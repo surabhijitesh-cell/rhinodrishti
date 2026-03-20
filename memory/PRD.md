@@ -7,8 +7,8 @@ Build a full-stack AI-powered web application called "Rhino Drishti" designed fo
 - **Frontend**: React + Tailwind CSS + shadcn/ui (Tactical Olive military theme)
 - **Backend**: FastAPI + MongoDB + emergentintegrations
 - **AI Layer**: Claude Haiku 4.5 via Emergent LLM Key
-- **RSS Feeds**: feedparser with 8 configured sources
-- **Background Scheduler**: APScheduler (30-min interval)
+- **RSS Feeds**: feedparser with 25 configured sources
+- **Background Scheduler**: APScheduler (30-min fetch, 15-min retry)
 
 ## User Personas
 - Armed forces personnel monitoring NER security
@@ -25,25 +25,45 @@ Build a full-stack AI-powered web application called "Rhino Drishti" designed fo
 - Weekly trend analysis with charts
 - Dark military theme with light mode toggle
 
-## What's Been Implemented (2026-03-20)
+## What's Been Implemented
+
+### Phase 1 (2026-03-20)
 - [x] Backend API: 10+ endpoints (dashboard stats, intelligence CRUD, alerts, daily brief, weekly trends, sources, RSS fetch trigger)
 - [x] MongoDB: intelligence_items, daily_briefs, rss_sources collections
 - [x] AI Pipeline: Claude Haiku 4.5 classification and analysis
-- [x] RSS Fetcher: 8 sources with keyword filtering
+- [x] RSS Fetcher: 25 sources with keyword filtering
 - [x] Background Scheduler: 30-min interval auto-fetch
-- [x] Seed Data: 24 realistic intelligence items across all 6 NER states
-- [x] Dashboard: Stats, NER SVG map, charts (threat/state distribution), recent alerts
+- [x] Dashboard: Stats, NER SVG map, charts, recent alerts
 - [x] Intelligence Feed: Filterable cards with search, state, threat type, severity filters
 - [x] Cross-Border Developments: Filtered view for cross-border items
 - [x] Daily Intelligence Brief: AI-generated with manual fallback
 - [x] Weekly Trends: Severity trend, category analysis, state analysis charts
-- [x] Alerts Page: Critical/High severity items
-- [x] Theme Toggle: Dark (Tactical Olive) / Light mode
-- [x] Responsive: Mobile-friendly with collapsible sidebar
+- [x] PDF Export for Daily Brief
+
+### Phase 2 - Rate Limit Management (2026-03-20)
+- [x] **Exponential Backoff Retry**: Aggressive backoff for rate limits (15s, 30s, 60s, 120s)
+- [x] **Article Deduplication**: Skip already processed articles in each cycle
+- [x] **Batch Processing**: 3 articles per batch with 5s pause between batches
+- [x] **Cycle Limits**: Max 25 new articles per 30-min fetch cycle
+- [x] **Retry Cycle**: 15 articles per 15-min retry cycle for failed items
+- [x] **Inter-article Delay**: 1.5s between articles to prevent burst rate limits
+- [x] **Rate Limit Detection**: Automatic detection of 429/rate/limit/quota errors
+- [x] **Early Stop**: Stop retry cycle if 3+ rate limit hits
+
+## Rate Limit Configuration
+```python
+MAX_ARTICLES_PER_CYCLE = 25      # Max new articles per 30-min fetch
+BATCH_SIZE = 3                   # Articles per batch
+BATCH_PAUSE = 5                  # Seconds between batches
+INTER_ARTICLE_DELAY = 1.5        # Seconds between articles
+MAX_RETRY_PER_CYCLE = 15         # Max items in 15-min retry cycle
+```
 
 ## Prioritized Backlog
+
 ### P0 (Done)
 - All core features implemented and tested
+- Rate limit management with exponential backoff
 
 ### P1 (Next Phase)
 - Email/WhatsApp notifications for critical alerts
@@ -52,23 +72,8 @@ Build a full-stack AI-powered web application called "Rhino Drishti" designed fo
 - User authentication (JWT or Google OAuth)
 
 ### P2 (Future)
-- Interactive map with react-simple-maps (replacing SVG)
+- Interactive map with react-simple-maps
 - Keyword heatmap visualization
 - Multi-language support (Hindi, Assamese, Bengali)
 - Cross-source validation for misinformation detection
-- Export reports as PDF
 - Real-time WebSocket updates
-
-## Update 2026-03-20 - Phase 2
-### Added Features:
-1. **PDF Export for Daily Brief**: GET /api/daily-brief/pdf generates professional PDF with RESTRICTED classification header, analyst assessment, key developments, region-wise highlights, cross-border insights
-2. **Bangladesh & Myanmar as Monitored Regions**: Both countries elevated from border areas to full monitored regions alongside 6 NER states
-3. **Foreign Power Emphasis**: China/Pakistan/USA involvement flagged as HIGH/CRITICAL priority in AI classification
-4. **Expanded Threat Categories**: Added Political Developments, Foreign Power Influence, Military Operations, Economic/Trade
-5. **25 RSS Sources**: Including Prothom Alo (Bangla), Kaler Kantho (Bangla), Daily Star BD, Myanmar Now, Mizzima, Irrawaddy
-6. **Updated NER Map**: Bangladesh & Myanmar shown as monitored regions with dashed borders
-
-### Current Stats:
-- 68+ live intelligence items from real RSS feeds
-- 29 cross-border items tracked
-- AI processing via Claude Haiku 4.5 with updated prompts
