@@ -1,0 +1,155 @@
+@import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Manrope:wght@400;500;600&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+    margin: 0;
+    font-family: "Manrope", sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+code {
+    font-family: "JetBrains Mono", monospace;
+}
+
+h1, h2, h3, h4, h5, h6 {
+    font-family: "Barlow Condensed", sans-serif;
+}
+
+@layer base {
+    :root {
+        --background: 120 10% 5%;
+        --foreground: 120 5% 90%;
+        --card: 120 10% 8%;
+        --card-foreground: 120 5% 95%;
+        --popover: 120 10% 8%;
+        --popover-foreground: 120 5% 95%;
+        --primary: 84 80% 55%;
+        --primary-foreground: 120 10% 5%;
+        --secondary: 120 5% 20%;
+        --secondary-foreground: 120 5% 90%;
+        --muted: 120 5% 15%;
+        --muted-foreground: 120 5% 60%;
+        --accent: 84 80% 55%;
+        --accent-foreground: 120 10% 5%;
+        --destructive: 0 85% 60%;
+        --destructive-foreground: 0 0% 100%;
+        --border: 120 5% 20%;
+        --input: 120 5% 20%;
+        --ring: 84 80% 55%;
+        --radius: 0px;
+        --chart-1: 84 80% 55%;
+        --chart-2: 0 85% 60%;
+        --chart-3: 38 92% 50%;
+        --chart-4: 200 70% 50%;
+        --chart-5: 120 5% 60%;
+        --severity-critical: 0 85% 60%;
+        --severity-high: 38 92% 50%;
+        --severity-medium: 48 96% 53%;
+        --severity-low: 84 80% 55%;
+    }
+
+    .light {
+        --background: 120 5% 96%;
+        --foreground: 120 10% 10%;
+        --card: 0 0% 100%;
+        --card-foreground: 120 10% 10%;
+        --popover: 0 0% 100%;
+        --popover-foreground: 120 10% 10%;
+        --primary: 84 60% 40%;
+        --primary-foreground: 0 0% 100%;
+        --secondary: 120 5% 90%;
+        --secondary-foreground: 120 10% 10%;
+        --muted: 120 5% 92%;
+        --muted-foreground: 120 5% 40%;
+        --accent: 84 60% 40%;
+        --accent-foreground: 0 0% 100%;
+        --destructive: 0 85% 55%;
+        --destructive-foreground: 0 0% 100%;
+        --border: 120 5% 85%;
+        --input: 120 5% 85%;
+        --ring: 84 60% 40%;
+    }
+}
+
+@layer base {
+    * {
+        @apply border-border;
+    }
+    body {
+        @apply bg-background text-foreground;
+    }
+}
+
+@layer base {
+    [data-debug-wrapper="true"] {
+        display: contents !important;
+    }
+    [data-debug-wrapper="true"] > * {
+        margin-left: inherit;
+        margin-right: inherit;
+        margin-top: inherit;
+        margin-bottom: inherit;
+        padding-left: inherit;
+        padding-right: inherit;
+        padding-top: inherit;
+        padding-bottom: inherit;
+        column-gap: inherit;
+        row-gap: inherit;
+        gap: inherit;
+        border-left-width: inherit;
+        border-right-width: inherit;
+        border-top-width: inherit;
+        border-bottom-width: inherit;
+    }
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+::-webkit-scrollbar-track {
+    background: hsl(var(--muted));
+}
+::-webkit-scrollbar-thumb {
+    background: hsl(var(--border));
+}
+::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--primary));
+}
+
+/* Scanline overlay effect */
+.scanline-overlay {
+    background: repeating-linear-gradient(
+        0deg,
+        transparent,
+        transparent 2px,
+        rgba(0, 0, 0, 0.03) 2px,
+        rgba(0, 0, 0, 0.03) 4px
+    );
+    pointer-events: none;
+}
+
+/* Glow effect for active elements */
+.glow-primary {
+    box-shadow: 0 0 10px rgba(163, 230, 53, 0.2);
+}
+.glow-critical {
+    box-shadow: 0 0 10px rgba(239, 68, 68, 0.3);
+}
+.glow-high {
+    box-shadow: 0 0 10px rgba(245, 158, 11, 0.3);
+}
+
+/* Pulse animation for critical items */
+@keyframes pulse-critical {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.6; }
+}
+.animate-pulse-critical {
+    animation: pulse-critical 2s ease-in-out infinite;
+}

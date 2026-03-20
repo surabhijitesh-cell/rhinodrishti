@@ -1,0 +1,103 @@
+/* Rhino Drishti - Military Intelligence Dashboard */
+
+/* Sidebar */
+.sidebar-nav-item {
+    @apply flex items-center gap-3 px-3 py-2.5 text-sm font-medium uppercase tracking-wider transition-all duration-75;
+}
+.sidebar-nav-item:hover {
+    @apply bg-secondary text-foreground;
+}
+.sidebar-nav-item.active {
+    @apply bg-primary/10 text-primary border-l-2 border-l-primary;
+}
+
+/* Stat cards */
+.stat-card {
+    @apply border border-border bg-card p-4 transition-all duration-75;
+}
+.stat-card:hover {
+    @apply border-primary/30;
+    box-shadow: 0 0 15px rgba(163, 230, 53, 0.08);
+}
+
+/* Intelligence cards */
+.intel-card {
+    @apply border border-border bg-card transition-all duration-75;
+}
+.intel-card:hover {
+    @apply border-primary/30;
+}
+
+.intel-card-critical {
+    @apply border-l-4;
+    border-left-color: hsl(var(--severity-critical));
+}
+.intel-card-high {
+    @apply border-l-4;
+    border-left-color: hsl(var(--severity-high));
+}
+.intel-card-medium {
+    @apply border-l-4;
+    border-left-color: hsl(var(--severity-medium));
+}
+.intel-card-low {
+    @apply border-l-4;
+    border-left-color: hsl(var(--severity-low));
+}
+
+/* Severity badges */
+.severity-critical {
+    @apply bg-red-500/20 text-red-400 border-red-500/30;
+}
+.severity-high {
+    @apply bg-amber-500/20 text-amber-400 border-amber-500/30;
+}
+.severity-medium {
+    @apply bg-yellow-500/20 text-yellow-400 border-yellow-500/30;
+}
+.severity-low {
+    @apply bg-green-500/20 text-green-400 border-green-500/30;
+}
+
+/* Light theme severity */
+.light .severity-critical {
+    @apply bg-red-100 text-red-700 border-red-300;
+}
+.light .severity-high {
+    @apply bg-amber-100 text-amber-700 border-amber-300;
+}
+.light .severity-medium {
+    @apply bg-yellow-100 text-yellow-700 border-yellow-300;
+}
+.light .severity-low {
+    @apply bg-green-100 text-green-700 border-green-300;
+}
+
+/* Map styles */
+.map-container {
+    @apply border border-border bg-card overflow-hidden;
+}
+.map-state {
+    cursor: pointer;
+    transition: all 0.1s ease-out;
+}
+.map-state:hover {
+    filter: brightness(1.3);
+}
+
+/* Brief sections */
+.brief-section {
+    @apply border border-border bg-card p-4 mb-4;
+}
+.brief-bullet {
+    @apply flex items-start gap-2 py-1.5 text-sm;
+}
+
+/* Custom animations */
+@keyframes slideIn {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+.animate-slide-in {
+    animation: slideIn 0.15s ease-out forwards;
+}

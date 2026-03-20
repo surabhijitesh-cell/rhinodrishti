@@ -1,0 +1,149 @@
+{
+  "identity": {
+    "name": "Rhino Drishti",
+    "tone": "Tactical, Authoritative, Minimalist, High-Precision",
+    "aesthetic": "Military Command Center (Dark Mode First)",
+    "target_audience": "Armed Forces, Intelligence Analysts, Strategic Planners"
+  },
+  "typography": {
+    "font_family": {
+      "headings": "\"Barlow Condensed\", sans-serif",
+      "body": "\"Manrope\", sans-serif",
+      "mono": "\"JetBrains Mono\", monospace"
+    },
+    "scaling": {
+      "h1": "text-4xl md:text-5xl font-bold tracking-tight uppercase",
+      "h2": "text-3xl font-semibold tracking-tight uppercase",
+      "h3": "text-2xl font-medium tracking-wide uppercase",
+      "body": "text-base leading-relaxed",
+      "small": "text-sm text-muted-foreground",
+      "label": "text-xs font-mono tracking-widest uppercase text-muted-foreground"
+    },
+    "imports": [
+      "@import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Manrope:wght@400;500;600&display=swap');"
+    ]
+  },
+  "colors": {
+    "palette_name": "Tactical Olive",
+    "theme_strategy": "Dark Mode Default with Light Mode Toggle",
+    "css_variables": {
+      "root": {
+        "--background": "120 10% 5%", 
+        "--foreground": "120 5% 90%",
+        "--card": "120 10% 8%",
+        "--card-foreground": "120 5% 95%",
+        "--popover": "120 10% 8%",
+        "--popover-foreground": "120 5% 95%",
+        "--primary": "84 80% 55%",
+        "--primary-foreground": "120 10% 5%",
+        "--secondary": "120 5% 20%",
+        "--secondary-foreground": "120 5% 90%",
+        "--muted": "120 5% 15%",
+        "--muted-foreground": "120 5% 60%",
+        "--accent": "84 80% 55%",
+        "--accent-foreground": "120 10% 5%",
+        "--destructive": "0 85% 60%",
+        "--destructive-foreground": "0 0% 100%",
+        "--border": "120 5% 20%",
+        "--input": "120 5% 20%",
+        "--ring": "84 80% 55%",
+        "--radius": "0px"
+      },
+      "dark": {
+        "--background": "120 10% 5%",
+        "--foreground": "120 5% 90%",
+        "--card": "120 10% 8%",
+        "--card-foreground": "120 5% 95%",
+        "--primary": "84 80% 55%",
+        "--primary-foreground": "120 10% 5%",
+        "--border": "120 5% 20%"
+      }
+    },
+    "usage_rules": {
+      "background": "Deepest olive-black (#0a0d0a), NOT pure black.",
+      "text": "Off-white (#e2e8f0) for body, Terminal Green (#a3e635) for active states/highlights.",
+      "borders": "Thin, sharp 1px borders in dark olive gray (#2d372b).",
+      "alerts": "Signal Red for critical, Amber for warning, Terminal Green for safe.",
+      "gradients": "Avoid gradients unless simulating 'scanlines' or 'radar' effects."
+    }
+  },
+  "visual_enhancers": {
+    "borders": "Sharp corners (rounded-none or rounded-sm). Use 1px borders everywhere.",
+    "shadows": "Minimal ambient shadows. Use 'glow' effects for active elements (e.g., box-shadow: 0 0 10px rgba(163, 230, 53, 0.2)).",
+    "textures": "Optional: subtle 'scanline' overlay or 'grid' pattern on backgrounds.",
+    "icons": "Lucide React (default). Use 'Shield', 'Radar', 'Target', 'Map', 'Activity' icons frequently.",
+    "animations": "Instant transitions (duration-75 or duration-100). No bouncy springs. 'Tech' ease-out."
+  },
+  "layout_strategy": {
+    "type": "Dense Bento Grid",
+    "container": "container mx-auto p-4 md:p-6 max-w-[1600px]",
+    "spacing": "Compact. gap-4.",
+    "sidebar": "Collapsible vertical navigation on the left (w-16 to w-64).",
+    "dashboard_grid": "Grid with 12 columns. Map takes 6-8 cols. Feed takes 4 cols. Stats take top row.",
+    "mobile": "Stack vertically. Sidebar becomes bottom sheet or drawer."
+  },
+  "components": {
+    "path": "/app/frontend/src/components/ui",
+    "customizations": [
+      {
+        "component": "Card",
+        "style": "bg-card border-border border-l-4 border-l-primary rounded-none shadow-none"
+      },
+      {
+        "component": "Button",
+        "style": "uppercase font-bold tracking-wider rounded-sm hover:bg-primary/90"
+      },
+      {
+        "component": "Badge",
+        "style": "rounded-none uppercase tracking-widest text-[10px] px-2 py-0.5 border"
+      },
+      {
+        "component": "Input",
+        "style": "bg-background/50 border-input rounded-none focus-visible:ring-primary focus-visible:ring-1"
+      }
+    ]
+  },
+  "map_visualization": {
+    "library": "react-simple-maps",
+    "instructions": "Use 'react-simple-maps' to render the NER region. Highlight Assam, Meghalaya, Mizoram, Manipur, Arunachal Pradesh, Tripura. Add markers for incidents. Use 'd3-scale' for color coding choropleth maps if needed.",
+    "data_source": "Use a topojson file for India/NER. If unavailable, use a placeholder SVG or fetch from a public URL like 'https://raw.githubusercontent.com/deldersveld/topojson/master/countries/india/india-states.json' and filter for NER states."
+  },
+  "image_urls": {
+    "hero_background": "https://images.pexels.com/photos/7009483/pexels-photo-7009483.jpeg",
+    "map_texture": "https://images.pexels.com/photos/108942/pexels-photo-108942.jpeg",
+    "news_placeholders": [
+      {
+        "url": "https://images.pexels.com/photos/5491888/pexels-photo-5491888.jpeg",
+        "category": "operations",
+        "description": "Soldiers in training/patrol"
+      },
+      {
+        "url": "https://images.unsplash.com/photo-1761236301545-e0d533b3669b",
+        "category": "border",
+        "description": "Watchtower and fence"
+      },
+      {
+        "url": "https://images.pexels.com/photos/6949365/pexels-photo-6949365.jpeg",
+        "category": "intelligence",
+        "description": "Conference room/Briefing"
+      }
+    ]
+  },
+  "instructions_to_main_agent": {
+    "step_1": "Update '/app/frontend/src/index.css' with the provided CSS variables for the Tactical Olive theme.",
+    "step_2": "Install dependencies: 'lucide-react', 'recharts', 'react-simple-maps', 'd3-scale', 'clsx', 'tailwind-merge'.",
+    "step_3": "Create a 'Layout' component that includes the sidebar and top bar.",
+    "step_4": "Build the 'Dashboard' page with the Bento grid layout using the 'Card' components.",
+    "step_5": "Implement the Map component using 'react-simple-maps'. Handle loading states gracefully.",
+    "step_6": "Ensure all text contrast meets WCAG AA standards (especially green on black).",
+    "step_7": "Add 'data-testid' to all interactive elements."
+  },
+  "UNIVERSAL_GUIDELINES_FOR_MAIN_AGENT": [
+    "Do not use gradients for backgrounds, use solid dark colors or subtle textures.",
+    "Avoid rounded corners > 4px. Prefer sharp edges (rounded-none or rounded-sm).",
+    "Use uppercase text for labels, headers, and buttons to enhance the 'military' feel.",
+    "Feedback is instant. Avoid long animations.",
+    "Charts should use the theme colors: Primary (Green), Destructive (Red), Warning (Amber), Info (Blue).",
+    "Always check for accessibility. Green text on black must be readable."
+  ]
+}
