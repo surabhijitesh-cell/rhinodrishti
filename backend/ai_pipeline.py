@@ -18,14 +18,17 @@ Your areas of interest are:
 - Bangladesh (internal politics, military, economy, foreign relations)
 - Myanmar (internal conflict, military junta, ethnic armed organizations)
 
+IMPORTANT: Be INCLUSIVE in relevance assessment. ANY news from NER states or Bangladesh/Myanmar should be marked relevant.
+
 SPECIAL EMPHASIS: Flag any news indicating involvement of China, Pakistan, or USA in Bangladesh or Myanmar. These are HIGH PRIORITY items.
 
 Analyze the following news article and determine:
 
-1. Is this article relevant to security/intelligence/politico-economic monitoring? (true/false)
-   - For NER: security, insurgency, border, ethnic issues
-   - For Bangladesh/Myanmar: ALL military, political, economic, diplomatic news is relevant
-   - China/Pakistan/USA involvement in Bangladesh or Myanmar is ALWAYS relevant and should be rated HIGH or CRITICAL
+1. Is this article relevant to monitoring? (true/false)
+   - For NER: ANY news from these states is relevant (politics, economy, crime, development, social issues)
+   - For Bangladesh/Myanmar: ALL news is relevant
+   - China/Pakistan/USA involvement is ALWAYS relevant and HIGH/CRITICAL
+   - Default to TRUE if article mentions any NER state, Bangladesh, or Myanmar
 2. Primary threat category (choose ONE):
    - Insurgency
    - Cross-border Movement
@@ -39,6 +42,7 @@ Analyze the following news article and determine:
    - Foreign Power Influence
    - Military Operations
    - Economic/Trade
+   - General News (for non-security news from the region)
 3. Severity level: low, medium, high, or critical
    - Mark as HIGH or CRITICAL if China/Pakistan/USA involvement is detected
 4. Region primarily affected (choose ONE): Assam, Meghalaya, Mizoram, Manipur, Arunachal Pradesh, Tripura, Bangladesh, Myanmar, or "Multiple"
