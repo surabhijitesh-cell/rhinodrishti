@@ -410,6 +410,14 @@ async def trigger_fetch(background_tasks: BackgroundTasks):
     return {"message": "News fetch triggered"}
 
 
+@api_router.post("/bulk-scrape")
+async def trigger_bulk_scrape(background_tasks: BackgroundTasks):
+    """Bulk scrape ALL articles from RSS feeds without AI processing.
+    Articles are stored as unprocessed and will be AI-analyzed gradually."""
+    background_tasks.add_task(bulk_scrape_all_feeds)
+    return {"message": "Bulk scrape triggered - articles will be stored for gradual AI processing"}
+
+
 @api_router.post("/analyze-news")
 async def trigger_analysis(background_tasks: BackgroundTasks):
     background_tasks.add_task(analyze_unprocessed_items)
@@ -684,6 +692,73 @@ def _make_raw_doc(article):
     }
 
 
+async def bulk_scrape_all_feeds():
+    """
+    BULK SCRAPE: Fetch ALL articles from ALL RSS feeds and store them as unprocessed.
+    
+    This is the initial data collection phase - no AI processing.
+    Articles will be gradually AI-processed by the retry scheduler.
+    
+    Benefits:
+    - Collects maximum articles quickly (no rate limit concerns)
+    - AI processing happens gradually via scheduled retries
+    - Keeps LLM costs low by spreading processing over time
+    """
+    from rss_fetcher import fetch_all_feeds
+    
+    logger.info("=" * 60)
+    logger.info("=== BULK SCRAPE: Fetching ALL articles from RSS feeds ===")
+    logger.info("=" * 60)
+    
+    try:
+        # Step 1: Fetch all RSS articles
+        articles = await fetch_all_feeds()
+        logger.info(f"Fetched {len(articles)} total articles from RSS feeds")
+
+        # Step 2: Deduplicate — only keep articles NOT already in DB
+        new_articles = []
+        for article in articles:
+            url = article.get("source_url", "")
+            if not url:
+                continue
+            existing = await intelligence_col.find_one({"source_url": url}, {"_id": 1})
+            if not existing:
+                new_articles.append(article)
+        
+        skipped = len(articles) - len(new_articles)
+        logger.info(f"Deduplication: {skipped} already in DB, {len(new_articles)} new articles to store")
+
+        if not new_articles:
+            logger.info("No new articles to store. Bulk scrape complete.")
+            return {"stored": 0, "skipped": skipped, "total_fetched": len(articles)}
+
+        # Step 3: Store ALL new articles as unprocessed (NO AI processing)
+        stored_count = 0
+        for article in new_articles:
+            raw_doc = _make_raw_doc(article)
+            await intelligence_col.insert_one(raw_doc)
+            stored_count += 1
+            
+            # Log progress every 50 articles
+            if stored_count % 50 == 0:
+                logger.info(f"  Stored {stored_count}/{len(new_articles)} articles...")
+
+        logger.info("=" * 60)
+        logger.info(f"=== BULK SCRAPE COMPLETE ===")
+        logger.info(f"  Stored: {stored_count} new articles (unprocessed)")
+        logger.info(f"  Skipped: {skipped} duplicates")
+        logger.info(f"  Total in DB: {await intelligence_col.count_documents({})}")
+        logger.info(f"  Pending AI processing: {await intelligence_col.count_documents({'processed': False})}")
+        logger.info("=" * 60)
+        logger.info("Articles will be AI-processed gradually via scheduled retries (every 15 min)")
+        
+        return {"stored": stored_count, "skipped": skipped, "total_fetched": len(articles)}
+
+    except Exception as e:
+        logger.error(f"Bulk scrape failed: {e}")
+        raise
+
+
 async def analyze_unprocessed_items():
     """
     Retry AI classification on previously failed items with exponential backoff.
@@ -691,9 +766,9 @@ async def analyze_unprocessed_items():
     This runs every 15 minutes and processes items that failed in previous cycles.
     Uses conservative limits to avoid overwhelming the API.
     """
-    # Configuration for retry processing
-    MAX_RETRY_PER_CYCLE = 15  # Process max 15 unprocessed items per retry cycle
-    INTER_ARTICLE_DELAY = 2.0  # 2 seconds between articles
+    # Configuration for retry processing - increased for faster processing
+    MAX_RETRY_PER_CYCLE = 20  # Process max 20 unprocessed items per retry cycle
+    INTER_ARTICLE_DELAY = 2.5  # 2.5 seconds between articles for safety
     
     unprocessed = await intelligence_col.find(
         {"processed": False}, {"_id": 0}
@@ -704,12 +779,13 @@ async def analyze_unprocessed_items():
         return
 
     total_unprocessed = await intelligence_col.count_documents({"processed": False})
-    logger.info(f"Retrying AI analysis on {len(unprocessed)}/{total_unprocessed} unprocessed items...")
+    logger.info(f"=== AI Processing Cycle: {len(unprocessed)}/{total_unprocessed} unprocessed items ===")
     
     success = 0
+    not_relevant = 0
     rate_limit_hits = 0
     
-    for item in unprocessed:
+    for idx, item in enumerate(unprocessed):
         await asyncio.sleep(INTER_ARTICLE_DELAY)
         result, was_rate_limited = await _classify_with_retry_v2(item, max_retries=3)
         
@@ -730,10 +806,23 @@ async def analyze_unprocessed_items():
                 {"$set": update_fields}
             )
             success += 1
+        elif result and not result.get("is_relevant", True):
+            # Mark as processed but not relevant
+            await intelligence_col.update_one(
+                {"id": item["id"]},
+                {"$set": {"processed": True, "tags": ["not_relevant"]}}
+            )
+            not_relevant += 1
+        
+        # Log progress every 5 articles
+        if (idx + 1) % 5 == 0:
+            logger.info(f"  Progress: {idx + 1}/{len(unprocessed)} | Success: {success} | Not relevant: {not_relevant}")
     
-    remaining = total_unprocessed - success
-    logger.info(f"Reprocessed: {success}/{len(unprocessed)} items upgraded to AI-classified. "
-                f"Remaining unprocessed: {remaining}")
+    remaining = total_unprocessed - success - not_relevant
+    logger.info(f"=== AI Processing Complete ===")
+    logger.info(f"  Processed: {success} relevant | {not_relevant} not relevant")
+    logger.info(f"  Remaining unprocessed: {remaining}")
+    logger.info(f"  Rate limit hits: {rate_limit_hits}")
 
 
 async def initialize_sources():
