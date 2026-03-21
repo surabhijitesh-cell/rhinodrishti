@@ -202,7 +202,8 @@ async def get_intelligence(
     date_to: Optional[str] = None,
     is_cross_border: Optional[bool] = None,
     page: int = Query(1, ge=1),
-    limit: int = Query(20, ge=1, le=100)
+    limit: int = Query(20, ge=1, le=100),
+    translate: bool = Query(True)  # Auto-translate non-English content
 ):
     query = {}
     if state:
@@ -227,6 +228,12 @@ async def get_intelligence(
     skip = (page - 1) * limit
     total = await intelligence_col.count_documents(query)
     items = await intelligence_col.find(query, {"_id": 0}).sort("published_at", -1).skip(skip).limit(limit).to_list(limit)
+
+    # Translate non-English titles for display
+    if translate:
+        for item in items:
+            if has_non_latin_chars(item.get("title", "")):
+                item["title"] = await translate_to_english(item["title"])
 
     return {
         "items": items, "total": total, "page": page,
@@ -270,12 +277,15 @@ async def generate_brief(background_tasks: BackgroundTasks):
 
 @api_router.get("/daily-brief/pdf")
 async def get_daily_brief_pdf(date: Optional[str] = None):
-    """Generate and return a PDF of the daily intelligence brief"""
+    """Generate and return a PDF of the daily intelligence brief with translated content"""
     if not date:
         date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     brief = await briefs_col.find_one({"date": date}, {"_id": 0})
     if not brief:
         brief = await generate_brief_for_date(date)
+
+    # Translate any non-English content in the brief for PDF
+    brief = await translate_brief_for_pdf(brief)
 
     # Get stats for the PDF header
     total = await intelligence_col.count_documents({})
@@ -290,6 +300,124 @@ async def get_daily_brief_pdf(date: Optional[str] = None):
         media_type="application/pdf",
         headers={"Content-Disposition": f"attachment; filename=Rhino_Drishti_Brief_{date}.pdf"}
     )
+
+
+async def translate_brief_for_pdf(brief: dict) -> dict:
+    """Translate non-English content in brief to English for PDF rendering"""
+    translated = dict(brief)
+    
+    # Translate key_developments
+    if translated.get("key_developments"):
+        new_devs = []
+        for dev in translated["key_developments"]:
+            if isinstance(dev, dict):
+                if has_non_latin_chars(dev.get("title", "")):
+                    dev["title"] = await translate_to_english(dev["title"])
+                if has_non_latin_chars(dev.get("summary", "")):
+                    dev["summary"] = await translate_to_english(dev["summary"])
+                new_devs.append(dev)
+            elif isinstance(dev, str) and has_non_latin_chars(dev):
+                new_devs.append(await translate_to_english(dev))
+            else:
+                new_devs.append(dev)
+        translated["key_developments"] = new_devs
+    
+    # Translate national_news
+    if translated.get("national_news"):
+        for news in translated["national_news"]:
+            if isinstance(news, dict):
+                if has_non_latin_chars(news.get("title", "")):
+                    news["title"] = await translate_to_english(news["title"])
+                if has_non_latin_chars(news.get("summary", "")):
+                    news["summary"] = await translate_to_english(news["summary"])
+    
+    # Translate international_news
+    if translated.get("international_news"):
+        for news in translated["international_news"]:
+            if isinstance(news, dict):
+                if has_non_latin_chars(news.get("title", "")):
+                    news["title"] = await translate_to_english(news["title"])
+                if has_non_latin_chars(news.get("summary", "")):
+                    news["summary"] = await translate_to_english(news["summary"])
+    
+    # Translate state_highlights
+    if translated.get("state_highlights"):
+        for state, highlight in translated["state_highlights"].items():
+            if has_non_latin_chars(highlight):
+                translated["state_highlights"][state] = await translate_to_english(highlight)
+    
+    # Translate analyst_summary and cross_border_insights
+    if has_non_latin_chars(translated.get("analyst_summary", "")):
+        translated["analyst_summary"] = await translate_to_english(translated["analyst_summary"])
+    if has_non_latin_chars(translated.get("cross_border_insights", "")):
+        translated["cross_border_insights"] = await translate_to_english(translated["cross_border_insights"])
+    
+    return translated
+
+
+def has_non_latin_chars(text: str) -> bool:
+    """Check if text contains non-Latin characters (Bengali, Hindi, Assamese, etc.)"""
+    if not text:
+        return False
+    for char in text:
+        code = ord(char)
+        # Check for Bengali (U+0980-U+09FF), Devanagari (U+0900-U+097F), 
+        # and other South Asian scripts
+        if (0x0900 <= code <= 0x097F) or \
+           (0x0980 <= code <= 0x09FF) or \
+           (0x0A00 <= code <= 0x0A7F) or \
+           (0x0A80 <= code <= 0x0AFF) or \
+           (0x0B00 <= code <= 0x0B7F) or \
+           (0x0B80 <= code <= 0x0BFF) or \
+           (0x0C00 <= code <= 0x0C7F) or \
+           (0x0C80 <= code <= 0x0CFF) or \
+           (0x0D00 <= code <= 0x0D7F):
+            return True
+    return False
+
+
+async def translate_to_english(text: str) -> str:
+    """Translate non-English text to English using AI"""
+    if not text or not has_non_latin_chars(text):
+        return text
+    
+    try:
+        from emergentintegrations.llm.chat import LlmChat, UserMessage
+        EMERGENT_LLM_KEY = os.environ.get('EMERGENT_LLM_KEY', '')
+        
+        chat = LlmChat(
+            api_key=EMERGENT_LLM_KEY,
+            session_id=f"translate-{hash(text[:50])}",
+            system_message="You are a translator. Translate the following text to English. Return ONLY the English translation, nothing else."
+        ).with_model("anthropic", "claude-haiku-4-5-20251001")
+        
+        response = await chat.send_message(UserMessage(text=text[:1000]))
+        return str(response).strip()
+    except Exception as e:
+        logger.error(f"Translation failed: {e}")
+        # Return transliterated version as fallback
+        return text.encode('ascii', 'ignore').decode('ascii') or "[Non-English content]"
+
+
+def clean_for_pdf(text: str) -> str:
+    """Clean text for PDF rendering - remove non-Latin characters"""
+    if not text:
+        return ""
+    # Replace common Unicode characters with ASCII equivalents
+    replacements = {
+        '"': '"', '"': '"', ''': "'", ''': "'", 
+        '–': '-', '—': '-', '…': '...', '•': '*',
+        '\u200b': '', '\u200c': '', '\u200d': '',  # Zero-width chars
+    }
+    for orig, repl in replacements.items():
+        text = text.replace(orig, repl)
+    
+    # If text has non-Latin chars, mark it for translation
+    if has_non_latin_chars(text):
+        # For PDF, we can't await, so we'll use a placeholder
+        return "[Content requires translation - see original source]"
+    
+    return text.encode('latin-1', 'replace').decode('latin-1')
 
 
 def generate_brief_pdf(brief: dict, date: str, total: int, critical: int, high: int) -> bytes:
