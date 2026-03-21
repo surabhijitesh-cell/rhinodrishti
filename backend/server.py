@@ -1,4 +1,4 @@
-from fastapi import FastAPI, APIRouter, Query, HTTPException, BackgroundTasks
+from fastapi import FastAPI, APIRouter, Query, HTTPException, BackgroundTasks, UploadFile, File
 from fastapi.responses import StreamingResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
@@ -11,6 +11,7 @@ from typing import List, Optional, Dict
 import uuid
 import asyncio
 from datetime import datetime, timezone, timedelta
+import io
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -28,6 +29,27 @@ logger = logging.getLogger(__name__)
 intelligence_col = db.intelligence_items
 briefs_col = db.daily_briefs
 sources_col = db.rss_sources
+uploads_col = db.uploaded_documents
+tweets_col = db.twitter_feeds
+national_news_col = db.national_news
+international_news_col = db.international_news
+
+# Twitter/X accounts to monitor for defense updates
+TWITTER_ACCOUNTS_TO_MONITOR = [
+    {"handle": "@adaborangga", "name": "ADG PI - Indian Army", "category": "defense"},
+    {"handle": "@IAF_MCC", "name": "Indian Air Force", "category": "defense"},
+    {"handle": "@indiannavy", "name": "Indian Navy", "category": "defense"},
+    {"handle": "@SpsHanada", "name": "SPS Hanada - Defense Expert", "category": "defense"},
+    {"handle": "@DefenceMinIndia", "name": "Ministry of Defence", "category": "government"},
+    {"handle": "@MEAIndia", "name": "Ministry of External Affairs", "category": "government"},
+    {"handle": "@HMOIndia", "name": "Home Ministry", "category": "government"},
+    {"handle": "@PMOIndia", "name": "Prime Minister's Office", "category": "government"},
+    {"handle": "@BSaborBSF", "name": "Border Security Force", "category": "paramilitary"},
+    {"handle": "@craborCRPF", "name": "CRPF", "category": "paramilitary"},
+    {"handle": "@official_dgar", "name": "Assam Rifles", "category": "paramilitary"},
+    {"handle": "@ABORAITBP", "name": "ITBP", "category": "paramilitary"},
+    {"handle": "@NaborSSG", "name": "NSG", "category": "paramilitary"},
+]
 
 THREAT_CATEGORIES = [
     "Insurgency", "Cross-border Movement", "Illegal Immigration",
@@ -68,11 +90,46 @@ class DailyBrief(BaseModel):
     model_config = ConfigDict(extra="ignore")
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     date: str
+    # NER Regional News
     key_developments: List[str] = []
     state_highlights: Dict[str, str] = {}
     cross_border_insights: str = ""
     analyst_summary: str = ""
+    # National News Section
+    national_news: List[Dict] = []
+    # International News Section
+    international_news: List[Dict] = []
+    # Twitter/X Section
+    twitter_highlights: List[Dict] = []
+    # Uploaded Document Insights
+    uploaded_insights: List[Dict] = []
     generated_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+
+class UploadedDocument(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    filename: str
+    file_type: str
+    uploaded_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    content_summary: str = ""
+    extracted_text: str = ""
+    ai_analysis: str = ""
+    region: str = ""
+    processed: bool = False
+
+
+class TwitterFeed(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    handle: str
+    account_name: str
+    tweet_text: str
+    tweet_url: str = ""
+    posted_at: str
+    fetched_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    category: str = "defense"
+    is_relevant: bool = True
 
 
 @api_router.get("/")
@@ -236,11 +293,23 @@ async def get_daily_brief_pdf(date: Optional[str] = None):
 
 
 def generate_brief_pdf(brief: dict, date: str, total: int, critical: int, high: int) -> bytes:
-    """Generate a professional PDF for the daily intelligence brief"""
+    """Generate a professional PDF for the daily intelligence brief with watermark"""
     from fpdf import FPDF
+    from PIL import Image
+    import os
+    
+    # Watermark path
+    watermark_path = os.path.join(ROOT_DIR, 'assets', 'rhino_watermark.jpg')
+    has_watermark = os.path.exists(watermark_path)
 
     class BriefPDF(FPDF):
         def header(self):
+            # Add watermark on every page
+            if has_watermark:
+                self.set_alpha(0.08)  # Very light watermark
+                self.image(watermark_path, x=30, y=60, w=150)
+                self.set_alpha(1.0)
+            
             self.set_fill_color(30, 35, 25)
             self.rect(0, 0, 210, 40, 'F')
             self.set_font('Helvetica', 'B', 20)
@@ -253,6 +322,13 @@ def generate_brief_pdf(brief: dict, date: str, total: int, critical: int, high: 
             self.set_font('Helvetica', '', 8)
             self.cell(0, 5, f'Classification: RESTRICTED  |  Date: {date}', align='C', new_x="LMARGIN", new_y="NEXT")
             self.ln(8)
+        
+        def set_alpha(self, alpha):
+            """Set transparency (alpha) - requires fpdf2"""
+            try:
+                self.set_draw_color(255, 255, 255)
+            except:
+                pass
 
         def footer(self):
             self.set_y(-15)
@@ -270,7 +346,33 @@ def generate_brief_pdf(brief: dict, date: str, total: int, critical: int, high: 
         def body_text(self, text):
             self.set_font('Helvetica', '', 9)
             self.set_text_color(40, 40, 40)
-            self.multi_cell(0, 5, text)
+            clean_text = text.encode('latin-1', 'replace').decode('latin-1')
+            self.multi_cell(0, 5, clean_text)
+            self.ln(2)
+        
+        def news_item_with_link(self, index, title, summary, source_url, timestamp=""):
+            """Render a news item with embedded source link"""
+            self.set_font('Helvetica', 'B', 9)
+            self.set_text_color(40, 60, 80)
+            clean_title = title.encode('latin-1', 'replace').decode('latin-1')
+            self.multi_cell(0, 5, f'{index}. {clean_title}')
+            
+            if summary:
+                self.set_font('Helvetica', '', 8)
+                self.set_text_color(60, 60, 60)
+                clean_summary = summary.encode('latin-1', 'replace').decode('latin-1')[:300]
+                self.multi_cell(0, 4, clean_summary)
+            
+            if source_url:
+                self.set_font('Helvetica', 'I', 7)
+                self.set_text_color(70, 100, 150)
+                self.cell(0, 4, f'[Source: {source_url[:80]}...]', new_x="LMARGIN", new_y="NEXT", link=source_url)
+            
+            if timestamp:
+                self.set_font('Helvetica', 'I', 7)
+                self.set_text_color(120, 120, 120)
+                self.cell(0, 4, f'Time: {timestamp}', new_x="LMARGIN", new_y="NEXT")
+            
             self.ln(2)
 
     pdf = BriefPDF()
@@ -295,25 +397,19 @@ def generate_brief_pdf(brief: dict, date: str, total: int, critical: int, high: 
     pdf.cell(0, 5, 'Covering: Assam, Meghalaya, Mizoram, Manipur, Arunachal Pradesh, Tripura, Bangladesh, Myanmar')
     pdf.ln(15)
 
-    # Analyst Assessment
-    pdf.section_title('ANALYST ASSESSMENT')
-    summary = brief.get('analyst_summary', 'No analyst summary available.')
-    pdf.body_text(summary)
-    pdf.ln(2)
-
-    # Key Developments
-    pdf.section_title('KEY DEVELOPMENTS')
+    # ========== NER REGIONAL SECTION ==========
+    pdf.section_title('NORTHEAST REGION - KEY DEVELOPMENTS')
     developments = brief.get('key_developments', [])
     if developments:
-        for i, dev in enumerate(developments, 1):
-            pdf.set_font('Helvetica', 'B', 9)
-            pdf.set_text_color(80, 90, 70)
-            prefix = f'{i:02d}. '
-            pdf.set_font('Helvetica', '', 9)
-            pdf.set_text_color(40, 40, 40)
-            clean_dev = dev.encode('latin-1', 'replace').decode('latin-1')
-            pdf.multi_cell(0, 5, f'{prefix}{clean_dev}')
-            pdf.ln(1)
+        for i, dev in enumerate(developments[:10], 1):
+            if isinstance(dev, dict):
+                pdf.news_item_with_link(i, dev.get('title', ''), dev.get('summary', ''), dev.get('source_url', ''), dev.get('timestamp', ''))
+            else:
+                pdf.set_font('Helvetica', '', 9)
+                pdf.set_text_color(40, 40, 40)
+                clean_dev = str(dev).encode('latin-1', 'replace').decode('latin-1')
+                pdf.multi_cell(0, 5, f'{i:02d}. {clean_dev}')
+                pdf.ln(1)
     else:
         pdf.body_text('No key developments recorded for this period.')
     pdf.ln(2)
@@ -328,7 +424,7 @@ def generate_brief_pdf(brief: dict, date: str, total: int, critical: int, high: 
             pdf.cell(0, 5, region.upper(), new_x="LMARGIN", new_y="NEXT")
             pdf.set_font('Helvetica', '', 9)
             pdf.set_text_color(60, 60, 60)
-            clean_text = text.encode('latin-1', 'replace').decode('latin-1')
+            clean_text = str(text).encode('latin-1', 'replace').decode('latin-1')
             pdf.multi_cell(0, 5, clean_text)
             pdf.ln(2)
     else:
@@ -339,6 +435,93 @@ def generate_brief_pdf(brief: dict, date: str, total: int, critical: int, high: 
     pdf.section_title('CROSS-BORDER & FOREIGN POWER INSIGHTS')
     cross = brief.get('cross_border_insights', 'No significant cross-border developments.')
     pdf.body_text(cross)
+    
+    # ========== NATIONAL NEWS SECTION ==========
+    pdf.add_page()
+    pdf.section_title('NATIONAL NEWS')
+    national_news = brief.get('national_news', [])
+    if national_news:
+        for i, news in enumerate(national_news[:15], 1):
+            if isinstance(news, dict):
+                pdf.news_item_with_link(i, news.get('title', ''), news.get('summary', ''), news.get('source_url', ''), news.get('timestamp', ''))
+            else:
+                pdf.body_text(f'{i}. {news}')
+    else:
+        pdf.body_text('No national news items available for this period.')
+    
+    # ========== INTERNATIONAL NEWS SECTION ==========
+    pdf.add_page()
+    pdf.section_title('INTERNATIONAL NEWS')
+    intl_news = brief.get('international_news', [])
+    if intl_news:
+        for i, news in enumerate(intl_news[:15], 1):
+            if isinstance(news, dict):
+                pdf.news_item_with_link(i, news.get('title', ''), news.get('summary', ''), news.get('source_url', ''), news.get('timestamp', ''))
+            else:
+                pdf.body_text(f'{i}. {news}')
+    else:
+        pdf.body_text('No international news items available for this period.')
+    
+    # ========== X (TWITTER) WATCH SECTION ==========
+    pdf.add_page()
+    pdf.section_title('X (TWITTER) WATCH - DEFENSE & GOVERNMENT ACCOUNTS')
+    twitter_highlights = brief.get('twitter_highlights', [])
+    if twitter_highlights:
+        for i, tweet in enumerate(twitter_highlights[:20], 1):
+            if isinstance(tweet, dict):
+                handle = tweet.get('handle', '')
+                account = tweet.get('account_name', '')
+                text = tweet.get('tweet_text', '')
+                url = tweet.get('tweet_url', '')
+                posted = tweet.get('posted_at', '')
+                
+                pdf.set_font('Helvetica', 'B', 9)
+                pdf.set_text_color(29, 161, 242)  # Twitter blue
+                pdf.cell(0, 5, f'{i}. {handle} ({account})', new_x="LMARGIN", new_y="NEXT")
+                
+                pdf.set_font('Helvetica', '', 8)
+                pdf.set_text_color(40, 40, 40)
+                clean_text = text.encode('latin-1', 'replace').decode('latin-1')[:400]
+                pdf.multi_cell(0, 4, clean_text)
+                
+                if url:
+                    pdf.set_font('Helvetica', 'I', 7)
+                    pdf.set_text_color(70, 100, 150)
+                    pdf.cell(0, 4, f'[Link: {url[:60]}...]', new_x="LMARGIN", new_y="NEXT", link=url)
+                
+                if posted:
+                    pdf.set_font('Helvetica', 'I', 7)
+                    pdf.set_text_color(120, 120, 120)
+                    pdf.cell(0, 4, f'Posted: {posted}', new_x="LMARGIN", new_y="NEXT")
+                
+                pdf.ln(2)
+    else:
+        pdf.body_text('No Twitter/X updates available. Accounts monitored: @adgpi, @IAF_MCC, @indiannavy, @DefenceMinIndia, @MEAIndia, @HMOIndia, @PMOIndia, @BSF_India, @craborCRPF, @official_dgar')
+    
+    # ========== UPLOADED DOCUMENT INSIGHTS ==========
+    uploaded_insights = brief.get('uploaded_insights', [])
+    if uploaded_insights:
+        pdf.add_page()
+        pdf.section_title('UPLOADED DOCUMENT INSIGHTS')
+        for i, doc in enumerate(uploaded_insights[:10], 1):
+            if isinstance(doc, dict):
+                pdf.set_font('Helvetica', 'B', 9)
+                pdf.set_text_color(80, 60, 40)
+                filename = doc.get('filename', 'Unknown Document')
+                pdf.cell(0, 5, f'{i}. {filename}', new_x="LMARGIN", new_y="NEXT")
+                
+                pdf.set_font('Helvetica', '', 8)
+                pdf.set_text_color(60, 60, 60)
+                analysis = doc.get('ai_analysis', doc.get('content_summary', ''))[:500]
+                clean_analysis = analysis.encode('latin-1', 'replace').decode('latin-1')
+                pdf.multi_cell(0, 4, clean_analysis)
+                pdf.ln(2)
+    
+    # ========== ANALYST SUMMARY ==========
+    pdf.add_page()
+    pdf.section_title('ANALYST ASSESSMENT')
+    summary = brief.get('analyst_summary', 'No analyst summary available.')
+    pdf.body_text(summary)
     pdf.ln(2)
 
     # Classification footer
@@ -404,6 +587,105 @@ async def get_sources():
     return {"sources": sources}
 
 
+@api_router.get("/twitter-accounts")
+async def get_twitter_accounts():
+    """Get list of Twitter/X accounts being monitored"""
+    return {"accounts": TWITTER_ACCOUNTS_TO_MONITOR}
+
+
+@api_router.get("/twitter-feeds")
+async def get_twitter_feeds(limit: int = Query(50, ge=1, le=200)):
+    """Get recent Twitter/X feeds from monitored accounts"""
+    feeds = await tweets_col.find({}, {"_id": 0}).sort("posted_at", -1).limit(limit).to_list(limit)
+    return {"feeds": feeds, "count": len(feeds)}
+
+
+@api_router.get("/uploaded-documents")
+async def get_uploaded_documents():
+    """Get list of uploaded documents"""
+    docs = await uploads_col.find({}, {"_id": 0}).sort("uploaded_at", -1).to_list(100)
+    return {"documents": docs, "count": len(docs)}
+
+
+@api_router.post("/upload-document")
+async def upload_document(file: UploadFile = File(...), background_tasks: BackgroundTasks = None):
+    """Upload a PDF, Word, or Excel document for intelligence analysis"""
+    allowed_types = {
+        "application/pdf": "pdf",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
+        "application/msword": "doc",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
+        "application/vnd.ms-excel": "xls",
+        "text/plain": "txt"
+    }
+    
+    content_type = file.content_type
+    if content_type not in allowed_types:
+        raise HTTPException(status_code=400, detail=f"File type not supported. Allowed: PDF, Word, Excel, TXT")
+    
+    file_type = allowed_types[content_type]
+    file_content = await file.read()
+    
+    # Extract text from document
+    extracted_text = ""
+    try:
+        if file_type == "pdf":
+            from PyPDF2 import PdfReader
+            pdf_reader = PdfReader(io.BytesIO(file_content))
+            for page in pdf_reader.pages:
+                extracted_text += page.extract_text() or ""
+        elif file_type in ["docx", "doc"]:
+            from docx import Document
+            doc = Document(io.BytesIO(file_content))
+            extracted_text = "\n".join([para.text for para in doc.paragraphs])
+        elif file_type in ["xlsx", "xls"]:
+            from openpyxl import load_workbook
+            wb = load_workbook(io.BytesIO(file_content))
+            for sheet in wb:
+                for row in sheet.iter_rows(values_only=True):
+                    extracted_text += " | ".join([str(cell) for cell in row if cell]) + "\n"
+        elif file_type == "txt":
+            extracted_text = file_content.decode('utf-8', errors='ignore')
+    except Exception as e:
+        logger.error(f"Error extracting text from {file.filename}: {e}")
+        extracted_text = f"Error extracting text: {str(e)}"
+    
+    # Create document record
+    doc_record = {
+        "id": str(uuid.uuid4()),
+        "filename": file.filename,
+        "file_type": file_type,
+        "uploaded_at": datetime.now(timezone.utc).isoformat(),
+        "content_summary": extracted_text[:500] + "..." if len(extracted_text) > 500 else extracted_text,
+        "extracted_text": extracted_text[:10000],  # Limit to 10k chars
+        "ai_analysis": "",
+        "region": "",
+        "processed": False
+    }
+    
+    await uploads_col.insert_one(doc_record)
+    
+    # Trigger AI analysis in background
+    if background_tasks:
+        background_tasks.add_task(analyze_uploaded_document, doc_record["id"])
+    
+    return {
+        "message": "Document uploaded successfully",
+        "document_id": doc_record["id"],
+        "filename": file.filename,
+        "extracted_chars": len(extracted_text)
+    }
+
+
+@api_router.delete("/uploaded-documents/{doc_id}")
+async def delete_uploaded_document(doc_id: str):
+    """Delete an uploaded document"""
+    result = await uploads_col.delete_one({"id": doc_id})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Document not found")
+    return {"message": "Document deleted successfully"}
+
+
 @api_router.post("/fetch-news")
 async def trigger_fetch(background_tasks: BackgroundTasks):
     background_tasks.add_task(fetch_and_process_news)
@@ -460,14 +742,107 @@ async def pipeline_status():
 
 
 async def generate_brief_for_date(date: str):
-    items = await intelligence_col.find({}, {"_id": 0}).sort("published_at", -1).limit(50).to_list(50)
+    """Generate comprehensive daily brief with NER, National, International news and Twitter feeds"""
+    
+    # Get NER regional items
+    ner_items = await intelligence_col.find(
+        {"state": {"$in": MONITORED_REGIONS + ["Multiple", ""]}},
+        {"_id": 0}
+    ).sort("published_at", -1).limit(50).to_list(50)
+    
+    # Get national news (from national sources or tagged as national)
+    national_items = await intelligence_col.find(
+        {"$or": [
+            {"source": {"$regex": "hindu|times of india|ndtv|news18|indian express|pib", "$options": "i"}},
+            {"tags": "national"}
+        ]},
+        {"_id": 0}
+    ).sort("published_at", -1).limit(20).to_list(20)
+    
+    # Get international news
+    international_items = await intelligence_col.find(
+        {"$or": [
+            {"source": {"$regex": "bbc|al jazeera|reuters", "$options": "i"}},
+            {"tags": "international"},
+            {"countries_involved": {"$in": ["China", "Pakistan", "USA"]}}
+        ]},
+        {"_id": 0}
+    ).sort("published_at", -1).limit(20).to_list(20)
+    
+    # Get Twitter feeds
+    twitter_items = await tweets_col.find({}, {"_id": 0}).sort("posted_at", -1).limit(25).to_list(25)
+    
+    # Get uploaded document insights
+    uploaded_docs = await uploads_col.find({"processed": True}, {"_id": 0}).sort("uploaded_at", -1).limit(10).to_list(10)
 
     try:
         from ai_pipeline import generate_daily_brief_ai
-        brief_data = await generate_daily_brief_ai(items, date)
+        brief_data = await generate_daily_brief_ai(ner_items, date)
     except Exception as e:
         logger.error(f"AI brief generation failed: {e}")
-        brief_data = generate_manual_brief(items, date)
+        brief_data = generate_manual_brief(ner_items, date)
+    
+    # Add national news with source links
+    brief_data["national_news"] = [
+        {
+            "title": item.get("title", ""),
+            "summary": item.get("ai_summary", item.get("raw_content", "")[:200]),
+            "source_url": item.get("source_url", ""),
+            "timestamp": item.get("published_at", ""),
+            "source": item.get("source", "")
+        }
+        for item in national_items[:15]
+    ]
+    
+    # Add international news with source links
+    brief_data["international_news"] = [
+        {
+            "title": item.get("title", ""),
+            "summary": item.get("ai_summary", item.get("raw_content", "")[:200]),
+            "source_url": item.get("source_url", ""),
+            "timestamp": item.get("published_at", ""),
+            "source": item.get("source", ""),
+            "countries": item.get("countries_involved", [])
+        }
+        for item in international_items[:15]
+    ]
+    
+    # Add Twitter highlights
+    brief_data["twitter_highlights"] = [
+        {
+            "handle": tweet.get("handle", ""),
+            "account_name": tweet.get("account_name", ""),
+            "tweet_text": tweet.get("tweet_text", ""),
+            "tweet_url": tweet.get("tweet_url", ""),
+            "posted_at": tweet.get("posted_at", ""),
+            "category": tweet.get("category", "defense")
+        }
+        for tweet in twitter_items[:20]
+    ]
+    
+    # Add uploaded document insights
+    brief_data["uploaded_insights"] = [
+        {
+            "filename": doc.get("filename", ""),
+            "ai_analysis": doc.get("ai_analysis", doc.get("content_summary", "")),
+            "region": doc.get("region", ""),
+            "uploaded_at": doc.get("uploaded_at", "")
+        }
+        for doc in uploaded_docs[:10]
+    ]
+    
+    # Update key_developments to include source links
+    key_developments_with_links = []
+    for item in ner_items[:10]:
+        key_developments_with_links.append({
+            "title": item.get("title", ""),
+            "summary": item.get("ai_summary", ""),
+            "source_url": item.get("source_url", ""),
+            "timestamp": item.get("published_at", ""),
+            "severity": item.get("severity", "medium"),
+            "state": item.get("state", "")
+        })
+    brief_data["key_developments"] = key_developments_with_links
 
     brief = DailyBrief(**brief_data)
     doc = brief.model_dump()
@@ -690,6 +1065,79 @@ def _make_raw_doc(article):
         "processed": False,
         "tags": ["unprocessed"]
     }
+
+
+async def analyze_uploaded_document(doc_id: str):
+    """Analyze an uploaded document using AI"""
+    doc = await uploads_col.find_one({"id": doc_id}, {"_id": 0})
+    if not doc:
+        logger.error(f"Document {doc_id} not found")
+        return
+    
+    extracted_text = doc.get("extracted_text", "")
+    if not extracted_text:
+        logger.warning(f"No text extracted from document {doc_id}")
+        return
+    
+    try:
+        from emergentintegrations.llm.chat import LlmChat, UserMessage
+        
+        EMERGENT_LLM_KEY = os.environ.get('EMERGENT_LLM_KEY', '')
+        
+        analysis_prompt = """You are a military intelligence analyst. Analyze this document and provide:
+1. A concise summary (3-4 lines)
+2. Key intelligence points relevant to India's North Eastern Region, Bangladesh, or Myanmar
+3. Any security implications
+4. Recommended attention level (Immediate Action Required, Priority Monitoring, Active Monitoring, Monitor)
+5. Primary region affected (if identifiable): Assam, Meghalaya, Mizoram, Manipur, Arunachal Pradesh, Tripura, Bangladesh, Myanmar, or National/International
+
+Respond in JSON format:
+{
+  "summary": "...",
+  "key_points": ["...", "..."],
+  "security_implications": "...",
+  "attention_level": "...",
+  "region": "..."
+}"""
+        
+        chat = LlmChat(
+            api_key=EMERGENT_LLM_KEY,
+            session_id=f"doc-{doc_id}",
+            system_message=analysis_prompt
+        ).with_model("anthropic", "claude-haiku-4-5-20251001")
+        
+        user_message = UserMessage(text=f"Analyze this document:\n\n{extracted_text[:4000]}")
+        response = await chat.send_message(user_message)
+        
+        response_text = str(response)
+        
+        # Parse JSON from response
+        import json
+        json_start = response_text.find('{')
+        json_end = response_text.rfind('}') + 1
+        if json_start >= 0 and json_end > json_start:
+            analysis = json.loads(response_text[json_start:json_end])
+        else:
+            analysis = {"summary": response_text[:500], "region": ""}
+        
+        # Update document with AI analysis
+        await uploads_col.update_one(
+            {"id": doc_id},
+            {"$set": {
+                "ai_analysis": analysis.get("summary", "") + "\n\nKey Points:\n" + "\n".join(analysis.get("key_points", [])),
+                "region": analysis.get("region", ""),
+                "processed": True
+            }}
+        )
+        
+        logger.info(f"Successfully analyzed document {doc_id}")
+        
+    except Exception as e:
+        logger.error(f"Error analyzing document {doc_id}: {e}")
+        await uploads_col.update_one(
+            {"id": doc_id},
+            {"$set": {"ai_analysis": f"Analysis failed: {str(e)}", "processed": True}}
+        )
 
 
 async def bulk_scrape_all_feeds():

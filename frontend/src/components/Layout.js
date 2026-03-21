@@ -4,7 +4,7 @@ import { useTheme } from "./ThemeProvider";
 import {
   Shield, LayoutDashboard, Newspaper, FileText, TrendingUp,
   Globe, Bell, ChevronLeft, ChevronRight, Sun, Moon, Search,
-  Activity, Menu, X
+  Activity, Menu, X, Upload
 } from "lucide-react";
 import { Input } from "../components/ui/input";
 import { Button } from "../components/ui/button";
@@ -17,6 +17,7 @@ const NAV_ITEMS = [
   { path: "/daily-brief", label: "Daily Brief", icon: FileText },
   { path: "/weekly-trends", label: "Weekly Trends", icon: TrendingUp },
   { path: "/alerts", label: "Alerts", icon: Bell },
+  { path: "/upload", label: "Upload Documents", icon: Upload },
 ];
 
 export default function Layout({ children, alertCount = 0, onSearch }) {

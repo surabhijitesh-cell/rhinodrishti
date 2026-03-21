@@ -8,6 +8,7 @@ import Dashboard from "./pages/Dashboard";
 import IntelligenceFeed from "./pages/IntelligenceFeed";
 import DailyBrief from "./pages/DailyBrief";
 import WeeklyTrends from "./pages/WeeklyTrends";
+import DocumentUpload from "./pages/DocumentUpload";
 import { Toaster } from "./components/ui/sonner";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
@@ -49,6 +50,7 @@ function AppRoutes() {
         <Route path="/daily-brief" element={<DailyBrief api={API} />} />
         <Route path="/weekly-trends" element={<WeeklyTrends api={API} />} />
         <Route path="/alerts" element={<IntelligenceFeed api={API} alertsOnly={true} />} />
+        <Route path="/upload" element={<DocumentUpload api={API} />} />
       </Routes>
     </Layout>
   );

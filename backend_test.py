@@ -544,8 +544,212 @@ class RhinoDrishtiAPITester:
             self.log_test("Background Processing - Recent Activity Tracking", False, 
                          f"Invalid recent_24h_processed: {recent_processed}")
 
+    def test_twitter_accounts_api(self):
+        """Test GET /api/twitter-accounts - NEW FEATURE"""
+        print("\n🔍 Testing Twitter Accounts API...")
+        
+        success, data, status = self.make_request('GET', '/twitter-accounts')
+        if not success:
+            self.log_test("Twitter Accounts - Basic Request", False, f"Status {status}: {data}")
+            return
+        
+        self.log_test("Twitter Accounts - Basic Request", True)
+        
+        # Check response structure
+        if 'accounts' in data:
+            self.log_test("Twitter Accounts - Has Accounts Field", True)
+            
+            accounts = data.get('accounts', [])
+            if len(accounts) >= 10:  # Should have at least 10 defense accounts
+                self.log_test("Twitter Accounts - Has Multiple Accounts", True)
+            else:
+                self.log_test("Twitter Accounts - Has Multiple Accounts", False, f"Only {len(accounts)} accounts")
+            
+            # Check for specific defense accounts
+            handles = [acc.get('handle', '') for acc in accounts]
+            expected_handles = ['@adgpi', '@IAF_MCC', '@indiannavy', '@DefenceMinIndia']
+            
+            found_handles = [h for h in expected_handles if h in handles]
+            if len(found_handles) >= 3:
+                self.log_test("Twitter Accounts - Has Defense Accounts", True)
+            else:
+                self.log_test("Twitter Accounts - Has Defense Accounts", False, f"Missing key defense accounts")
+            
+            # Check account structure
+            if accounts and all(acc.get('handle') and acc.get('name') and acc.get('category') for acc in accounts):
+                self.log_test("Twitter Accounts - Account Structure", True)
+            else:
+                self.log_test("Twitter Accounts - Account Structure", False, "Missing handle/name/category fields")
+        else:
+            self.log_test("Twitter Accounts - Has Accounts Field", False, "Missing accounts field")
+
+    def test_uploaded_documents_api(self):
+        """Test GET /api/uploaded-documents - NEW FEATURE"""
+        print("\n🔍 Testing Uploaded Documents API...")
+        
+        success, data, status = self.make_request('GET', '/uploaded-documents')
+        if not success:
+            self.log_test("Uploaded Documents - Basic Request", False, f"Status {status}: {data}")
+            return
+        
+        self.log_test("Uploaded Documents - Basic Request", True)
+        
+        # Check response structure
+        if 'documents' in data and 'count' in data:
+            self.log_test("Uploaded Documents - Response Structure", True)
+            
+            documents = data.get('documents', [])
+            count = data.get('count', 0)
+            
+            if len(documents) == count:
+                self.log_test("Uploaded Documents - Count Matches", True)
+            else:
+                self.log_test("Uploaded Documents - Count Matches", False, f"Count {count} != documents length {len(documents)}")
+            
+            # If there are documents, check structure
+            if documents:
+                doc = documents[0]
+                required_fields = ['id', 'filename', 'file_type', 'uploaded_at', 'processed']
+                missing_fields = [f for f in required_fields if f not in doc]
+                
+                if not missing_fields:
+                    self.log_test("Uploaded Documents - Document Structure", True)
+                else:
+                    self.log_test("Uploaded Documents - Document Structure", False, f"Missing fields: {missing_fields}")
+        else:
+            self.log_test("Uploaded Documents - Response Structure", False, "Missing documents or count field")
+
+    def test_upload_document_api(self):
+        """Test POST /api/upload-document - NEW FEATURE"""
+        print("\n🔍 Testing Upload Document API...")
+        
+        # Create a simple test file content
+        test_content = "This is a test document for intelligence analysis. It contains information about border security and regional developments."
+        
+        try:
+            import io
+            # Create a file-like object
+            files = {'file': ('test_document.txt', io.StringIO(test_content), 'text/plain')}
+            
+            url = f"{self.base_url}/upload-document"
+            response = requests.post(url, files=files, timeout=30)
+            
+            if response.status_code == 200:
+                self.log_test("Upload Document - Request Status", True)
+                
+                try:
+                    data = response.json()
+                    
+                    # Check response structure
+                    required_fields = ['message', 'document_id', 'filename', 'extracted_chars']
+                    missing_fields = [f for f in required_fields if f not in data]
+                    
+                    if not missing_fields:
+                        self.log_test("Upload Document - Response Structure", True)
+                    else:
+                        self.log_test("Upload Document - Response Structure", False, f"Missing fields: {missing_fields}")
+                    
+                    # Check if document_id is valid UUID format
+                    doc_id = data.get('document_id', '')
+                    if len(doc_id) > 20:  # Basic UUID length check
+                        self.log_test("Upload Document - Valid Document ID", True)
+                    else:
+                        self.log_test("Upload Document - Valid Document ID", False, f"Invalid document ID: {doc_id}")
+                    
+                    # Check extracted characters count
+                    extracted_chars = data.get('extracted_chars', 0)
+                    if extracted_chars > 0:
+                        self.log_test("Upload Document - Text Extraction", True)
+                    else:
+                        self.log_test("Upload Document - Text Extraction", False, "No text extracted")
+                        
+                except Exception as e:
+                    self.log_test("Upload Document - Parse Response", False, f"JSON parse error: {e}")
+                    
+            else:
+                self.log_test("Upload Document - Request Status", False, f"Status {response.status_code}: {response.text}")
+                
+        except Exception as e:
+            self.log_test("Upload Document - Request", False, f"Exception: {str(e)}")
+
+    def test_twitter_feeds_api(self):
+        """Test GET /api/twitter-feeds - NEW FEATURE"""
+        print("\n🔍 Testing Twitter Feeds API...")
+        
+        success, data, status = self.make_request('GET', '/twitter-feeds')
+        if not success:
+            self.log_test("Twitter Feeds - Basic Request", False, f"Status {status}: {data}")
+            return
+        
+        self.log_test("Twitter Feeds - Basic Request", True)
+        
+        # Check response structure
+        if 'feeds' in data and 'count' in data:
+            self.log_test("Twitter Feeds - Response Structure", True)
+            
+            feeds = data.get('feeds', [])
+            count = data.get('count', 0)
+            
+            if len(feeds) == count:
+                self.log_test("Twitter Feeds - Count Matches", True)
+            else:
+                self.log_test("Twitter Feeds - Count Matches", False, f"Count {count} != feeds length {len(feeds)}")
+            
+            # Test with limit parameter
+            success2, data2, status2 = self.make_request('GET', '/twitter-feeds?limit=10')
+            if success2:
+                feeds2 = data2.get('feeds', [])
+                if len(feeds2) <= 10:
+                    self.log_test("Twitter Feeds - Limit Parameter", True)
+                else:
+                    self.log_test("Twitter Feeds - Limit Parameter", False, f"Returned {len(feeds2)} feeds with limit=10")
+            else:
+                self.log_test("Twitter Feeds - Limit Parameter", False, f"Status {status2}")
+        else:
+            self.log_test("Twitter Feeds - Response Structure", False, "Missing feeds or count field")
+
+    def test_enhanced_daily_brief_structure(self):
+        """Test enhanced daily brief with new sections - NEW FEATURE"""
+        print("\n🔍 Testing Enhanced Daily Brief Structure...")
+        
+        success, data, status = self.make_request('GET', '/daily-brief')
+        if not success:
+            self.log_test("Enhanced Brief - Basic Request", False, f"Status {status}: {data}")
+            return
+        
+        self.log_test("Enhanced Brief - Basic Request", True)
+        
+        # Check for new sections
+        new_sections = ['national_news', 'international_news', 'twitter_highlights', 'uploaded_insights']
+        
+        for section in new_sections:
+            if section in data:
+                self.log_test(f"Enhanced Brief - Has {section.replace('_', ' ').title()}", True)
+                
+                # Check if section is a list
+                section_data = data.get(section, [])
+                if isinstance(section_data, list):
+                    self.log_test(f"Enhanced Brief - {section.replace('_', ' ').title()} is List", True)
+                else:
+                    self.log_test(f"Enhanced Brief - {section.replace('_', ' ').title()} is List", False, f"Should be list, got {type(section_data)}")
+            else:
+                self.log_test(f"Enhanced Brief - Has {section.replace('_', ' ').title()}", False, f"Missing {section} section")
+        
+        # Check if key_developments has enhanced structure with source links
+        key_developments = data.get('key_developments', [])
+        if key_developments and isinstance(key_developments[0], dict):
+            dev = key_developments[0]
+            if 'source_url' in dev and 'timestamp' in dev:
+                self.log_test("Enhanced Brief - Key Developments with Links", True)
+            else:
+                self.log_test("Enhanced Brief - Key Developments with Links", False, "Missing source_url or timestamp")
+        elif key_developments:
+            self.log_test("Enhanced Brief - Key Developments with Links", False, "Key developments not in enhanced format")
+        else:
+            self.log_test("Enhanced Brief - Key Developments with Links", False, "No key developments found")
+
     def run_all_tests(self):
-        """Run all API tests including new rate limiting tests"""
+        """Run all API tests including new features"""
         print("🚀 Starting Rhino Drishti Backend API Tests")
         print(f"📡 Testing API at: {self.base_url}")
         print("=" * 60)
@@ -561,7 +765,14 @@ class RhinoDrishtiAPITester:
         self.test_sources_api()
         self.test_fetch_news_api()
         
-        # NEW TESTS for rate limiting and retry functionality
+        # NEW FEATURES TESTS
+        self.test_twitter_accounts_api()  # NEW: Twitter accounts monitoring
+        self.test_uploaded_documents_api()  # NEW: Document upload list
+        self.test_upload_document_api()  # NEW: Document upload functionality
+        self.test_twitter_feeds_api()  # NEW: Twitter feeds
+        self.test_enhanced_daily_brief_structure()  # NEW: Enhanced brief structure
+        
+        # Rate limiting and retry functionality tests
         self.test_pipeline_status_api()
         self.test_analyze_news_api()
         self.test_deduplication_logic()
