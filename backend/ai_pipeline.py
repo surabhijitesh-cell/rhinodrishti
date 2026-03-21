@@ -20,6 +20,8 @@ Your areas of interest are:
 
 IMPORTANT: Be INCLUSIVE in relevance assessment. ANY news from NER states or Bangladesh/Myanmar should be marked relevant.
 
+CRITICAL: If the article is in Bengali, Assamese, Hindi, or any other non-English language, you MUST TRANSLATE all your responses (ai_summary, why_it_matters, potential_impact, title_english) to ENGLISH. All output must be in English only.
+
 SPECIAL EMPHASIS: Flag any news indicating involvement of China, Pakistan, or USA in Bangladesh or Myanmar. These are HIGH PRIORITY items.
 
 Analyze the following news article and determine:
@@ -48,10 +50,11 @@ Analyze the following news article and determine:
 4. Region primarily affected (choose ONE): Assam, Meghalaya, Mizoram, Manipur, Arunachal Pradesh, Tripura, Bangladesh, Myanmar, or "Multiple"
 5. Is this a cross-border issue? (true/false)
 6. Countries involved (Bangladesh, Myanmar, China, Pakistan, USA, Bhutan, India, or empty list)
-7. Concise intelligence summary (3-4 lines)
-8. Why it matters (security/strategic implications from India's perspective, 2-3 lines)
-9. Potential future impact (1-2 lines)
+7. Concise intelligence summary IN ENGLISH (3-4 lines) - translate if source is non-English
+8. Why it matters IN ENGLISH (security/strategic implications from India's perspective, 2-3 lines)
+9. Potential future impact IN ENGLISH (1-2 lines)
 10. Recommended attention level (Immediate Action Required, Priority Monitoring, Active Monitoring, Monitor)
+11. title_english: English translation of the title (same as original if already English)
 
 Respond ONLY in valid JSON format:
 {
@@ -64,7 +67,8 @@ Respond ONLY in valid JSON format:
   "ai_summary": "...",
   "why_it_matters": "...",
   "potential_impact": "...",
-  "attention_level": "..."
+  "attention_level": "...",
+  "title_english": "..."
 }"""
 
 BRIEF_PROMPT = """You are a senior military intelligence analyst. Generate a structured Daily Intelligence Brief for India's North Eastern Region (NER) AND bordering countries (Bangladesh, Myanmar) based on the following intelligence items.
@@ -115,8 +119,12 @@ async def classify_and_analyze_article(article: dict) -> dict:
             raise ValueError("No JSON found in response")
 
         # Merge with original article data
+        # Use translated title if provided, otherwise use original
+        display_title = analysis.get("title_english", title) or title
+        
         result = {
-            "title": title,
+            "title": display_title,
+            "original_title": title if display_title != title else None,
             "source": article.get("source", "Unknown"),
             "source_url": article.get("source_url", ""),
             "published_at": article.get("published_at", ""),

@@ -293,23 +293,11 @@ async def get_daily_brief_pdf(date: Optional[str] = None):
 
 
 def generate_brief_pdf(brief: dict, date: str, total: int, critical: int, high: int) -> bytes:
-    """Generate a professional PDF for the daily intelligence brief with watermark"""
+    """Generate a professional PDF for the daily intelligence brief"""
     from fpdf import FPDF
-    from PIL import Image
-    import os
-    
-    # Watermark path
-    watermark_path = os.path.join(ROOT_DIR, 'assets', 'rhino_watermark.jpg')
-    has_watermark = os.path.exists(watermark_path)
 
     class BriefPDF(FPDF):
         def header(self):
-            # Add watermark on every page
-            if has_watermark:
-                self.set_alpha(0.08)  # Very light watermark
-                self.image(watermark_path, x=30, y=60, w=150)
-                self.set_alpha(1.0)
-            
             self.set_fill_color(30, 35, 25)
             self.rect(0, 0, 210, 40, 'F')
             self.set_font('Helvetica', 'B', 20)
@@ -322,13 +310,6 @@ def generate_brief_pdf(brief: dict, date: str, total: int, critical: int, high: 
             self.set_font('Helvetica', '', 8)
             self.cell(0, 5, f'Classification: RESTRICTED  |  Date: {date}', align='C', new_x="LMARGIN", new_y="NEXT")
             self.ln(8)
-        
-        def set_alpha(self, alpha):
-            """Set transparency (alpha) - requires fpdf2"""
-            try:
-                self.set_draw_color(255, 255, 255)
-            except:
-                pass
 
         def footer(self):
             self.set_y(-15)
