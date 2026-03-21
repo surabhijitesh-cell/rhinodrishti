@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import {
-  FileText, RefreshCw, Calendar, Shield, Globe, AlertTriangle, Download
+  FileText, RefreshCw, Calendar, Shield, Globe, AlertTriangle, Download,
+  Newspaper, Twitter, Upload, ExternalLink
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Button } from "../components/ui/button";
@@ -30,7 +31,7 @@ export default function DailyBrief({ api }) {
   const generateBrief = async () => {
     setGenerating(true);
     try {
-      await axios.post(`${api}/generate-brief`);
+      await axios.post(`${api}/daily-brief`);
       setTimeout(async () => {
         await fetchBrief();
         setGenerating(false);
@@ -60,6 +61,54 @@ export default function DailyBrief({ api }) {
     }
   };
 
+  // Helper to render a news item (string or object)
+  const renderNewsItem = (item, index) => {
+    if (typeof item === 'string') {
+      return (
+        <li key={index} className="brief-bullet">
+          <span className="text-primary font-mono text-xs mt-0.5 shrink-0">{String(index + 1).padStart(2, '0')}.</span>
+          <span className="text-sm">{item}</span>
+        </li>
+      );
+    }
+    // Object format with title, summary, source_url
+    return (
+      <li key={index} className="border-b border-border/50 pb-3 last:border-0 last:pb-0">
+        <div className="flex items-start gap-2">
+          <span className="text-primary font-mono text-xs mt-1 shrink-0">{String(index + 1).padStart(2, '0')}.</span>
+          <div className="flex-1">
+            <p className="text-sm font-medium">{item.title}</p>
+            {item.summary && (
+              <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{item.summary}</p>
+            )}
+            <div className="flex items-center gap-3 mt-1">
+              {item.source_url && (
+                <a 
+                  href={item.source_url} 
+                  target="_blank" 
+                  rel="noopener noreferrer"
+                  className="text-xs text-primary hover:underline flex items-center gap-1"
+                >
+                  <ExternalLink size={10} />
+                  Source
+                </a>
+              )}
+              {item.state && (
+                <Badge variant="outline" className="text-[9px] rounded-none px-1 py-0">{item.state}</Badge>
+              )}
+              {item.severity && item.severity !== 'low' && (
+                <Badge className={`text-[9px] rounded-none px-1 py-0 ${
+                  item.severity === 'critical' ? 'bg-red-500' : 
+                  item.severity === 'high' ? 'bg-orange-500' : 'bg-yellow-500'
+                }`}>{item.severity}</Badge>
+              )}
+            </div>
+          </div>
+        </div>
+      </li>
+    );
+  };
+
   if (loading) {
     return (
       <div className="space-y-4" data-testid="daily-brief-loading">
@@ -80,7 +129,7 @@ export default function DailyBrief({ api }) {
   return (
     <div className="space-y-6" data-testid="daily-brief-page">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-4">
         <div>
           <h1 className="text-3xl md:text-4xl font-bold uppercase tracking-tight font-['Barlow_Condensed']" data-testid="brief-title">
             Daily Intelligence Brief
@@ -139,29 +188,121 @@ export default function DailyBrief({ api }) {
             </CardContent>
           </Card>
 
-          {/* Key Developments */}
+          {/* NER Key Developments */}
           <Card className="border border-border rounded-none bg-card">
             <CardHeader className="py-3 px-4 border-b border-border">
               <CardTitle className="text-sm uppercase tracking-wider font-['Barlow_Condensed'] font-semibold flex items-center gap-2">
                 <AlertTriangle size={16} className="text-amber-400" />
-                Key Developments
+                NER Key Developments
               </CardTitle>
             </CardHeader>
             <CardContent className="p-4" data-testid="key-developments">
               {brief.key_developments && brief.key_developments.length > 0 ? (
-                <ul className="space-y-2">
-                  {brief.key_developments.map((dev, i) => (
-                    <li key={i} className="brief-bullet">
-                      <span className="text-primary font-mono text-xs mt-0.5 shrink-0">{String(i + 1).padStart(2, '0')}.</span>
-                      <span className="text-sm">{dev}</span>
-                    </li>
-                  ))}
+                <ul className="space-y-3">
+                  {brief.key_developments.map((dev, i) => renderNewsItem(dev, i))}
                 </ul>
               ) : (
                 <p className="text-sm text-muted-foreground">No key developments recorded.</p>
               )}
             </CardContent>
           </Card>
+
+          {/* National News Section */}
+          {brief.national_news && brief.national_news.length > 0 && (
+            <Card className="border border-border rounded-none bg-card">
+              <CardHeader className="py-3 px-4 border-b border-border">
+                <CardTitle className="text-sm uppercase tracking-wider font-['Barlow_Condensed'] font-semibold flex items-center gap-2">
+                  <Newspaper size={16} className="text-blue-400" />
+                  National News ({brief.national_news.length})
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="p-4" data-testid="national-news">
+                <ul className="space-y-3">
+                  {brief.national_news.map((news, i) => renderNewsItem(news, i))}
+                </ul>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* International News Section */}
+          {brief.international_news && brief.international_news.length > 0 && (
+            <Card className="border border-border rounded-none bg-card">
+              <CardHeader className="py-3 px-4 border-b border-border">
+                <CardTitle className="text-sm uppercase tracking-wider font-['Barlow_Condensed'] font-semibold flex items-center gap-2">
+                  <Globe size={16} className="text-green-400" />
+                  International News ({brief.international_news.length})
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="p-4" data-testid="international-news">
+                <ul className="space-y-3">
+                  {brief.international_news.map((news, i) => renderNewsItem(news, i))}
+                </ul>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Twitter/X Watch Section */}
+          {brief.twitter_highlights && brief.twitter_highlights.length > 0 && (
+            <Card className="border border-border rounded-none bg-card">
+              <CardHeader className="py-3 px-4 border-b border-border">
+                <CardTitle className="text-sm uppercase tracking-wider font-['Barlow_Condensed'] font-semibold flex items-center gap-2">
+                  <Twitter size={16} className="text-[#1DA1F2]" />
+                  X (Twitter) Watch ({brief.twitter_highlights.length})
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="p-4" data-testid="twitter-highlights">
+                <ul className="space-y-3">
+                  {brief.twitter_highlights.map((tweet, i) => (
+                    <li key={i} className="border-b border-border/50 pb-3 last:border-0 last:pb-0">
+                      <div className="flex items-start gap-2">
+                        <span className="text-[#1DA1F2] font-mono text-xs mt-1">{String(i + 1).padStart(2, '0')}.</span>
+                        <div>
+                          <p className="text-sm font-medium text-[#1DA1F2]">
+                            {tweet.handle} <span className="text-muted-foreground font-normal">({tweet.account_name})</span>
+                          </p>
+                          <p className="text-sm mt-1">{tweet.tweet_text}</p>
+                          {tweet.tweet_url && (
+                            <a href={tweet.tweet_url} target="_blank" rel="noopener noreferrer" 
+                               className="text-xs text-primary hover:underline flex items-center gap-1 mt-1">
+                              <ExternalLink size={10} />
+                              View Tweet
+                            </a>
+                          )}
+                        </div>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Uploaded Document Insights */}
+          {brief.uploaded_insights && brief.uploaded_insights.length > 0 && (
+            <Card className="border border-border rounded-none bg-card">
+              <CardHeader className="py-3 px-4 border-b border-border">
+                <CardTitle className="text-sm uppercase tracking-wider font-['Barlow_Condensed'] font-semibold flex items-center gap-2">
+                  <Upload size={16} className="text-purple-400" />
+                  Uploaded Document Insights ({brief.uploaded_insights.length})
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="p-4" data-testid="uploaded-insights">
+                <ul className="space-y-3">
+                  {brief.uploaded_insights.map((doc, i) => (
+                    <li key={i} className="border-b border-border/50 pb-3 last:border-0 last:pb-0">
+                      <p className="text-sm font-medium">{doc.filename}</p>
+                      {doc.ai_analysis && (
+                        <p className="text-xs text-muted-foreground mt-1">{doc.ai_analysis}</p>
+                      )}
+                      {doc.region && (
+                        <Badge variant="outline" className="text-[9px] rounded-none px-1 py-0 mt-1">{doc.region}</Badge>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </CardContent>
+            </Card>
+          )}
 
           {/* State-wise Highlights */}
           <Card className="border border-border rounded-none bg-card">
