@@ -91,7 +91,7 @@ class DailyBrief(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     date: str
     # NER Regional News
-    key_developments: List[str] = []
+    key_developments: List[Dict] = []  # Changed from List[str] to support source links
     state_highlights: Dict[str, str] = {}
     cross_border_insights: str = ""
     analyst_summary: str = ""
@@ -352,26 +352,31 @@ def generate_brief_pdf(brief: dict, date: str, total: int, critical: int, high: 
         
         def news_item_with_link(self, index, title, summary, source_url, timestamp=""):
             """Render a news item with embedded source link"""
+            if self.get_y() > 260:  # Check if near page end
+                self.add_page()
+            
             self.set_font('Helvetica', 'B', 9)
             self.set_text_color(40, 60, 80)
-            clean_title = title.encode('latin-1', 'replace').decode('latin-1')
-            self.multi_cell(0, 5, f'{index}. {clean_title}')
+            clean_title = title.encode('latin-1', 'replace').decode('latin-1')[:150]
+            self.multi_cell(0, 5, f'{index}. {clean_title}', new_x="LMARGIN", new_y="NEXT")
             
             if summary:
                 self.set_font('Helvetica', '', 8)
                 self.set_text_color(60, 60, 60)
-                clean_summary = summary.encode('latin-1', 'replace').decode('latin-1')[:300]
-                self.multi_cell(0, 4, clean_summary)
+                clean_summary = summary.encode('latin-1', 'replace').decode('latin-1')[:250]
+                if clean_summary:
+                    self.multi_cell(0, 4, clean_summary, new_x="LMARGIN", new_y="NEXT")
             
-            if source_url:
+            if source_url and len(source_url) > 5:
                 self.set_font('Helvetica', 'I', 7)
                 self.set_text_color(70, 100, 150)
-                self.cell(0, 4, f'[Source: {source_url[:80]}...]', new_x="LMARGIN", new_y="NEXT", link=source_url)
+                url_display = source_url[:70] + '...' if len(source_url) > 70 else source_url
+                self.cell(0, 4, f'[Source: {url_display}]', new_x="LMARGIN", new_y="NEXT", link=source_url)
             
             if timestamp:
                 self.set_font('Helvetica', 'I', 7)
                 self.set_text_color(120, 120, 120)
-                self.cell(0, 4, f'Time: {timestamp}', new_x="LMARGIN", new_y="NEXT")
+                self.cell(0, 4, f'Time: {timestamp[:19]}', new_x="LMARGIN", new_y="NEXT")
             
             self.ln(2)
 
@@ -750,21 +755,23 @@ async def generate_brief_for_date(date: str):
         {"_id": 0}
     ).sort("published_at", -1).limit(50).to_list(50)
     
-    # Get national news (from national sources or tagged as national)
+    # Get national news (from The Hindu, NDTV, Times of India, PIB, etc.)
     national_items = await intelligence_col.find(
         {"$or": [
-            {"source": {"$regex": "hindu|times of india|ndtv|news18|indian express|pib", "$options": "i"}},
-            {"tags": "national"}
+            {"source": {"$regex": "hindu|times of india|ndtv|news18|indian express|pib|sentinel|tribune", "$options": "i"}},
+            {"tags": "national"},
+            {"state": "India"}
         ]},
         {"_id": 0}
     ).sort("published_at", -1).limit(20).to_list(20)
     
-    # Get international news
+    # Get international news (BBC, Al Jazeera, Reuters, or items with foreign country involvement)
     international_items = await intelligence_col.find(
         {"$or": [
-            {"source": {"$regex": "bbc|al jazeera|reuters", "$options": "i"}},
+            {"source": {"$regex": "bbc|al jazeera|reuters|irrawaddy|mizzima|myanmar now|frontier|daily star", "$options": "i"}},
             {"tags": "international"},
-            {"countries_involved": {"$in": ["China", "Pakistan", "USA"]}}
+            {"countries_involved": {"$in": ["China", "Pakistan", "USA", "Bangladesh", "Myanmar"]}},
+            {"state": {"$in": ["Bangladesh", "Myanmar"]}}
         ]},
         {"_id": 0}
     ).sort("published_at", -1).limit(20).to_list(20)
@@ -774,6 +781,9 @@ async def generate_brief_for_date(date: str):
     
     # Get uploaded document insights
     uploaded_docs = await uploads_col.find({"processed": True}, {"_id": 0}).sort("uploaded_at", -1).limit(10).to_list(10)
+    
+    # Log the query results
+    logger.info(f"Brief generation - NER items: {len(ner_items)}, National: {len(national_items)}, International: {len(international_items)}")
 
     try:
         from ai_pipeline import generate_daily_brief_ai
