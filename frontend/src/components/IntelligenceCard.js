@@ -1,20 +1,27 @@
 import { useState } from "react";
 import {
   Target, MapPin, Users, Package, Shield, AlertTriangle,
-  Wifi, Building, Clock, ExternalLink, ChevronDown, ChevronUp
+  Wifi, Building, Clock, ExternalLink, ChevronDown, ChevronUp,
+  Flag, TrendingUp, Radar
 } from "lucide-react";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 
 const THREAT_ICONS = {
   "Insurgency": Target,
+  "Insurgency / Militancy": Target,
   "Cross-border Movement": MapPin,
   "Illegal Immigration": Users,
   "Drug Trafficking": Package,
   "Arms Smuggling": Shield,
   "Ethnic Conflicts": AlertTriangle,
+  "Ethnic / Tribal Tension": AlertTriangle,
   "Cyber Threats": Wifi,
   "Strategic Infrastructure": Building,
+  "Infrastructure / Logistics": Building,
+  "Military Movement": Shield,
+  "Foreign Influence (China/Pakistan/USA)": Flag,
+  "Information Warfare / Narrative": Radar,
 };
 
 const SEVERITY_CLASSES = {
@@ -29,6 +36,14 @@ const CARD_BORDER_CLASSES = {
   high: "intel-card-high",
   medium: "intel-card-medium",
   low: "intel-card-low",
+};
+
+const SPECIAL_FLAG_LABELS = {
+  "PLA_PAKISTAN_PRESENCE": "PLA/Pak Presence",
+  "COORDINATED_NARRATIVE": "Info Warfare",
+  "DEMOGRAPHIC_TREND": "Demographic Shift",
+  "DUAL_USE_INFRA": "Dual-Use Infra",
+  "PATTERN_DETECTED": "Pattern Alert",
 };
 
 function formatTime(isoStr) {
@@ -50,9 +65,10 @@ function formatTime(isoStr) {
 
 export default function IntelligenceCard({ item, compact = false }) {
   const [expanded, setExpanded] = useState(false);
-  const ThreatIcon = THREAT_ICONS[item.threat_category] || AlertTriangle;
+  const ThreatIcon = THREAT_ICONS[item.threat_category] || THREAT_ICONS[item.tags?.[0]] || AlertTriangle;
   const severityClass = SEVERITY_CLASSES[item.severity] || "severity-low";
   const borderClass = CARD_BORDER_CLASSES[item.severity] || "intel-card-low";
+  const priorityScore = item.priority_score || 0;
 
   return (
     <div
@@ -82,17 +98,29 @@ export default function IntelligenceCard({ item, compact = false }) {
           >
             {item.severity}
           </Badge>
+          {priorityScore > 0 && (
+            <span className={`text-[10px] font-mono ${priorityScore >= 80 ? 'text-red-400' : priorityScore >= 60 ? 'text-orange-400' : 'text-muted-foreground'}`}>
+              P{priorityScore}
+            </span>
+          )}
         </div>
       </div>
 
-      {/* Tags */}
+      {/* Tags - Enhanced with multi-label support */}
       <div className="flex flex-wrap gap-1.5 mb-2">
         {item.state && (
           <Badge variant="outline" className="rounded-none text-[10px] uppercase tracking-wider px-1.5 py-0" data-testid="card-state">
             {item.state}
           </Badge>
         )}
-        {item.threat_category && (
+        {/* Show multiple tags if available */}
+        {item.tags && item.tags.length > 0 ? (
+          item.tags.slice(0, 3).map((tag, idx) => (
+            <Badge key={idx} variant="outline" className="rounded-none text-[10px] uppercase tracking-wider px-1.5 py-0">
+              {tag}
+            </Badge>
+          ))
+        ) : item.threat_category && (
           <Badge variant="outline" className="rounded-none text-[10px] uppercase tracking-wider px-1.5 py-0" data-testid="card-threat">
             {item.threat_category}
           </Badge>
@@ -102,13 +130,35 @@ export default function IntelligenceCard({ item, compact = false }) {
             Cross-Border
           </Badge>
         )}
+        {/* Special Flags */}
+        {item.special_flags && item.special_flags.map((flag, idx) => (
+          <Badge key={idx} className="rounded-none text-[10px] uppercase tracking-wider px-1.5 py-0 bg-red-500/20 text-red-400 border-red-500/30">
+            {SPECIAL_FLAG_LABELS[flag] || flag}
+          </Badge>
+        ))}
       </div>
+
+      {/* Actors involved */}
+      {item.actors && item.actors.length > 0 && (
+        <div className="flex items-center gap-1 mb-2 text-xs text-muted-foreground">
+          <Users size={10} />
+          <span>Actors: {item.actors.slice(0, 3).join(", ")}</span>
+        </div>
+      )}
 
       {/* Summary */}
       {item.ai_summary && (
         <p className="text-sm text-muted-foreground leading-relaxed mb-2" data-testid="card-summary">
           {compact ? item.ai_summary.slice(0, 150) + (item.ai_summary.length > 150 ? "..." : "") : item.ai_summary}
         </p>
+      )}
+
+      {/* Early Warning Signal */}
+      {item.early_warning_signal && item.early_warning_signal !== "None identified" && (
+        <div className="flex items-start gap-1.5 mb-2 p-2 bg-amber-500/10 border border-amber-500/20 rounded">
+          <TrendingUp size={12} className="text-amber-400 mt-0.5 shrink-0" />
+          <p className="text-xs text-amber-300">{item.early_warning_signal}</p>
+        </div>
       )}
 
       {/* Expandable section */}
@@ -135,14 +185,23 @@ export default function IntelligenceCard({ item, compact = false }) {
               )}
               {item.potential_impact && (
                 <div>
-                  <p className="text-[10px] uppercase tracking-widest text-muted-foreground font-mono mb-1">Potential Impact</p>
+                  <p className="text-[10px] uppercase tracking-widest text-muted-foreground font-mono mb-1">Early Warning</p>
                   <p className="text-sm" data-testid="card-impact">{item.potential_impact}</p>
+                </div>
+              )}
+              {item.countries_involved && item.countries_involved.length > 0 && (
+                <div>
+                  <p className="text-[10px] uppercase tracking-widest text-muted-foreground font-mono mb-1">Countries Involved</p>
+                  <p className="text-sm">{item.countries_involved.join(", ")}</p>
                 </div>
               )}
               {item.attention_level && (
                 <div className="flex items-center gap-2">
-                  <p className="text-[10px] uppercase tracking-widest text-muted-foreground font-mono">Attention Level:</p>
-                  <span className="text-sm font-semibold text-primary" data-testid="card-attention">{item.attention_level}</span>
+                  <p className="text-[10px] uppercase tracking-widest text-muted-foreground font-mono">Attention:</p>
+                  <span className={`text-sm font-semibold ${
+                    item.attention_level.includes("Immediate") ? "text-red-400" :
+                    item.attention_level.includes("Priority") ? "text-orange-400" : "text-primary"
+                  }`} data-testid="card-attention">{item.attention_level}</span>
                 </div>
               )}
               {item.source_url && (

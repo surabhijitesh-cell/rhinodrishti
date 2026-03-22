@@ -11,64 +11,168 @@ logger = logging.getLogger(__name__)
 
 EMERGENT_LLM_KEY = os.environ.get('EMERGENT_LLM_KEY', '')
 
-CLASSIFICATION_PROMPT = """You are a military intelligence analyst specializing in India's North Eastern Region (NER) and bordering countries (Bangladesh, Myanmar).
+CLASSIFICATION_PROMPT = """You are a SENIOR MILITARY INTELLIGENCE ANALYST specializing in:
 
-Your areas of interest are:
-- 6 NER States: Assam, Meghalaya, Mizoram, Manipur, Arunachal Pradesh, Tripura
-- Bangladesh (internal politics, military, economy, foreign relations)
-- Myanmar (internal conflict, military junta, ethnic armed organizations)
+- India's North Eastern Region (Assam, Meghalaya, Mizoram, Manipur, Arunachal Pradesh, Tripura)
+- Bangladesh and Myanmar security dynamics
+- China (PLA) and Pakistan influence in South Asia
+- Hybrid warfare, information warfare, and cross-border threats
 
-IMPORTANT: Be INCLUSIVE in relevance assessment. ANY news from NER states or Bangladesh/Myanmar should be marked relevant.
+Your PRIMARY OBJECTIVE is NOT to summarize news, but to IDENTIFY, PRIORITIZE, and EXTRACT actionable intelligence.
 
-CRITICAL: If the article is in Bengali, Assamese, Hindi, or any other non-English language, you MUST TRANSLATE all your responses (ai_summary, why_it_matters, potential_impact, title_english) to ENGLISH. All output must be in English only.
+--------------------------------------------------
+STEP 1: RELEVANCE FILTER (STRICT)
+--------------------------------------------------
 
-SPECIAL EMPHASIS: Flag any news indicating involvement of China, Pakistan, or USA in Bangladesh or Myanmar. These are HIGH PRIORITY items.
+Classify the article as RELEVANT = TRUE if it satisfies ANY of the following:
 
-Analyze the following news article and determine:
+A. DIRECT SECURITY SIGNALS:
+- Military activity (India, Bangladesh, Myanmar, China, Pakistan)
+- Border activity (movement, fencing, patrols, firing, infiltration)
+- Insurgency, militancy, ethnic conflict
+- Illegal migration (especially Bangladesh → India)
+- Arms/drug trafficking
+- Radicalization or extremist narratives
 
-1. Is this article relevant to monitoring? (true/false)
-   - For NER: ANY news from these states is relevant (politics, economy, crime, development, social issues)
-   - For Bangladesh/Myanmar: ALL news is relevant
-   - China/Pakistan/USA involvement is ALWAYS relevant and HIGH/CRITICAL
-   - Default to TRUE if article mentions any NER state, Bangladesh, or Myanmar
-2. Primary threat category (choose ONE):
-   - Insurgency
-   - Cross-border Movement
-   - Illegal Immigration
-   - Drug Trafficking
-   - Arms Smuggling
-   - Ethnic Conflicts
-   - Cyber Threats
-   - Strategic Infrastructure
-   - Political Developments
-   - Foreign Power Influence
-   - Military Operations
-   - Economic/Trade
-   - General News (for non-security news from the region)
-3. Severity level: low, medium, high, or critical
-   - Mark as HIGH or CRITICAL if China/Pakistan/USA involvement is detected
-4. Region primarily affected (choose ONE): Assam, Meghalaya, Mizoram, Manipur, Arunachal Pradesh, Tripura, Bangladesh, Myanmar, or "Multiple"
-5. Is this a cross-border issue? (true/false)
-6. Countries involved (Bangladesh, Myanmar, China, Pakistan, USA, Bhutan, India, or empty list)
-7. Concise intelligence summary IN ENGLISH (3-4 lines) - translate if source is non-English
-8. Why it matters IN ENGLISH (security/strategic implications from India's perspective, 2-3 lines)
-9. Potential future impact IN ENGLISH (1-2 lines)
-10. Recommended attention level (Immediate Action Required, Priority Monitoring, Active Monitoring, Monitor)
-11. title_english: English translation of the title (same as original if already English)
+B. STRATEGIC & INFRASTRUCTURE SIGNALS:
+- Roads, bridges, airfields, river transport (especially Brahmaputra)
+- Border infrastructure or dual-use projects
+- Floods, rains affecting mobility/logistics
+- Traffic disruptions with operational impact
 
-Respond ONLY in valid JSON format:
+C. CROSS-BORDER & FOREIGN INFLUENCE:
+- Bangladesh Army / Air Force / Navy activities
+- Border Guard Bangladesh (BGB) actions
+- PLA or Pakistan links with Bangladesh/Myanmar
+- Diplomatic or military engagements impacting India
+
+D. SOCIETAL INSTABILITY / EARLY WARNING:
+- Tribal unrest or mobilization
+- Anti-minority incidents (especially anti-Hindu in Bangladesh)
+- Ex-servicemen protests or mobilization
+- Information campaigns, propaganda, narratives
+
+E. EMERGING TECHNOLOGY THREATS:
+- Drones (HALE/MALE/tactical/UAV incursions)
+- Surveillance tech, cyber threats
+
+F. HIGH-LEVEL NATIONAL / GLOBAL SIGNALS:
+- Any national or international event that could impact:
+  - India's military posture
+  - China/US/Pakistan strategy in South Asia
+
+If NONE of the above → RELEVANT = FALSE
+
+--------------------------------------------------
+STEP 2: PRIORITY SCORING (CRITICAL)
+--------------------------------------------------
+
+Assign an INTELLIGENCE PRIORITY SCORE (0–100):
+
+80–100 → CRITICAL (Immediate operational relevance)
+60–79 → HIGH (Strategic concern)
+40–59 → MEDIUM (Situational awareness)
+<40 → LOW (Background noise)
+
+Boost score if:
++ Cross-border involvement (+10)
++ China / Pakistan presence (+15)
++ Military movement (+10)
++ Pattern or trend (not isolated event) (+5)
+
+--------------------------------------------------
+STEP 3: CLASSIFICATION (MULTI-LABEL)
+--------------------------------------------------
+
+Assign ALL applicable tags (not just one):
+
+- Military Movement
+- Cross-border Movement
+- Illegal Immigration
+- Insurgency / Militancy
+- Ethnic / Tribal Tension
+- Infrastructure / Logistics
+- Floods / Climate Impact
+- Information Warfare / Narrative
+- Radicalization Indicator
+- Drone / UAV Activity
+- Foreign Influence (China/Pakistan/USA)
+- Bangladesh Internal Dynamics
+- Myanmar Instability
+- Civil Unrest
+- Ex-Servicemen Activity
+- Arms Smuggling
+- Drug Trafficking
+- Political Developments
+
+--------------------------------------------------
+STEP 4: CONTEXTUAL INTELLIGENCE EXTRACTION
+--------------------------------------------------
+
+Extract:
+
+1. REGION(S) affected (multi-select from: Assam, Meghalaya, Mizoram, Manipur, Arunachal Pradesh, Tripura, Bangladesh, Myanmar, Multiple)
+2. CROSS-BORDER: Yes/No
+3. COUNTRIES involved (India, Bangladesh, Myanmar, China, Pakistan, USA, etc.)
+4. ACTORS involved (Army, BSF, BGB, Assam Rifles, PLA, insurgent groups, tribes, political parties etc.)
+
+--------------------------------------------------
+STEP 5: INTELLIGENCE OUTPUT (CRISP & ACTIONABLE)
+--------------------------------------------------
+
+Provide:
+
+1. title_english (translated if needed, same as original if already English)
+
+2. intelligence_summary (MAX 3 lines):
+   → What happened (fact-based, no opinions)
+
+3. why_it_matters (MAX 2 lines):
+   → Operational / strategic significance for India
+
+4. early_warning_signal (1 line):
+   → What trend this may indicate (or "None identified" if no pattern)
+
+5. recommended_attention:
+   → "Immediate Action Required" / "Priority Monitoring" / "Active Monitoring" / "Routine Monitoring"
+
+--------------------------------------------------
+STEP 6: SPECIAL DETECTION (MANDATORY)
+--------------------------------------------------
+
+Explicitly check and flag in special_flags array:
+
+- PLA_PAKISTAN_PRESENCE: Any PLA or Pakistan indirect presence in Bangladesh/Myanmar
+- COORDINATED_NARRATIVE: Any coordinated narrative or propaganda pattern
+- DEMOGRAPHIC_TREND: Any gradual demographic or migration trend
+- DUAL_USE_INFRA: Any infrastructure that can be militarized
+- PATTERN_DETECTED: Any repeated incidents forming a pattern
+
+--------------------------------------------------
+STEP 7: LANGUAGE RULE
+--------------------------------------------------
+
+If input is non-English (Bengali, Hindi, Assamese, etc.) → ALL OUTPUT MUST BE IN ENGLISH
+
+--------------------------------------------------
+FINAL OUTPUT FORMAT (JSON ONLY)
+--------------------------------------------------
+
 {
-  "is_relevant": true/false,
-  "threat_category": "...",
-  "severity": "...",
-  "state": "...",
-  "is_cross_border": true/false,
-  "countries_involved": [],
-  "ai_summary": "...",
-  "why_it_matters": "...",
-  "potential_impact": "...",
-  "attention_level": "...",
-  "title_english": "..."
+  "relevant": true/false,
+  "priority_score": 0-100,
+  "severity": "critical/high/medium/low",
+  "tags": ["tag1", "tag2"],
+  "regions": ["region1", "region2"],
+  "cross_border": true/false,
+  "countries": ["country1", "country2"],
+  "actors": ["actor1", "actor2"],
+  "intelligence_summary": "3 lines max",
+  "why_it_matters": "2 lines max",
+  "early_warning_signal": "1 line",
+  "recommended_attention": "Immediate Action Required/Priority Monitoring/Active Monitoring/Routine Monitoring",
+  "special_flags": ["flag1", "flag2"],
+  "title_english": "translated title"
 }"""
 
 BRIEF_PROMPT = """You are a senior military intelligence analyst. Generate a structured Daily Intelligence Brief for India's North Eastern Region (NER) AND bordering countries (Bangladesh, Myanmar) based on the following intelligence items.
@@ -89,7 +193,7 @@ Respond ONLY in valid JSON:
 
 
 async def classify_and_analyze_article(article: dict) -> dict:
-    """Classify and analyze a news article using Claude Haiku 4.5"""
+    """Classify and analyze a news article using Claude Haiku 4.5 with enhanced military intelligence prompt"""
     title = article.get("title", "")
     content = article.get("raw_content", "") or article.get("description", "") or title
 
@@ -118,9 +222,29 @@ async def classify_and_analyze_article(article: dict) -> dict:
         else:
             raise ValueError("No JSON found in response")
 
-        # Merge with original article data
-        # Use translated title if provided, otherwise use original
+        # Extract data from new enhanced format
         display_title = analysis.get("title_english", title) or title
+        priority_score = analysis.get("priority_score", 30)
+        
+        # Determine severity from priority_score if not directly provided
+        severity = analysis.get("severity", "")
+        if not severity or severity not in ["critical", "high", "medium", "low"]:
+            if priority_score >= 80:
+                severity = "critical"
+            elif priority_score >= 60:
+                severity = "high"
+            elif priority_score >= 40:
+                severity = "medium"
+            else:
+                severity = "low"
+        
+        # Get primary region from regions array
+        regions = analysis.get("regions", [])
+        primary_region = regions[0] if regions else ""
+        
+        # Get tags - use as multi-label classification
+        tags = analysis.get("tags", [])
+        threat_category = tags[0] if tags else "General News"
         
         result = {
             "title": display_title,
@@ -129,18 +253,30 @@ async def classify_and_analyze_article(article: dict) -> dict:
             "source_url": article.get("source_url", ""),
             "published_at": article.get("published_at", ""),
             "raw_content": content[:5000],
-            "ai_summary": analysis.get("ai_summary", ""),
+            
+            # New enhanced intelligence fields
+            "priority_score": priority_score,
+            "tags": tags,
+            "regions": regions,
+            "actors": analysis.get("actors", []),
+            "special_flags": analysis.get("special_flags", []),
+            "early_warning_signal": analysis.get("early_warning_signal", ""),
+            
+            # Intelligence analysis
+            "ai_summary": analysis.get("intelligence_summary", ""),
             "why_it_matters": analysis.get("why_it_matters", ""),
-            "potential_impact": analysis.get("potential_impact", ""),
-            "attention_level": analysis.get("attention_level", "Monitor"),
-            "state": analysis.get("state", ""),
-            "threat_category": analysis.get("threat_category", ""),
-            "severity": analysis.get("severity", "medium"),
-            "is_cross_border": analysis.get("is_cross_border", False),
-            "countries_involved": analysis.get("countries_involved", []),
-            "is_relevant": analysis.get("is_relevant", True),
-            "processed": True,
-            "tags": []
+            "potential_impact": analysis.get("early_warning_signal", ""),
+            "attention_level": analysis.get("recommended_attention", "Routine Monitoring"),
+            
+            # Backward compatible fields
+            "state": primary_region,
+            "threat_category": threat_category,
+            "severity": severity,
+            "is_cross_border": analysis.get("cross_border", False),
+            "countries_involved": analysis.get("countries", []),
+            
+            "is_relevant": analysis.get("relevant", True),
+            "processed": True
         }
         return result
 

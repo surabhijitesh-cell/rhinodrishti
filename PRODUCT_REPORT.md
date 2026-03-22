@@ -429,42 +429,86 @@ Retry Cycle (every 15 min):
 
 ## 8. AI Prompts
 
-### 8.1 Classification Prompt (Excerpt)
+### 8.1 Enhanced Military Intelligence Prompt (NEW - March 2026)
+
+The classification prompt has been upgraded to a comprehensive 7-step military intelligence analysis framework:
+
 ```
-You are a military intelligence analyst specializing in India's 
-North Eastern Region (NER) and bordering countries (Bangladesh, Myanmar).
+STEP 1: RELEVANCE FILTER (STRICT)
+- A. Direct Security Signals (military, border, insurgency, migration, trafficking)
+- B. Strategic & Infrastructure Signals (roads, bridges, dual-use projects)
+- C. Cross-Border & Foreign Influence (BGB, PLA, Pakistan links)
+- D. Societal Instability / Early Warning (tribal unrest, anti-minority)
+- E. Emerging Technology Threats (drones, cyber)
+- F. High-Level National/Global Signals
 
-CRITICAL: If the article is in Bengali, Assamese, Hindi, or any other 
-non-English language, you MUST TRANSLATE all your responses to ENGLISH.
+STEP 2: PRIORITY SCORING (0-100)
+- 80-100 → CRITICAL (Immediate operational relevance)
+- 60-79 → HIGH (Strategic concern)
+- 40-59 → MEDIUM (Situational awareness)
+- <40 → LOW (Background noise)
+- Boost factors: Cross-border (+10), China/Pakistan (+15), Military movement (+10)
 
-SPECIAL EMPHASIS: Flag any news indicating involvement of China, Pakistan, 
-or USA in Bangladesh or Myanmar. These are HIGH PRIORITY items.
+STEP 3: MULTI-LABEL CLASSIFICATION
+- 18 tags: Military Movement, Cross-border Movement, Illegal Immigration,
+  Insurgency/Militancy, Ethnic/Tribal Tension, Infrastructure/Logistics,
+  Floods/Climate Impact, Information Warfare, Radicalization Indicator,
+  Drone/UAV Activity, Foreign Influence, Bangladesh Dynamics, Myanmar Instability,
+  Civil Unrest, Ex-Servicemen Activity, Arms Smuggling, Drug Trafficking,
+  Political Developments
 
-Analyze the following news article and determine:
-1. Is this article relevant to monitoring? (true/false)
-2. Primary threat category (choose ONE from 13 categories)
-3. Severity level: low, medium, high, or critical
-4. Region primarily affected
-5. Is this a cross-border issue?
-6. Countries involved
-7. Concise intelligence summary IN ENGLISH (3-4 lines)
-8. Why it matters IN ENGLISH
-9. Potential future impact IN ENGLISH
-10. Recommended attention level
-11. title_english: English translation of the title
+STEP 4: CONTEXTUAL EXTRACTION
+- Multiple regions (multi-select)
+- Countries involved
+- Actors (Army, BSF, BGB, PLA, insurgent groups, tribes, etc.)
+
+STEP 5: ACTIONABLE OUTPUT
+- intelligence_summary (3 lines max)
+- why_it_matters (2 lines max)
+- early_warning_signal (1 line trend indicator)
+- recommended_attention (Immediate Action/Priority Monitoring/Active/Routine)
+
+STEP 6: SPECIAL DETECTION FLAGS
+- PLA_PAKISTAN_PRESENCE
+- COORDINATED_NARRATIVE
+- DEMOGRAPHIC_TREND
+- DUAL_USE_INFRA
+- PATTERN_DETECTED
+- CROSS_BORDER_SANCTUARY
+- ESCALATION_PATTERN
+- COMMAND_COORDINATION_INTACT
+- TACTICAL_TARGETING_SHIFT
+
+STEP 7: LANGUAGE TRANSLATION
+- All output in English regardless of input language
 ```
 
-### 8.2 Brief Generation Prompt (Excerpt)
-```
-You are a senior military intelligence analyst. Generate a structured 
-Daily Intelligence Brief for India's North Eastern Region (NER) AND 
-bordering countries (Bangladesh, Myanmar).
+### 8.2 Output Quality Examples
 
-The brief must include:
-1. key_developments: List of 6-10 bullet points
-2. state_highlights: Object with region names as keys
-3. cross_border_insights: Summary of cross-border activities
-4. analyst_summary: Professional analyst-style summary paragraph
+**HIGH PRIORITY (P72 - ULFA-I Attack):**
+```json
+{
+  "priority_score": 72,
+  "severity": "high",
+  "tags": ["Insurgency / Militancy", "Military Movement", "Cross-border Movement"],
+  "special_flags": ["CROSS_BORDER_SANCTUARY", "ESCALATION_PATTERN", 
+                    "COMMAND_COORDINATION_INTACT", "TACTICAL_TARGETING_SHIFT"],
+  "early_warning_signal": "Pattern of claimed ULFA-I operations post-crackdown 
+    suggests escalatory cycle—increased counter-ops may trigger more strikes"
+}
+```
+
+**HIGH PRIORITY (P62 - Ethnic Tension):**
+```json
+{
+  "priority_score": 62,
+  "severity": "high",  
+  "tags": ["Ethnic / Tribal Tension", "Civil Unrest", "Insurgency / Militancy"],
+  "special_flags": ["PATTERN_DETECTED"],
+  "actors": ["Kuki-Zo Council", "Armed mob/protestors", "Security personnel"],
+  "early_warning_signal": "Pattern of internal leadership delegitimization 
+    signals potential fragmentation and hardening of negotiating positions"
+}
 ```
 
 ---

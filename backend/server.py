@@ -76,7 +76,7 @@ class IntelligenceItem(BaseModel):
     ai_summary: str = ""
     why_it_matters: str = ""
     potential_impact: str = ""
-    attention_level: str = "Monitor"
+    attention_level: str = "Routine Monitoring"
     state: str = ""
     threat_category: str = ""
     severity: str = "medium"
@@ -84,6 +84,13 @@ class IntelligenceItem(BaseModel):
     countries_involved: List[str] = []
     processed: bool = True
     tags: List[str] = []
+    # New enhanced intelligence fields
+    priority_score: int = 30
+    regions: List[str] = []
+    actors: List[str] = []
+    special_flags: List[str] = []
+    early_warning_signal: str = ""
+    original_title: Optional[str] = None
 
 
 class DailyBrief(BaseModel):
