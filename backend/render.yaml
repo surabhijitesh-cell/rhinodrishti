@@ -1,0 +1,22 @@
+# Render Deployment Configuration
+# https://render.com/docs/blueprint-spec
+
+services:
+  - type: web
+    name: rhino-drishti-api
+    runtime: python
+    region: singapore  # Closest to India
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn server:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: MONGO_URL
+        sync: false  # Set manually in Render dashboard
+      - key: DB_NAME
+        value: rhino_drishti
+      - key: EMERGENT_LLM_KEY
+        sync: false  # Set manually in Render dashboard
+      - key: CORS_ORIGINS
+        sync: false  # Set to your Vercel frontend URL after deploying frontend
+      - key: PYTHON_VERSION
+        value: "3.11.0"
