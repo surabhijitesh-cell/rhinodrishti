@@ -863,64 +863,185 @@ async def pipeline_status():
 
 
 async def generate_brief_for_date(date: str):
-    """Generate comprehensive daily brief with NER, National, International news and Twitter feeds"""
+    """Generate comprehensive daily brief with properly categorized sections and military-relevant content only"""
     
-    # Get NER regional items
+    # Define NER states (India's Northeast Region)
+    NER_STATES = ["Assam", "Meghalaya", "Mizoram", "Manipur", "Arunachal Pradesh", "Tripura"]
+    
+    # ========== 1. GET CRITICAL/HIGH PRIORITY ITEMS FIRST (These MUST be in the brief) ==========
+    critical_high_items = await intelligence_col.find(
+        {
+            "processed": True,
+            "$or": [
+                {"severity": {"$in": ["critical", "high"]}},
+                {"priority_score": {"$gte": 60}}
+            ]
+        },
+        {"_id": 0}
+    ).sort([("priority_score", -1), ("published_at", -1)]).limit(20).to_list(20)
+    
+    logger.info(f"Brief: Found {len(critical_high_items)} critical/high priority items")
+    
+    # ========== 2. GET NER REGIONAL ITEMS (Only from NER states, diverse sources) ==========
+    # First, get distinct sources to ensure diversity
     ner_items = await intelligence_col.find(
-        {"state": {"$in": MONITORED_REGIONS + ["Multiple", ""]}},
+        {
+            "processed": True,
+            "state": {"$in": NER_STATES + ["Multiple"]},
+            # Filter for military relevance - must have tags or priority score
+            "$or": [
+                {"priority_score": {"$gte": 30}},
+                {"tags": {"$exists": True, "$ne": []}},
+                {"severity": {"$in": ["critical", "high", "medium"]}}
+            ]
+        },
         {"_id": 0}
-    ).sort("published_at", -1).limit(50).to_list(50)
+    ).sort([("priority_score", -1), ("published_at", -1)]).limit(50).to_list(50)
     
-    # Get national news (from The Hindu, NDTV, Times of India, PIB, etc.)
+    # Diversify sources - don't let one source dominate
+    seen_sources = {}
+    diverse_ner_items = []
+    for item in ner_items:
+        source = item.get("source", "Unknown")
+        if source not in seen_sources:
+            seen_sources[source] = 0
+        if seen_sources[source] < 3:  # Max 3 items per source
+            diverse_ner_items.append(item)
+            seen_sources[source] += 1
+    
+    logger.info(f"Brief: Found {len(ner_items)} NER items, diversified to {len(diverse_ner_items)} from {len(seen_sources)} sources")
+    
+    # ========== 3. GET NATIONAL NEWS (Indian sources, NOT NER-specific, NOT Bangladesh/Myanmar) ==========
     national_items = await intelligence_col.find(
-        {"$or": [
-            {"source": {"$regex": "hindu|times of india|ndtv|news18|indian express|pib|sentinel|tribune", "$options": "i"}},
-            {"tags": "national"},
-            {"state": "India"}
-        ]},
+        {
+            "processed": True,
+            # Must be from Indian national sources
+            "source": {"$in": ["The Hindu - National", "NDTV India News", "News18 India", "Times of India"]},
+            # EXCLUDE NER states and international (they have their own sections)
+            "state": {"$nin": NER_STATES + ["Bangladesh", "Myanmar", "Multiple"]}
+        },
         {"_id": 0}
-    ).sort("published_at", -1).limit(20).to_list(20)
+    ).sort([("priority_score", -1), ("published_at", -1)]).limit(20).to_list(20)
     
-    # Get international news (BBC, Al Jazeera, Reuters, or items with foreign country involvement)
+    # Filter for military relevance - must have priority score or relevant tags
+    military_national = [
+        item for item in national_items
+        if item.get("priority_score", 0) >= 25 or 
+           item.get("severity") in ["critical", "high", "medium"] or
+           any(tag in str(item.get("tags", [])).lower() for tag in ["military", "security", "cross-border", "insurgency", "foreign", "infrastructure", "defence", "border"])
+    ]
+    
+    logger.info(f"Brief: Found {len(national_items)} national items, {len(military_national)} military-relevant")
+    
+    # ========== 4. GET INTERNATIONAL NEWS (Bangladesh, Myanmar, China, Pakistan, USA related) ==========
     international_items = await intelligence_col.find(
-        {"$or": [
-            {"source": {"$regex": "bbc|al jazeera|reuters|irrawaddy|mizzima|myanmar now|frontier|daily star", "$options": "i"}},
-            {"tags": "international"},
-            {"countries_involved": {"$in": ["China", "Pakistan", "USA", "Bangladesh", "Myanmar"]}},
-            {"state": {"$in": ["Bangladesh", "Myanmar"]}}
-        ]},
+        {
+            "processed": True,
+            "$or": [
+                # Items about Bangladesh/Myanmar
+                {"state": {"$in": ["Bangladesh", "Myanmar"]}},
+                # Items involving foreign powers
+                {"countries_involved": {"$in": ["China", "Pakistan", "USA"]}},
+                # From international sources
+                {"source": {"$in": [
+                    "Al Jazeera", "BBC Asia/India", "The Daily Star BD", 
+                    "Prothom Alo (English)", "Prothom Alo (Bangla)", "Kaler Kantho (Bangla)",
+                    "Myanmar Now", "Mizzima News", "The Hindu - International"
+                ]}}
+            ]
+        },
         {"_id": 0}
-    ).sort("published_at", -1).limit(20).to_list(20)
+    ).sort([("priority_score", -1), ("published_at", -1)]).limit(30).to_list(30)
     
-    # Get Twitter feeds
+    # Separate Bangladesh and Myanmar items
+    bangladesh_items = [i for i in international_items if i.get("state") == "Bangladesh" or "Bangladesh" in i.get("countries_involved", [])]
+    myanmar_items = [i for i in international_items if i.get("state") == "Myanmar" or "Myanmar" in i.get("countries_involved", [])]
+    other_intl = [i for i in international_items if i not in bangladesh_items and i not in myanmar_items]
+    
+    # Diversify international sources too
+    seen_intl_sources = {}
+    diverse_intl_items = []
+    for item in international_items:
+        source = item.get("source", "Unknown")
+        if source not in seen_intl_sources:
+            seen_intl_sources[source] = 0
+        if seen_intl_sources[source] < 3:
+            diverse_intl_items.append(item)
+            seen_intl_sources[source] += 1
+    
+    logger.info(f"Brief: Found {len(international_items)} intl items (BD: {len(bangladesh_items)}, MM: {len(myanmar_items)})")
+    
+    # ========== 5. GET TWITTER FEEDS ==========
     twitter_items = await tweets_col.find({}, {"_id": 0}).sort("posted_at", -1).limit(25).to_list(25)
     
-    # Get uploaded document insights
+    # ========== 6. GET UPLOADED DOCUMENT INSIGHTS ==========
     uploaded_docs = await uploads_col.find({"processed": True}, {"_id": 0}).sort("uploaded_at", -1).limit(10).to_list(10)
     
-    # Log the query results
-    logger.info(f"Brief generation - NER items: {len(ner_items)}, National: {len(national_items)}, International: {len(international_items)}")
-
+    # ========== 7. GENERATE AI BRIEF ==========
+    # Combine critical items with NER items for AI analysis
+    items_for_ai = critical_high_items + diverse_ner_items[:20]
+    
     try:
         from ai_pipeline import generate_daily_brief_ai
-        brief_data = await generate_daily_brief_ai(ner_items, date)
+        brief_data = await generate_daily_brief_ai(items_for_ai, date)
     except Exception as e:
         logger.error(f"AI brief generation failed: {e}")
-        brief_data = generate_manual_brief(ner_items, date)
+        brief_data = generate_manual_brief(items_for_ai, date)
     
-    # Add national news with source links
+    # ========== 8. BUILD KEY DEVELOPMENTS (Critical/High items FIRST) ==========
+    key_developments = []
+    added_ids = set()
+    
+    # Add critical/high items first
+    for item in critical_high_items[:5]:
+        if item.get("id") not in added_ids and item.get("state") in NER_STATES + ["Multiple", "Bangladesh", "Myanmar", ""]:
+            key_developments.append({
+                "title": item.get("title", ""),
+                "summary": item.get("ai_summary", ""),
+                "source_url": item.get("source_url", ""),
+                "timestamp": item.get("published_at", ""),
+                "severity": item.get("severity", "medium"),
+                "priority_score": item.get("priority_score", 0),
+                "state": item.get("state", ""),
+                "source": item.get("source", ""),
+                "early_warning": item.get("early_warning_signal", "")
+            })
+            added_ids.add(item.get("id"))
+    
+    # Add diverse NER items
+    for item in diverse_ner_items[:10]:
+        if item.get("id") not in added_ids:
+            key_developments.append({
+                "title": item.get("title", ""),
+                "summary": item.get("ai_summary", ""),
+                "source_url": item.get("source_url", ""),
+                "timestamp": item.get("published_at", ""),
+                "severity": item.get("severity", "medium"),
+                "priority_score": item.get("priority_score", 0),
+                "state": item.get("state", ""),
+                "source": item.get("source", ""),
+                "early_warning": item.get("early_warning_signal", "")
+            })
+            added_ids.add(item.get("id"))
+    
+    brief_data["key_developments"] = key_developments[:15]
+    
+    # ========== 9. BUILD NATIONAL NEWS (Military relevant only, NOT NER) ==========
     brief_data["national_news"] = [
         {
             "title": item.get("title", ""),
             "summary": item.get("ai_summary", item.get("raw_content", "")[:200]),
             "source_url": item.get("source_url", ""),
             "timestamp": item.get("published_at", ""),
-            "source": item.get("source", "")
+            "source": item.get("source", ""),
+            "priority_score": item.get("priority_score", 0),
+            "severity": item.get("severity", "low")
         }
-        for item in national_items[:15]
+        for item in military_national[:15]
+        if item.get("id") not in added_ids  # Don't duplicate items from NER section
     ]
     
-    # Add international news with source links
+    # ========== 10. BUILD INTERNATIONAL NEWS (Bangladesh, Myanmar, Foreign powers) ==========
     brief_data["international_news"] = [
         {
             "title": item.get("title", ""),
@@ -928,12 +1049,15 @@ async def generate_brief_for_date(date: str):
             "source_url": item.get("source_url", ""),
             "timestamp": item.get("published_at", ""),
             "source": item.get("source", ""),
-            "countries": item.get("countries_involved", [])
+            "countries": item.get("countries_involved", []),
+            "state": item.get("state", ""),
+            "priority_score": item.get("priority_score", 0)
         }
-        for item in international_items[:15]
+        for item in diverse_intl_items[:15]
+        if item.get("id") not in added_ids  # Don't duplicate
     ]
     
-    # Add Twitter highlights
+    # ========== 11. ADD TWITTER AND UPLOADS ==========
     brief_data["twitter_highlights"] = [
         {
             "handle": tweet.get("handle", ""),
@@ -946,7 +1070,6 @@ async def generate_brief_for_date(date: str):
         for tweet in twitter_items[:20]
     ]
     
-    # Add uploaded document insights
     brief_data["uploaded_insights"] = [
         {
             "filename": doc.get("filename", ""),
@@ -957,22 +1080,13 @@ async def generate_brief_for_date(date: str):
         for doc in uploaded_docs[:10]
     ]
     
-    # Update key_developments to include source links
-    key_developments_with_links = []
-    for item in ner_items[:10]:
-        key_developments_with_links.append({
-            "title": item.get("title", ""),
-            "summary": item.get("ai_summary", ""),
-            "source_url": item.get("source_url", ""),
-            "timestamp": item.get("published_at", ""),
-            "severity": item.get("severity", "medium"),
-            "state": item.get("state", "")
-        })
-    brief_data["key_developments"] = key_developments_with_links
-
+    # ========== 12. SAVE AND RETURN ==========
     brief = DailyBrief(**brief_data)
     doc = brief.model_dump()
     await briefs_col.update_one({"date": date}, {"$set": doc}, upsert=True)
+    
+    logger.info(f"Brief generated: {len(key_developments)} NER developments, {len(brief_data.get('national_news', []))} national, {len(brief_data.get('international_news', []))} international")
+    
     return doc
 
 
