@@ -567,7 +567,7 @@ EMERGENT_LLM_KEY=sk-emergent-xxxxx
 
 ### Frontend (.env)
 ```
-REACT_APP_BACKEND_URL=https://[app-name].preview.emergentagent.com/api
+REACT_APP_BACKEND_URL=https://strategic-scan.preview.emergentagent.com/api
 ```
 
 ---

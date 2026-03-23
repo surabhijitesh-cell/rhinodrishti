@@ -12,7 +12,7 @@ from typing import Dict, Any
 
 class RhinoDrishtiAPITester:
     def __init__(self):
-        self.base_url = "https://rhino-features.preview.emergentagent.com/api"
+        self.base_url = "https://strategic-scan.preview.emergentagent.com/api"
         self.tests_run = 0
         self.tests_passed = 0
         self.failed_tests = []
