@@ -41,43 +41,33 @@ Build a full-stack AI-powered web application called "Rhino Drishti" designed fo
 - [x] PDF Export for Daily Brief
 
 ### Phase 2 - Rate Limit Management (2026-03-20)
-- [x] **Exponential Backoff Retry**: Aggressive backoff for rate limits (15s, 30s, 60s, 120s)
-- [x] **Article Deduplication**: Skip already processed articles in each cycle
-- [x] **Batch Processing**: 3 articles/batch with 5s pause between batches
-- [x] **Cycle Limits**: Max 25 new articles per 30-min fetch, max 20 retry per cycle
-- [x] **Bulk Scrape Endpoint**: `/api/bulk-scrape` to fetch all RSS articles without AI processing
+- [x] Exponential Backoff Retry: Aggressive backoff for rate limits
+- [x] Article Deduplication: Skip already processed articles
+- [x] Batch Processing: 3 articles/batch with 5s pause
+- [x] Cycle Limits: Max 25 new articles per 30-min fetch
+- [x] Bulk Scrape Endpoint: /api/bulk-scrape
 
 ### Phase 3 - Enhanced Daily Brief & Document Upload (2026-03-21)
-- [x] **Expanded Daily Brief Structure**:
-  - NER Regional News (key developments with source links)
-  - National News Section (15 items from The Hindu, TOI, NDTV, etc.)
-  - International News Section (15 items from BBC, Al Jazeera, Bangladesh/Myanmar sources)
-  - Twitter/X Watch Section (monitoring 13 defense accounts)
-  - Uploaded Document Insights
-- [x] **Source Links Embedded**: All news items include clickable source URLs
-- [x] **Document Upload Facility**:
-  - Accepts PDF, Word (.doc, .docx), Excel (.xls, .xlsx), TXT files
-  - Text extraction using PyPDF2, python-docx, openpyxl
-  - AI analysis of uploaded documents
-  - Insights included in daily brief
-- [x] **Rhino Watermark**: Charging rhino image appears on every page of PDF brief
-- [x] **Twitter Accounts Monitored**:
-  - @adgpi (ADG PI - Indian Army)
-  - @IAF_MCC (Indian Air Force)
-  - @indiannavy (Indian Navy)
-  - @DefenceMinIndia (Ministry of Defence)
-  - @MEAIndia (Ministry of External Affairs)
-  - @HMOIndia (Home Ministry)
-  - @PMOIndia (PMO)
-  - @BSF_India (BSF), @crpf (CRPF), @official_dgar (Assam Rifles), @ITBP (ITBP), @NSG
+- [x] Expanded Daily Brief Structure (NER/National/International sections)
+- [x] Source Links Embedded in all news items
+- [x] Document Upload Facility (PDF/Word/Excel/TXT)
+- [x] Rhino Watermark on PDF brief
+- [x] Twitter Accounts Monitored (13 defense accounts listed)
+- [x] Local Language Translation (Bengali/Assamese/Hindi to English)
+- [x] 7-step Military Intelligence AI Classification Prompt
+
+### Session 2026-03-23
+- [x] Environment recovery verification - all services healthy
+- [x] Full application preview generated across all pages
+- [x] Storage projection analysis (~200MB for 1 year)
 
 ## Rate Limit Configuration
 ```python
-MAX_ARTICLES_PER_CYCLE = 25      # Max new articles per 30-min fetch
-BATCH_SIZE = 3                   # Articles per batch
-BATCH_PAUSE = 5                  # Seconds between batches
-INTER_ARTICLE_DELAY = 1.5        # Seconds between articles
-MAX_RETRY_PER_CYCLE = 20         # Max items in 15-min retry cycle
+MAX_ARTICLES_PER_CYCLE = 25
+BATCH_SIZE = 3
+BATCH_PAUSE = 5
+INTER_ARTICLE_DELAY = 1.5
+MAX_RETRY_PER_CYCLE = 20
 ```
 
 ## API Endpoints
@@ -92,29 +82,23 @@ MAX_RETRY_PER_CYCLE = 20         # Max items in 15-min retry cycle
 - `POST /api/upload-document` - Upload PDF/Word/Excel
 - `GET /api/uploaded-documents` - List uploaded documents
 - `DELETE /api/uploaded-documents/{id}` - Delete document
-- `POST /api/bulk-scrape` - Bulk fetch all RSS without AI processing
+- `POST /api/bulk-scrape` - Bulk fetch all RSS without AI
 - `POST /api/fetch-news` - Fetch and AI-process news
 - `POST /api/analyze-news` - Retry unprocessed items
+- `GET /api/pipeline/status` - Pipeline status
 
 ## Prioritized Backlog
 
-### P0 (Done)
-- All core features implemented and tested
-- Rate limit management with exponential backoff
-- Enhanced daily brief with national/international sections
-- Document upload facility
-- PDF watermark
-
-### P1 (Next Phase)
-- **Twitter API Integration**: Real-time tweet fetching from defense accounts
-- Email/WhatsApp notifications for critical alerts
-- Full-text search with MongoDB text indexes
-- Manual override tagging for intelligence items
-- User authentication (JWT or Google OAuth)
+### P1 (Next)
+- Priority score filter on Dashboard/Intelligence Feed
+- More National Indian news sources in RSS fetcher
+- Twitter/X monitoring integration (paused by user)
 
 ### P2 (Future)
-- Interactive map with react-simple-maps (replacing SVG)
-- Keyword heatmap visualization
-- Multi-language support (Hindi, Assamese, Bengali)
-- Cross-source validation for misinformation detection
+- Email/WhatsApp notifications for critical alerts
+- Full-text search with MongoDB text indexes
+- Interactive map with react-simple-maps
+- User authentication (JWT or Google OAuth)
 - Real-time WebSocket updates
+- Keyword heatmap visualization
+- Cross-source validation for misinformation detection
