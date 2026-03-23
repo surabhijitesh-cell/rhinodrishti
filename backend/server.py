@@ -36,19 +36,19 @@ international_news_col = db.international_news
 
 # Twitter/X accounts to monitor for defense updates
 TWITTER_ACCOUNTS_TO_MONITOR = [
-    {"handle": "@adaborangga", "name": "ADG PI - Indian Army", "category": "defense"},
-    {"handle": "@IAF_MCC", "name": "Indian Air Force", "category": "defense"},
-    {"handle": "@indiannavy", "name": "Indian Navy", "category": "defense"},
-    {"handle": "@SpsHanada", "name": "SPS Hanada - Defense Expert", "category": "defense"},
-    {"handle": "@DefenceMinIndia", "name": "Ministry of Defence", "category": "government"},
-    {"handle": "@MEAIndia", "name": "Ministry of External Affairs", "category": "government"},
-    {"handle": "@HMOIndia", "name": "Home Ministry", "category": "government"},
-    {"handle": "@PMOIndia", "name": "Prime Minister's Office", "category": "government"},
-    {"handle": "@BSaborBSF", "name": "Border Security Force", "category": "paramilitary"},
-    {"handle": "@craborCRPF", "name": "CRPF", "category": "paramilitary"},
-    {"handle": "@official_dgar", "name": "Assam Rifles", "category": "paramilitary"},
-    {"handle": "@ABORAITBP", "name": "ITBP", "category": "paramilitary"},
-    {"handle": "@NaborSSG", "name": "NSG", "category": "paramilitary"},
+    {"handle": "@adgpi", "name": "ADG PI - Indian Army", "category": "defense", "url": "https://twitter.com/adgpi"},
+    {"handle": "@IAF_MCC", "name": "Indian Air Force", "category": "defense", "url": "https://twitter.com/IAF_MCC"},
+    {"handle": "@indiannavy", "name": "Indian Navy", "category": "defense", "url": "https://twitter.com/indiannavy"},
+    {"handle": "@easaborterncomd", "name": "Eastern Command - Indian Army", "category": "defense", "url": "https://twitter.com/easterncomd"},
+    {"handle": "@DefenceMinIndia", "name": "Ministry of Defence", "category": "government", "url": "https://twitter.com/DefenceMinIndia"},
+    {"handle": "@MEAIndia", "name": "Ministry of External Affairs", "category": "government", "url": "https://twitter.com/MEAIndia"},
+    {"handle": "@HMOIndia", "name": "Home Ministry", "category": "government", "url": "https://twitter.com/HMOIndia"},
+    {"handle": "@PMOIndia", "name": "Prime Minister's Office", "category": "government", "url": "https://twitter.com/PMOIndia"},
+    {"handle": "@BSF_India", "name": "Border Security Force", "category": "paramilitary", "url": "https://twitter.com/BSF_India"},
+    {"handle": "@craborCRPF", "name": "CRPF", "category": "paramilitary", "url": "https://twitter.com/crpaborCRPF"},
+    {"handle": "@official_dgar", "name": "Assam Rifles", "category": "paramilitary", "url": "https://twitter.com/official_dgar"},
+    {"handle": "@ABORAITBP", "name": "ITBP", "category": "paramilitary", "url": "https://twitter.com/ITBP_official"},
+    {"handle": "@SpsHanada", "name": "SPS Hanada - Defense Analyst", "category": "analyst", "url": "https://twitter.com/SpsHanada"},
 ]
 
 THREAT_CATEGORIES = [
@@ -933,35 +933,74 @@ async def generate_brief_for_date(date: str):
     
     logger.info(f"Brief: Found {len(national_items)} national items, {len(military_national)} military-relevant")
     
-    # ========== 4. GET INTERNATIONAL NEWS (Bangladesh, Myanmar, China, Pakistan, USA related) ==========
+    # ========== 4. GET INTERNATIONAL NEWS (Bangladesh, Myanmar - SECURITY/STRATEGIC ONLY) ==========
+    # Focus on security-relevant news that impacts NER security paradigm
+    # EXCLUDE NER states - they belong in Key Developments
     international_items = await intelligence_col.find(
         {
             "processed": True,
+            # Must be about Bangladesh, Myanmar, or involve China/Pakistan
             "$or": [
-                # Items about Bangladesh/Myanmar
                 {"state": {"$in": ["Bangladesh", "Myanmar"]}},
-                # Items involving foreign powers
-                {"countries_involved": {"$in": ["China", "Pakistan", "USA"]}},
-                # From international sources
-                {"source": {"$in": [
-                    "Al Jazeera", "BBC Asia/India", "The Daily Star BD", 
-                    "Prothom Alo (English)", "Prothom Alo (Bangla)", "Kaler Kantho (Bangla)",
-                    "Myanmar Now", "Mizzima News", "The Hindu - International"
+                {"countries_involved": {"$in": ["China", "Pakistan"]}},
+            ],
+            # EXCLUDE NER states - they go to Key Developments section
+            "state": {"$nin": NER_STATES + ["Multiple", "India", ""]},
+            # MUST have military/security relevance
+            "$or": [
+                {"priority_score": {"$gte": 35}},
+                {"severity": {"$in": ["critical", "high"]}},
+                {"tags": {"$in": [
+                    "Military Movement", "Cross-border Movement", "Insurgency / Militancy",
+                    "Foreign Influence (China/Pakistan/USA)", "Border Security", "Arms Smuggling",
+                    "Drug Trafficking", "Illegal Immigration", "Bangladesh Internal Dynamics",
+                    "Myanmar Instability", "Infrastructure / Logistics"
                 ]}}
             ]
         },
         {"_id": 0}
     ).sort([("priority_score", -1), ("published_at", -1)]).limit(30).to_list(30)
     
-    # Separate Bangladesh and Myanmar items
-    bangladesh_items = [i for i in international_items if i.get("state") == "Bangladesh" or "Bangladesh" in i.get("countries_involved", [])]
-    myanmar_items = [i for i in international_items if i.get("state") == "Myanmar" or "Myanmar" in i.get("countries_involved", [])]
-    other_intl = [i for i in international_items if i not in bangladesh_items and i not in myanmar_items]
+    # Additional filter: Remove sports, entertainment, cultural, petty crime news
+    EXCLUDE_KEYWORDS = [
+        'cricket', 'football', 'sports', 'match', 'tournament', 'celebrity', 'entertainment',
+        'movie', 'film', 'music', 'concert', 'festival', 'recipe', 'fashion', 'lifestyle',
+        'wedding', 'divorce', 'sparrow', 'bird', 'animal', 'zoo', 'weather forecast',
+        'horoscope', 'lottery', 'quiz', 'game show', 'reality show', 'bollywood', 'tollywood',
+        'chelsea', 'goalkeeper', 'striker', 'midfielder', 'coach', 'player'
+    ]
     
-    # Diversify international sources too
+    def is_strategic_news(item):
+        """Filter for strategic/security relevance"""
+        title = (item.get("title", "") or "").lower()
+        summary = (item.get("ai_summary", "") or "").lower()
+        content = title + " " + summary
+        
+        # Exclude if contains entertainment/sports keywords
+        for kw in EXCLUDE_KEYWORDS:
+            if kw in content:
+                return False
+        
+        # Must have priority score >= 35 or be from key security sources
+        if item.get("priority_score", 0) >= 35:
+            return True
+        
+        # Check for security-related tags
+        tags = item.get("tags", [])
+        security_tags = ["Military", "Border", "Insurgency", "Cross-border", "Arms", "Drug", "Security", "Foreign"]
+        for tag in tags:
+            for st in security_tags:
+                if st.lower() in tag.lower():
+                    return True
+        
+        return False
+    
+    strategic_intl_items = [item for item in international_items if is_strategic_news(item)]
+    
+    # Diversify sources
     seen_intl_sources = {}
     diverse_intl_items = []
-    for item in international_items:
+    for item in strategic_intl_items:
         source = item.get("source", "Unknown")
         if source not in seen_intl_sources:
             seen_intl_sources[source] = 0
@@ -969,7 +1008,7 @@ async def generate_brief_for_date(date: str):
             diverse_intl_items.append(item)
             seen_intl_sources[source] += 1
     
-    logger.info(f"Brief: Found {len(international_items)} intl items (BD: {len(bangladesh_items)}, MM: {len(myanmar_items)})")
+    logger.info(f"Brief: Found {len(international_items)} intl items, {len(strategic_intl_items)} strategic, {len(diverse_intl_items)} diversified")
     
     # ========== 5. GET TWITTER FEEDS ==========
     twitter_items = await tweets_col.find({}, {"_id": 0}).sort("posted_at", -1).limit(25).to_list(25)
@@ -1058,17 +1097,32 @@ async def generate_brief_for_date(date: str):
     ]
     
     # ========== 11. ADD TWITTER AND UPLOADS ==========
-    brief_data["twitter_highlights"] = [
-        {
-            "handle": tweet.get("handle", ""),
-            "account_name": tweet.get("account_name", ""),
-            "tweet_text": tweet.get("tweet_text", ""),
-            "tweet_url": tweet.get("tweet_url", ""),
-            "posted_at": tweet.get("posted_at", ""),
-            "category": tweet.get("category", "defense")
-        }
-        for tweet in twitter_items[:20]
-    ]
+    # If no tweets in DB, show the accounts being monitored with links
+    if not twitter_items:
+        brief_data["twitter_highlights"] = [
+            {
+                "handle": account.get("handle", ""),
+                "account_name": account.get("name", ""),
+                "tweet_text": f"Visit {account.get('url', '')} for latest updates from {account.get('name', '')}",
+                "tweet_url": account.get("url", ""),
+                "posted_at": "",
+                "category": account.get("category", "defense")
+            }
+            for account in TWITTER_ACCOUNTS_TO_MONITOR
+        ]
+        logger.info("Twitter: No tweets in DB, showing monitored accounts list")
+    else:
+        brief_data["twitter_highlights"] = [
+            {
+                "handle": tweet.get("handle", ""),
+                "account_name": tweet.get("account_name", ""),
+                "tweet_text": tweet.get("tweet_text", ""),
+                "tweet_url": tweet.get("tweet_url", ""),
+                "posted_at": tweet.get("posted_at", ""),
+                "category": tweet.get("category", "defense")
+            }
+            for tweet in twitter_items[:20]
+        ]
     
     brief_data["uploaded_insights"] = [
         {
