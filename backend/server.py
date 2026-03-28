@@ -1107,7 +1107,7 @@ async def generate_brief_for_date(date: str):
             "source_url": item.get("source_url", ""),
             "timestamp": item.get("published_at", ""),
             "source": item.get("source", ""),
-            "countries": item.get("countries_involved", []),
+            "countries": ", ".join(item.get("countries_involved", [])),
             "state": item.get("state", ""),
             "priority_score": item.get("priority_score", 0)
         }

@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, Component } from "react";
 import {
   FileText, RefreshCw, Calendar, Shield, Globe, AlertTriangle, Download,
   Newspaper, Twitter, Upload, ExternalLink
@@ -7,6 +7,31 @@ import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card"
 import { Button } from "../components/ui/button";
 import { Badge } from "../components/ui/badge";
 import axios from "axios";
+
+class BriefErrorBoundary extends Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error };
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="text-center py-16 border border-border bg-card">
+          <AlertTriangle size={40} className="mx-auto text-amber-400 mb-4" />
+          <p className="text-muted-foreground text-sm mb-2">Failed to render the daily brief.</p>
+          <p className="text-xs text-muted-foreground mb-4 font-mono">{String(this.state.error?.message || '').slice(0, 100)}</p>
+          <Button onClick={() => { this.setState({ hasError: false }); window.location.reload(); }} className="rounded-none uppercase text-xs tracking-wider">
+            Reload Page
+          </Button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 export default function DailyBrief({ api }) {
   const [brief, setBrief] = useState(null);
@@ -144,6 +169,7 @@ export default function DailyBrief({ api }) {
   }
 
   return (
+    <BriefErrorBoundary>
     <div className="space-y-6" data-testid="daily-brief-page">
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-4">
@@ -371,5 +397,6 @@ export default function DailyBrief({ api }) {
         </div>
       )}
     </div>
+    </BriefErrorBoundary>
   );
 }
