@@ -113,17 +113,44 @@ export default function DailyBrief({ api }) {
         </li>
       );
     }
-    // Object format with title, summary, source_url
+    // Object format with title, summary, source_url, and analysis fields
     return (
-      <li key={index} className="border-b border-border/50 pb-3 last:border-0 last:pb-0">
+      <li key={index} className="border-b border-border/50 pb-4 last:border-0 last:pb-0">
         <div className="flex items-start gap-2">
           <span className="text-primary font-mono text-xs mt-1 shrink-0">{String(index + 1).padStart(2, '0')}.</span>
-          <div className="flex-1">
+          <div className="flex-1 space-y-1.5">
             <p className="text-sm font-medium">{safeStr(item.title)}</p>
             {item.summary && (
-              <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{safeStr(item.summary)}</p>
+              <p className="text-xs text-muted-foreground leading-relaxed">{safeStr(item.summary)}</p>
             )}
-            <div className="flex items-center gap-3 mt-1">
+            {item.why_it_matters && (
+              <div className="text-xs border-l-2 border-primary/40 pl-2 mt-1">
+                <span className="font-semibold text-primary/80">Why it matters: </span>
+                <span className="text-muted-foreground">{safeStr(item.why_it_matters)}</span>
+              </div>
+            )}
+            {item.potential_impact && (
+              <div className="text-xs border-l-2 border-amber-500/40 pl-2">
+                <span className="font-semibold text-amber-400/80">Potential impact: </span>
+                <span className="text-muted-foreground">{safeStr(item.potential_impact)}</span>
+              </div>
+            )}
+            {item.early_warning && (
+              <div className="text-xs bg-red-500/10 border border-red-500/20 px-2 py-1 mt-1">
+                <span className="font-semibold text-red-400">Early Warning: </span>
+                <span className="text-red-300/80">{safeStr(item.early_warning)}</span>
+              </div>
+            )}
+            {item.special_flags && Array.isArray(item.special_flags) && item.special_flags.length > 0 && (
+              <div className="flex flex-wrap gap-1 mt-1">
+                {item.special_flags.map((flag, fi) => (
+                  <Badge key={fi} variant="outline" className="text-[9px] rounded-none px-1.5 py-0 border-amber-500/40 text-amber-400">
+                    {safeStr(flag)}
+                  </Badge>
+                ))}
+              </div>
+            )}
+            <div className="flex flex-wrap items-center gap-3 mt-1">
               {item.source_url && (
                 <a 
                   href={safeStr(item.source_url)} 
@@ -143,6 +170,14 @@ export default function DailyBrief({ api }) {
                   item.severity === 'critical' ? 'bg-red-500' : 
                   item.severity === 'high' ? 'bg-orange-500' : 'bg-yellow-500'
                 }`}>{safeStr(item.severity)}</Badge>
+              )}
+              {item.actors && (
+                <span className="text-[9px] text-muted-foreground font-mono">Actors: {safeStr(item.actors)}</span>
+              )}
+              {item.attention_level && (
+                <Badge variant="outline" className="text-[9px] rounded-none px-1 py-0 border-red-500/40 text-red-400">
+                  {safeStr(item.attention_level)}
+                </Badge>
               )}
             </div>
           </div>

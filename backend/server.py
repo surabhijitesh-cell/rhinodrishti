@@ -882,32 +882,97 @@ async def pipeline_status():
 
 
 async def generate_brief_for_date(date: str):
-    """Generate comprehensive daily brief with properly categorized sections and military-relevant content only"""
+    """Generate comprehensive daily brief with ALL critical/high items from 0600 IST previous day"""
     
     # Define NER states (India's Northeast Region)
     NER_STATES = ["Assam", "Meghalaya", "Mizoram", "Manipur", "Arunachal Pradesh", "Tripura"]
     
-    # ========== 1. GET CRITICAL/HIGH PRIORITY ITEMS FIRST (These MUST be in the brief) ==========
+    # ========== TIME WINDOW: 0600 IST previous day to now ==========
+    from datetime import timedelta
+    import pytz
+    ist = pytz.timezone("Asia/Kolkata")
+    now_utc = datetime.now(timezone.utc)
+    # 0600 IST previous day
+    today_ist = now_utc.astimezone(ist).replace(hour=6, minute=0, second=0, microsecond=0)
+    cutoff_ist = today_ist - timedelta(days=1)
+    cutoff_utc = cutoff_ist.astimezone(timezone.utc).isoformat()
+    logger.info(f"Brief time window: {cutoff_ist.isoformat()} IST to now")
+    
+    # ========== TITLE SIMILARITY DEDUP HELPER ==========
+    def normalize_title(title):
+        """Normalize title for similarity comparison"""
+        import re
+        t = (title or "").lower().strip()
+        t = re.sub(r'[^a-z0-9\s]', '', t)
+        t = re.sub(r'\s+', ' ', t).strip()
+        return t
+    
+    def is_duplicate_title(new_title, seen_titles, threshold=0.6):
+        """Check if title is similar to any already seen title"""
+        norm_new = normalize_title(new_title)
+        if not norm_new or len(norm_new) < 10:
+            return False
+        new_words = set(norm_new.split())
+        for seen in seen_titles:
+            seen_words = set(seen.split())
+            if not seen_words:
+                continue
+            overlap = len(new_words & seen_words)
+            total = max(len(new_words), len(seen_words))
+            if total > 0 and overlap / total >= threshold:
+                return True
+        return False
+    
+    # ========== 1. GET ALL CRITICAL/HIGH ITEMS since 0600 IST prev day ==========
     critical_high_items = await intelligence_col.find(
         {
             "processed": True,
+            "published_at": {"$gte": cutoff_utc},
             "$or": [
                 {"severity": {"$in": ["critical", "high"]}},
                 {"priority_score": {"$gte": 60}}
             ]
         },
         {"_id": 0}
-    ).sort([("priority_score", -1), ("published_at", -1)]).limit(20).to_list(20)
+    ).sort([("priority_score", -1), ("published_at", -1)]).to_list(100)
     
-    logger.info(f"Brief: Found {len(critical_high_items)} critical/high priority items")
+    # Fallback: if too few items in time window, expand to most recent critical/high
+    if len(critical_high_items) < 5:
+        logger.info(f"Brief: Only {len(critical_high_items)} items in time window, expanding to recent critical/high")
+        fallback_items = await intelligence_col.find(
+            {
+                "processed": True,
+                "$or": [
+                    {"severity": {"$in": ["critical", "high"]}},
+                    {"priority_score": {"$gte": 60}}
+                ]
+            },
+            {"_id": 0}
+        ).sort([("priority_score", -1), ("published_at", -1)]).limit(30).to_list(30)
+        # Merge without duplicates
+        existing_urls = set(i.get("source_url") for i in critical_high_items)
+        for item in fallback_items:
+            if item.get("source_url") not in existing_urls:
+                critical_high_items.append(item)
+                existing_urls.add(item.get("source_url"))
     
-    # ========== 2. GET NER REGIONAL ITEMS (Only from NER states, diverse sources) ==========
-    # First, get distinct sources to ensure diversity
+    # Dedup critical/high items by title similarity
+    seen_titles = []
+    deduped_critical = []
+    for item in critical_high_items:
+        title = item.get("title", "")
+        if not is_duplicate_title(title, seen_titles):
+            deduped_critical.append(item)
+            seen_titles.append(normalize_title(title))
+    
+    logger.info(f"Brief: {len(critical_high_items)} critical/high items found, {len(deduped_critical)} after title dedup")
+    
+    # ========== 2. GET NER REGIONAL ITEMS with time window ==========
     ner_items = await intelligence_col.find(
         {
             "processed": True,
+            "published_at": {"$gte": cutoff_utc},
             "state": {"$in": NER_STATES + ["Multiple"]},
-            # Filter for military relevance - must have tags or priority score
             "$or": [
                 {"priority_score": {"$gte": 30}},
                 {"tags": {"$exists": True, "$ne": []}},
@@ -915,34 +980,53 @@ async def generate_brief_for_date(date: str):
             ]
         },
         {"_id": 0}
-    ).sort([("priority_score", -1), ("published_at", -1)]).limit(50).to_list(50)
+    ).sort([("priority_score", -1), ("published_at", -1)]).limit(80).to_list(80)
     
-    # Diversify sources - don't let one source dominate
+    # Fallback: if too few NER items in time window
+    if len(ner_items) < 5:
+        logger.info(f"Brief: Only {len(ner_items)} NER items in window, expanding")
+        fallback_ner = await intelligence_col.find(
+            {
+                "processed": True,
+                "state": {"$in": NER_STATES + ["Multiple"]},
+                "severity": {"$in": ["critical", "high", "medium"]}
+            },
+            {"_id": 0}
+        ).sort([("priority_score", -1), ("published_at", -1)]).limit(40).to_list(40)
+        existing_urls = set(i.get("source_url") for i in ner_items)
+        for item in fallback_ner:
+            if item.get("source_url") not in existing_urls:
+                ner_items.append(item)
+                existing_urls.add(item.get("source_url"))
+    
+    # Dedup NER items and diversify sources
     seen_sources = {}
     diverse_ner_items = []
     for item in ner_items:
+        title = item.get("title", "")
         source = item.get("source", "Unknown")
+        if is_duplicate_title(title, seen_titles):
+            continue
         if source not in seen_sources:
             seen_sources[source] = 0
-        if seen_sources[source] < 3:  # Max 3 items per source
+        if seen_sources[source] < 4:
             diverse_ner_items.append(item)
             seen_sources[source] += 1
+            seen_titles.append(normalize_title(title))
     
-    logger.info(f"Brief: Found {len(ner_items)} NER items, diversified to {len(diverse_ner_items)} from {len(seen_sources)} sources")
+    logger.info(f"Brief: {len(ner_items)} NER items, {len(diverse_ner_items)} after dedup from {len(seen_sources)} sources")
     
-    # ========== 3. GET NATIONAL NEWS (Indian sources, NOT NER-specific, NOT Bangladesh/Myanmar) ==========
+    # ========== 3. GET NATIONAL NEWS with time window ==========
     national_items = await intelligence_col.find(
         {
             "processed": True,
-            # Must be from Indian national sources
+            "published_at": {"$gte": cutoff_utc},
             "source": {"$in": ["The Hindu - National", "NDTV India News", "News18 India", "Times of India"]},
-            # EXCLUDE NER states and international (they have their own sections)
             "state": {"$nin": NER_STATES + ["Bangladesh", "Myanmar", "Multiple"]}
         },
         {"_id": 0}
-    ).sort([("priority_score", -1), ("published_at", -1)]).limit(20).to_list(20)
+    ).sort([("priority_score", -1), ("published_at", -1)]).limit(30).to_list(30)
     
-    # Filter for military relevance - must have priority score or relevant tags
     military_national = [
         item for item in national_items
         if item.get("priority_score", 0) >= 25 or 
@@ -950,22 +1034,18 @@ async def generate_brief_for_date(date: str):
            any(tag in str(item.get("tags", [])).lower() for tag in ["military", "security", "cross-border", "insurgency", "foreign", "infrastructure", "defence", "border"])
     ]
     
-    logger.info(f"Brief: Found {len(national_items)} national items, {len(military_national)} military-relevant")
+    logger.info(f"Brief: {len(national_items)} national items, {len(military_national)} military-relevant")
     
-    # ========== 4. GET INTERNATIONAL NEWS (Bangladesh, Myanmar - SECURITY/STRATEGIC ONLY) ==========
-    # Focus on security-relevant news that impacts NER security paradigm
-    # EXCLUDE NER states - they belong in Key Developments
+    # ========== 4. GET INTERNATIONAL NEWS with time window ==========
     international_items = await intelligence_col.find(
         {
             "processed": True,
-            # Must be about Bangladesh, Myanmar, or involve China/Pakistan
+            "published_at": {"$gte": cutoff_utc},
             "$or": [
                 {"state": {"$in": ["Bangladesh", "Myanmar"]}},
                 {"countries_involved": {"$in": ["China", "Pakistan"]}},
             ],
-            # EXCLUDE NER states - they go to Key Developments section
             "state": {"$nin": NER_STATES + ["Multiple", "India", ""]},
-            # MUST have military/security relevance
             "$or": [
                 {"priority_score": {"$gte": 35}},
                 {"severity": {"$in": ["critical", "high"]}},
@@ -978,9 +1058,8 @@ async def generate_brief_for_date(date: str):
             ]
         },
         {"_id": 0}
-    ).sort([("priority_score", -1), ("published_at", -1)]).limit(30).to_list(30)
+    ).sort([("priority_score", -1), ("published_at", -1)]).limit(40).to_list(40)
     
-    # Additional filter: Remove sports, entertainment, cultural, petty crime news
     EXCLUDE_KEYWORDS = [
         'cricket', 'football', 'sports', 'match', 'tournament', 'celebrity', 'entertainment',
         'movie', 'film', 'music', 'concert', 'festival', 'recipe', 'fashion', 'lifestyle',
@@ -990,44 +1069,40 @@ async def generate_brief_for_date(date: str):
     ]
     
     def is_strategic_news(item):
-        """Filter for strategic/security relevance"""
         title = (item.get("title", "") or "").lower()
         summary = (item.get("ai_summary", "") or "").lower()
         content = title + " " + summary
-        
-        # Exclude if contains entertainment/sports keywords
         for kw in EXCLUDE_KEYWORDS:
             if kw in content:
                 return False
-        
-        # Must have priority score >= 35 or be from key security sources
         if item.get("priority_score", 0) >= 35:
             return True
-        
-        # Check for security-related tags
         tags = item.get("tags", [])
         security_tags = ["Military", "Border", "Insurgency", "Cross-border", "Arms", "Drug", "Security", "Foreign"]
         for tag in tags:
             for st in security_tags:
                 if st.lower() in tag.lower():
                     return True
-        
         return False
     
     strategic_intl_items = [item for item in international_items if is_strategic_news(item)]
     
-    # Diversify sources
+    # Dedup international items
     seen_intl_sources = {}
     diverse_intl_items = []
     for item in strategic_intl_items:
+        title = item.get("title", "")
         source = item.get("source", "Unknown")
+        if is_duplicate_title(title, seen_titles):
+            continue
         if source not in seen_intl_sources:
             seen_intl_sources[source] = 0
         if seen_intl_sources[source] < 3:
             diverse_intl_items.append(item)
             seen_intl_sources[source] += 1
+            seen_titles.append(normalize_title(title))
     
-    logger.info(f"Brief: Found {len(international_items)} intl items, {len(strategic_intl_items)} strategic, {len(diverse_intl_items)} diversified")
+    logger.info(f"Brief: {len(international_items)} intl items, {len(strategic_intl_items)} strategic, {len(diverse_intl_items)} deduplicated")
     
     # ========== 5. GET TWITTER FEEDS ==========
     twitter_items = await tweets_col.find({}, {"_id": 0}).sort("posted_at", -1).limit(25).to_list(25)
@@ -1036,8 +1111,7 @@ async def generate_brief_for_date(date: str):
     uploaded_docs = await uploads_col.find({"processed": True}, {"_id": 0}).sort("uploaded_at", -1).limit(10).to_list(10)
     
     # ========== 7. GENERATE AI BRIEF ==========
-    # Combine critical items with NER items for AI analysis
-    items_for_ai = critical_high_items + diverse_ner_items[:20]
+    items_for_ai = deduped_critical + diverse_ner_items[:20]
     
     try:
         from ai_pipeline import generate_daily_brief_ai
@@ -1046,73 +1120,74 @@ async def generate_brief_for_date(date: str):
         logger.error(f"AI brief generation failed: {e}")
         brief_data = generate_manual_brief(items_for_ai, date)
     
-    # ========== 8. BUILD KEY DEVELOPMENTS (Critical/High items FIRST) ==========
+    # ========== 8. BUILD COMPREHENSIVE KEY DEVELOPMENTS ==========
+    # Helper to build a comprehensive item dict with all analysis fields
+    def build_brief_item(item):
+        """Build a comprehensive brief item including analysis and pattern detection"""
+        result = {
+            "title": item.get("title", ""),
+            "summary": item.get("ai_summary", ""),
+            "source_url": item.get("source_url", ""),
+            "timestamp": item.get("published_at", ""),
+            "severity": item.get("severity", "medium"),
+            "priority_score": item.get("priority_score", 0),
+            "state": item.get("state", ""),
+            "source": item.get("source", ""),
+        }
+        # Include analysis fields
+        if item.get("why_it_matters"):
+            result["why_it_matters"] = item["why_it_matters"]
+        if item.get("potential_impact"):
+            result["potential_impact"] = item["potential_impact"]
+        if item.get("early_warning_signal"):
+            result["early_warning"] = item["early_warning_signal"]
+        if item.get("special_flags"):
+            flags = item["special_flags"]
+            result["special_flags"] = flags if isinstance(flags, list) else [str(flags)]
+        if item.get("actors"):
+            actors = item["actors"]
+            result["actors"] = ", ".join(actors) if isinstance(actors, list) else str(actors)
+        if item.get("attention_level") and item["attention_level"] != "Routine Monitoring":
+            result["attention_level"] = item["attention_level"]
+        return result
+    
     key_developments = []
     added_ids = set()
     
-    # Add critical/high items first
-    for item in critical_high_items[:5]:
-        if item.get("id") not in added_ids and item.get("state") in NER_STATES + ["Multiple", "Bangladesh", "Myanmar", ""]:
-            key_developments.append({
-                "title": item.get("title", ""),
-                "summary": item.get("ai_summary", ""),
-                "source_url": item.get("source_url", ""),
-                "timestamp": item.get("published_at", ""),
-                "severity": item.get("severity", "medium"),
-                "priority_score": item.get("priority_score", 0),
-                "state": item.get("state", ""),
-                "source": item.get("source", ""),
-                "early_warning": item.get("early_warning_signal", "")
-            })
-            added_ids.add(item.get("id"))
+    # Add ALL critical/high items (no cap - user wants comprehensive coverage)
+    for item in deduped_critical:
+        item_id = item.get("id")
+        if item_id and item_id not in added_ids:
+            if item.get("state") in NER_STATES + ["Multiple", "Bangladesh", "Myanmar", ""]:
+                key_developments.append(build_brief_item(item))
+                added_ids.add(item_id)
     
-    # Add diverse NER items
-    for item in diverse_ner_items[:10]:
-        if item.get("id") not in added_ids:
-            key_developments.append({
-                "title": item.get("title", ""),
-                "summary": item.get("ai_summary", ""),
-                "source_url": item.get("source_url", ""),
-                "timestamp": item.get("published_at", ""),
-                "severity": item.get("severity", "medium"),
-                "priority_score": item.get("priority_score", 0),
-                "state": item.get("state", ""),
-                "source": item.get("source", ""),
-                "early_warning": item.get("early_warning_signal", "")
-            })
-            added_ids.add(item.get("id"))
+    # Add diverse NER items (medium+ severity)
+    for item in diverse_ner_items:
+        item_id = item.get("id")
+        if item_id and item_id not in added_ids:
+            key_developments.append(build_brief_item(item))
+            added_ids.add(item_id)
     
-    brief_data["key_developments"] = key_developments[:15]
+    brief_data["key_developments"] = key_developments
     
-    # ========== 9. BUILD NATIONAL NEWS (Military relevant only, NOT NER) ==========
-    brief_data["national_news"] = [
-        {
-            "title": item.get("title", ""),
-            "summary": item.get("ai_summary", item.get("raw_content", "")[:200]),
-            "source_url": item.get("source_url", ""),
-            "timestamp": item.get("published_at", ""),
-            "source": item.get("source", ""),
-            "priority_score": item.get("priority_score", 0),
-            "severity": item.get("severity", "low")
-        }
-        for item in military_national[:15]
-        if item.get("id") not in added_ids  # Don't duplicate items from NER section
-    ]
+    # ========== 9. BUILD NATIONAL NEWS ==========
+    national_deduped = []
+    for item in military_national:
+        title = item.get("title", "")
+        if item.get("id") not in added_ids and not is_duplicate_title(title, seen_titles):
+            national_deduped.append(build_brief_item(item))
+            seen_titles.append(normalize_title(title))
+    brief_data["national_news"] = national_deduped[:15]
     
-    # ========== 10. BUILD INTERNATIONAL NEWS (Bangladesh, Myanmar, Foreign powers) ==========
+    # ========== 10. BUILD INTERNATIONAL NEWS ==========
     brief_data["international_news"] = [
         {
-            "title": item.get("title", ""),
-            "summary": item.get("ai_summary", item.get("raw_content", "")[:200]),
-            "source_url": item.get("source_url", ""),
-            "timestamp": item.get("published_at", ""),
-            "source": item.get("source", ""),
-            "countries": ", ".join(item.get("countries_involved", [])),
-            "state": item.get("state", ""),
-            "priority_score": item.get("priority_score", 0)
+            **build_brief_item(item),
+            "countries": ", ".join(item.get("countries_involved", [])) if isinstance(item.get("countries_involved"), list) else str(item.get("countries_involved", "")),
         }
-        for item in diverse_intl_items[:15]
-        if item.get("id") not in added_ids  # Don't duplicate
+        for item in diverse_intl_items
+        if item.get("id") not in added_ids
     ]
     
     # ========== 11. ADD TWITTER AND UPLOADS ==========
@@ -1236,19 +1311,57 @@ async def fetch_and_process_news():
         scan_status["articles_found"] = len(articles)
         logger.info(f"Fetched {len(articles)} relevant articles from RSS feeds")
 
-        # Step 2: Deduplicate
+        # Step 2: Deduplicate by URL AND title similarity
+        import re
+        def normalize_for_dedup(title):
+            t = (title or "").lower().strip()
+            t = re.sub(r'[^a-z0-9\s]', '', t)
+            t = re.sub(r'\s+', ' ', t).strip()
+            return t
+        
+        def title_is_similar(t1, existing_titles, threshold=0.65):
+            words1 = set(t1.split())
+            for t2 in existing_titles:
+                words2 = set(t2.split())
+                if not words2:
+                    continue
+                overlap = len(words1 & words2)
+                total = max(len(words1), len(words2))
+                if total > 0 and overlap / total >= threshold:
+                    return True
+            return False
+        
+        # Get recent titles from DB for title-level dedup
+        recent_db_items = await intelligence_col.find(
+            {"processed": True},
+            {"title": 1, "source_url": 1, "_id": 0}
+        ).sort("fetched_at", -1).limit(500).to_list(500)
+        
+        existing_urls = set(item.get("source_url", "") for item in recent_db_items)
+        existing_titles = [normalize_for_dedup(item.get("title", "")) for item in recent_db_items]
+        
         new_articles = []
+        url_dupes = 0
+        title_dupes = 0
         for article in articles:
             url = article.get("source_url", "")
+            title = article.get("title", "")
             if not url:
                 continue
-            existing = await intelligence_col.find_one({"source_url": url}, {"_id": 1})
-            if not existing:
-                new_articles.append(article)
+            if url in existing_urls:
+                url_dupes += 1
+                continue
+            norm_title = normalize_for_dedup(title)
+            if len(norm_title) > 10 and title_is_similar(norm_title, existing_titles):
+                title_dupes += 1
+                continue
+            new_articles.append(article)
+            existing_urls.add(url)
+            existing_titles.append(norm_title)
         
-        skipped = len(articles) - len(new_articles)
+        skipped = url_dupes + title_dupes
         scan_status["relevant_found"] = len(new_articles)
-        logger.info(f"Deduplication: {skipped} already in DB, {len(new_articles)} new articles to process")
+        logger.info(f"Deduplication: {url_dupes} URL dupes, {title_dupes} title dupes, {len(new_articles)} new articles")
 
         if not new_articles:
             logger.info("No new articles to process. Cycle complete.")
