@@ -313,7 +313,18 @@ async def get_daily_brief_pdf(date: Optional[str] = None):
     critical = await intelligence_col.count_documents({"severity": "critical"})
     high = await intelligence_col.count_documents({"severity": "high"})
 
-    pdf_bytes = generate_brief_pdf(brief, date, total, critical, high)
+    # Query latest uploaded documents for this date directly from DB
+    today_start = f"{date}T00:00:00"
+    today_end = f"{date}T23:59:59"
+    fresh_uploads = await uploads_col.find(
+        {
+            "processed": True,
+            "uploaded_at": {"$gte": today_start, "$lte": today_end}
+        },
+        {"_id": 0}
+    ).sort("uploaded_at", -1).to_list(20)
+
+    pdf_bytes = generate_brief_pdf(brief, date, total, critical, high, fresh_uploads)
 
     import io
     return StreamingResponse(
@@ -441,7 +452,7 @@ def clean_for_pdf(text: str) -> str:
     return text.encode('latin-1', 'replace').decode('latin-1')
 
 
-def generate_brief_pdf(brief: dict, date: str, total: int, critical: int, high: int) -> bytes:
+def generate_brief_pdf(brief: dict, date: str, total: int, critical: int, high: int, fresh_uploads: list = None) -> bytes:
     """Generate a professional PDF for the daily intelligence brief"""
     from fpdf import FPDF
 
@@ -655,18 +666,14 @@ def generate_brief_pdf(brief: dict, date: str, total: int, critical: int, high: 
     pdf.ln(2)
 
     # ========== UPLOADED DOCUMENT INSIGHTS (same date only, NER-focused) ==========
-    uploaded_insights = brief.get('uploaded_insights', [])
-    # Filter to same-date documents with NER relevance
-    ner_keywords = ['assam', 'meghalaya', 'mizoram', 'manipur', 'arunachal', 'tripura', 'nagaland', 'northeast', 'ner', 'nscn', 'ulfa', 'pla', 'rpf', 'myanmar', 'border']
+    ner_keywords = ['assam', 'meghalaya', 'mizoram', 'manipur', 'arunachal', 'tripura', 'nagaland', 
+                    'northeast', 'ner', 'nscn', 'ulfa', 'pla', 'rpf', 'myanmar', 'border',
+                    'insurgency', 'militant', 'security force', 'army', 'bsf', 'crpf', 'assam rifles']
     same_date_docs = []
-    for doc in uploaded_insights:
-        if isinstance(doc, dict):
-            uploaded_at = str(doc.get('uploaded_at', ''))[:10]
-            if uploaded_at == date:
-                # Check NER relevance
-                analysis_text = (str(doc.get('ai_analysis', '')) + str(doc.get('filename', ''))).lower()
-                if any(kw in analysis_text for kw in ner_keywords):
-                    same_date_docs.append(doc)
+    for doc in (fresh_uploads or []):
+        analysis_text = (str(doc.get('ai_analysis', '')) + str(doc.get('extracted_text', '')) + str(doc.get('filename', ''))).lower()
+        if any(kw in analysis_text for kw in ner_keywords):
+            same_date_docs.append(doc)
     
     if same_date_docs:
         pdf.section_title('UPLOADED DOCUMENT INSIGHTS')
