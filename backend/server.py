@@ -482,7 +482,7 @@ def generate_brief_pdf(brief: dict, date: str, total: int, critical: int, high: 
         
         def news_item_with_link(self, index, title, summary, source_url, timestamp=""):
             """Render a news item with embedded source link"""
-            if self.get_y() > 260:  # Check if near page end
+            if self.get_y() > 260:
                 self.add_page()
             
             self.set_font('Helvetica', 'B', 9)
@@ -493,7 +493,7 @@ def generate_brief_pdf(brief: dict, date: str, total: int, critical: int, high: 
             if summary:
                 self.set_font('Helvetica', '', 8)
                 self.set_text_color(60, 60, 60)
-                clean_summary = summary.encode('latin-1', 'replace').decode('latin-1')[:250]
+                clean_summary = summary.encode('latin-1', 'replace').decode('latin-1')[:400]
                 if clean_summary:
                     self.multi_cell(0, 4, clean_summary, new_x="LMARGIN", new_y="NEXT")
             
@@ -509,6 +509,98 @@ def generate_brief_pdf(brief: dict, date: str, total: int, critical: int, high: 
                 self.cell(0, 4, f'Time: {timestamp[:19]}', new_x="LMARGIN", new_y="NEXT")
             
             self.ln(2)
+        
+        def news_item_comprehensive(self, index, item):
+            """Render a comprehensive news item with full analysis fields"""
+            if self.get_y() > 240:
+                self.add_page()
+            
+            title = item.get('title', '')
+            summary = item.get('summary', '')
+            source_url = item.get('source_url', '')
+            severity = item.get('severity', '')
+            state = item.get('state', '')
+            priority = item.get('priority_score', 0)
+            
+            # Title with severity badge
+            self.set_font('Helvetica', 'B', 9)
+            self.set_text_color(40, 60, 80)
+            sev_label = f' [{severity.upper()}]' if severity in ('critical', 'high') else ''
+            clean_title = f'{index}. {title}{sev_label}'.encode('latin-1', 'replace').decode('latin-1')[:180]
+            self.multi_cell(0, 5, clean_title, new_x="LMARGIN", new_y="NEXT")
+            
+            # Summary
+            if summary:
+                self.set_font('Helvetica', '', 8)
+                self.set_text_color(60, 60, 60)
+                self.multi_cell(0, 4, summary.encode('latin-1', 'replace').decode('latin-1')[:500], new_x="LMARGIN", new_y="NEXT")
+            
+            # Why it matters
+            why = item.get('why_it_matters', '')
+            if why:
+                if self.get_y() > 270: self.add_page()
+                self.set_font('Helvetica', 'B', 7)
+                self.set_text_color(50, 120, 50)
+                self.cell(30, 4, 'Why it matters: ', new_x="END")
+                self.set_font('Helvetica', '', 7)
+                self.set_text_color(80, 80, 80)
+                self.multi_cell(0, 4, why.encode('latin-1', 'replace').decode('latin-1')[:300], new_x="LMARGIN", new_y="NEXT")
+            
+            # Potential impact
+            impact = item.get('potential_impact', '')
+            if impact:
+                if self.get_y() > 270: self.add_page()
+                self.set_font('Helvetica', 'B', 7)
+                self.set_text_color(180, 120, 30)
+                self.cell(30, 4, 'Potential impact: ', new_x="END")
+                self.set_font('Helvetica', '', 7)
+                self.set_text_color(80, 80, 80)
+                self.multi_cell(0, 4, impact.encode('latin-1', 'replace').decode('latin-1')[:300], new_x="LMARGIN", new_y="NEXT")
+            
+            # Early warning
+            warning = item.get('early_warning', '')
+            if warning:
+                if self.get_y() > 270: self.add_page()
+                self.set_font('Helvetica', 'B', 7)
+                self.set_text_color(200, 50, 50)
+                self.cell(30, 4, 'EARLY WARNING: ', new_x="END")
+                self.set_font('Helvetica', '', 7)
+                self.set_text_color(150, 50, 50)
+                self.multi_cell(0, 4, warning.encode('latin-1', 'replace').decode('latin-1')[:300], new_x="LMARGIN", new_y="NEXT")
+            
+            # Special flags
+            flags = item.get('special_flags', [])
+            if flags and isinstance(flags, list) and len(flags) > 0:
+                self.set_font('Helvetica', 'I', 7)
+                self.set_text_color(140, 100, 40)
+                flags_text = 'Flags: ' + ' | '.join(str(f) for f in flags[:5])
+                self.cell(0, 4, flags_text.encode('latin-1', 'replace').decode('latin-1')[:150], new_x="LMARGIN", new_y="NEXT")
+            
+            # Actors
+            actors = item.get('actors', '')
+            if actors:
+                self.set_font('Helvetica', 'I', 7)
+                self.set_text_color(100, 100, 120)
+                self.cell(0, 4, f'Actors: {str(actors)[:120]}'.encode('latin-1', 'replace').decode('latin-1'), new_x="LMARGIN", new_y="NEXT")
+            
+            # Source link and metadata
+            meta_parts = []
+            if state: meta_parts.append(f'Region: {state}')
+            if priority: meta_parts.append(f'Priority: {priority}')
+            if source_url:
+                url_display = source_url[:60] + '...' if len(source_url) > 60 else source_url
+                meta_parts.append(f'Source: {url_display}')
+            
+            if meta_parts:
+                self.set_font('Helvetica', 'I', 7)
+                self.set_text_color(100, 100, 100)
+                meta_text = ' | '.join(meta_parts)
+                if source_url:
+                    self.cell(0, 4, meta_text.encode('latin-1', 'replace').decode('latin-1')[:180], new_x="LMARGIN", new_y="NEXT", link=source_url)
+                else:
+                    self.cell(0, 4, meta_text.encode('latin-1', 'replace').decode('latin-1')[:180], new_x="LMARGIN", new_y="NEXT")
+            
+            self.ln(3)
 
     pdf = BriefPDF()
     pdf.alias_nb_pages()
@@ -536,9 +628,9 @@ def generate_brief_pdf(brief: dict, date: str, total: int, critical: int, high: 
     pdf.section_title('NORTHEAST REGION - KEY DEVELOPMENTS')
     developments = brief.get('key_developments', [])
     if developments:
-        for i, dev in enumerate(developments[:10], 1):
+        for i, dev in enumerate(developments, 1):
             if isinstance(dev, dict):
-                pdf.news_item_with_link(i, dev.get('title', ''), dev.get('summary', ''), dev.get('source_url', ''), dev.get('timestamp', ''))
+                pdf.news_item_comprehensive(i, dev)
             else:
                 pdf.set_font('Helvetica', '', 9)
                 pdf.set_text_color(40, 40, 40)
@@ -578,7 +670,7 @@ def generate_brief_pdf(brief: dict, date: str, total: int, critical: int, high: 
     if national_news:
         for i, news in enumerate(national_news[:15], 1):
             if isinstance(news, dict):
-                pdf.news_item_with_link(i, news.get('title', ''), news.get('summary', ''), news.get('source_url', ''), news.get('timestamp', ''))
+                pdf.news_item_comprehensive(i, news)
             else:
                 pdf.body_text(f'{i}. {news}')
     else:
@@ -591,7 +683,7 @@ def generate_brief_pdf(brief: dict, date: str, total: int, critical: int, high: 
     if intl_news:
         for i, news in enumerate(intl_news[:15], 1):
             if isinstance(news, dict):
-                pdf.news_item_with_link(i, news.get('title', ''), news.get('summary', ''), news.get('source_url', ''), news.get('timestamp', ''))
+                pdf.news_item_comprehensive(i, news)
             else:
                 pdf.body_text(f'{i}. {news}')
     else:
@@ -907,19 +999,64 @@ async def generate_brief_for_date(date: str):
         t = re.sub(r'\s+', ' ', t).strip()
         return t
     
-    def is_duplicate_title(new_title, seen_titles, threshold=0.6):
-        """Check if title is similar to any already seen title"""
+    def extract_key_entities(title):
+        """Extract key entities (names, places, orgs) for event matching"""
+        import re
+        t = (title or "").lower()
+        # Known NER entities
+        entities = set()
+        known_orgs = ['ulfa', 'nscn', 'rpf', 'pla', 'hnlc', 'gnla', 'kla', 'mnf', 'unlf', 'prepak', 'knf', 'arsa', 'tnla', 'mndaa', 'assam rifles', 'bsf', 'crpf', 'army']
+        known_places = ['manipur', 'assam', 'meghalaya', 'mizoram', 'tripura', 'arunachal', 'nagaland', 'tinsukia', 'changlang', 'tamenglong', 'imphal', 'dimapur', 'guwahati', 'silchar', 'agartala', 'shillong', 'aizawl', 'itanagar', 'kohima', 'myanmar', 'bangladesh', 'dhaka', 'chittagong', 'cox']
+        known_events = ['rpg', 'grenade', 'gunfire', 'gunfight', 'bomb', 'blast', 'attack', 'ambush', 'shootout', 'firing', 'seized', 'arrested', 'killed', 'injured', 'rally', 'protest', 'blockade', 'bandh']
+        
+        for org in known_orgs:
+            if org in t:
+                entities.add(org)
+        for place in known_places:
+            if place in t:
+                entities.add(place)
+        for event in known_events:
+            if event in t:
+                entities.add(event)
+        # Extract numbers (casualties, etc.)
+        numbers = re.findall(r'\b(\d+)\s*(?:killed|injured|arrested|seized|dead)\b', t)
+        for n in numbers:
+            entities.add(f"count_{n}")
+        return entities
+    
+    def is_duplicate_title(new_title, seen_titles, seen_entities_list, threshold=0.55):
+        """Check if title is similar to any already seen title using word overlap AND entity matching"""
         norm_new = normalize_title(new_title)
         if not norm_new or len(norm_new) < 10:
             return False
         new_words = set(norm_new.split())
-        for seen in seen_titles:
+        new_entities = extract_key_entities(new_title)
+        
+        for i, seen in enumerate(seen_titles):
             seen_words = set(seen.split())
             if not seen_words:
                 continue
+            # Word overlap check
             overlap = len(new_words & seen_words)
             total = max(len(new_words), len(seen_words))
-            if total > 0 and overlap / total >= threshold:
+            word_sim = overlap / total if total > 0 else 0
+            
+            # Entity overlap check (stricter - same event if key entities match)
+            seen_ents = seen_entities_list[i] if i < len(seen_entities_list) else set()
+            if new_entities and seen_ents:
+                ent_overlap = len(new_entities & seen_ents)
+                ent_total = max(len(new_entities), len(seen_ents))
+                ent_sim = ent_overlap / ent_total if ent_total > 0 else 0
+                
+                # If 3+ entities match (e.g. ULFA + Tinsukia + attack), it's the same event
+                if ent_overlap >= 3:
+                    return True
+                # If 2 entities match AND word similarity is moderate
+                if ent_overlap >= 2 and word_sim >= 0.35:
+                    return True
+            
+            # Standard word similarity
+            if word_sim >= threshold:
                 return True
         return False
     
@@ -958,12 +1095,14 @@ async def generate_brief_for_date(date: str):
     
     # Dedup critical/high items by title similarity
     seen_titles = []
+    seen_entities = []
     deduped_critical = []
     for item in critical_high_items:
         title = item.get("title", "")
-        if not is_duplicate_title(title, seen_titles):
+        if not is_duplicate_title(title, seen_titles, seen_entities):
             deduped_critical.append(item)
             seen_titles.append(normalize_title(title))
+            seen_entities.append(extract_key_entities(title))
     
     logger.info(f"Brief: {len(critical_high_items)} critical/high items found, {len(deduped_critical)} after title dedup")
     
@@ -1005,7 +1144,7 @@ async def generate_brief_for_date(date: str):
     for item in ner_items:
         title = item.get("title", "")
         source = item.get("source", "Unknown")
-        if is_duplicate_title(title, seen_titles):
+        if is_duplicate_title(title, seen_titles, seen_entities):
             continue
         if source not in seen_sources:
             seen_sources[source] = 0
@@ -1013,6 +1152,7 @@ async def generate_brief_for_date(date: str):
             diverse_ner_items.append(item)
             seen_sources[source] += 1
             seen_titles.append(normalize_title(title))
+            seen_entities.append(extract_key_entities(title))
     
     logger.info(f"Brief: {len(ner_items)} NER items, {len(diverse_ner_items)} after dedup from {len(seen_sources)} sources")
     
@@ -1093,7 +1233,7 @@ async def generate_brief_for_date(date: str):
     for item in strategic_intl_items:
         title = item.get("title", "")
         source = item.get("source", "Unknown")
-        if is_duplicate_title(title, seen_titles):
+        if is_duplicate_title(title, seen_titles, seen_entities):
             continue
         if source not in seen_intl_sources:
             seen_intl_sources[source] = 0
@@ -1101,6 +1241,7 @@ async def generate_brief_for_date(date: str):
             diverse_intl_items.append(item)
             seen_intl_sources[source] += 1
             seen_titles.append(normalize_title(title))
+            seen_entities.append(extract_key_entities(title))
     
     logger.info(f"Brief: {len(international_items)} intl items, {len(strategic_intl_items)} strategic, {len(diverse_intl_items)} deduplicated")
     
@@ -1175,9 +1316,10 @@ async def generate_brief_for_date(date: str):
     national_deduped = []
     for item in military_national:
         title = item.get("title", "")
-        if item.get("id") not in added_ids and not is_duplicate_title(title, seen_titles):
+        if item.get("id") not in added_ids and not is_duplicate_title(title, seen_titles, seen_entities):
             national_deduped.append(build_brief_item(item))
             seen_titles.append(normalize_title(title))
+            seen_entities.append(extract_key_entities(title))
     brief_data["national_news"] = national_deduped[:15]
     
     # ========== 10. BUILD INTERNATIONAL NEWS ==========
