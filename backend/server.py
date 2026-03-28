@@ -621,14 +621,27 @@ def generate_brief_pdf(brief: dict, date: str, total: int, critical: int, high: 
     pdf.set_xy(15, y_start + 7)
     pdf.set_font('Helvetica', '', 8)
     pdf.set_text_color(100, 100, 100)
-    pdf.cell(0, 5, 'Covering: Assam, Meghalaya, Mizoram, Manipur, Arunachal Pradesh, Tripura, Bangladesh, Myanmar')
+    pdf.cell(0, 5, 'Covering: Assam, Meghalaya, Mizoram, Manipur, Arunachal Pradesh, Tripura')
     pdf.ln(15)
 
-    # ========== NER REGIONAL SECTION ==========
+    # ========== NER REGIONAL SECTION (ONLY SECTION) ==========
     pdf.section_title('NORTHEAST REGION - KEY DEVELOPMENTS')
+    
+    # Filter key developments to NER-only items
+    NER_STATES_PDF = ["Assam", "Meghalaya", "Mizoram", "Manipur", "Arunachal Pradesh", "Tripura", "Multiple", ""]
     developments = brief.get('key_developments', [])
-    if developments:
-        for i, dev in enumerate(developments, 1):
+    ner_developments = []
+    for dev in developments:
+        if isinstance(dev, dict):
+            state = dev.get('state', '')
+            # Include NER states, or items without a state (likely NER-related from the query)
+            if state in NER_STATES_PDF or not state:
+                ner_developments.append(dev)
+        else:
+            ner_developments.append(dev)
+    
+    if ner_developments:
+        for i, dev in enumerate(ner_developments, 1):
             if isinstance(dev, dict):
                 pdf.news_item_comprehensive(i, dev)
             else:
@@ -641,108 +654,34 @@ def generate_brief_pdf(brief: dict, date: str, total: int, critical: int, high: 
         pdf.body_text('No key developments recorded for this period.')
     pdf.ln(2)
 
-    # Region-wise Highlights
-    pdf.section_title('REGION-WISE HIGHLIGHTS')
-    highlights = brief.get('state_highlights', {})
-    if highlights:
-        for region, text in highlights.items():
-            pdf.set_font('Helvetica', 'B', 9)
-            pdf.set_text_color(50, 60, 40)
-            pdf.cell(0, 5, region.upper(), new_x="LMARGIN", new_y="NEXT")
-            pdf.set_font('Helvetica', '', 9)
-            pdf.set_text_color(60, 60, 60)
-            clean_text = str(text).encode('latin-1', 'replace').decode('latin-1')
-            pdf.multi_cell(0, 5, clean_text)
-            pdf.ln(2)
-    else:
-        pdf.body_text('No region-specific highlights available.')
-    pdf.ln(2)
-
-    # Cross-Border & Foreign Power Insights
-    pdf.section_title('CROSS-BORDER & FOREIGN POWER INSIGHTS')
-    cross = brief.get('cross_border_insights', 'No significant cross-border developments.')
-    pdf.body_text(cross)
-    
-    # ========== NATIONAL NEWS SECTION ==========
-    pdf.add_page()
-    pdf.section_title('NATIONAL NEWS')
-    national_news = brief.get('national_news', [])
-    if national_news:
-        for i, news in enumerate(national_news[:15], 1):
-            if isinstance(news, dict):
-                pdf.news_item_comprehensive(i, news)
-            else:
-                pdf.body_text(f'{i}. {news}')
-    else:
-        pdf.body_text('No national news items available for this period.')
-    
-    # ========== INTERNATIONAL NEWS SECTION ==========
-    pdf.add_page()
-    pdf.section_title('INTERNATIONAL NEWS')
-    intl_news = brief.get('international_news', [])
-    if intl_news:
-        for i, news in enumerate(intl_news[:15], 1):
-            if isinstance(news, dict):
-                pdf.news_item_comprehensive(i, news)
-            else:
-                pdf.body_text(f'{i}. {news}')
-    else:
-        pdf.body_text('No international news items available for this period.')
-    
-    # ========== X (TWITTER) WATCH SECTION ==========
-    pdf.add_page()
-    pdf.section_title('X (TWITTER) WATCH - DEFENSE & GOVERNMENT ACCOUNTS')
-    twitter_highlights = brief.get('twitter_highlights', [])
-    if twitter_highlights:
-        for i, tweet in enumerate(twitter_highlights[:20], 1):
-            if isinstance(tweet, dict):
-                handle = tweet.get('handle', '')
-                account = tweet.get('account_name', '')
-                text = tweet.get('tweet_text', '')
-                url = tweet.get('tweet_url', '')
-                posted = tweet.get('posted_at', '')
-                
-                pdf.set_font('Helvetica', 'B', 9)
-                pdf.set_text_color(29, 161, 242)  # Twitter blue
-                pdf.cell(0, 5, f'{i}. {handle} ({account})', new_x="LMARGIN", new_y="NEXT")
-                
-                pdf.set_font('Helvetica', '', 8)
-                pdf.set_text_color(40, 40, 40)
-                clean_text = text.encode('latin-1', 'replace').decode('latin-1')[:400]
-                pdf.multi_cell(0, 4, clean_text)
-                
-                if url:
-                    pdf.set_font('Helvetica', 'I', 7)
-                    pdf.set_text_color(70, 100, 150)
-                    pdf.cell(0, 4, f'[Link: {url[:60]}...]', new_x="LMARGIN", new_y="NEXT", link=url)
-                
-                if posted:
-                    pdf.set_font('Helvetica', 'I', 7)
-                    pdf.set_text_color(120, 120, 120)
-                    pdf.cell(0, 4, f'Posted: {posted}', new_x="LMARGIN", new_y="NEXT")
-                
-                pdf.ln(2)
-    else:
-        pdf.body_text('No Twitter/X updates available. Accounts monitored: @adgpi, @IAF_MCC, @indiannavy, @DefenceMinIndia, @MEAIndia, @HMOIndia, @PMOIndia, @BSF_India, @craborCRPF, @official_dgar')
-    
-    # ========== UPLOADED DOCUMENT INSIGHTS ==========
+    # ========== UPLOADED DOCUMENT INSIGHTS (same date only, NER-focused) ==========
     uploaded_insights = brief.get('uploaded_insights', [])
-    if uploaded_insights:
-        pdf.add_page()
+    # Filter to same-date documents with NER relevance
+    ner_keywords = ['assam', 'meghalaya', 'mizoram', 'manipur', 'arunachal', 'tripura', 'nagaland', 'northeast', 'ner', 'nscn', 'ulfa', 'pla', 'rpf', 'myanmar', 'border']
+    same_date_docs = []
+    for doc in uploaded_insights:
+        if isinstance(doc, dict):
+            uploaded_at = str(doc.get('uploaded_at', ''))[:10]
+            if uploaded_at == date:
+                # Check NER relevance
+                analysis_text = (str(doc.get('ai_analysis', '')) + str(doc.get('filename', ''))).lower()
+                if any(kw in analysis_text for kw in ner_keywords):
+                    same_date_docs.append(doc)
+    
+    if same_date_docs:
         pdf.section_title('UPLOADED DOCUMENT INSIGHTS')
-        for i, doc in enumerate(uploaded_insights[:10], 1):
-            if isinstance(doc, dict):
-                pdf.set_font('Helvetica', 'B', 9)
-                pdf.set_text_color(80, 60, 40)
-                filename = doc.get('filename', 'Unknown Document')
-                pdf.cell(0, 5, f'{i}. {filename}', new_x="LMARGIN", new_y="NEXT")
-                
-                pdf.set_font('Helvetica', '', 8)
-                pdf.set_text_color(60, 60, 60)
-                analysis = doc.get('ai_analysis', doc.get('content_summary', ''))[:500]
-                clean_analysis = analysis.encode('latin-1', 'replace').decode('latin-1')
-                pdf.multi_cell(0, 4, clean_analysis)
-                pdf.ln(2)
+        for i, doc in enumerate(same_date_docs[:10], 1):
+            pdf.set_font('Helvetica', 'B', 9)
+            pdf.set_text_color(80, 60, 40)
+            filename = doc.get('filename', 'Unknown Document')
+            pdf.cell(0, 5, f'{i}. {filename}', new_x="LMARGIN", new_y="NEXT")
+            
+            pdf.set_font('Helvetica', '', 8)
+            pdf.set_text_color(60, 60, 60)
+            analysis = doc.get('ai_analysis', doc.get('content_summary', ''))[:500]
+            clean_analysis = analysis.encode('latin-1', 'replace').decode('latin-1')
+            pdf.multi_cell(0, 4, clean_analysis)
+            pdf.ln(2)
     
     # ========== ANALYST SUMMARY ==========
     pdf.add_page()
