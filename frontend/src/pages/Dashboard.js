@@ -147,7 +147,7 @@ function ScanProgressBar({ api }) {
             <div className="flex items-center gap-1.5" data-testid="last-scan-time">
               <Clock size={11} className="text-muted-foreground" />
               <span className="text-muted-foreground">Last scan:</span>
-              <span className="font-mono font-medium">{formatIST(scanStatus.last_scan_at)}</span>
+              <span className="font-mono font-medium">{scanStatus.last_scan_at ? formatIST(scanStatus.last_scan_at) : "No scans yet"}</span>
             </div>
             {lastResult && !lastResult.error && (
               <>
