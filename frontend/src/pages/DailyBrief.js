@@ -61,13 +61,30 @@ export default function DailyBrief({ api }) {
     }
   };
 
+  // Safe string render helper - prevents React error #31
+  const safeStr = (val) => {
+    if (val === null || val === undefined) return '';
+    if (typeof val === 'string') return val;
+    if (typeof val === 'number' || typeof val === 'boolean') return String(val);
+    return JSON.stringify(val);
+  };
+
   // Helper to render a news item (string or object)
   const renderNewsItem = (item, index) => {
+    if (!item) return null;
     if (typeof item === 'string') {
       return (
         <li key={index} className="brief-bullet">
           <span className="text-primary font-mono text-xs mt-0.5 shrink-0">{String(index + 1).padStart(2, '0')}.</span>
           <span className="text-sm">{item}</span>
+        </li>
+      );
+    }
+    if (typeof item !== 'object') {
+      return (
+        <li key={index} className="brief-bullet">
+          <span className="text-primary font-mono text-xs mt-0.5 shrink-0">{String(index + 1).padStart(2, '0')}.</span>
+          <span className="text-sm">{String(item)}</span>
         </li>
       );
     }
@@ -77,14 +94,14 @@ export default function DailyBrief({ api }) {
         <div className="flex items-start gap-2">
           <span className="text-primary font-mono text-xs mt-1 shrink-0">{String(index + 1).padStart(2, '0')}.</span>
           <div className="flex-1">
-            <p className="text-sm font-medium">{item.title}</p>
+            <p className="text-sm font-medium">{safeStr(item.title)}</p>
             {item.summary && (
-              <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{item.summary}</p>
+              <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{safeStr(item.summary)}</p>
             )}
             <div className="flex items-center gap-3 mt-1">
               {item.source_url && (
                 <a 
-                  href={item.source_url} 
+                  href={safeStr(item.source_url)} 
                   target="_blank" 
                   rel="noopener noreferrer"
                   className="text-xs text-primary hover:underline flex items-center gap-1"
@@ -94,13 +111,13 @@ export default function DailyBrief({ api }) {
                 </a>
               )}
               {item.state && (
-                <Badge variant="outline" className="text-[9px] rounded-none px-1 py-0">{item.state}</Badge>
+                <Badge variant="outline" className="text-[9px] rounded-none px-1 py-0">{safeStr(item.state)}</Badge>
               )}
               {item.severity && item.severity !== 'low' && (
                 <Badge className={`text-[9px] rounded-none px-1 py-0 ${
                   item.severity === 'critical' ? 'bg-red-500' : 
                   item.severity === 'high' ? 'bg-orange-500' : 'bg-yellow-500'
-                }`}>{item.severity}</Badge>
+                }`}>{safeStr(item.severity)}</Badge>
               )}
             </div>
           </div>
@@ -184,7 +201,7 @@ export default function DailyBrief({ api }) {
               </CardTitle>
             </CardHeader>
             <CardContent className="p-4" data-testid="analyst-summary">
-              <p className="text-sm leading-relaxed">{brief.analyst_summary}</p>
+              <p className="text-sm leading-relaxed">{safeStr(brief.analyst_summary)}</p>
             </CardContent>
           </Card>
 
@@ -257,10 +274,9 @@ export default function DailyBrief({ api }) {
                       <div className="flex items-start gap-2">
                         <span className="text-[#1DA1F2] font-mono text-xs mt-1">{String(i + 1).padStart(2, '0')}.</span>
                         <div>
-                          <p className="text-sm font-medium text-[#1DA1F2]">
-                            {tweet.handle} <span className="text-muted-foreground font-normal">({tweet.account_name})</span>
+                      <p className="text-sm font-medium">{safeStr(tweet.handle)} <span className="text-muted-foreground font-normal">({safeStr(tweet.account_name)})</span>
                           </p>
-                          <p className="text-sm mt-1">{tweet.tweet_text}</p>
+                          <p className="text-sm mt-1">{safeStr(tweet.tweet_text)}</p>
                           {tweet.tweet_url && (
                             <a href={tweet.tweet_url} target="_blank" rel="noopener noreferrer" 
                                className="text-xs text-primary hover:underline flex items-center gap-1 mt-1">
@@ -290,12 +306,12 @@ export default function DailyBrief({ api }) {
                 <ul className="space-y-3">
                   {brief.uploaded_insights.map((doc, i) => (
                     <li key={i} className="border-b border-border/50 pb-3 last:border-0 last:pb-0">
-                      <p className="text-sm font-medium">{doc.filename}</p>
+                      <p className="text-sm font-medium">{safeStr(doc.filename)}</p>
                       {doc.ai_analysis && (
-                        <p className="text-xs text-muted-foreground mt-1">{doc.ai_analysis}</p>
+                        <p className="text-xs text-muted-foreground mt-1">{safeStr(doc.ai_analysis)}</p>
                       )}
                       {doc.region && (
-                        <Badge variant="outline" className="text-[9px] rounded-none px-1 py-0 mt-1">{doc.region}</Badge>
+                        <Badge variant="outline" className="text-[9px] rounded-none px-1 py-0 mt-1">{safeStr(doc.region)}</Badge>
                       )}
                     </li>
                   ))}
@@ -320,7 +336,7 @@ export default function DailyBrief({ api }) {
                       <Badge variant="outline" className="rounded-none uppercase text-[10px] tracking-wider mb-2">
                         {state}
                       </Badge>
-                      <p className="text-sm text-muted-foreground leading-relaxed">{highlight}</p>
+                      <p className="text-sm text-muted-foreground leading-relaxed">{safeStr(highlight)}</p>
                     </div>
                   ))}
                 </div>
@@ -340,7 +356,7 @@ export default function DailyBrief({ api }) {
             </CardHeader>
             <CardContent className="p-4" data-testid="cross-border-insights">
               <p className="text-sm leading-relaxed">
-                {brief.cross_border_insights || "No significant cross-border developments to report."}
+                {safeStr(brief.cross_border_insights) || "No significant cross-border developments to report."}
               </p>
             </CardContent>
           </Card>
