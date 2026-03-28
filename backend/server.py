@@ -34,6 +34,20 @@ tweets_col = db.twitter_feeds
 national_news_col = db.national_news
 international_news_col = db.international_news
 
+# In-memory scan status tracker
+scan_status = {
+    "is_scanning": False,
+    "progress": 0,
+    "total_sources": 0,
+    "current_source": "",
+    "sources_scanned": 0,
+    "articles_found": 0,
+    "relevant_found": 0,
+    "last_scan_at": None,
+    "last_scan_result": None,
+    "scan_log": [],
+}
+
 # Twitter/X accounts to monitor for defense updates
 TWITTER_ACCOUNTS_TO_MONITOR = [
     {"handle": "@adgpi", "name": "ADG PI - Indian Army", "category": "defense", "url": "https://twitter.com/adgpi"},
@@ -742,7 +756,7 @@ async def upload_document(file: UploadFile = File(...), background_tasks: Backgr
     
     content_type = file.content_type
     if content_type not in allowed_types:
-        raise HTTPException(status_code=400, detail=f"File type not supported. Allowed: PDF, Word, Excel, TXT")
+        raise HTTPException(status_code=400, detail="File type not supported. Allowed: PDF, Word, Excel, TXT")
     
     file_type = allowed_types[content_type]
     file_content = await file.read()
@@ -821,6 +835,12 @@ async def trigger_bulk_scrape(background_tasks: BackgroundTasks):
     return {"message": "Bulk scrape triggered - articles will be stored for gradual AI processing"}
 
 
+@api_router.get("/scan-status")
+async def get_scan_status():
+    """Get real-time RSS scan status"""
+    return scan_status
+
+
 @api_router.post("/analyze-news")
 async def trigger_analysis(background_tasks: BackgroundTasks):
     background_tasks.add_task(analyze_unprocessed_items)
@@ -836,7 +856,6 @@ async def pipeline_status():
     sources = await sources_col.count_documents({})
     
     # Get recent processing stats (last 24 hours)
-    from datetime import timedelta
     yesterday = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
     recent_processed = await intelligence_col.count_documents({
         "processed": True,
@@ -1182,21 +1201,42 @@ async def fetch_and_process_news():
     3. Use aggressive exponential backoff on rate limit errors
     4. Store failed articles as unprocessed for retry in next cycle
     """
-    from rss_fetcher import fetch_all_feeds
+    from rss_fetcher import fetch_all_feeds, RSS_SOURCES
     
     # Configuration for rate limit management
-    MAX_ARTICLES_PER_CYCLE = 25  # Process max 25 new articles per 30-min cycle
-    BATCH_SIZE = 3  # Smaller batches = less burst, fewer rate limits
-    BATCH_PAUSE = 5  # 5 seconds between batches (was 2)
-    INTER_ARTICLE_DELAY = 1.5  # 1.5 seconds between articles in same batch (was 0.2)
+    MAX_ARTICLES_PER_CYCLE = 25
+    BATCH_SIZE = 3
+    BATCH_PAUSE = 5
+    INTER_ARTICLE_DELAY = 1.5
+    
+    # Update scan status
+    scan_status["is_scanning"] = True
+    scan_status["progress"] = 0
+    scan_status["total_sources"] = len(RSS_SOURCES)
+    scan_status["sources_scanned"] = 0
+    scan_status["current_source"] = ""
+    scan_status["articles_found"] = 0
+    scan_status["relevant_found"] = 0
+    scan_status["scan_log"] = []
+    
+    async def on_source_progress(idx, total, source_name):
+        scan_status["sources_scanned"] = idx
+        scan_status["current_source"] = source_name
+        scan_status["progress"] = int((idx / total) * 100) if total > 0 else 0
+        if source_name != "Complete":
+            scan_status["scan_log"].append(source_name)
+            # Keep only last 10 entries
+            if len(scan_status["scan_log"]) > 10:
+                scan_status["scan_log"] = scan_status["scan_log"][-10:]
     
     logger.info("=== Starting news fetch cycle ===")
     try:
-        # Step 1: Fetch all RSS articles
-        articles = await fetch_all_feeds()
+        # Step 1: Fetch all RSS articles with progress tracking
+        articles = await fetch_all_feeds(progress_callback=on_source_progress)
+        scan_status["articles_found"] = len(articles)
         logger.info(f"Fetched {len(articles)} relevant articles from RSS feeds")
 
-        # Step 2: Deduplicate — only keep articles NOT already in DB
+        # Step 2: Deduplicate
         new_articles = []
         for article in articles:
             url = article.get("source_url", "")
@@ -1207,16 +1247,26 @@ async def fetch_and_process_news():
                 new_articles.append(article)
         
         skipped = len(articles) - len(new_articles)
+        scan_status["relevant_found"] = len(new_articles)
         logger.info(f"Deduplication: {skipped} already in DB, {len(new_articles)} new articles to process")
 
         if not new_articles:
             logger.info("No new articles to process. Cycle complete.")
+            scan_status["is_scanning"] = False
+            scan_status["progress"] = 100
+            scan_status["current_source"] = ""
+            scan_status["last_scan_at"] = datetime.now(timezone.utc).isoformat()
+            scan_status["last_scan_result"] = {
+                "feeds_scanned": len(RSS_SOURCES),
+                "total_articles": len(articles),
+                "new_relevant": 0,
+                "duplicates_skipped": skipped
+            }
             return
 
-        # Step 3: Limit to MAX_ARTICLES_PER_CYCLE to avoid rate limits
+        # Step 3: Limit to MAX_ARTICLES_PER_CYCLE
         if len(new_articles) > MAX_ARTICLES_PER_CYCLE:
-            logger.info(f"Limiting to {MAX_ARTICLES_PER_CYCLE} articles this cycle "
-                        f"({len(new_articles) - MAX_ARTICLES_PER_CYCLE} deferred to next cycle)")
+            logger.info(f"Limiting to {MAX_ARTICLES_PER_CYCLE} articles this cycle")
             new_articles = new_articles[:MAX_ARTICLES_PER_CYCLE]
 
         # Step 4: Process new articles in small batches with retry
@@ -1233,14 +1283,13 @@ async def fetch_and_process_news():
             logger.info(f"  Processing batch {batch_num}/{total_batches} ({len(batch)} articles)...")
             
             for article in batch:
-                await asyncio.sleep(INTER_ARTICLE_DELAY)  # Rate limit spacing
+                await asyncio.sleep(INTER_ARTICLE_DELAY)
                 result, was_rate_limited = await _classify_with_retry_v2(article)
                 
                 if was_rate_limited:
                     rate_limit_hits += 1
                 
                 if result is None:
-                    # All retries exhausted — store as unprocessed for next cycle
                     raw_doc = _make_raw_doc(article)
                     await intelligence_col.insert_one(raw_doc)
                     fail_count += 1
@@ -1250,23 +1299,40 @@ async def fetch_and_process_news():
                     await intelligence_col.insert_one(doc)
                     success_count += 1
                 else:
-                    skip_count += 1  # AI said not relevant
+                    skip_count += 1
 
-            # Pause between batches to avoid rate limits
             if batch_start + BATCH_SIZE < len(new_articles):
-                # Dynamic pause: if we hit rate limits, wait longer
                 pause_time = BATCH_PAUSE * 2 if rate_limit_hits > 2 else BATCH_PAUSE
                 logger.info(f"  Batch {batch_num} done. Success: {success_count}, Failed: {fail_count}. "
                             f"Pausing {pause_time}s...")
                 await asyncio.sleep(pause_time)
 
-        logger.info(f"=== Fetch cycle complete ===")
+        logger.info("=== Fetch cycle complete ===")
         logger.info(f"  Processed: {success_count} | Failed: {fail_count} | Not relevant: {skip_count}")
         logger.info(f"  Duplicates skipped: {skipped} | Rate limit hits: {rate_limit_hits}")
         logger.info(f"  Remaining for next cycle: {max(0, len(articles) - skipped - MAX_ARTICLES_PER_CYCLE)}")
 
+        # Finalize scan status
+        scan_status["is_scanning"] = False
+        scan_status["progress"] = 100
+        scan_status["current_source"] = ""
+        scan_status["last_scan_at"] = datetime.now(timezone.utc).isoformat()
+        scan_status["last_scan_result"] = {
+            "feeds_scanned": scan_status["total_sources"],
+            "total_articles": len(articles),
+            "new_relevant": success_count,
+            "duplicates_skipped": skipped,
+            "failed": fail_count,
+            "not_relevant": skip_count
+        }
+
     except Exception as e:
         logger.error(f"News fetch cycle failed: {e}")
+        scan_status["is_scanning"] = False
+        scan_status["progress"] = 100
+        scan_status["current_source"] = ""
+        scan_status["last_scan_at"] = datetime.now(timezone.utc).isoformat()
+        scan_status["last_scan_result"] = {"error": str(e)}
 
 
 async def _classify_with_retry(article, max_retries=3):
@@ -1486,7 +1552,7 @@ async def bulk_scrape_all_feeds():
                 logger.info(f"  Stored {stored_count}/{len(new_articles)} articles...")
 
         logger.info("=" * 60)
-        logger.info(f"=== BULK SCRAPE COMPLETE ===")
+        logger.info("=== BULK SCRAPE COMPLETE ===")
         logger.info(f"  Stored: {stored_count} new articles (unprocessed)")
         logger.info(f"  Skipped: {skipped} duplicates")
         logger.info(f"  Total in DB: {await intelligence_col.count_documents({})}")
@@ -1561,7 +1627,7 @@ async def analyze_unprocessed_items():
             logger.info(f"  Progress: {idx + 1}/{len(unprocessed)} | Success: {success} | Not relevant: {not_relevant}")
     
     remaining = total_unprocessed - success - not_relevant
-    logger.info(f"=== AI Processing Complete ===")
+    logger.info("=== AI Processing Complete ===")
     logger.info(f"  Processed: {success} relevant | {not_relevant} not relevant")
     logger.info(f"  Remaining unprocessed: {remaining}")
     logger.info(f"  Rate limit hits: {rate_limit_hits}")

@@ -1,8 +1,9 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Shield, AlertTriangle, Activity, TrendingUp,
-  ChevronRight, RefreshCw, Target, ArrowUp
+  ChevronRight, RefreshCw, Target, ArrowUp,
+  Rss, Eye, EyeOff, Clock, CheckCircle2, Loader2
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Badge } from "../components/ui/badge";
@@ -21,9 +22,15 @@ const SEVERITY_COLORS = {
   low: "#a3e635",
 };
 
-function StatBox({ label, value, icon: Icon, color, sub, testId }) {
+function StatBox({ label, value, icon: Icon, color, sub, testId, onClick }) {
   return (
-    <div className="stat-card flex items-center gap-4" data-testid={testId}>
+    <div
+      className={`stat-card flex items-center gap-4 ${onClick ? "cursor-pointer hover:border-primary/50 hover:bg-primary/5 transition-all duration-200" : ""}`}
+      data-testid={testId}
+      onClick={onClick}
+      role={onClick ? "button" : undefined}
+      tabIndex={onClick ? 0 : undefined}
+    >
       <div className={`p-2.5 ${color}`}>
         <Icon size={20} />
       </div>
@@ -32,7 +39,136 @@ function StatBox({ label, value, icon: Icon, color, sub, testId }) {
         <p className="text-[10px] uppercase tracking-[0.15em] text-muted-foreground font-mono">{label}</p>
         {sub && <p className="text-xs text-muted-foreground mt-0.5">{sub}</p>}
       </div>
+      {onClick && <ChevronRight size={14} className="ml-auto text-muted-foreground" />}
     </div>
+  );
+}
+
+function ScanProgressBar({ api }) {
+  const [scanStatus, setScanStatus] = useState(null);
+  const [visible, setVisible] = useState(true);
+  const pollRef = useRef(null);
+
+  useEffect(() => {
+    const fetchStatus = async () => {
+      try {
+        const res = await axios.get(`${api}/scan-status`);
+        setScanStatus(res.data);
+      } catch (e) { /* silent */ }
+    };
+    fetchStatus();
+    pollRef.current = setInterval(fetchStatus, 3000);
+    return () => clearInterval(pollRef.current);
+  }, [api]);
+
+  const formatIST = (isoStr) => {
+    if (!isoStr) return "N/A";
+    try {
+      const d = new Date(isoStr);
+      return d.toLocaleString("en-IN", { timeZone: "Asia/Kolkata", day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: true });
+    } catch { return "N/A"; }
+  };
+
+  if (!scanStatus) return null;
+
+  const isScanning = scanStatus.is_scanning;
+  const progress = scanStatus.progress || 0;
+  const lastResult = scanStatus.last_scan_result;
+
+  return (
+    <Card className="border border-border rounded-none bg-card overflow-hidden" data-testid="scan-progress-card">
+      <div className="flex items-center justify-between px-4 py-2 border-b border-border">
+        <div className="flex items-center gap-2">
+          <Rss size={14} className={isScanning ? "text-primary animate-pulse" : "text-muted-foreground"} />
+          <span className="text-xs uppercase tracking-wider font-['Barlow_Condensed'] font-semibold">
+            RSS Scanner
+          </span>
+          {isScanning && (
+            <Badge className="rounded-none text-[9px] px-1.5 py-0 bg-primary/20 text-primary border-primary/30 animate-pulse">
+              SCANNING
+            </Badge>
+          )}
+          {!isScanning && lastResult && !lastResult.error && (
+            <Badge className="rounded-none text-[9px] px-1.5 py-0 bg-green-500/20 text-green-400 border-green-500/30">
+              IDLE
+            </Badge>
+          )}
+        </div>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-6 w-6 p-0"
+          onClick={() => setVisible(!visible)}
+          data-testid="toggle-scan-progress"
+        >
+          {visible ? <EyeOff size={12} /> : <Eye size={12} />}
+        </Button>
+      </div>
+
+      {visible && (
+        <CardContent className="p-4 space-y-3">
+          {/* Progress bar */}
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between text-xs font-mono text-muted-foreground">
+              <span>{isScanning ? `Scanning... ${progress}%` : "Last scan complete"}</span>
+              <span>{scanStatus.sources_scanned || 0}/{scanStatus.total_sources || 0} feeds</span>
+            </div>
+            <div className="w-full h-2 bg-muted/30 overflow-hidden">
+              <div
+                className={`h-full transition-all duration-500 ${isScanning ? "bg-primary animate-pulse" : "bg-green-500"}`}
+                style={{ width: `${isScanning ? progress : 100}%` }}
+              />
+            </div>
+          </div>
+
+          {/* Live source name during scan */}
+          {isScanning && scanStatus.current_source && (
+            <div className="flex items-center gap-2 text-xs" data-testid="current-scan-source">
+              <Loader2 size={12} className="animate-spin text-primary" />
+              <span className="text-muted-foreground">Scanning:</span>
+              <span className="font-medium text-foreground truncate">{scanStatus.current_source}</span>
+            </div>
+          )}
+
+          {/* Scan log - last few sources */}
+          {isScanning && scanStatus.scan_log && scanStatus.scan_log.length > 0 && (
+            <div className="max-h-20 overflow-y-auto space-y-0.5" data-testid="scan-log">
+              {scanStatus.scan_log.slice(-5).map((source, i) => (
+                <div key={i} className="flex items-center gap-1.5 text-[10px] font-mono text-muted-foreground">
+                  <CheckCircle2 size={9} className="text-green-500 shrink-0" />
+                  <span className="truncate">{source}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Last scan info + results */}
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs border-t border-border pt-2">
+            <div className="flex items-center gap-1.5" data-testid="last-scan-time">
+              <Clock size={11} className="text-muted-foreground" />
+              <span className="text-muted-foreground">Last scan:</span>
+              <span className="font-mono font-medium">{formatIST(scanStatus.last_scan_at)}</span>
+            </div>
+            {lastResult && !lastResult.error && (
+              <>
+                <div className="flex items-center gap-1">
+                  <span className="text-muted-foreground">Feeds:</span>
+                  <span className="font-mono font-bold">{lastResult.feeds_scanned}</span>
+                </div>
+                <div className="flex items-center gap-1">
+                  <span className="text-muted-foreground">Articles:</span>
+                  <span className="font-mono font-bold">{lastResult.total_articles}</span>
+                </div>
+                <div className="flex items-center gap-1">
+                  <span className="text-muted-foreground">New:</span>
+                  <span className="font-mono font-bold text-primary">{lastResult.new_relevant}</span>
+                </div>
+              </>
+            )}
+          </div>
+        </CardContent>
+      )}
+    </Card>
   );
 }
 
@@ -148,6 +284,7 @@ export default function Dashboard({ stats: propStats, api }) {
           color="bg-primary/10 text-primary"
           sub={`${stats?.today_count || 0} today`}
           testId="stat-total"
+          onClick={() => navigate("/feed")}
         />
         <StatBox
           label="Critical"
@@ -155,6 +292,7 @@ export default function Dashboard({ stats: propStats, api }) {
           icon={AlertTriangle}
           color="bg-red-500/10 text-red-400"
           testId="stat-critical"
+          onClick={() => navigate("/feed?severity=critical")}
         />
         <StatBox
           label="High"
@@ -162,6 +300,7 @@ export default function Dashboard({ stats: propStats, api }) {
           icon={Target}
           color="bg-amber-500/10 text-amber-400"
           testId="stat-high"
+          onClick={() => navigate("/feed?severity=high")}
         />
         <StatBox
           label="Medium"
@@ -169,6 +308,7 @@ export default function Dashboard({ stats: propStats, api }) {
           icon={Shield}
           color="bg-yellow-500/10 text-yellow-400"
           testId="stat-medium"
+          onClick={() => navigate("/feed?severity=medium")}
         />
         <StatBox
           label="Low"
@@ -176,8 +316,12 @@ export default function Dashboard({ stats: propStats, api }) {
           icon={ArrowUp}
           color="bg-green-500/10 text-green-400"
           testId="stat-low"
+          onClick={() => navigate("/feed?severity=low")}
         />
       </div>
+
+      {/* RSS Scan Progress Bar */}
+      <ScanProgressBar api={api} />
 
       {/* Map + Recent Alerts */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">

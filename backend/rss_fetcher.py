@@ -194,28 +194,30 @@ def is_ner_relevant(article: dict) -> bool:
     return any(kw in text for kw in ALL_KEYWORDS)
 
 
-async def fetch_all_feeds() -> list:
+async def fetch_all_feeds(progress_callback=None) -> list:
     """Fetch and filter articles from all RSS sources"""
     loop = asyncio.get_event_loop()
     all_articles = []
 
-    tasks = [
-        loop.run_in_executor(executor, parse_feed, source)
-        for source in RSS_SOURCES
-    ]
-
-    results = await asyncio.gather(*tasks, return_exceptions=True)
-
     source_summary = {}
-    for i, result in enumerate(results):
-        source_name = RSS_SOURCES[i]["name"]
-        if isinstance(result, Exception):
-            logger.error(f"Feed fetch error for {source_name}: {result}")
-            source_summary[source_name] = {"fetched": 0, "relevant": 0, "error": str(result)}
+    for i, source in enumerate(RSS_SOURCES):
+        source_name = source["name"]
+        if progress_callback:
+            await progress_callback(i, len(RSS_SOURCES), source_name)
+        
+        try:
+            result = await loop.run_in_executor(executor, parse_feed, source)
+        except Exception as e:
+            logger.error(f"Feed fetch error for {source_name}: {e}")
+            source_summary[source_name] = {"fetched": 0, "relevant": 0, "error": str(e)}
             continue
+        
         relevant = [a for a in result if is_ner_relevant(a)]
         all_articles.extend(relevant)
         source_summary[source_name] = {"fetched": len(result), "relevant": len(relevant)}
+
+    if progress_callback:
+        await progress_callback(len(RSS_SOURCES), len(RSS_SOURCES), "Complete")
 
     logger.info(f"=== RSS Fetch Summary ===")
     for name, stats in source_summary.items():
