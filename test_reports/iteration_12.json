@@ -1,0 +1,92 @@
+{
+  "summary": "Comprehensive testing of P0 bug fixes for Rhino Drishti Elite OSINT Platform. Both critical bugs are FIXED: (1) Custom PDF Brief now returns 200 with valid PDF (fpdf2 effective_w fix working), (2) Embeddings backfill endpoint returns 200 (OPENAI_API_KEY fix working - actual embedding fails with 429 quota as expected). All 16 backend tests passed. Frontend Dashboard, Daily Brief, and Intelligence Feed pages all working correctly.",
+
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+
+  "passed_tests": [
+    "GET /api/ - returns 200 with Rhino Drishti message",
+    "GET /api/pipeline/status - returns 200 with all scheduler info (total_items: 532, ai_processed: 532)",
+    "GET /api/intelligence - returns 200 with 472 items (30-day retention window)",
+    "GET /api/intelligence - items have correct structure (id, title, source, published_at, severity, state)",
+    "GET /api/daily-brief - returns 200 with analyst_summary and 41 key_developments",
+    "POST /api/generate-brief - returns 200 with 'Brief generation started' message",
+    "POST /api/intelligence/custom-brief - P0 FIX VERIFIED: returns 200 with valid PDF (22KB)",
+    "POST /api/intelligence/custom-brief with region filter - returns 200/404 correctly",
+    "GET /api/daily-brief/pdf - returns 200 with valid PDF (29KB)",
+    "POST /api/embeddings/backfill - P0 FIX VERIFIED: returns 200 (not 401/500)",
+    "POST /api/intelligence/semantic-search - returns 200 with empty results (expected - no embeddings)",
+    "POST /api/intelligence/semantic-search validation - returns 400 for short queries",
+    "GET /api/settings/retention - returns 200 with retention_days: 30",
+    "GET /api/alerts - returns 200 with critical/high alerts",
+    "GET /api/alerts/unacknowledged - returns 200",
+    "GET /api/dashboard/stats - returns 200 with all expected fields",
+    "Dashboard page loads with stats (472 total, 2 critical, 41 high, 33 medium, 396 low)",
+    "Dashboard shows threat distribution chart, state distribution chart, NER map",
+    "Dashboard shows recent critical alerts panel and unacknowledged alerts",
+    "Daily Brief page loads with Analyst Assessment and NER Key Developments",
+    "Daily Brief shows 'Why it matters', 'Potential impact', 'Early Warning' for each item",
+    "Intelligence Feed page loads with 472 results",
+    "Intelligence Feed has search input, semantic search toggle, filters button",
+    "Intelligence Feed filter panel shows state/threat/severity/priority/sort dropdowns",
+    "Intelligence Feed pagination works correctly"
+  ],
+
+  "p0_bug_fixes_verified": {
+    "custom_pdf_500_error": {
+      "status": "FIXED",
+      "test": "POST /api/intelligence/custom-brief with {hours: 720, title: 'Test Brief'}",
+      "result": "HTTP 200, Content-Type: application/pdf, Size: 22087 bytes",
+      "fix_details": "Changed fpdf2 cell(0,...) to use explicit effective_w calculations in _generate_custom_pdf()"
+    },
+    "embeddings_401_error": {
+      "status": "FIXED",
+      "test": "POST /api/embeddings/backfill",
+      "result": "HTTP 200, message: 'Embedding backfill started (batch of 50)'",
+      "fix_details": "Changed embedding_service.py to use OPENAI_API_KEY instead of EMERGENT_LLM_KEY",
+      "note": "Actual embedding generation will fail with 429 (quota exceeded) but endpoint doesn't crash"
+    }
+  },
+
+  "test_report_links": [
+    "/app/backend/tests/test_p0_bugfixes_v12.py",
+    "/app/test_reports/pytest/pytest_results_v12.xml"
+  ],
+
+  "action_items": [],
+
+  "critical_code_review_comments": [
+    "P0 Custom PDF fix is correct - using effective_w = pdf.w - pdf.l_margin - pdf.r_margin for all cell/multi_cell calls",
+    "P0 Embeddings fix is correct - embedding_service.py now uses OPENAI_API_KEY from environment",
+    "Semantic search gracefully returns empty results when no embeddings exist",
+    "30-day retention window correctly shows 472 of 532 total items",
+    "All UI components have proper data-testid attributes for testing"
+  ],
+
+  "updated_files": [
+    "/app/backend/tests/test_p0_bugfixes_v12.py"
+  ],
+
+  "success_rate": {
+    "backend": "100% (16/16 tests passed)",
+    "frontend": "100% (all pages and features verified)"
+  },
+
+  "test_credentials": "No credentials needed - app has no auth system",
+
+  "seed_data_creation": "None - used existing data (532 intelligence items, 472 within 30-day retention window)",
+
+  "retest_needed": false,
+
+  "should_main_agent_self_test": false,
+
+  "context_for_next_testing_agent": "Both P0 bugs are fixed and verified: (1) Custom PDF Brief at POST /api/intelligence/custom-brief now returns valid PDF using explicit effective_w calculations, (2) Embeddings backfill at POST /api/embeddings/backfill returns 200 using OPENAI_API_KEY (actual embedding fails with 429 quota but endpoint doesn't crash). Semantic search returns empty results since no embeddings exist yet. All 532 items are AI-processed, 472 visible within 30-day retention window. Backend tests in /app/backend/tests/test_p0_bugfixes_v12.py."
+}

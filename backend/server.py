@@ -572,6 +572,7 @@ def _generate_custom_pdf(items: list, title: str, region: str, threat: str, hour
     pdf.ln(4)
     
     # Items
+    effective_w = pdf.w - pdf.l_margin - pdf.r_margin
     for i, item in enumerate(items, 1):
         sev = item.get('severity', 'low').upper()
         priority = item.get('priority_score', 0)
@@ -588,28 +589,33 @@ def _generate_custom_pdf(items: list, title: str, region: str, threat: str, hour
             pdf.set_text_color(40, 120, 40)
         
         pdf.set_font('Helvetica', 'B', 10)
-        item_title = item.get('title', 'Untitled')[:100]
+        item_title = item.get('title', 'Untitled')[:90]
         clean_item_title = item_title.encode('latin-1', 'replace').decode('latin-1')
-        pdf.cell(0, 6, f'{i}. [{sev}|P{priority}] {clean_item_title}', new_x="LMARGIN", new_y="NEXT")
+        pdf.set_x(pdf.l_margin)
+        pdf.multi_cell(effective_w, 6, f'{i}. [{sev}|P{priority}] {clean_item_title}')
         
         pdf.set_text_color(60, 60, 60)
         pdf.set_font('Helvetica', '', 8)
-        meta = f"   Source: {item.get('source', '')} | {item.get('state', '')} | {item.get('published_at', '')[:16]}"
+        meta = f"Source: {item.get('source', '')[:40]} | {item.get('state', '')} | {item.get('published_at', '')[:16]}"
         if trajectory and trajectory != 'INDETERMINATE':
             meta += f" | {trajectory}"
-        pdf.cell(0, 4, meta, new_x="LMARGIN", new_y="NEXT")
+        clean_meta = meta.encode('latin-1', 'replace').decode('latin-1')
+        pdf.set_x(pdf.l_margin)
+        pdf.cell(effective_w, 4, clean_meta, new_x="LMARGIN", new_y="NEXT")
         
         summary = item.get('ai_summary', '')[:400]
         if summary:
             clean_summary = summary.encode('latin-1', 'replace').decode('latin-1')
-            pdf.multi_cell(0, 4, f"   {clean_summary}")
+            pdf.set_x(pdf.l_margin)
+            pdf.multi_cell(effective_w, 4, clean_summary)
         
         why = item.get('why_it_matters', '')[:200]
         if why:
             pdf.set_font('Helvetica', 'I', 8)
             pdf.set_text_color(100, 80, 40)
             clean_why = why.encode('latin-1', 'replace').decode('latin-1')
-            pdf.multi_cell(0, 4, f"   Why: {clean_why}")
+            pdf.set_x(pdf.l_margin)
+            pdf.multi_cell(effective_w, 4, f"Why: {clean_why}")
         
         pdf.ln(3)
     

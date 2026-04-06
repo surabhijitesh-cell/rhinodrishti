@@ -1,6 +1,6 @@
 """
 Embedding Service — Generates vector embeddings for intelligence items
-using OpenAI text-embedding-3-small via Emergent LLM Key.
+using OpenAI text-embedding-3-small with a dedicated OpenAI API Key.
 
 Supports: single embedding, batch embedding, semantic similarity search.
 """
@@ -17,13 +17,13 @@ EMBEDDING_DIMENSIONS = 1536
 
 
 async def generate_embedding(text: str) -> Optional[List[float]]:
-    """Generate embedding for a single text string using emergentintegrations."""
+    """Generate embedding for a single text string using OpenAI API."""
     if not text or len(text.strip()) < 5:
         return None
     
-    api_key = os.environ.get("EMERGENT_LLM_KEY", "")
+    api_key = os.environ.get("OPENAI_API_KEY", "")
     if not api_key:
-        logger.error("EMERGENT_LLM_KEY not set for embeddings")
+        logger.error("OPENAI_API_KEY not set for embeddings")
         return None
     
     try:
