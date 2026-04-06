@@ -4,7 +4,7 @@ import { useTheme } from "./ThemeProvider";
 import {
   Shield, LayoutDashboard, Newspaper, FileText, TrendingUp,
   Globe, Bell, ChevronLeft, ChevronRight, Sun, Moon, Search,
-  Activity, Menu, X, Upload, GitBranch
+  Activity, Menu, X, Upload, GitBranch, Settings
 } from "lucide-react";
 import { Input } from "../components/ui/input";
 import { Button } from "../components/ui/button";
@@ -19,6 +19,7 @@ const NAV_ITEMS = [
   { path: "/patterns", label: "Patterns", icon: GitBranch },
   { path: "/alerts", label: "Alerts", icon: Bell },
   { path: "/upload", label: "Upload Documents", icon: Upload },
+  { path: "/settings", label: "Settings", icon: Settings },
 ];
 
 export default function Layout({ children, alertCount = 0, onSearch }) {

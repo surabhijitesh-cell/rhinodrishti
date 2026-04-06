@@ -198,16 +198,42 @@ async def root():
     return {"message": "Rhino Drishti API - Intelligence Aggregation Platform"}
 
 
+# ============================================================
+# In-memory Cache for Dashboard Stats
+# ============================================================
+_stats_cache = {
+    "data": None,
+    "expires_at": None,
+}
+STATS_CACHE_TTL = 60  # seconds
+
+
+def invalidate_stats_cache():
+    _stats_cache["data"] = None
+    _stats_cache["expires_at"] = None
+
+
 @api_router.get("/dashboard/stats")
 async def get_dashboard_stats():
-    total = await intelligence_col.count_documents({})
-    critical = await intelligence_col.count_documents({"severity": "critical"})
-    high = await intelligence_col.count_documents({"severity": "high"})
-    medium = await intelligence_col.count_documents({"severity": "medium"})
-    low = await intelligence_col.count_documents({"severity": "low"})
+    now = datetime.now(timezone.utc)
+    if _stats_cache["data"] and _stats_cache["expires_at"] and now < _stats_cache["expires_at"]:
+        return _stats_cache["data"]
+
+    # Fetch retention setting
+    settings = await db.app_settings.find_one({"key": "retention_days"}, {"_id": 0})
+    retention_days = settings.get("value", 30) if settings else 30
+    retention_cutoff = (now - timedelta(days=retention_days)).isoformat()
+    base_filter = {"published_at": {"$gte": retention_cutoff}}
+
+    total = await intelligence_col.count_documents(base_filter)
+    critical = await intelligence_col.count_documents({**base_filter, "severity": "critical"})
+    high = await intelligence_col.count_documents({**base_filter, "severity": "high"})
+    medium = await intelligence_col.count_documents({**base_filter, "severity": "medium"})
+    low = await intelligence_col.count_documents({**base_filter, "severity": "low"})
 
     state_dist = {}
     async for doc in intelligence_col.aggregate([
+        {"$match": base_filter},
         {"$group": {"_id": "$state", "count": {"$sum": 1}}},
         {"$sort": {"count": -1}}
     ]):
@@ -216,6 +242,7 @@ async def get_dashboard_stats():
 
     threat_dist = {}
     async for doc in intelligence_col.aggregate([
+        {"$match": base_filter},
         {"$group": {"_id": "$threat_category", "count": {"$sum": 1}}},
         {"$sort": {"count": -1}}
     ]):
@@ -223,17 +250,18 @@ async def get_dashboard_stats():
             threat_dist[doc["_id"]] = doc["count"]
 
     recent_critical = await intelligence_col.find(
-        {"severity": {"$in": ["critical", "high"]}},
+        {**base_filter, "severity": {"$in": ["critical", "high"]}},
         {"_id": 0}
     ).sort("published_at", -1).limit(5).to_list(5)
 
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    today = now.strftime("%Y-%m-%d")
     today_count = await intelligence_col.count_documents(
         {"published_at": {"$regex": f"^{today}"}}
     )
 
     trend_data = []
     async for doc in intelligence_col.aggregate([
+        {"$match": base_filter},
         {"$group": {
             "_id": {"$substr": ["$published_at", 0, 10]},
             "count": {"$sum": 1},
@@ -244,13 +272,18 @@ async def get_dashboard_stats():
     ]):
         trend_data.append({"date": doc["_id"], "count": doc["count"], "critical": doc["critical"], "high": doc["high"]})
 
-    return {
+    result = {
         "total_items": total, "today_count": today_count,
         "critical_count": critical, "high_count": high,
         "medium_count": medium, "low_count": low,
         "state_distribution": state_dist, "threat_distribution": threat_dist,
-        "recent_critical": recent_critical, "trend_7d": trend_data[-7:]
+        "recent_critical": recent_critical, "trend_7d": trend_data[-7:],
+        "retention_days": retention_days,
     }
+
+    _stats_cache["data"] = result
+    _stats_cache["expires_at"] = now + timedelta(seconds=STATS_CACHE_TTL)
+    return result
 
 
 @api_router.get("/intelligence")
@@ -270,6 +303,14 @@ async def get_intelligence(
     translate: bool = Query(True)
 ):
     query = {}
+
+    # Apply retention window filter (unless explicit date_from is provided)
+    if not date_from:
+        settings = await db.app_settings.find_one({"key": "retention_days"}, {"_id": 0})
+        retention_days = settings.get("value", 30) if settings else 30
+        retention_cutoff = (datetime.now(timezone.utc) - timedelta(days=retention_days)).isoformat()
+        query["published_at"] = {"$gte": retention_cutoff}
+
     if state:
         query["state"] = state
     if threat_type:
@@ -375,6 +416,31 @@ async def trigger_pattern_detection(background_tasks: BackgroundTasks):
     from pattern_engine import detect_patterns
     background_tasks.add_task(detect_patterns, db)
     return {"message": "Pattern detection started"}
+
+
+# ============================================================
+# Settings Endpoints
+# ============================================================
+@api_router.get("/settings/retention")
+async def get_retention_setting():
+    """Get the current news retention window (in days)."""
+    settings = await db.app_settings.find_one({"key": "retention_days"}, {"_id": 0})
+    return {"retention_days": settings.get("value", 30) if settings else 30}
+
+
+@api_router.put("/settings/retention")
+async def set_retention_setting(body: dict):
+    """Set the news retention window (in days). Valid range: 1-365."""
+    days = body.get("retention_days", 30)
+    if not isinstance(days, int) or days < 1 or days > 365:
+        raise HTTPException(status_code=400, detail="retention_days must be integer 1-365")
+    await db.app_settings.update_one(
+        {"key": "retention_days"},
+        {"$set": {"key": "retention_days", "value": days, "updated_at": datetime.now(timezone.utc).isoformat()}},
+        upsert=True
+    )
+    invalidate_stats_cache()
+    return {"message": f"Retention window set to {days} days", "retention_days": days}
 
 
 @api_router.get("/daily-brief")
@@ -1106,7 +1172,6 @@ async def generate_brief_for_date(date: str):
     
     # Determine time cutoff based on scenario
     today_0600_ist = now_ist.replace(hour=6, minute=0, second=0, microsecond=0)
-    today_0600_utc = today_0600_ist.astimezone(timezone.utc)
     
     if prev_day_brief and prev_day_brief.get("generated_at"):
         # SCENARIO: Previous day has a brief — use its generation time as cutoff
@@ -1744,6 +1809,7 @@ async def fetch_and_process_news():
                     doc = item.model_dump()
                     await intelligence_col.insert_one(doc)
                     success_count += 1
+                    invalidate_stats_cache()
                     
                     # Broadcast to WebSocket clients
                     try:

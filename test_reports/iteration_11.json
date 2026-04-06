@@ -1,0 +1,87 @@
+{
+  "summary": "Comprehensive testing of P2 features: Configurable News Retention Window and Dashboard Stats Caching. All 13 backend tests passed. Frontend Settings page UI fully functional with retention dropdown, save button, and Pipeline Status card.",
+
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+
+  "passed_tests": [
+    "GET /api/settings/retention - returns 200 with retention_days (default 30)",
+    "PUT /api/settings/retention with {retention_days: 14} - updates setting and returns confirmation",
+    "PUT /api/settings/retention with 0 - returns 400 error",
+    "PUT /api/settings/retention with 400 - returns 400 error (max is 365)",
+    "PUT /api/settings/retention with -5 - returns 400 error",
+    "GET /api/dashboard/stats - includes retention_days field in response",
+    "Dashboard stats with 30d retention shows more items than 7d retention",
+    "Dashboard stats cache serves same data within 60s TTL",
+    "Cache invalidated after PUT /api/settings/retention",
+    "GET /api/intelligence applies retention window filter",
+    "GET /api/intelligence with explicit date_from overrides retention filter",
+    "Retention boundary values (1 and 365 days) are valid",
+    "Non-integer retention_days rejected with 400",
+    "Settings page renders with 'Platform Settings' title",
+    "Settings page has retention dropdown with 7/14/30/60/90/180/365 day options",
+    "Settings page Save button works and shows success toast",
+    "Settings page Pipeline Status card shows total items, processing rate, sources, scheduler",
+    "Settings nav item visible in sidebar",
+    "Navigation from sidebar to Settings page works correctly"
+  ],
+
+  "verified_from_code": [
+    "_stats_cache dict with data and expires_at fields (server.py line 204-208)",
+    "STATS_CACHE_TTL = 60 seconds (server.py line 209)",
+    "invalidate_stats_cache() function clears cache (server.py lines 211-213)",
+    "get_dashboard_stats() checks cache before querying DB (server.py lines 217-220)",
+    "get_dashboard_stats() applies retention_days filter to all queries (server.py lines 223-256)",
+    "get_dashboard_stats() returns retention_days in response (server.py line 282)",
+    "get_retention_setting() endpoint returns current retention_days (server.py lines 424-428)",
+    "set_retention_setting() validates 1-365 range and calls invalidate_stats_cache() (server.py lines 431-443)",
+    "get_intelligence() applies retention filter unless explicit date_from provided (server.py lines 306-312)",
+    "SettingsPage.js has RETENTION_OPTIONS array with 7 options (lines 9-17)",
+    "SettingsPage.js fetches and displays current retention (lines 24-35)",
+    "SettingsPage.js handleSave() calls PUT /api/settings/retention (lines 37-48)",
+    "SettingsPage.js has PipelineInfo component showing pipeline status (lines 123-171)",
+    "Layout.js has Settings nav item with Settings icon (line 22)"
+  ],
+
+  "test_report_links": [
+    "/app/backend/tests/test_retention_and_cache_v11.py",
+    "/app/test_reports/pytest/pytest_results_v11.xml"
+  ],
+
+  "action_items": [],
+
+  "critical_code_review_comments": [
+    "Cache implementation is simple and effective - in-memory dict with TTL",
+    "Cache invalidation is properly called on retention change",
+    "Retention filter correctly applied to both dashboard stats and intelligence feed",
+    "Explicit date_from parameter correctly overrides retention filter for advanced queries",
+    "Frontend Settings page has good UX with current setting display and success toast"
+  ],
+
+  "updated_files": [
+    "/app/backend/tests/test_retention_and_cache_v11.py"
+  ],
+
+  "success_rate": {
+    "backend": "100% (13/13 tests passed)",
+    "frontend": "100% (all UI components verified)"
+  },
+
+  "test_credentials": "No credentials needed - app has no auth",
+
+  "seed_data_creation": "None - used existing data (532 intelligence items, 472 within 30-day retention window)",
+
+  "retest_needed": false,
+
+  "should_main_agent_self_test": false,
+
+  "context_for_next_testing_agent": "All P2 features working correctly: (1) GET /api/settings/retention returns current retention_days (default 30), (2) PUT /api/settings/retention updates setting with validation (1-365 range), (3) Dashboard stats cache with 60s TTL, invalidated on retention change, (4) Dashboard stats and intelligence feed both apply retention window filter, (5) Settings page at /settings with retention dropdown (7/14/30/60/90/180/365 days), save button, and Pipeline Status card. Data is mostly from March 28, so with 30d retention ~472 items show, with 7d retention fewer items show. Backend tests in /app/backend/tests/test_retention_and_cache_v11.py."
+}
