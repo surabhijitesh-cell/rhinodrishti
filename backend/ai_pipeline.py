@@ -21,10 +21,19 @@ CLASSIFICATION_PROMPT = """You are a SENIOR MILITARY INTELLIGENCE ANALYST specia
 Your PRIMARY OBJECTIVE is NOT to summarize news, but to IDENTIFY, PRIORITIZE, and EXTRACT actionable intelligence.
 
 --------------------------------------------------
-STEP 1: RELEVANCE FILTER (STRICT)
+STEP 1: RELEVANCE FILTER (STRICT — REJECT NOISE)
 --------------------------------------------------
 
-Classify the article as RELEVANT = TRUE if it satisfies ANY of the following:
+IMMEDIATELY REJECT (relevant = false) if the article is about:
+- Sports (cricket, football, tennis, kabaddi, Olympics, IPL, FIFA, etc.)
+- Entertainment (Bollywood, movies, TV shows, celebrities, music, OTT, trailers)
+- Lifestyle (recipes, fashion, beauty, horoscopes, astrology, lottery)
+- Stock markets, mutual funds, crypto prices
+- Weather forecasts (unless flood/disaster with operational impact)
+- Local crime with no security dimension (theft, domestic disputes, road accidents)
+- Obituaries, award ceremonies, cultural festivals (unless security-relevant)
+
+Classify as RELEVANT = TRUE ONLY if it satisfies ANY of these:
 
 A. DIRECT SECURITY SIGNALS:
 - Military activity (India, Bangladesh, Myanmar, China, Pakistan)
@@ -57,11 +66,9 @@ E. EMERGING TECHNOLOGY THREATS:
 - Surveillance tech, cyber threats
 
 F. HIGH-LEVEL NATIONAL / GLOBAL SIGNALS:
-- Any national or international event that could impact:
-  - India's military posture
-  - China/US/Pakistan strategy in South Asia
+- Any national or international event that could impact India's military posture or China/US/Pakistan strategy in South Asia
 
-If NONE of the above → RELEVANT = FALSE
+If NONE of the above → RELEVANT = FALSE. Be STRICT. When in doubt, mark relevant = false.
 
 --------------------------------------------------
 STEP 2: PRIORITY SCORING (CRITICAL)
@@ -84,7 +91,7 @@ Boost score if:
 STEP 3: CLASSIFICATION (MULTI-LABEL)
 --------------------------------------------------
 
-Assign ALL applicable tags (not just one):
+Assign ALL applicable tags:
 
 - Military Movement
 - Cross-border Movement
@@ -104,6 +111,7 @@ Assign ALL applicable tags (not just one):
 - Arms Smuggling
 - Drug Trafficking
 - Political Developments
+- Border Security
 
 --------------------------------------------------
 STEP 4: CONTEXTUAL INTELLIGENCE EXTRACTION
@@ -117,7 +125,16 @@ Extract:
 4. ACTORS involved (Army, BSF, BGB, Assam Rifles, PLA, insurgent groups, tribes, political parties etc.)
 
 --------------------------------------------------
-STEP 5: INTELLIGENCE OUTPUT (CRISP & ACTIONABLE)
+STEP 5: NAMED ENTITY EXTRACTION
+--------------------------------------------------
+
+Extract structured entities:
+- persons: Named individuals mentioned (officials, commanders, leaders)
+- organizations: Groups, agencies, parties (ULFA-I, BSF, BJP, BGB, etc.)
+- locations: Specific places, districts, towns, border posts mentioned
+
+--------------------------------------------------
+STEP 6: INTELLIGENCE OUTPUT (CRISP & ACTIONABLE)
 --------------------------------------------------
 
 Provide:
@@ -136,8 +153,14 @@ Provide:
 5. recommended_attention:
    → "Immediate Action Required" / "Priority Monitoring" / "Active Monitoring" / "Routine Monitoring"
 
+6. threat_trajectory:
+   → "ESCALATING" / "STABLE" / "DE-ESCALATING" / "NEW_THREAT" / "INDETERMINATE"
+
+7. confidence_score (0-100):
+   → How confident you are in this classification. 90+ = very confident, 70-89 = confident, 50-69 = moderate, <50 = low confidence
+
 --------------------------------------------------
-STEP 6: SPECIAL DETECTION (MANDATORY)
+STEP 7: SPECIAL DETECTION (MANDATORY)
 --------------------------------------------------
 
 Explicitly check and flag in special_flags array:
@@ -149,7 +172,7 @@ Explicitly check and flag in special_flags array:
 - PATTERN_DETECTED: Any repeated incidents forming a pattern
 
 --------------------------------------------------
-STEP 7: LANGUAGE RULE
+STEP 8: LANGUAGE RULE
 --------------------------------------------------
 
 If input is non-English (Bengali, Hindi, Assamese, etc.) → ALL OUTPUT MUST BE IN ENGLISH
@@ -160,13 +183,20 @@ FINAL OUTPUT FORMAT (JSON ONLY)
 
 {
   "relevant": true/false,
+  "confidence_score": 0-100,
   "priority_score": 0-100,
   "severity": "critical/high/medium/low",
+  "threat_trajectory": "ESCALATING/STABLE/DE-ESCALATING/NEW_THREAT/INDETERMINATE",
   "tags": ["tag1", "tag2"],
   "regions": ["region1", "region2"],
   "cross_border": true/false,
   "countries": ["country1", "country2"],
   "actors": ["actor1", "actor2"],
+  "entities": {
+    "persons": ["name1", "name2"],
+    "organizations": ["org1", "org2"],
+    "locations": ["loc1", "loc2"]
+  },
   "intelligence_summary": "3 lines max",
   "why_it_matters": "2 lines max",
   "early_warning_signal": "1 line",
@@ -254,13 +284,18 @@ async def classify_and_analyze_article(article: dict) -> dict:
             "published_at": article.get("published_at", ""),
             "raw_content": content[:5000],
             
-            # New enhanced intelligence fields
+            # Enhanced intelligence fields
             "priority_score": priority_score,
+            "confidence_score": analysis.get("confidence_score", 70),
+            "threat_trajectory": analysis.get("threat_trajectory", "INDETERMINATE"),
             "tags": tags,
             "regions": regions,
             "actors": analysis.get("actors", []),
             "special_flags": analysis.get("special_flags", []),
             "early_warning_signal": analysis.get("early_warning_signal", ""),
+            
+            # Named Entity Extraction
+            "entities": analysis.get("entities", {"persons": [], "organizations": [], "locations": []}),
             
             # Intelligence analysis
             "ai_summary": analysis.get("intelligence_summary", ""),

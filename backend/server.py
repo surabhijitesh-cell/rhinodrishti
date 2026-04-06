@@ -1,4 +1,4 @@
-from fastapi import FastAPI, APIRouter, Query, HTTPException, BackgroundTasks, UploadFile, File
+from fastapi import FastAPI, APIRouter, Query, HTTPException, BackgroundTasks, UploadFile, File, WebSocket, WebSocketDisconnect
 from fastapi.responses import StreamingResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
@@ -103,11 +103,46 @@ class IntelligenceItem(BaseModel):
     tags: List[str] = []
     # New enhanced intelligence fields
     priority_score: int = 30
+    confidence_score: int = 70
+    threat_trajectory: str = "INDETERMINATE"
     regions: List[str] = []
     actors: List[str] = []
     special_flags: List[str] = []
     early_warning_signal: str = ""
     original_title: Optional[str] = None
+    entities: Dict = Field(default_factory=lambda: {"persons": [], "organizations": [], "locations": []})
+
+
+# ============================================================
+# WebSocket Connection Manager
+# ============================================================
+class ConnectionManager:
+    """Manages WebSocket connections for real-time intelligence updates."""
+    def __init__(self):
+        self.active_connections: List[WebSocket] = []
+
+    async def connect(self, websocket: WebSocket):
+        await websocket.accept()
+        self.active_connections.append(websocket)
+        logger.info(f"WebSocket connected. Active: {len(self.active_connections)}")
+
+    def disconnect(self, websocket: WebSocket):
+        if websocket in self.active_connections:
+            self.active_connections.remove(websocket)
+        logger.info(f"WebSocket disconnected. Active: {len(self.active_connections)}")
+
+    async def broadcast(self, message: dict):
+        """Broadcast to all connected clients."""
+        disconnected = []
+        for conn in self.active_connections:
+            try:
+                await conn.send_json(message)
+            except Exception:
+                disconnected.append(conn)
+        for conn in disconnected:
+            self.disconnect(conn)
+
+ws_manager = ConnectionManager()
 
 
 class DailyBrief(BaseModel):
@@ -1709,6 +1744,31 @@ async def fetch_and_process_news():
                     doc = item.model_dump()
                     await intelligence_col.insert_one(doc)
                     success_count += 1
+                    
+                    # Broadcast to WebSocket clients
+                    try:
+                        ws_msg = {
+                            "type": "new_item",
+                            "item": {
+                                "id": doc.get("id"),
+                                "title": doc.get("title"),
+                                "severity": doc.get("severity"),
+                                "priority_score": doc.get("priority_score", 0),
+                                "confidence_score": doc.get("confidence_score", 70),
+                                "threat_trajectory": doc.get("threat_trajectory", "INDETERMINATE"),
+                                "state": doc.get("state"),
+                                "source": doc.get("source"),
+                                "threat_category": doc.get("threat_category"),
+                                "published_at": doc.get("published_at"),
+                                "ai_summary": doc.get("ai_summary", "")[:200],
+                            }
+                        }
+                        # Add alert flag for critical/high items
+                        if doc.get("severity") in ("critical", "high"):
+                            ws_msg["type"] = "critical_alert"
+                        await ws_manager.broadcast(ws_msg)
+                    except Exception as ws_err:
+                        logger.debug(f"WS broadcast error: {ws_err}")
                 else:
                     skip_count += 1
 
@@ -1745,6 +1805,15 @@ async def fetch_and_process_news():
             asyncio.create_task(detect_patterns(db))
         except Exception as e:
             logger.warning(f"Pattern detection trigger failed: {e}")
+        
+        # Broadcast scan complete to WebSocket clients
+        try:
+            await ws_manager.broadcast({
+                "type": "scan_complete",
+                "result": scan_status["last_scan_result"]
+            })
+        except Exception:
+            pass
 
     except Exception as e:
         logger.error(f"News fetch cycle failed: {e}")
@@ -2122,6 +2191,26 @@ async def startup():
 @app.on_event("shutdown")
 async def shutdown():
     client.close()
+
+
+# ============================================================
+# WebSocket Endpoint (mounted on app directly, not api_router)
+# ============================================================
+@app.websocket("/api/ws/intelligence")
+async def websocket_intelligence(websocket: WebSocket):
+    """Real-time intelligence feed via WebSocket.
+    Sends new items and critical alerts as they're processed."""
+    await ws_manager.connect(websocket)
+    try:
+        while True:
+            # Keep connection alive, listen for client pings
+            data = await websocket.receive_text()
+            if data == "ping":
+                await websocket.send_json({"type": "pong"})
+    except WebSocketDisconnect:
+        ws_manager.disconnect(websocket)
+    except Exception:
+        ws_manager.disconnect(websocket)
 
 
 app.include_router(api_router)

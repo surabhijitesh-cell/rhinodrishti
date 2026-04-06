@@ -1,16 +1,17 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Shield, AlertTriangle, Activity, TrendingUp,
   ChevronRight, RefreshCw, Target, ArrowUp,
   Rss, Eye, EyeOff, Clock, CheckCircle2, Loader2,
-  Filter, Languages, BellRing, GitBranch, Check
+  Filter, Languages, BellRing, GitBranch, Check, Wifi, WifiOff
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import NERMap from "../components/NERMap";
 import IntelligenceCard from "../components/IntelligenceCard";
+import { useIntelligenceWS } from "../hooks/useIntelligenceWS";
 import axios from "axios";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, PieChart, Pie
@@ -321,6 +322,9 @@ export default function Dashboard({ stats: propStats, api }) {
   const [localStats, setLocalStats] = useState(null);
   const navigate = useNavigate();
 
+  // WebSocket real-time connection
+  const { connected: wsConnected, newItems: wsNewItems, criticalAlerts, clearNewItems } = useIntelligenceWS(api);
+
   const stats = propStats || localStats;
 
   useEffect(() => {
@@ -329,6 +333,13 @@ export default function Dashboard({ stats: propStats, api }) {
       fetchStats();
     }
   }, [api, propStats]);
+
+  // Auto-refresh stats when new WS items arrive
+  useEffect(() => {
+    if (wsNewItems.length > 0) {
+      fetchStats();
+    }
+  }, [wsNewItems.length]);
 
   const fetchStats = async () => {
     try {
@@ -407,15 +418,30 @@ export default function Dashboard({ stats: propStats, api }) {
             NER Situation Awareness Dashboard
           </p>
         </div>
-        <Button
-          onClick={handleFetchNews}
-          disabled={loading}
-          className="uppercase text-xs font-bold tracking-wider rounded-none"
-          data-testid="fetch-news-btn"
-        >
-          <RefreshCw size={14} className={`mr-2 ${loading ? "animate-spin" : ""}`} />
-          Fetch Intel
-        </Button>
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-1.5 text-[10px] font-mono" data-testid="ws-status">
+            {wsConnected ? (
+              <>
+                <Wifi size={12} className="text-green-400" />
+                <span className="text-green-400 uppercase">Live</span>
+              </>
+            ) : (
+              <>
+                <WifiOff size={12} className="text-muted-foreground" />
+                <span className="text-muted-foreground uppercase">Offline</span>
+              </>
+            )}
+          </div>
+          <Button
+            onClick={handleFetchNews}
+            disabled={loading}
+            className="uppercase text-xs font-bold tracking-wider rounded-none"
+            data-testid="fetch-news-btn"
+          >
+            <RefreshCw size={14} className={`mr-2 ${loading ? "animate-spin" : ""}`} />
+            Fetch Intel
+          </Button>
+        </div>
       </div>
 
       {/* Stats Row */}
@@ -468,6 +494,41 @@ export default function Dashboard({ stats: propStats, api }) {
 
       {/* Unacknowledged Critical Alerts - Sticky Panel */}
       <UnacknowledgedAlerts api={api} />
+
+      {/* WebSocket Live Feed - Shows items as they arrive */}
+      {wsNewItems.length > 0 && (
+        <Card className="border border-green-500/30 rounded-none bg-green-950/10 animate-slide-in" data-testid="ws-live-feed">
+          <div className="flex items-center gap-2 px-4 py-2 border-b border-green-500/20">
+            <Wifi size={12} className="text-green-400 animate-pulse" />
+            <span className="text-xs uppercase tracking-wider font-['Barlow_Condensed'] font-semibold text-green-400">
+              Live Feed ({wsNewItems.length} new)
+            </span>
+            <Button
+              variant="ghost" size="sm"
+              className="ml-auto text-xs text-green-400 hover:text-green-300"
+              onClick={() => { clearNewItems(); fetchRecent(); fetchStats(); }}
+              data-testid="ws-refresh-btn"
+            >
+              <RefreshCw size={12} className="mr-1" /> Refresh Dashboard
+            </Button>
+          </div>
+          <CardContent className="p-3 space-y-1.5 max-h-40 overflow-y-auto">
+            {wsNewItems.slice(0, 8).map((item, i) => (
+              <div key={item.id || i} className="flex items-center gap-3 p-1.5 text-xs" data-testid={`ws-item-${i}`}>
+                <Badge className={`shrink-0 rounded-none uppercase text-[9px] px-1 py-0 border ${
+                  item.severity === "critical" ? "severity-critical" :
+                  item.severity === "high" ? "severity-high" :
+                  item.severity === "medium" ? "severity-medium" : "severity-low"
+                }`}>
+                  {item.severity}
+                </Badge>
+                <span className="truncate flex-1">{item.title}</span>
+                <span className="text-muted-foreground font-mono shrink-0">P:{item.priority_score}</span>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      )}
 
       {/* Map + Recent Alerts */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">

@@ -1,0 +1,88 @@
+{
+  "summary": "Comprehensive testing of Rhino Drishti iteration 10 features: WebSocket real-time updates at /api/ws/intelligence and Enhanced AI Classification with confidence_score, threat_trajectory, and named entities extraction. All 13 backend tests passed. Frontend WebSocket indicator shows LIVE status and all UI components are correctly implemented.",
+
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+
+  "passed_tests": [
+    "WebSocket /api/ws/intelligence - accepts connection and responds to ping with pong",
+    "GET /api/intelligence - returns 200 with items",
+    "GET /api/intelligence - items have confidence_score, threat_trajectory, entities fields in model (defaults for old items)",
+    "GET /api/intelligence?sort_by=priority_score - sort by priority works correctly",
+    "GET /api/intelligence?min_priority=80 - priority filter works correctly",
+    "Combined sort_by + min_priority filter works",
+    "AI pipeline prompt includes STEP 5 NAMED ENTITY EXTRACTION",
+    "AI pipeline prompt includes confidence_score (0-100)",
+    "AI pipeline prompt includes threat_trajectory (ESCALATING/STABLE/DE-ESCALATING/NEW_THREAT/INDETERMINATE)",
+    "IntelligenceItem model has confidence_score, threat_trajectory, entities fields with correct defaults",
+    "WebSocket broadcast includes confidence_score and threat_trajectory fields",
+    "WebSocket uses critical_alert type for critical/high severity items",
+    "ConnectionManager class exists with connect, disconnect, broadcast methods",
+    "Dashboard WebSocket indicator shows LIVE when connected",
+    "Dashboard has Fetch Intel button",
+    "IntelligenceCard component has confidence_score display (C%)",
+    "IntelligenceCard component has threat_trajectory badge (ESC/DE-ESC/NEW/STABLE)",
+    "IntelligenceCard expanded section has Named Entities display (persons/organizations/locations)"
+  ],
+
+  "verified_from_code": [
+    "WebSocket endpoint at /api/ws/intelligence (server.py lines 2199-2213)",
+    "ConnectionManager class with broadcast method (server.py lines 119-144)",
+    "WebSocket broadcast includes confidence_score and threat_trajectory (server.py lines 1750-1769)",
+    "critical_alert type for critical/high severity items (server.py lines 1767-1768)",
+    "AI pipeline CLASSIFICATION_PROMPT has STEP 5 NAMED ENTITY EXTRACTION (ai_pipeline.py lines 127-135)",
+    "AI pipeline outputs confidence_score 0-100 (ai_pipeline.py lines 159-160)",
+    "AI pipeline outputs threat_trajectory values (ai_pipeline.py lines 156-157)",
+    "IntelligenceItem model has new fields with defaults (server.py lines 105-113)",
+    "useIntelligenceWS hook handles ping/pong and new_item/critical_alert messages (useIntelligenceWS.js)",
+    "Dashboard shows ws-status indicator with LIVE/OFFLINE (Dashboard.js lines 422-434)",
+    "IntelligenceCard shows C% for confidence_score (IntelligenceCard.js lines 106-110)",
+    "IntelligenceCard shows trajectory badge (IntelligenceCard.js lines 111-123)",
+    "IntelligenceCard shows Named Entities in expanded section (IntelligenceCard.js lines 216-237)"
+  ],
+
+  "note_on_existing_items": "Existing DB items (532 total) do not have confidence_score, threat_trajectory, or entities fields because they were processed before the AI prompt update. Only NEW items processed going forward will have these fields populated. This is expected behavior as confirmed in agent context.",
+
+  "test_report_links": [
+    "/app/backend/tests/test_websocket_and_enhanced_ai_v10.py",
+    "/app/test_reports/pytest/pytest_results_v10.xml"
+  ],
+
+  "action_items": [],
+
+  "critical_code_review_comments": [
+    "WebSocket endpoint correctly mounted on app (not api_router) at /api/ws/intelligence for K8s routing",
+    "ConnectionManager properly handles disconnections and broadcasts to all active connections",
+    "AI pipeline prompt is comprehensive with 8 steps including Named Entity Extraction",
+    "IntelligenceItem model has sensible defaults (confidence_score=70, threat_trajectory=INDETERMINATE, entities=empty dict)",
+    "Frontend useIntelligenceWS hook has reconnection logic with 5s delay",
+    "Dashboard correctly shows LIVE/OFFLINE status based on WebSocket connection"
+  ],
+
+  "updated_files": [
+    "/app/backend/tests/test_websocket_and_enhanced_ai_v10.py"
+  ],
+
+  "success_rate": {
+    "backend": "100% (13/13 tests passed)",
+    "frontend": "100% (all UI components verified)"
+  },
+
+  "test_credentials": "No credentials needed - app has no auth",
+
+  "seed_data_creation": "None - used existing data (532 intelligence items)",
+
+  "retest_needed": false,
+
+  "should_main_agent_self_test": false,
+
+  "context_for_next_testing_agent": "All iteration 10 features working correctly: (1) WebSocket /api/ws/intelligence accepts connections and responds to ping with pong, (2) Dashboard shows LIVE indicator when WebSocket connected, (3) AI pipeline prompt has STEP 5 Named Entity Extraction with confidence_score and threat_trajectory, (4) IntelligenceItem model has new fields with defaults, (5) IntelligenceCard UI components ready to display new fields when items are processed with updated pipeline, (6) WebSocket broadcasts new_item and critical_alert messages with enhanced fields. Note: Existing 532 items don't have new fields - only newly processed items will have them. Backend tests in /app/backend/tests/test_websocket_and_enhanced_ai_v10.py."
+}

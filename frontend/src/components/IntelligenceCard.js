@@ -103,6 +103,24 @@ export default function IntelligenceCard({ item, compact = false }) {
               P{priorityScore}
             </span>
           )}
+          {item.confidence_score && (
+            <span className={`text-[10px] font-mono ${item.confidence_score >= 90 ? 'text-green-400' : item.confidence_score >= 70 ? 'text-blue-400' : 'text-muted-foreground'}`}>
+              C{item.confidence_score}%
+            </span>
+          )}
+          {item.threat_trajectory && item.threat_trajectory !== "INDETERMINATE" && (
+            <Badge variant="outline" className={`rounded-none text-[9px] px-1 py-0 ${
+              item.threat_trajectory === "ESCALATING" ? "text-red-400 border-red-500/30" :
+              item.threat_trajectory === "DE-ESCALATING" ? "text-green-400 border-green-500/30" :
+              item.threat_trajectory === "NEW_THREAT" ? "text-amber-400 border-amber-500/30" :
+              "text-muted-foreground border-border"
+            }`} data-testid="card-trajectory">
+              {item.threat_trajectory === "ESCALATING" ? "ESC" :
+               item.threat_trajectory === "DE-ESCALATING" ? "DE-ESC" :
+               item.threat_trajectory === "NEW_THREAT" ? "NEW" :
+               item.threat_trajectory === "STABLE" ? "STABLE" : ""}
+            </Badge>
+          )}
         </div>
       </div>
 
@@ -193,6 +211,28 @@ export default function IntelligenceCard({ item, compact = false }) {
                 <div>
                   <p className="text-[10px] uppercase tracking-widest text-muted-foreground font-mono mb-1">Countries Involved</p>
                   <p className="text-sm">{item.countries_involved.join(", ")}</p>
+                </div>
+              )}
+              {item.entities && (item.entities.persons?.length > 0 || item.entities.organizations?.length > 0 || item.entities.locations?.length > 0) && (
+                <div data-testid="card-entities">
+                  <p className="text-[10px] uppercase tracking-widest text-muted-foreground font-mono mb-1">Named Entities</p>
+                  <div className="flex flex-wrap gap-1">
+                    {item.entities.persons?.map((p, i) => (
+                      <Badge key={`p-${i}`} variant="outline" className="rounded-none text-[9px] px-1 py-0 text-blue-400 border-blue-500/30">
+                        {p}
+                      </Badge>
+                    ))}
+                    {item.entities.organizations?.map((o, i) => (
+                      <Badge key={`o-${i}`} variant="outline" className="rounded-none text-[9px] px-1 py-0 text-purple-400 border-purple-500/30">
+                        {o}
+                      </Badge>
+                    ))}
+                    {item.entities.locations?.map((l, i) => (
+                      <Badge key={`l-${i}`} variant="outline" className="rounded-none text-[9px] px-1 py-0 text-green-400 border-green-500/30">
+                        {l}
+                      </Badge>
+                    ))}
+                  </div>
                 </div>
               )}
               {item.attention_level && (
