@@ -2,7 +2,7 @@
 
 ## Executive Summary
 
-**Rhino Drishti** is a full-stack AI-powered military intelligence aggregation and analysis platform designed for monitoring India's North Eastern Region (NER), Bangladesh, and Myanmar. The system automates news collection from 32 RSS sources, performs 8-step AI classification using Claude Haiku 4.5 with confidence scoring and named entity extraction, detects recurring threat patterns, and generates daily intelligence briefs (auto-scheduled at 0600 IST) with PDF export. It features real-time WebSocket updates, configurable retention windows, and critical alert acknowledgement workflows.
+**Rhino Drishti** is a full-stack AI-powered military intelligence aggregation and analysis platform designed for monitoring India's North Eastern Region (NER), Bangladesh, and Myanmar. The system automates news collection from **36 RSS sources** plus elite web-scraped targets, performs **tiered AI classification** (Level 1 Sifter pre-filter → Level 2 Deep Analyst 8-step military classification) using Claude Haiku 4.5 with confidence scoring and named entity extraction, detects recurring threat patterns, and generates daily intelligence briefs (auto-scheduled at 0600 IST) with PDF export. It features **real-time WebSocket updates**, **OpenAI vector embeddings for semantic search**, **adaptive scheduling** (grassroots/60min, standard/30min, established/12hr), **on-demand custom PDF briefs** with RESTRICTED headers, configurable retention windows, and critical alert acknowledgement workflows.
 
 ---
 
@@ -11,8 +11,12 @@
 ### 1.1 Purpose
 - Real-time intelligence monitoring for armed forces and strategic analysts
 - Automated collection and AI analysis of news from NER states, Bangladesh, and Myanmar
+- **Tiered AI processing**: Level 1 Sifter pre-filters for border instability, refugee movements → Level 2 Deep Analyst performs 8-step military classification
 - Pattern detection across regions to identify escalating threats early
 - Daily intelligence brief generation (auto-scheduled 0600 IST) with cross-brief deduplication
+- **Semantic search** via OpenAI vector embeddings for finding related intelligence across the corpus
+- **On-demand custom PDF briefs** with filters (region, threat type, severity, time window) and RESTRICTED classification headers
+- **Elite web scraping** of grassroots/hard-to-reach sources (SATP, Ukhrul Times, Frontier Myanmar) via BeautifulSoup/httpx
 - Document upload facility for offline intelligence materials
 - Critical alert acknowledgement workflow for high-severity items
 
@@ -23,13 +27,16 @@
 - Defense ministry officials requiring daily situational awareness
 
 ### 1.3 Key Value Propositions
-1. **32 RSS Sources**: PIB Defence, MHA, Assam Rifles, regional papers, Global Times, SCMP, plus NER/Bangladesh/Myanmar feeds
-2. **8-Step AI Classification**: Confidence scoring, threat trajectory, named entity extraction, negative filtering
-3. **Pattern Detection Engine**: Sliding-window analysis detecting escalation across regions
-4. **WebSocket Real-time Updates**: Live feed without polling, critical alert notifications
-5. **Automated Daily Brief**: 0600 IST, no repeated news, pattern insights in PDF
-6. **Multi-lingual**: Bengali, Assamese, Hindi auto-translated before AI processing
-7. **Configurable Retention**: UI-adjustable news window (7-365 days)
+1. **36 RSS Sources + Elite Web Scraping**: PIB Defence, MHA, Assam Rifles, regional papers, Global Times, SCMP, plus NER/Bangladesh/Myanmar feeds and grassroots targets
+2. **Tiered AI Classification**: Level 1 Sifter pre-filter → Level 2 8-step Deep Analyst with confidence scoring, threat trajectory, named entity extraction
+3. **Semantic Search**: OpenAI `text-embedding-3-small` vector embeddings for finding contextually related intelligence items
+4. **Pattern Detection Engine**: Sliding-window analysis detecting escalation across regions
+5. **WebSocket Real-time Updates**: Live feed without polling, critical alert notifications
+6. **Automated Daily Brief**: 0600 IST, no repeated news, pattern insights in PDF
+7. **Custom On-Demand Briefs**: Filtered PDF generation with RESTRICTED classification headers
+8. **Adaptive Scheduling**: Grassroots (60min), standard (30min), established (12hr), retry (15min)
+9. **Multi-lingual**: Bengali, Assamese, Hindi auto-translated before AI processing
+10. **Configurable Retention**: UI-adjustable news window (7-365 days)
 
 ---
 
@@ -43,54 +50,66 @@
 | Backend | FastAPI (Python 3.11) + WebSockets |
 | Database | MongoDB Atlas (Motor async driver) |
 | AI/LLM | Claude Haiku 4.5 via Emergent LLM Key |
+| Embeddings | OpenAI `text-embedding-3-small` (1536 dimensions) |
 | RSS Parsing | feedparser |
+| Web Scraping | BeautifulSoup4 + httpx (async) |
 | PDF Generation | fpdf2 |
-| Background Jobs | APScheduler (3 scheduled tasks) |
+| Background Jobs | APScheduler (6 scheduled tasks) |
 | Document Processing | PyPDF2, python-docx, openpyxl |
 | Real-time | WebSocket (native FastAPI) |
-| Deployment | Vercel (Frontend) + Render (Backend) |
 
 ### 2.2 System Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                        RHINO DRISHTI                            │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                 │
-│  ┌──────────────────┐      ┌──────────────────────────────┐    │
-│  │  React Frontend   │◄────►│   FastAPI Backend             │    │
-│  │  (Vercel)         │ WS   │   (Render)                    │    │
-│  │                   │◄────►│                               │    │
-│  │  - Dashboard      │      │  ┌─────────────────────────┐ │    │
-│  │  - Intel Feed     │      │  │ APScheduler              │ │    │
-│  │  - Daily Brief    │      │  │ - RSS Fetch (30min)      │ │    │
-│  │  - Patterns       │      │  │ - AI Retry (15min)       │ │    │
-│  │  - Alerts         │      │  │ - Daily Brief (0600 IST) │ │    │
-│  │  - Settings       │      │  └─────────────────────────┘ │    │
-│  └──────────────────┘      │                               │    │
-│                             │  ┌─────────────────────────┐ │    │
-│                             │  │ Intelligence Pipeline     │ │    │
-│                             │  │ 1. RSS Fetch             │ │    │
-│                             │  │ 2. Dedup (URL + Title)   │ │    │
-│                             │  │ 3. Hard Filter           │ │    │
-│                             │  │ 4. Language Translation   │ │    │
-│                             │  │ 5. AI Classification     │ │    │
-│                             │  │ 6. WebSocket Broadcast   │ │    │
-│                             │  │ 7. Pattern Detection     │ │    │
-│                             │  └─────────────────────────┘ │    │
-│                             │                               │    │
-│                             └──────────────┬────────────────┘    │
-│                                            │                     │
-│                             ┌──────────────▼────────────────┐    │
-│                             │     MongoDB Atlas              │    │
-│                             │  - intelligence_items          │    │
-│                             │  - daily_briefs                │    │
-│                             │  - intelligence_patterns       │    │
-│                             │  - uploaded_documents          │    │
-│                             │  - rss_sources                 │    │
-│                             │  - app_settings                │    │
-│                             └───────────────────────────────┘    │
-└─────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────┐
+│                          RHINO DRISHTI ELITE                             │
+├──────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│  ┌──────────────────┐      ┌───────────────────────────────────────┐    │
+│  │  React Frontend   │◄────►│   FastAPI Backend                     │    │
+│  │                   │ WS   │                                       │    │
+│  │  - Dashboard      │◄────►│  ┌────────────────────────────────┐  │    │
+│  │  - Intel Feed     │      │  │ APScheduler (6 Jobs)            │  │    │
+│  │  - Cross-Border   │      │  │ - Grassroots Fetch (60min)      │  │    │
+│  │  - Daily Brief    │      │  │ - Standard Fetch (30min)        │  │    │
+│  │  - Weekly Trends  │      │  │ - Established Fetch (12hr)      │  │    │
+│  │  - Patterns       │      │  │ - AI Retry (15min)              │  │    │
+│  │  - Alerts         │      │  │ - Daily Brief (0600 IST)        │  │    │
+│  │  - Upload Docs    │      │  │ - Embedding Backfill (6hr)      │  │    │
+│  │  - Settings       │      │  └────────────────────────────────┘  │    │
+│  └──────────────────┘      │                                       │    │
+│                             │  ┌────────────────────────────────┐  │    │
+│                             │  │ Elite Intelligence Pipeline     │  │    │
+│                             │  │ 1. RSS Fetch / Web Scrape       │  │    │
+│                             │  │ 2. Dedup (URL + Title)          │  │    │
+│                             │  │ 3. Hard Filter                  │  │    │
+│                             │  │ 4. Language Translation          │  │    │
+│                             │  │ 5. Level 1 Sifter (pre-filter)  │  │    │
+│                             │  │ 6. Level 2 AI Classification    │  │    │
+│                             │  │ 7. Vector Embedding Generation  │  │    │
+│                             │  │ 8. WebSocket Broadcast          │  │    │
+│                             │  │ 9. Pattern Detection            │  │    │
+│                             │  └────────────────────────────────┘  │    │
+│                             │                                       │    │
+│                             │  ┌────────────────────────────────┐  │    │
+│                             │  │ Embedding Service (OpenAI)      │  │    │
+│                             │  │ - text-embedding-3-small        │  │    │
+│                             │  │ - Cosine similarity search      │  │    │
+│                             │  │ - Batch backfill (50/cycle)     │  │    │
+│                             │  └────────────────────────────────┘  │    │
+│                             │                                       │    │
+│                             └──────────────────┬────────────────────┘    │
+│                                                │                         │
+│                             ┌──────────────────▼────────────────────┐    │
+│                             │     MongoDB Atlas                      │    │
+│                             │  - intelligence_items (w/ embeddings)  │    │
+│                             │  - daily_briefs                        │    │
+│                             │  - intelligence_patterns               │    │
+│                             │  - uploaded_documents                  │    │
+│                             │  - rss_sources                         │    │
+│                             │  - app_settings                        │    │
+│                             └───────────────────────────────────────┘    │
+└──────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -101,16 +120,28 @@
 
 | Feature | Description | Status |
 |---------|-------------|--------|
-| RSS Ingestion | 32 sources across NER, National, International, Bangladesh, Myanmar | Active |
+| RSS Ingestion | 36 sources across NER, National, International, Bangladesh, Myanmar | Active |
+| Elite Web Scraping | BS4/httpx scraping of SATP, Ukhrul Times, Frontier Myanmar | Active |
+| Adaptive Scheduling | Grassroots/60min, Standard/30min, Established/12hr, Retry/15min | Active |
 | Deduplication | URL + title similarity matching (65% threshold) | Active |
 | Hard Filter | Rule-based noise rejection (sports, entertainment, lifestyle) | Active |
 | Language Detection | Bengali, Assamese, Hindi character analysis | Active |
 | Pre-AI Translation | Translate non-English before Claude classification | Active |
-| AI Classification | 8-step military intelligence prompt with Claude Haiku 4.5 | Active |
+| Level 1 Sifter | Pre-filter for border instability, refugee movements, militant activity | Active |
+| Level 2 AI Classification | 8-step military intelligence prompt with Claude Haiku 4.5 | Active |
+| Vector Embeddings | OpenAI text-embedding-3-small for semantic search | Active |
 | WebSocket Broadcast | Real-time push to connected clients | Active |
 | Pattern Detection | Post-processing sliding-window analysis | Active |
 
-### 3.2 AI Classification (8-Step Prompt)
+### 3.2 Tiered AI Classification
+
+#### Level 1: Sifter (Pre-filter)
+- Fast keyword/pattern scan for border instability, refugee movements, militant activity
+- Assigns initial confidence and relevance scores
+- Filters out obviously irrelevant content before expensive LLM calls
+- Located in `sifter.py`
+
+#### Level 2: Deep Analyst (8-Step Prompt)
 
 | Step | Purpose |
 |------|---------|
@@ -123,12 +154,21 @@
 | 7. Special Detection | PLA_PAKISTAN_PRESENCE, COORDINATED_NARRATIVE, etc. |
 | 8. Language Rule | All output in English regardless of input language |
 
-**New Fields (v2):**
+**Enhanced Fields:**
 - `confidence_score` (0-100): How confident the AI is in its classification
 - `threat_trajectory`: ESCALATING / STABLE / DE-ESCALATING / NEW_THREAT / INDETERMINATE
 - `entities`: Structured extraction of persons, organizations, locations
 
-### 3.3 Pattern Detection Engine
+### 3.3 Semantic Search (Vector Embeddings)
+
+- **Model**: OpenAI `text-embedding-3-small` (1536 dimensions)
+- **Storage**: `embedding` field on each `intelligence_item` document
+- **Search**: Cosine similarity between query embedding and stored item embeddings
+- **Backfill**: Batch of 50 items per cycle, scheduled every 6 hours + manual trigger
+- **Minimum Score**: 0.3 threshold for result inclusion
+- **UI**: Toggle between keyword and semantic search in Intelligence Feed
+
+### 3.4 Pattern Detection Engine
 
 - **Collection**: `intelligence_patterns`
 - **Algorithm**: Groups items by region+threat, region+actor, region+tag, crossborder keys
@@ -137,23 +177,38 @@
 - **Window**: 7 days default, auto-expands to 30 days for sparse data
 - **Runs**: After each fetch cycle + manual trigger via `/api/patterns/detect`
 
-### 3.4 Daily Brief System
+### 3.5 Daily Brief System
 
 - **Auto-generation**: APScheduler cron at 0600 IST (0030 UTC) daily
 - **Time Window**: From previous day's latest brief generation → current generation time
 - **Cross-brief Dedup**: Tracks `included_item_ids` — no item appears in two consecutive briefs
 - **Sections**: NER Key Developments, National News, International News, Pattern Insights, Document Insights
 - **PDF Export**: Full analysis (Why it matters, Early Warning, Special Flags, Actors) + Pattern Detection section with color-coded risk levels
-- **No Twitter**: Twitter section completely removed per user request
+- **RESTRICTED Headers**: All PDFs carry RESTRICTED classification markings
 
-### 3.5 Critical Alert Acknowledgement
+### 3.6 Custom On-Demand Briefs
+
+- **Endpoint**: POST `/api/intelligence/custom-brief`
+- **Filters**: Region, threat type, severity, time window (hours), text search
+- **Output**: Downloadable PDF with RESTRICTED headers
+- **Content**: Filtered intelligence items with severity badges, priority scores, summaries, threat trajectories
+
+### 3.7 Critical Alert Acknowledgement
 
 - **Unacknowledged Alerts Panel**: Sticky panel on Dashboard showing critical/high items
 - **One-click ACK**: Acknowledge button marks item as handled
 - **Fields**: `acknowledged`, `acknowledged_at` on intelligence items
 - **Endpoints**: GET `/api/alerts/unacknowledged`, POST `/api/intelligence/{id}/acknowledge`
 
-### 3.6 Dashboard & UI
+### 3.8 Elite Web Scraping
+
+- **Engine**: BeautifulSoup4 + httpx (async HTTP client)
+- **Targets**: SATP (South Asia Terrorism Portal), Ukhrul Times, Frontier Myanmar
+- **Dedup**: Checks against existing `source_url` before ingestion
+- **Trigger**: Manual via `/api/scrape-elite` or scheduled
+- **Located in**: `web_scraper.py`
+
+### 3.9 Dashboard & UI
 
 | Component | Description |
 |-----------|-------------|
@@ -165,8 +220,9 @@
 | Unacknowledged Alerts | Sticky panel with ACK buttons |
 | Pattern Insights Widget | Top escalation warnings |
 | Trend Charts | 7-day severity distribution |
+| Semantic Search Toggle | Switch between keyword and vector search in Intel Feed |
 
-### 3.7 Settings & Configuration
+### 3.10 Settings & Configuration
 
 - **News Retention Window**: 7/14/30/60/90/180/365 days (UI toggle)
 - **Dashboard Stats Cache**: 60-second in-memory TTL cache, auto-invalidated on new data or retention change
@@ -184,8 +240,15 @@
 | GET | /api/intelligence/{id} | Single item detail |
 | POST | /api/fetch-news | Trigger RSS fetch cycle |
 | POST | /api/bulk-scrape | Trigger bulk article scraping |
+| POST | /api/scrape-elite | Trigger elite web scraping (SATP, Ukhrul Times, Frontier Myanmar) |
 | GET | /api/scan-status | Real-time scan progress |
 | GET | /api/pipeline/status | Pipeline health metrics |
+
+### Semantic Search & Embeddings
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | /api/intelligence/semantic-search | Semantic search via vector embeddings (body: {query, limit, min_score}) |
+| POST | /api/embeddings/backfill | Trigger embedding backfill for unprocessed items (batch of 50) |
 
 ### Brief Endpoints
 | Method | Endpoint | Description |
@@ -193,6 +256,7 @@
 | GET | /api/daily-brief | Get today's brief (auto-generates if missing) |
 | GET | /api/daily-brief/pdf | Download brief as PDF |
 | POST | /api/generate-brief | Force regenerate today's brief |
+| POST | /api/intelligence/custom-brief | Generate custom filtered PDF brief (body: {region, threat_type, severity, hours, search, title}) |
 | GET | /api/weekly-trends | Weekly trend data |
 
 ### Pattern & Alert Endpoints
@@ -200,6 +264,7 @@
 |--------|----------|-------------|
 | GET | /api/patterns | Get detected patterns |
 | POST | /api/patterns/detect | Trigger pattern detection |
+| GET | /api/alerts | Get critical/high alerts |
 | GET | /api/alerts/unacknowledged | Unacknowledged critical/high alerts |
 | POST | /api/intelligence/{id}/acknowledge | Acknowledge an alert |
 
@@ -247,6 +312,7 @@
   "countries_involved": ["string"],
   "acknowledged": false,
   "acknowledged_at": "ISO 8601",
+  "embedding": [1536-dim float vector],
   "processed": true
 }
 ```
@@ -300,13 +366,16 @@
 
 | Job | Schedule | Purpose |
 |-----|----------|---------|
-| `fetch_and_process_news` | Every 30 min | Fetch RSS → Dedup → Filter → Translate → AI → Store |
+| `fetch_grassroots_sources` | Every 60 min | Fetch from grassroots/hard-to-reach RSS sources |
+| `fetch_and_process_news` | Every 30 min | Fetch standard RSS → Dedup → Filter → Translate → AI → Store |
+| `fetch_established_sources` | Every 12 hr | Fetch from established/stable sources (lower frequency) |
 | `analyze_unprocessed_items` | Every 15 min | Retry failed/unprocessed items (max 15 per cycle) |
 | `generate_scheduled_daily_brief` | 0030 UTC (0600 IST) | Auto-generate daily intelligence brief |
+| `run_embedding_backfill` | Every 6 hr | Generate OpenAI embeddings for items missing vectors (batch of 50) |
 
 ---
 
-## 7. RSS Sources (32 Total)
+## 7. RSS Sources (36 Total)
 
 ### NER Regional (12)
 Sentinel Assam, Northeast Now, East Mojo, Morung Express, The Sangai Express, Manipur Express, Indian Express NE, Nagaland Post, The Shillong Times, Imphal Free Press, Eastern Mirror, Arunachal24
@@ -323,16 +392,42 @@ The Irrawaddy, Myanmar Now
 ### International (4)
 BBC Asia/India, Al Jazeera, Global Times, SCMP Asia
 
+### Elite Watchlist (4 — Web Scraped)
+SATP (South Asia Terrorism Portal), Ukhrul Times, Frontier Myanmar, Assam Rifles (Official)
+
 ---
 
-## 8. Deployment Architecture
+## 8. File Architecture
 
-| Service | Platform | URL |
-|---------|----------|-----|
-| Frontend | Vercel | User's Vercel deployment |
-| Backend | Render | User's Render deployment |
-| Database | MongoDB Atlas | Cloud cluster |
-| Uptime | UptimeRobot | Pings Render to prevent sleep |
+```
+/app/
+├── backend/
+│   ├── server.py               # FastAPI endpoints, APScheduler, WebSocket, PDF generation
+│   ├── ai_pipeline.py          # Claude Haiku 4.5 integration, 8-step military prompt
+│   ├── rss_fetcher.py          # RSS ingestion with elite watchlists
+│   ├── sifter.py               # Level 1 Sifter pre-filter
+│   ├── web_scraper.py          # BS4/httpx web scraper for elite sources
+│   ├── embedding_service.py    # OpenAI text-embedding-3-small service
+│   ├── intelligence_filter.py  # Hard filter + geographic matching
+│   ├── requirements.txt
+│   └── .env                    # MONGO_URL, EMERGENT_LLM_KEY, OPENAI_API_KEY
+├── frontend/
+│   ├── src/
+│   │   ├── components/
+│   │   │   └── IntelligenceCard.js
+│   │   ├── pages/
+│   │   │   ├── Dashboard.js
+│   │   │   ├── IntelligenceFeed.js   # Semantic search UI toggle
+│   │   │   ├── DailyBrief.js
+│   │   │   ├── DocumentUpload.js
+│   │   │   └── SettingsPage.js
+│   │   └── hooks/
+│   │       └── useIntelligenceWS.js
+│   └── .env                    # REACT_APP_BACKEND_URL
+├── memory/
+│   └── PRD.md
+└── PRODUCT_REPORT.md
+```
 
 ---
 
@@ -347,14 +442,31 @@ BBC Asia/India, Al Jazeera, Global Times, SCMP Asia
 - Batch processing: 3 articles per batch, 5s pause between batches
 - 1.5s inter-article delay
 - Exponential backoff on Claude API rate limits
+- 0.2-0.3s delay between embedding API calls
 
 ### Noise Reduction
 - Hard filter rejects sports/entertainment/lifestyle before AI processing
+- Level 1 Sifter pre-filters for relevance before expensive LLM calls
 - Geographic relevance matching (NER states, Bangladesh, Myanmar)
 - Title similarity dedup (65% word overlap threshold)
 - AI negative filtering with explicit rejection criteria
+- Cross-brief deduplication (no repeated news in consecutive briefs)
+
+### Embedding Efficiency
+- Batch backfill: 50 items per cycle with rate-limiting delays
+- Scheduled every 6 hours to incrementally embed new items
+- Text truncated to 8000 chars before embedding to stay within token limits
+
+---
+
+## 10. Security & Classification
+
+- All PDF briefs carry **RESTRICTED** classification headers and footers
+- Custom briefs include **FOR AUTHORIZED PERSONNEL ONLY** distribution notice
+- No public authentication layer (designed for internal/classified network deployment)
+- API keys stored in environment variables, not in codebase
 
 ---
 
 *Report generated: April 6, 2026*
-*Platform version: Rhino Drishti v2.0 (11-Phase Architectural Upgrade)*
+*Platform version: Rhino Drishti Elite v3.0 (OSINT Upgrade)*
