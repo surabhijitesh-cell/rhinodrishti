@@ -33,6 +33,7 @@ uploads_col = db.uploaded_documents
 tweets_col = db.twitter_feeds
 national_news_col = db.national_news
 international_news_col = db.international_news
+patterns_col = db.intelligence_patterns
 
 # In-memory scan status tracker
 scan_status = {
@@ -43,6 +44,8 @@ scan_status = {
     "sources_scanned": 0,
     "articles_found": 0,
     "relevant_found": 0,
+    "filtered_out": 0,
+    "translated": 0,
     "last_scan_at": None,
     "last_scan_result": None,
     "scan_log": [],
@@ -276,6 +279,52 @@ async def get_alerts():
         {"severity": {"$in": ["critical", "high"]}}, {"_id": 0}
     ).sort("published_at", -1).limit(30).to_list(30)
     return {"alerts": items, "count": len(items)}
+
+
+@api_router.get("/alerts/unacknowledged")
+async def get_unacknowledged_alerts():
+    """Get critical/high alerts that have not been acknowledged."""
+    items = await intelligence_col.find(
+        {
+            "severity": {"$in": ["critical", "high"]},
+            "$or": [
+                {"acknowledged": {"$exists": False}},
+                {"acknowledged": False}
+            ]
+        },
+        {"_id": 0}
+    ).sort("published_at", -1).limit(50).to_list(50)
+    return {"alerts": items, "count": len(items)}
+
+
+@api_router.post("/intelligence/{item_id}/acknowledge")
+async def acknowledge_alert(item_id: str):
+    """Acknowledge a critical/high alert."""
+    result = await intelligence_col.update_one(
+        {"id": item_id},
+        {"$set": {
+            "acknowledged": True,
+            "acknowledged_at": datetime.now(timezone.utc).isoformat()
+        }}
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Item not found")
+    return {"message": "Alert acknowledged", "id": item_id}
+
+
+@api_router.get("/patterns")
+async def get_patterns():
+    """Get detected intelligence patterns."""
+    patterns = await patterns_col.find({}, {"_id": 0}).to_list(100)
+    return {"patterns": patterns, "count": len(patterns)}
+
+
+@api_router.post("/patterns/detect")
+async def trigger_pattern_detection(background_tasks: BackgroundTasks):
+    """Trigger pattern detection analysis."""
+    from pattern_engine import detect_patterns
+    background_tasks.add_task(detect_patterns, db)
+    return {"message": "Pattern detection started"}
 
 
 @api_router.get("/daily-brief")
@@ -914,6 +963,10 @@ async def pipeline_status():
             "inter_article_delay_seconds": 1.5,
             "max_retry_per_cycle": 15
         },
+        "filter_stats": {
+            "last_filtered_out": scan_status.get("filtered_out", 0),
+            "last_translated": scan_status.get("translated", 0),
+        },
         "scheduler": "fetch every 30 min (max 25 articles), retry unprocessed every 15 min (max 15 articles)"
     }
 
@@ -1448,11 +1501,49 @@ async def fetch_and_process_news():
             existing_titles.append(norm_title)
         
         skipped = url_dupes + title_dupes
-        scan_status["relevant_found"] = len(new_articles)
         logger.info(f"Deduplication: {url_dupes} URL dupes, {title_dupes} title dupes, {len(new_articles)} new articles")
 
+        # Step 2.5: Apply intelligence hard filter BEFORE AI processing
+        from intelligence_filter import hard_filter, detect_language, run_filter_pipeline
+        EMERGENT_LLM_KEY = os.environ.get('EMERGENT_LLM_KEY', '')
+        
+        filtered_articles = []
+        filter_rejected = 0
+        translated_count = 0
+        for article in new_articles:
+            passed, reason = hard_filter(article)
+            if not passed:
+                filter_rejected += 1
+                logger.debug(f"  Filtered out: {article.get('title', '')[:50]} ({reason})")
+                continue
+            
+            # Detect language and translate if needed (pre-process for AI)
+            lang = detect_language(f"{article.get('title', '')} {article.get('raw_content', '')[:200]}")
+            article["detected_language"] = lang
+            
+            if lang != "en" and EMERGENT_LLM_KEY:
+                try:
+                    filter_result = await run_filter_pipeline(article, EMERGENT_LLM_KEY)
+                    if filter_result.get("translated_title"):
+                        article["original_title"] = article["title"]
+                        article["title"] = filter_result["translated_title"]
+                        translated_count += 1
+                    if filter_result.get("translated_content"):
+                        article["original_content"] = article.get("raw_content", "")
+                        article["raw_content"] = filter_result["translated_content"]
+                except Exception as e:
+                    logger.warning(f"Translation failed, using original: {e}")
+            
+            filtered_articles.append(article)
+        
+        scan_status["filtered_out"] = filter_rejected
+        scan_status["translated"] = translated_count
+        scan_status["relevant_found"] = len(filtered_articles)
+        logger.info(f"Intelligence Filter: {filter_rejected} rejected, {translated_count} translated, {len(filtered_articles)} passed")
+        new_articles = filtered_articles
+
         if not new_articles:
-            logger.info("No new articles to process. Cycle complete.")
+            logger.info("No new articles to process after filtering. Cycle complete.")
             scan_status["is_scanning"] = False
             scan_status["progress"] = 100
             scan_status["current_source"] = ""
@@ -1461,7 +1552,9 @@ async def fetch_and_process_news():
                 "feeds_scanned": len(RSS_SOURCES),
                 "total_articles": len(articles),
                 "new_relevant": 0,
-                "duplicates_skipped": skipped
+                "duplicates_skipped": skipped,
+                "filtered_out": filter_rejected,
+                "translated": translated_count
             }
             return
 
@@ -1510,8 +1603,8 @@ async def fetch_and_process_news():
 
         logger.info("=== Fetch cycle complete ===")
         logger.info(f"  Processed: {success_count} | Failed: {fail_count} | Not relevant: {skip_count}")
-        logger.info(f"  Duplicates skipped: {skipped} | Rate limit hits: {rate_limit_hits}")
-        logger.info(f"  Remaining for next cycle: {max(0, len(articles) - skipped - MAX_ARTICLES_PER_CYCLE)}")
+        logger.info(f"  Duplicates skipped: {skipped} | Filtered out: {filter_rejected} | Translated: {translated_count}")
+        logger.info(f"  Rate limit hits: {rate_limit_hits}")
 
         # Finalize scan status
         scan_status["is_scanning"] = False
@@ -1523,9 +1616,18 @@ async def fetch_and_process_news():
             "total_articles": len(articles),
             "new_relevant": success_count,
             "duplicates_skipped": skipped,
+            "filtered_out": filter_rejected,
+            "translated": translated_count,
             "failed": fail_count,
             "not_relevant": skip_count
         }
+
+        # Trigger pattern detection after processing
+        try:
+            from pattern_engine import detect_patterns
+            asyncio.create_task(detect_patterns(db))
+        except Exception as e:
+            logger.warning(f"Pattern detection trigger failed: {e}")
 
     except Exception as e:
         logger.error(f"News fetch cycle failed: {e}")
@@ -1835,13 +1937,17 @@ async def analyze_unprocessed_items():
 
 
 async def initialize_sources():
-    """Seed RSS sources from rss_fetcher config if not already present"""
+    """Seed RSS sources from rss_fetcher config — always update to latest list"""
     from rss_fetcher import RSS_SOURCES
+    # Upsert all sources to ensure new ones are added
+    for source in RSS_SOURCES:
+        await sources_col.update_one(
+            {"url": source["url"]},
+            {"$set": {**source, "id": str(uuid.uuid4())}},
+            upsert=True
+        )
     count = await sources_col.count_documents({})
-    if count == 0:
-        for source in RSS_SOURCES:
-            await sources_col.insert_one({**source, "id": str(uuid.uuid4())})
-        logger.info(f"Initialized {len(RSS_SOURCES)} RSS sources (regional, national, Bangladesh, Myanmar)")
+    logger.info(f"RSS sources synced: {count} total ({len(RSS_SOURCES)} configured)")
 
 
 @app.on_event("startup")

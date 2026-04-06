@@ -3,7 +3,8 @@ import { useNavigate } from "react-router-dom";
 import {
   Shield, AlertTriangle, Activity, TrendingUp,
   ChevronRight, RefreshCw, Target, ArrowUp,
-  Rss, Eye, EyeOff, Clock, CheckCircle2, Loader2
+  Rss, Eye, EyeOff, Clock, CheckCircle2, Loader2,
+  Filter, Languages, BellRing, GitBranch, Check
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Badge } from "../components/ui/badge";
@@ -163,11 +164,153 @@ function ScanProgressBar({ api }) {
                   <span className="text-muted-foreground">New:</span>
                   <span className="font-mono font-bold text-primary">{lastResult.new_relevant}</span>
                 </div>
+                {lastResult.filtered_out > 0 && (
+                  <div className="flex items-center gap-1" data-testid="scan-filtered-stat">
+                    <Filter size={10} className="text-muted-foreground" />
+                    <span className="text-muted-foreground">Filtered:</span>
+                    <span className="font-mono font-bold text-orange-400">{lastResult.filtered_out}</span>
+                  </div>
+                )}
+                {lastResult.translated > 0 && (
+                  <div className="flex items-center gap-1" data-testid="scan-translated-stat">
+                    <Languages size={10} className="text-muted-foreground" />
+                    <span className="text-muted-foreground">Translated:</span>
+                    <span className="font-mono font-bold text-blue-400">{lastResult.translated}</span>
+                  </div>
+                )}
               </>
             )}
           </div>
         </CardContent>
       )}
+    </Card>
+  );
+}
+
+function UnacknowledgedAlerts({ api }) {
+  const [alerts, setAlerts] = useState([]);
+  const [dismissing, setDismissing] = useState(null);
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    const fetch = async () => {
+      try {
+        const res = await axios.get(`${api}/alerts/unacknowledged`);
+        setAlerts(res.data.alerts || []);
+      } catch (e) { /* silent */ }
+    };
+    fetch();
+    const interval = setInterval(fetch, 30000);
+    return () => clearInterval(interval);
+  }, [api]);
+
+  const acknowledge = async (id) => {
+    setDismissing(id);
+    try {
+      await axios.post(`${api}/intelligence/${id}/acknowledge`);
+      setAlerts((prev) => prev.filter((a) => a.id !== id));
+    } catch (e) { console.error(e); }
+    setDismissing(null);
+  };
+
+  if (alerts.length === 0) return null;
+
+  return (
+    <Card className="border-2 border-red-500/40 rounded-none bg-red-950/20 animate-slide-in" data-testid="unacknowledged-alerts-panel">
+      <div className="flex items-center gap-2 px-4 py-2 border-b border-red-500/30">
+        <BellRing size={14} className="text-red-400 animate-pulse" />
+        <span className="text-xs uppercase tracking-wider font-['Barlow_Condensed'] font-semibold text-red-400">
+          Unacknowledged Critical Alerts ({alerts.length})
+        </span>
+        <Button
+          variant="ghost" size="sm"
+          className="ml-auto text-xs text-red-400"
+          onClick={() => navigate("/alerts")}
+        >
+          View All <ChevronRight size={12} />
+        </Button>
+      </div>
+      <CardContent className="p-3 space-y-2 max-h-48 overflow-y-auto">
+        {alerts.slice(0, 5).map((item) => (
+          <div key={item.id} className="flex items-center gap-3 p-2 border border-red-500/20 bg-red-950/30" data-testid={`unack-alert-${item.id}`}>
+            <AlertTriangle size={14} className="text-red-400 shrink-0" />
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium leading-tight truncate">{item.title}</p>
+              <p className="text-[10px] text-muted-foreground font-mono">{item.state} | {item.source}</p>
+            </div>
+            <Badge className={`shrink-0 rounded-none uppercase text-[10px] px-1.5 py-0 border ${item.severity === "critical" ? "severity-critical" : "severity-high"}`}>
+              {item.severity}
+            </Badge>
+            <Button
+              variant="outline" size="sm"
+              className="h-7 text-[10px] rounded-none border-green-500/30 text-green-400 hover:bg-green-500/10"
+              onClick={() => acknowledge(item.id)}
+              disabled={dismissing === item.id}
+              data-testid={`ack-btn-${item.id}`}
+            >
+              <Check size={12} className="mr-1" />
+              ACK
+            </Button>
+          </div>
+        ))}
+      </CardContent>
+    </Card>
+  );
+}
+
+function PatternInsights({ api }) {
+  const [patterns, setPatterns] = useState([]);
+
+  useEffect(() => {
+    const fetch = async () => {
+      try {
+        const res = await axios.get(`${api}/patterns`);
+        setPatterns(res.data.patterns || []);
+      } catch (e) { /* silent */ }
+    };
+    fetch();
+  }, [api]);
+
+  if (patterns.length === 0) return null;
+
+  const riskColors = {
+    CRITICAL: "text-red-400 bg-red-500/20 border-red-500/30",
+    HIGH: "text-orange-400 bg-orange-500/20 border-orange-500/30",
+    MODERATE: "text-yellow-400 bg-yellow-500/20 border-yellow-500/30",
+    LOW: "text-green-400 bg-green-500/20 border-green-500/30",
+  };
+
+  return (
+    <Card className="border border-border rounded-none bg-card" data-testid="pattern-insights-card">
+      <CardHeader className="py-3 px-4 border-b border-border">
+        <div className="flex items-center gap-2">
+          <GitBranch size={14} className="text-primary" />
+          <CardTitle className="text-sm uppercase tracking-wider font-['Barlow_Condensed'] font-semibold">
+            Detected Patterns ({patterns.length})
+          </CardTitle>
+        </div>
+      </CardHeader>
+      <CardContent className="p-3 space-y-2 max-h-64 overflow-y-auto">
+        {patterns.slice(0, 8).map((p, i) => (
+          <div key={i} className="p-2 border border-border space-y-1" data-testid={`pattern-${i}`}>
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-sm font-medium">
+                {p.region} - {p.detail || p.pattern_type}
+              </span>
+              <Badge className={`rounded-none text-[10px] px-1.5 py-0 border ${riskColors[p.escalation_risk] || riskColors.LOW}`}>
+                {p.escalation_risk}
+              </Badge>
+            </div>
+            <div className="flex items-center gap-3 text-[10px] text-muted-foreground font-mono">
+              <span>{p.event_count} events / {p.window_days}d</span>
+              <span>Avg Priority: {p.avg_priority_score}</span>
+            </div>
+            {p.sample_titles && p.sample_titles[0] && (
+              <p className="text-xs text-muted-foreground truncate">Latest: {p.sample_titles[0]}</p>
+            )}
+          </div>
+        ))}
+      </CardContent>
     </Card>
   );
 }
@@ -323,6 +466,9 @@ export default function Dashboard({ stats: propStats, api }) {
       {/* RSS Scan Progress Bar */}
       <ScanProgressBar api={api} />
 
+      {/* Unacknowledged Critical Alerts - Sticky Panel */}
+      <UnacknowledgedAlerts api={api} />
+
       {/* Map + Recent Alerts */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
         {/* NER Map */}
@@ -462,6 +608,9 @@ export default function Dashboard({ stats: propStats, api }) {
           </CardContent>
         </Card>
       </div>
+
+      {/* Pattern Insights */}
+      <PatternInsights api={api} />
 
       {/* Recent Intelligence */}
       <div>

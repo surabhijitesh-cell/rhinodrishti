@@ -1,5 +1,6 @@
 import re
 import logging
+from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
@@ -7,7 +8,6 @@ logger = logging.getLogger(__name__)
 # STAGE 1: HARD FILTER (Rule-based noise rejection)
 # ============================================================
 
-# Hard reject keywords - if title/content contains these, reject immediately
 HARD_REJECT_KEYWORDS = [
     # Sports
     'cricket', 'cricketer', 'ipl', 'bcci', 'odi', 't20', 'test match', 'wicket', 'batsman', 'bowler',
@@ -27,7 +27,6 @@ HARD_REJECT_KEYWORDS = [
     'stock market tip', 'mutual fund', 'crypto price', 'bitcoin price',
 ]
 
-# Hard accept keywords - if present, always accept (security/strategic signals)
 HARD_ACCEPT_KEYWORDS = [
     # Military/Security
     'military', 'army', 'navy', 'air force', 'defence', 'defense', 'weapon', 'ammunition',
@@ -49,7 +48,6 @@ HARD_ACCEPT_KEYWORDS = [
     'mizoram', 'tripura', 'arunachal', 'nagaland',
 ]
 
-# Geographic relevance - accept if mentions these regions
 GEO_RELEVANT = [
     'assam', 'meghalaya', 'mizoram', 'manipur', 'arunachal', 'tripura', 'nagaland', 'sikkim',
     'northeast india', 'guwahati', 'imphal', 'shillong', 'itanagar', 'agartala', 'aizawl',
@@ -64,79 +62,62 @@ def hard_filter(article: dict) -> tuple:
     """
     STAGE 1: Rule-based hard filter.
     Returns: (pass: bool, reason: str)
-    
-    - Immediately reject pure entertainment/sports/lifestyle
-    - Immediately accept security/strategic signals
-    - Accept if geographically relevant
-    - Reject if none of the above
     """
     title = (article.get("title", "") or "").lower()
     content = (article.get("raw_content", "") or article.get("description", "") or "").lower()
     source_region = (article.get("region", "") or "").lower()
     text = f"{title} {content[:500]}"
-    
-    # RULE 1: If from Bangladesh/Myanmar specific feeds, always accept
+
+    # RULE 1: Bangladesh/Myanmar feeds always accepted
     if source_region in ("bangladesh", "myanmar"):
         return True, "source_region_relevant"
-    
-    # RULE 2: Hard reject - entertainment/sports/lifestyle
+
+    # RULE 2: Hard reject on title
     for kw in HARD_REJECT_KEYWORDS:
-        if kw in title:  # Only check title for hard reject (more precise)
+        if kw in title:
             return False, f"hard_reject:{kw}"
-    
-    # RULE 3: Hard accept - security/strategic signals
+
+    # RULE 3: Hard accept on security signals
     for kw in HARD_ACCEPT_KEYWORDS:
         if kw in text:
             return True, f"hard_accept:{kw}"
-    
+
     # RULE 4: Geographic relevance
     for geo in GEO_RELEVANT:
         if geo in text:
             return True, f"geo_relevant:{geo}"
-    
-    # RULE 5: If from national/international source with no relevance signals, reject
+
+    # RULE 5: National/international with no signals -> reject
     if source_region in ("india", "international"):
         return False, "no_relevance_signal"
-    
-    # RULE 6: Regional NER sources - accept by default (they're subscribed for a reason)
-    if source_region == "ner":
+
+    # RULE 6: NER sources accepted by default
+    if source_region in ("ner", "ner "):
         return True, "ner_source"
-    
-    # Default: reject
+
     return False, "no_match"
 
 
 # ============================================================
-# LANGUAGE DETECTION (Pre-processing)
+# LANGUAGE DETECTION
 # ============================================================
 
 def detect_language(text: str) -> str:
-    """Detect language of text using character analysis"""
+    """Detect language via character analysis."""
     if not text:
         return "en"
-    
-    # Check for Bengali/Bangla script (Unicode range U+0980-U+09FF)
     bengali_chars = len(re.findall(r'[\u0980-\u09FF]', text))
-    # Check for Devanagari (Hindi) script (Unicode range U+0900-U+097F)
     hindi_chars = len(re.findall(r'[\u0900-\u097F]', text))
-    # Check for Assamese (uses Bengali script with some extras)
-    # Assamese specific chars: ৰ (U+09F0), ৱ (U+09F1)
     assamese_chars = len(re.findall(r'[\u09F0\u09F1]', text))
-    
     total_chars = len(text)
     if total_chars == 0:
         return "en"
-    
-    # If more than 20% non-Latin characters
-    non_latin_ratio = (bengali_chars + hindi_chars) / total_chars
-    
     if assamese_chars > 0 and bengali_chars > total_chars * 0.15:
-        return "as"  # Assamese
+        return "as"
     elif bengali_chars > total_chars * 0.15:
-        return "bn"  # Bengali
+        return "bn"
     elif hindi_chars > total_chars * 0.15:
-        return "hi"  # Hindi
-    
+        return "hi"
     return "en"
 
 
@@ -147,13 +128,13 @@ async def translate_to_english(text: str, source_lang: str, emergent_key: str) -
     """
     if source_lang == "en" or not text or len(text.strip()) < 10:
         return text, 100
-    
+
     lang_names = {"bn": "Bengali", "hi": "Hindi", "as": "Assamese"}
     lang_name = lang_names.get(source_lang, "Unknown")
-    
+
     try:
         from emergentintegrations.llm.chat import LlmChat, UserMessage
-        
+
         chat = LlmChat(
             api_key=emergent_key,
             session_id=f"translate-{hash(text[:50])}",
@@ -161,15 +142,13 @@ async def translate_to_english(text: str, source_lang: str, emergent_key: str) -
                           f"Preserve all proper nouns, place names, organization names, and military terms. "
                           f"Return ONLY the translation, nothing else. If text is already English, return as-is."
         ).with_model("anthropic", "claude-haiku-4-5-20251001")
-        
+
         response = await chat.send_message(UserMessage(text=text[:3000]))
         translated = str(response).strip()
-        
-        # Simple confidence: check if output looks like English
+
         english_ratio = len(re.findall(r'[a-zA-Z]', translated)) / max(len(translated), 1)
         confidence = min(100, int(english_ratio * 120))
-        
-        # Retry if confidence is too low
+
         if confidence < 50:
             logger.warning(f"Low translation confidence ({confidence}), retrying...")
             response2 = await chat.send_message(UserMessage(
@@ -178,9 +157,63 @@ async def translate_to_english(text: str, source_lang: str, emergent_key: str) -
             translated = str(response2).strip()
             english_ratio = len(re.findall(r'[a-zA-Z]', translated)) / max(len(translated), 1)
             confidence = min(100, int(english_ratio * 120))
-        
+
         return translated, confidence
-    
+
     except Exception as e:
         logger.error(f"Translation failed for {lang_name}: {e}")
         return text, 0
+
+
+# ============================================================
+# FULL FILTER PIPELINE
+# ============================================================
+
+async def run_filter_pipeline(article: dict, emergent_key: str) -> dict:
+    """
+    Run the complete 2-stage filter pipeline on an article.
+    
+    Returns dict with:
+      - passed: bool
+      - reason: str
+      - language: str
+      - translated_title: str (if translated)
+      - translated_content: str (if translated)
+    """
+    result = {
+        "passed": False,
+        "reason": "",
+        "language": "en",
+        "translated_title": None,
+        "translated_content": None,
+    }
+
+    # Stage 1: Hard filter
+    passed, reason = hard_filter(article)
+    result["reason"] = reason
+
+    if not passed:
+        result["passed"] = False
+        return result
+
+    result["passed"] = True
+
+    # Language detection & translation (pre-process before AI)
+    title = article.get("title", "") or ""
+    content = article.get("raw_content", "") or article.get("description", "") or ""
+    combined = f"{title} {content[:200]}"
+    lang = detect_language(combined)
+    result["language"] = lang
+
+    if lang != "en" and emergent_key:
+        # Translate title
+        translated_title, t_conf = await translate_to_english(title, lang, emergent_key)
+        if t_conf >= 40:
+            result["translated_title"] = translated_title
+
+        # Translate content snippet for AI classification
+        translated_content, c_conf = await translate_to_english(content[:2000], lang, emergent_key)
+        if c_conf >= 40:
+            result["translated_content"] = translated_content
+
+    return result

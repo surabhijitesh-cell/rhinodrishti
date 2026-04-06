@@ -26,12 +26,21 @@ RSS_SOURCES = [
     {"name": "NDTV India News", "url": "https://feeds.feedburner.com/ndtvnews-india-news", "category": "national", "language": "en", "region": "India"},
     {"name": "Times of India", "url": "https://timesofindia.indiatimes.com/rssfeeds/296589292.cms", "category": "national", "language": "en", "region": "India"},
     {"name": "PIB Press Releases", "url": "https://pib.gov.in/RssMain.aspx?ModId=6&Lang=1&Regid=3", "category": "government", "language": "en", "region": "India"},
+    {"name": "PIB Defence", "url": "https://pib.gov.in/RssMain.aspx?ModId=6&Lang=1&Regid=3&DId=2", "category": "government", "language": "en", "region": "India"},
     {"name": "News18 India", "url": "https://www.news18.com/rss/india.xml", "category": "national", "language": "en", "region": "India"},
+    {"name": "MHA India", "url": "https://www.mha.gov.in/en/rss-feed", "category": "government", "language": "en", "region": "India"},
+
+    # ---- REGIONAL NER SOURCES (Additional) ----
+    {"name": "Nagaland Post", "url": "https://www.nagalandpost.com/feed/", "category": "regional", "language": "en", "region": "NER"},
+    {"name": "The Shillong Times", "url": "https://theshillongtimes.com/feed/", "category": "regional", "language": "en", "region": "NER"},
+    {"name": "Imphal Free Press", "url": "https://www.ifp.co.in/feed", "category": "regional", "language": "en", "region": "NER"},
 
     # ---- INTERNATIONAL SOURCES ----
     {"name": "BBC Asia/India", "url": "http://feeds.bbci.co.uk/news/world/asia/india/rss.xml", "category": "international", "language": "en", "region": "International"},
     {"name": "Al Jazeera", "url": "https://www.aljazeera.com/xml/rss/all.xml", "category": "international", "language": "en", "region": "International"},
     {"name": "Reuters World", "url": "https://www.reutersagency.com/feed/?best-topics=political-general&post_type=best", "category": "international", "language": "en", "region": "International"},
+    {"name": "Global Times", "url": "https://www.globaltimes.cn/rss/outbrain.xml", "category": "international", "language": "en", "region": "International"},
+    {"name": "SCMP Asia", "url": "https://www.scmp.com/rss/91/feed", "category": "international", "language": "en", "region": "International"},
 
     # ---- BANGLADESH SOURCES ----
     {"name": "Prothom Alo (Bangla)", "url": "https://www.prothomalo.com/feed/", "category": "bangladesh", "language": "bn", "region": "Bangladesh"},
