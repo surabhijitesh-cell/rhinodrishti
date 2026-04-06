@@ -1024,55 +1024,74 @@ async def pipeline_status():
             "last_filtered_out": scan_status.get("filtered_out", 0),
             "last_translated": scan_status.get("translated", 0),
         },
-        "scheduler": "fetch every 30 min (max 25 articles), retry unprocessed every 15 min (max 15 articles)"
+        "scheduler": "fetch every 30 min, retry every 15 min, daily brief at 0600 IST"
     }
 
 
 
 async def generate_brief_for_date(date: str):
-    """Generate comprehensive daily brief covering ONLY news since the last brief generation.
-    No item that appeared in a previous brief will be repeated."""
+    """Generate comprehensive daily brief.
+    
+    Time Window Logic:
+    - Auto 0600h brief: covers 0600h IST previous day → 0600h IST today
+    - Manual regeneration after 0600h: covers from the LATEST brief generated 
+      on the PREVIOUS calendar date → current time
+    - No item that appeared in a previous brief will be repeated.
+    """
     
     # Define NER states (India's Northeast Region)
     NER_STATES = ["Assam", "Meghalaya", "Mizoram", "Manipur", "Arunachal Pradesh", "Tripura"]
     
-    # ========== TIME WINDOW: Since last brief generation ==========
+    # ========== TIME WINDOW CALCULATION ==========
     from datetime import timedelta
     import pytz
     ist = pytz.timezone("Asia/Kolkata")
     now_utc = datetime.now(timezone.utc)
+    now_ist = now_utc.astimezone(ist)
     
-    # Find the previous brief to determine the cutoff
-    previous_brief = await briefs_col.find_one(
+    # Find the LATEST brief from the PREVIOUS calendar date
+    previous_date = (now_ist - timedelta(days=1)).strftime("%Y-%m-%d")
+    
+    # Get all briefs from previous calendar date, sorted by generation time (latest first)
+    prev_day_brief = await briefs_col.find_one(
+        {"date": previous_date},
+        {"_id": 0, "generated_at": 1, "included_item_ids": 1, "date": 1},
+        sort=[("generated_at", -1)]
+    )
+    
+    # Also check any earlier briefs (e.g. if previous day had no brief)
+    any_previous_brief = await briefs_col.find_one(
         {"date": {"$lt": date}},
         {"_id": 0, "generated_at": 1, "included_item_ids": 1, "date": 1},
         sort=[("date", -1)]
     )
     
-    # Also check same-date brief (in case of regeneration) - skip its IDs for re-gen
-    same_date_ids = set()
-    same_date_brief_doc = await briefs_col.find_one(
-        {"date": date},
-        {"_id": 0, "included_item_ids": 1}
-    )
-    if same_date_brief_doc and same_date_brief_doc.get("included_item_ids"):
-        same_date_ids.update(same_date_brief_doc["included_item_ids"])
-    
-    # Collect item IDs from ALL previous briefs to avoid repeats
+    # Collect item IDs from previous briefs to avoid repeats
     previous_item_ids = set()
-    if previous_brief and previous_brief.get("included_item_ids"):
-        previous_item_ids.update(previous_brief["included_item_ids"])
     
-    # Time cutoff: use previous brief generation time, or default 24h
-    if previous_brief and previous_brief.get("generated_at"):
-        cutoff_utc = previous_brief["generated_at"]
-        logger.info(f"Brief time window: since last brief ({previous_brief.get('date')}) generated at {cutoff_utc}")
+    # Determine time cutoff based on scenario
+    today_0600_ist = now_ist.replace(hour=6, minute=0, second=0, microsecond=0)
+    today_0600_utc = today_0600_ist.astimezone(timezone.utc)
+    
+    if prev_day_brief and prev_day_brief.get("generated_at"):
+        # SCENARIO: Previous day has a brief — use its generation time as cutoff
+        cutoff_utc = prev_day_brief["generated_at"]
+        if prev_day_brief.get("included_item_ids"):
+            previous_item_ids.update(prev_day_brief["included_item_ids"])
+        logger.info(f"Brief window: prev day brief ({previous_date}) generated at {cutoff_utc} → now")
+    elif any_previous_brief and any_previous_brief.get("generated_at"):
+        # SCENARIO: No brief yesterday but older briefs exist
+        cutoff_utc = any_previous_brief["generated_at"]
+        if any_previous_brief.get("included_item_ids"):
+            previous_item_ids.update(any_previous_brief["included_item_ids"])
+        logger.info(f"Brief window: last brief ({any_previous_brief.get('date')}) generated at {cutoff_utc} → now")
     else:
-        # Default: 0600 IST previous day
-        today_ist = now_utc.astimezone(ist).replace(hour=6, minute=0, second=0, microsecond=0)
-        cutoff_ist = today_ist - timedelta(days=1)
+        # SCENARIO: First-ever brief — default to 0600h IST previous day
+        cutoff_ist = today_0600_ist - timedelta(days=1)
         cutoff_utc = cutoff_ist.astimezone(timezone.utc).isoformat()
-        logger.info(f"Brief time window (default): {cutoff_utc} to now")
+        logger.info(f"Brief window (first brief): {cutoff_utc} → now")
+    
+    logger.info(f"Excluding {len(previous_item_ids)} items from previous briefs")
     
     # ========== TITLE SIMILARITY DEDUP HELPER ==========
     def normalize_title(title):
@@ -2048,6 +2067,23 @@ async def initialize_sources():
     logger.info(f"RSS sources synced: {count} total ({len(RSS_SOURCES)} configured)")
 
 
+async def generate_scheduled_daily_brief():
+    """Auto-generate the daily brief at 0600 IST.
+    Called by APScheduler cron trigger."""
+    import pytz
+    ist = pytz.timezone("Asia/Kolkata")
+    now_ist = datetime.now(timezone.utc).astimezone(ist)
+    date = now_ist.strftime("%Y-%m-%d")
+    logger.info(f"=== SCHEDULED DAILY BRIEF GENERATION: {date} at {now_ist.strftime('%H:%M IST')} ===")
+    try:
+        brief = await generate_brief_for_date(date)
+        dev_count = len(brief.get("key_developments", []))
+        pattern_count = len(brief.get("pattern_insights", []))
+        logger.info(f"Scheduled brief generated: {dev_count} developments, {pattern_count} pattern insights")
+    except Exception as e:
+        logger.error(f"Scheduled brief generation failed: {e}")
+
+
 @app.on_event("startup")
 async def startup():
     await initialize_sources()
@@ -2066,11 +2102,19 @@ async def startup():
 
     try:
         from apscheduler.schedulers.asyncio import AsyncIOScheduler
+        from apscheduler.triggers.cron import CronTrigger
         scheduler = AsyncIOScheduler()
         scheduler.add_job(fetch_and_process_news, 'interval', minutes=30, id='news_fetch')
         scheduler.add_job(analyze_unprocessed_items, 'interval', minutes=15, id='retry_unprocessed')
+        # Daily brief auto-generation at 0600 IST (0030 UTC)
+        scheduler.add_job(
+            generate_scheduled_daily_brief,
+            CronTrigger(hour=0, minute=30, timezone='UTC'),  # 0030 UTC = 0600 IST
+            id='daily_brief_0600',
+            misfire_grace_time=3600
+        )
         scheduler.start()
-        logger.info("Background scheduler started — fetch every 30 min, retry unprocessed every 15 min")
+        logger.info("Background scheduler started — fetch/30min, retry/15min, daily brief at 0600 IST")
     except Exception as e:
         logger.warning(f"Scheduler setup failed: {e}")
 
