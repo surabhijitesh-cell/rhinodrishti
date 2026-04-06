@@ -48,8 +48,8 @@ Build a full-stack AI-powered web application for intelligence aggregation, anal
 
 ## Prioritized Backlog
 
-### P0 - Blocked
-- Embeddings Backfill: User's OpenAI API key has insufficient quota (429). Needs billing credits added at platform.openai.com.
+### P0 - Resolved
+- Embeddings Backfill: Working with new OpenAI API key. 532 items being backfilled in batches of 50. Semantic search operational.
 
 ### P1 - Upcoming
 - Knowledge Graph Prep: Extract relationships (Actor-Location-Border) as structured metadata
