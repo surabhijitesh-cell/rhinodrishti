@@ -111,6 +111,13 @@ class IntelligenceItem(BaseModel):
     early_warning_signal: str = ""
     original_title: Optional[str] = None
     entities: Dict = Field(default_factory=lambda: {"persons": [], "organizations": [], "locations": []})
+    # Sifter fields
+    sifter_level: int = 1
+    sifter_triggers: List[str] = []
+    # Knowledge graph relationships
+    relationships: List[Dict] = []
+    # Vector embedding (stored separately, excluded from responses)
+    embedding: Optional[List[float]] = Field(default=None, exclude=True)
 
 
 # ============================================================
@@ -441,6 +448,198 @@ async def set_retention_setting(body: dict):
     )
     invalidate_stats_cache()
     return {"message": f"Retention window set to {days} days", "retention_days": days}
+
+
+# ============================================================
+# Semantic Search Endpoint
+# ============================================================
+@api_router.post("/intelligence/semantic-search")
+async def intelligence_semantic_search(body: dict):
+    """Semantic similarity search across intelligence items using vector embeddings."""
+    query = body.get("query", "")
+    limit = body.get("limit", 10)
+    min_score = body.get("min_score", 0.3)
+    
+    if not query or len(query.strip()) < 3:
+        raise HTTPException(status_code=400, detail="Query must be at least 3 characters")
+    
+    from embedding_service import semantic_search
+    results = await semantic_search(db, query, limit=limit, min_score=min_score)
+    
+    return {"results": results, "count": len(results), "query": query}
+
+
+@api_router.post("/embeddings/backfill")
+async def trigger_embedding_backfill(background_tasks: BackgroundTasks):
+    """Backfill vector embeddings for items that don't have them."""
+    from embedding_service import backfill_embeddings
+    background_tasks.add_task(backfill_embeddings, db, 50)
+    return {"message": "Embedding backfill started (batch of 50)"}
+
+
+# ============================================================
+# On-Demand Custom PDF Brief
+# ============================================================
+@api_router.post("/intelligence/custom-brief")
+async def generate_custom_brief(body: dict):
+    """Generate a custom filtered PDF brief.
+    
+    Accepts filters: region, threat_type, severity, hours (last N hours), search
+    """
+    region = body.get("region")
+    threat_type = body.get("threat_type")
+    severity = body.get("severity")
+    hours = body.get("hours", 48)
+    search = body.get("search")
+    title_override = body.get("title", "Custom Intelligence Brief")
+    
+    # Build query
+    query = {"processed": True}
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+    query["published_at"] = {"$gte": cutoff}
+    
+    if region:
+        query["state"] = region
+    if threat_type:
+        query["threat_category"] = threat_type
+    if severity:
+        query["severity"] = severity
+    if search:
+        query["$or"] = [
+            {"title": {"$regex": search, "$options": "i"}},
+            {"ai_summary": {"$regex": search, "$options": "i"}}
+        ]
+    
+    items = await intelligence_col.find(query, {"_id": 0}).sort(
+        [("priority_score", -1), ("published_at", -1)]
+    ).limit(50).to_list(50)
+    
+    if not items:
+        raise HTTPException(status_code=404, detail="No items match the given filters")
+    
+    # Generate PDF
+    pdf_bytes = _generate_custom_pdf(items, title_override, region, threat_type, hours)
+    
+    filename = f"custom_brief_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M')}.pdf"
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+    )
+
+
+def _generate_custom_pdf(items: list, title: str, region: str, threat: str, hours: int) -> bytes:
+    """Generate a custom filtered PDF brief."""
+    from fpdf import FPDF
+    import pytz
+    ist = pytz.timezone("Asia/Kolkata")
+    now_ist = datetime.now(timezone.utc).astimezone(ist)
+    
+    class CustomPDF(FPDF):
+        def header(self):
+            # RESTRICTED header
+            self.set_font('Helvetica', 'B', 8)
+            self.set_text_color(200, 30, 30)
+            self.cell(0, 4, 'RESTRICTED', align='C', new_x="LMARGIN", new_y="NEXT")
+            self.ln(2)
+        
+        def footer(self):
+            self.set_y(-15)
+            self.set_font('Helvetica', 'I', 7)
+            self.set_text_color(128, 128, 128)
+            self.cell(0, 10, f'Page {self.page_no()} | RESTRICTED | Rhino Drishti Elite', align='C')
+    
+    pdf = CustomPDF()
+    pdf.set_auto_page_break(auto=True, margin=20)
+    pdf.add_page()
+    
+    # Title
+    pdf.set_font('Helvetica', 'B', 16)
+    pdf.set_text_color(34, 50, 30)
+    clean_title = title.encode('latin-1', 'replace').decode('latin-1')
+    pdf.cell(0, 10, clean_title, new_x="LMARGIN", new_y="NEXT")
+    
+    # Subtitle with filters
+    pdf.set_font('Helvetica', '', 9)
+    pdf.set_text_color(80, 80, 80)
+    filter_desc = f"Generated: {now_ist.strftime('%d %b %Y %H:%M IST')} | Window: Last {hours}h"
+    if region:
+        filter_desc += f" | Region: {region}"
+    if threat:
+        filter_desc += f" | Threat: {threat}"
+    pdf.cell(0, 5, filter_desc, new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(0, 5, f"Total Items: {len(items)}", new_x="LMARGIN", new_y="NEXT")
+    pdf.ln(4)
+    
+    # Items
+    for i, item in enumerate(items, 1):
+        sev = item.get('severity', 'low').upper()
+        priority = item.get('priority_score', 0)
+        trajectory = item.get('threat_trajectory', '')
+        
+        # Severity color
+        if sev == 'CRITICAL':
+            pdf.set_text_color(200, 30, 30)
+        elif sev == 'HIGH':
+            pdf.set_text_color(200, 100, 30)
+        elif sev == 'MEDIUM':
+            pdf.set_text_color(180, 160, 30)
+        else:
+            pdf.set_text_color(40, 120, 40)
+        
+        pdf.set_font('Helvetica', 'B', 10)
+        item_title = item.get('title', 'Untitled')[:100]
+        clean_item_title = item_title.encode('latin-1', 'replace').decode('latin-1')
+        pdf.cell(0, 6, f'{i}. [{sev}|P{priority}] {clean_item_title}', new_x="LMARGIN", new_y="NEXT")
+        
+        pdf.set_text_color(60, 60, 60)
+        pdf.set_font('Helvetica', '', 8)
+        meta = f"   Source: {item.get('source', '')} | {item.get('state', '')} | {item.get('published_at', '')[:16]}"
+        if trajectory and trajectory != 'INDETERMINATE':
+            meta += f" | {trajectory}"
+        pdf.cell(0, 4, meta, new_x="LMARGIN", new_y="NEXT")
+        
+        summary = item.get('ai_summary', '')[:400]
+        if summary:
+            clean_summary = summary.encode('latin-1', 'replace').decode('latin-1')
+            pdf.multi_cell(0, 4, f"   {clean_summary}")
+        
+        why = item.get('why_it_matters', '')[:200]
+        if why:
+            pdf.set_font('Helvetica', 'I', 8)
+            pdf.set_text_color(100, 80, 40)
+            clean_why = why.encode('latin-1', 'replace').decode('latin-1')
+            pdf.multi_cell(0, 4, f"   Why: {clean_why}")
+        
+        pdf.ln(3)
+    
+    return pdf.output()
+
+
+# ============================================================
+# Web Scraping Trigger
+# ============================================================
+@api_router.post("/scrape-elite")
+async def trigger_elite_scrape(background_tasks: BackgroundTasks):
+    """Trigger elite web scraping of SATP, Ukhrul Times, Frontier Myanmar."""
+    background_tasks.add_task(_run_elite_scrape)
+    return {"message": "Elite scraping started"}
+
+
+async def _run_elite_scrape():
+    """Background task: scrape elite sources and ingest."""
+    from web_scraper import scrape_all_targets
+    articles = await scrape_all_targets()
+    if articles:
+        logger.info(f"Elite scrape: {len(articles)} articles found, merging into pipeline")
+        # Dedup against existing
+        for article in articles[:15]:
+            existing = await intelligence_col.find_one(
+                {"source_url": article["source_url"]}, {"_id": 1}
+            )
+            if not existing:
+                article["processed"] = False
+                await intelligence_col.insert_one(article)
 
 
 @api_router.get("/daily-brief")
@@ -1125,7 +1324,7 @@ async def pipeline_status():
             "last_filtered_out": scan_status.get("filtered_out", 0),
             "last_translated": scan_status.get("translated", 0),
         },
-        "scheduler": "fetch every 30 min, retry every 15 min, daily brief at 0600 IST"
+        "scheduler": "grassroots/60min, standard/30min, established/12hr, retry/15min, brief/0600 IST, embeddings/6hr"
     }
 
 
@@ -1624,17 +1823,13 @@ def generate_manual_brief(items, date):
     }
 
 
-async def fetch_and_process_news():
+async def fetch_and_process_news(source_filter: str = None):
     """
     Fetch and process news with rate-limit-aware batching.
     
-    Strategy to handle Claude Haiku rate limits:
-    1. Fetch all RSS articles but only process NEW ones (skip already in DB)
-    2. Limit to MAX_ARTICLES_PER_CYCLE (default 25) per cycle to stay under rate limits
-    3. Use aggressive exponential backoff on rate limit errors
-    4. Store failed articles as unprocessed for retry in next cycle
+    source_filter: "grassroots", "standard", "established", or None (all)
     """
-    from rss_fetcher import fetch_all_feeds, RSS_SOURCES
+    from rss_fetcher import fetch_all_feeds, RSS_SOURCES, get_sources_by_priority
     
     # Configuration for rate limit management
     MAX_ARTICLES_PER_CYCLE = 25
@@ -1642,10 +1837,17 @@ async def fetch_and_process_news():
     BATCH_PAUSE = 5
     INTER_ARTICLE_DELAY = 1.5
     
+    # Filter sources if specified
+    if source_filter:
+        active_sources = get_sources_by_priority(source_filter)
+        logger.info(f"Filtered to {len(active_sources)} {source_filter} sources")
+    else:
+        active_sources = RSS_SOURCES
+    
     # Update scan status
     scan_status["is_scanning"] = True
     scan_status["progress"] = 0
-    scan_status["total_sources"] = len(RSS_SOURCES)
+    scan_status["total_sources"] = len(active_sources)
     scan_status["sources_scanned"] = 0
     scan_status["current_source"] = ""
     scan_status["articles_found"] = 0
@@ -1662,10 +1864,10 @@ async def fetch_and_process_news():
             if len(scan_status["scan_log"]) > 10:
                 scan_status["scan_log"] = scan_status["scan_log"][-10:]
     
-    logger.info("=== Starting news fetch cycle ===")
+    logger.info(f"=== Starting news fetch cycle ({source_filter or 'all'}) ===")
     try:
-        # Step 1: Fetch all RSS articles with progress tracking
-        articles = await fetch_all_feeds(progress_callback=on_source_progress)
+        # Step 1: Fetch RSS articles with progress tracking
+        articles = await fetch_all_feeds(progress_callback=on_source_progress, sources=active_sources if source_filter else None)
         scan_status["articles_found"] = len(articles)
         logger.info(f"Fetched {len(articles)} relevant articles from RSS feeds")
 
@@ -1780,7 +1982,8 @@ async def fetch_and_process_news():
             logger.info(f"Limiting to {MAX_ARTICLES_PER_CYCLE} articles this cycle")
             new_articles = new_articles[:MAX_ARTICLES_PER_CYCLE]
 
-        # Step 4: Process new articles in small batches with retry
+        # Step 4: Process new articles with Sifter tiered analysis
+        from sifter import sift_article
         success_count = 0
         fail_count = 0
         skip_count = 0
@@ -1795,6 +1998,11 @@ async def fetch_and_process_news():
             
             for article in batch:
                 await asyncio.sleep(INTER_ARTICLE_DELAY)
+                
+                # Level 1 Sifter — fast pre-filter
+                sift_result = sift_article(article)
+                article["_sifter"] = sift_result
+                
                 result, was_rate_limited = await _classify_with_retry_v2(article)
                 
                 if was_rate_limited:
@@ -1805,11 +2013,51 @@ async def fetch_and_process_news():
                     await intelligence_col.insert_one(raw_doc)
                     fail_count += 1
                 elif result.get("is_relevant", True):
+                    # Apply Sifter boost to priority score
+                    sifter_boost = sift_result.get("boost_score", 0)
+                    result["priority_score"] = min(100, result.get("priority_score", 30) + sifter_boost)
+                    result["sifter_level"] = sift_result["level"]
+                    result["sifter_triggers"] = sift_result["triggers"]
+                    
+                    # Extract relationships for knowledge graph
+                    if result.get("entities"):
+                        ents = result["entities"]
+                        relationships = []
+                        for person in (ents.get("persons") or [])[:3]:
+                            for loc in (ents.get("locations") or [])[:3]:
+                                relationships.append({
+                                    "actor": person, "location": loc,
+                                    "context": result.get("threat_category", ""),
+                                    "date": result.get("published_at", "")
+                                })
+                        for org in (ents.get("organizations") or [])[:3]:
+                            for loc in (ents.get("locations") or [])[:3]:
+                                relationships.append({
+                                    "actor": org, "location": loc,
+                                    "context": result.get("threat_category", ""),
+                                    "date": result.get("published_at", "")
+                                })
+                        if relationships:
+                            result["relationships"] = relationships[:10]
+                    
                     item = IntelligenceItem(**result)
                     doc = item.model_dump()
                     await intelligence_col.insert_one(doc)
                     success_count += 1
                     invalidate_stats_cache()
+                    
+                    # Generate embedding async (don't block)
+                    try:
+                        from embedding_service import generate_embedding
+                        emb_text = f"{doc.get('title', '')}. {doc.get('ai_summary', '')}"
+                        emb = await generate_embedding(emb_text)
+                        if emb:
+                            await intelligence_col.update_one(
+                                {"id": doc["id"]},
+                                {"$set": {"embedding": emb}}
+                            )
+                    except Exception as emb_err:
+                        logger.debug(f"Embedding generation skipped: {emb_err}")
                     
                     # Broadcast to WebSocket clients
                     try:
@@ -1829,9 +2077,10 @@ async def fetch_and_process_news():
                                 "ai_summary": doc.get("ai_summary", "")[:200],
                             }
                         }
-                        # Add alert flag for critical/high items
-                        if doc.get("severity") in ("critical", "high"):
-                            ws_msg["type"] = "critical_alert"
+                        # Sifter L2 items or critical/high = elite alert
+                        if sift_result["level"] == 2 or doc.get("severity") in ("critical", "high"):
+                            ws_msg["type"] = "elite_alert"
+                            ws_msg["sifter_triggers"] = sift_result["triggers"]
                         await ws_manager.broadcast(ws_msg)
                     except Exception as ws_err:
                         logger.debug(f"WS broadcast error: {ws_err}")
@@ -2219,6 +2468,32 @@ async def generate_scheduled_daily_brief():
         logger.error(f"Scheduled brief generation failed: {e}")
 
 
+async def fetch_grassroots_sources():
+    """Fetch only grassroots NER/cross-border sources (high priority, 60min cycle)."""
+    from rss_fetcher import get_sources_by_priority
+    grassroots = get_sources_by_priority("grassroots")
+    logger.info(f"=== Grassroots fetch: {len(grassroots)} sources ===")
+    await fetch_and_process_news(source_filter="grassroots")
+
+
+async def fetch_established_sources():
+    """Fetch established/government security databases (12hr cycle)."""
+    from rss_fetcher import get_sources_by_priority
+    established = get_sources_by_priority("established")
+    logger.info(f"=== Established fetch: {len(established)} sources ===")
+    await fetch_and_process_news(source_filter="established")
+
+
+async def run_embedding_backfill():
+    """Periodic embedding backfill for items without embeddings."""
+    try:
+        from embedding_service import backfill_embeddings
+        count = await backfill_embeddings(db, 30)
+        logger.info(f"Embedding backfill: {count} items processed")
+    except Exception as e:
+        logger.warning(f"Embedding backfill failed: {e}")
+
+
 @app.on_event("startup")
 async def startup():
     await initialize_sources()
@@ -2239,17 +2514,25 @@ async def startup():
         from apscheduler.schedulers.asyncio import AsyncIOScheduler
         from apscheduler.triggers.cron import CronTrigger
         scheduler = AsyncIOScheduler()
+        # Grassroots NER/cross-border sites: every 60 min
+        scheduler.add_job(fetch_grassroots_sources, 'interval', minutes=60, id='grassroots_fetch')
+        # Standard sources (national, intl): every 30 min
         scheduler.add_job(fetch_and_process_news, 'interval', minutes=30, id='news_fetch')
+        # Established security databases: every 12 hours
+        scheduler.add_job(fetch_established_sources, 'interval', hours=12, id='established_fetch')
+        # Retry unprocessed
         scheduler.add_job(analyze_unprocessed_items, 'interval', minutes=15, id='retry_unprocessed')
         # Daily brief auto-generation at 0600 IST (0030 UTC)
         scheduler.add_job(
             generate_scheduled_daily_brief,
-            CronTrigger(hour=0, minute=30, timezone='UTC'),  # 0030 UTC = 0600 IST
+            CronTrigger(hour=0, minute=30, timezone='UTC'),
             id='daily_brief_0600',
             misfire_grace_time=3600
         )
+        # Embedding backfill every 6 hours
+        scheduler.add_job(run_embedding_backfill, 'interval', hours=6, id='embedding_backfill')
         scheduler.start()
-        logger.info("Background scheduler started — fetch/30min, retry/15min, daily brief at 0600 IST")
+        logger.info("Scheduler: grassroots/60min, standard/30min, established/12hr, retry/15min, brief/0600 IST, embeddings/6hr")
     except Exception as e:
         logger.warning(f"Scheduler setup failed: {e}")
 

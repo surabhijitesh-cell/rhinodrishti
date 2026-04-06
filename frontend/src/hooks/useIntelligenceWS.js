@@ -44,7 +44,7 @@ export function useIntelligenceWS(apiUrl) {
             setNewItems((prev) => [data.item, ...prev].slice(0, 50));
           }
 
-          if (data.type === "critical_alert" && data.item) {
+          if ((data.type === "elite_alert" || data.type === "critical_alert") && data.item) {
             setCriticalAlerts((prev) => [data.item, ...prev].slice(0, 20));
           }
         } catch (e) {

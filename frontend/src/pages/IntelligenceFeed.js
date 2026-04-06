@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
-  Search, Filter, X, ChevronLeft, ChevronRight, SlidersHorizontal, ArrowUpDown
+  Search, Filter, X, ChevronLeft, ChevronRight, SlidersHorizontal, ArrowUpDown, Sparkles
 } from "lucide-react";
 import { Input } from "../components/ui/input";
 import { Button } from "../components/ui/button";
@@ -33,6 +33,10 @@ export default function IntelligenceFeed({ api, crossBorderOnly = false, alertsO
   const [pages, setPages] = useState(0);
   const [loading, setLoading] = useState(true);
   const [showFilters, setShowFilters] = useState(false);
+  const [semanticMode, setSemanticMode] = useState(false);
+  const [semanticQuery, setSemanticQuery] = useState("");
+  const [semanticResults, setSemanticResults] = useState([]);
+  const [semanticLoading, setSemanticLoading] = useState(false);
 
   const [filters, setFilters] = useState({
     state: searchParams.get("state") || "",
@@ -98,6 +102,25 @@ export default function IntelligenceFeed({ api, crossBorderOnly = false, alertsO
   const clearFilters = () => {
     setFilters({ state: "", threat_type: "", severity: "", search: "", min_priority: "", sort_by: "published_at", sort_order: "desc" });
     setPage(1);
+    setSemanticMode(false);
+    setSemanticResults([]);
+    setSemanticQuery("");
+  };
+
+  const runSemanticSearch = async () => {
+    if (!semanticQuery.trim()) return;
+    setSemanticLoading(true);
+    try {
+      const res = await axios.post(`${api}/intelligence/semantic-search`, {
+        query: semanticQuery,
+        limit: 15,
+        min_score: 0.25,
+      });
+      setSemanticResults(res.data.results || []);
+    } catch (e) {
+      console.error("Semantic search failed:", e);
+    }
+    setSemanticLoading(false);
   };
 
   const activeFilterCount = Object.entries(filters).filter(([k, v]) => v && k !== "sort_by" && k !== "sort_order").length;
@@ -118,18 +141,44 @@ export default function IntelligenceFeed({ api, crossBorderOnly = false, alertsO
         <p className="text-xs font-mono uppercase tracking-[0.15em] text-muted-foreground mt-1">{pageDesc}</p>
       </div>
 
-      {/* Search + Filter toggle */}
+      {/* Search + Filter toggle + Semantic Search */}
       <div className="flex items-center gap-3">
         <div className="relative flex-1 max-w-md">
           <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
           <Input
-            placeholder="Search articles..."
-            value={filters.search}
-            onChange={(e) => updateFilter("search", e.target.value)}
+            placeholder={semanticMode ? "Describe what you're looking for..." : "Search articles..."}
+            value={semanticMode ? semanticQuery : filters.search}
+            onChange={(e) => semanticMode ? setSemanticQuery(e.target.value) : updateFilter("search", e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter" && semanticMode) runSemanticSearch(); }}
             className="pl-9 rounded-none"
             data-testid="feed-search-input"
           />
         </div>
+        <Button
+          variant={semanticMode ? "default" : "outline"}
+          size="sm"
+          className={`rounded-none uppercase text-xs tracking-wider ${semanticMode ? "bg-primary" : ""}`}
+          onClick={() => {
+            setSemanticMode(!semanticMode);
+            setSemanticResults([]);
+            setSemanticQuery("");
+          }}
+          data-testid="semantic-search-toggle"
+        >
+          <Sparkles size={14} className="mr-1.5" />
+          {semanticMode ? "Semantic ON" : "Semantic"}
+        </Button>
+        {semanticMode && (
+          <Button
+            size="sm"
+            className="rounded-none uppercase text-xs"
+            onClick={runSemanticSearch}
+            disabled={semanticLoading || !semanticQuery.trim()}
+            data-testid="semantic-search-btn"
+          >
+            {semanticLoading ? "Searching..." : "Find Similar"}
+          </Button>
+        )}
         <Button
           variant={showFilters ? "default" : "outline"}
           size="sm"
@@ -144,7 +193,7 @@ export default function IntelligenceFeed({ api, crossBorderOnly = false, alertsO
           )}
         </Button>
         <span className="text-xs font-mono text-muted-foreground" data-testid="result-count">
-          {total} results
+          {semanticMode && semanticResults.length > 0 ? `${semanticResults.length} similar` : `${total} results`}
         </span>
       </div>
 
@@ -233,6 +282,25 @@ export default function IntelligenceFeed({ api, crossBorderOnly = false, alertsO
             </div>
           ))}
         </div>
+      ) : semanticMode && semanticResults.length > 0 ? (
+        <>
+          <div className="flex items-center gap-2 mb-2">
+            <Sparkles size={14} className="text-primary" />
+            <span className="text-xs uppercase tracking-wider font-['Barlow_Condensed'] font-semibold">
+              Contextually Related Results
+            </span>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4" data-testid="semantic-results-grid">
+            {semanticResults.map((item, i) => (
+              <div key={item.id || i} className="relative">
+                <Badge className="absolute top-2 right-2 z-10 rounded-none bg-primary/20 text-primary border-primary/30 text-[9px] px-1">
+                  {(item.similarity_score * 100).toFixed(0)}% match
+                </Badge>
+                <IntelligenceCard item={item} />
+              </div>
+            ))}
+          </div>
+        </>
       ) : (
         <>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4" data-testid="intelligence-items-grid">
