@@ -1,7 +1,7 @@
 import { useState, useEffect, Component } from "react";
 import {
   FileText, RefreshCw, Calendar, Shield, Globe, AlertTriangle, Download,
-  Newspaper, Twitter, Upload, ExternalLink
+  Newspaper, Upload, ExternalLink, GitBranch
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Button } from "../components/ui/button";
@@ -319,31 +319,41 @@ export default function DailyBrief({ api }) {
             </Card>
           )}
 
-          {/* Twitter/X Watch Section */}
-          {brief.twitter_highlights && brief.twitter_highlights.length > 0 && (
-            <Card className="border border-border rounded-none bg-card">
+          {/* Pattern Insights / Escalation Warnings */}
+          {brief.pattern_insights && brief.pattern_insights.length > 0 && (
+            <Card className="border border-border rounded-none bg-card border-l-4 border-l-orange-500">
               <CardHeader className="py-3 px-4 border-b border-border">
                 <CardTitle className="text-sm uppercase tracking-wider font-['Barlow_Condensed'] font-semibold flex items-center gap-2">
-                  <Twitter size={16} className="text-[#1DA1F2]" />
-                  X (Twitter) Watch ({brief.twitter_highlights.length})
+                  <GitBranch size={16} className="text-orange-400" />
+                  Pattern Detection - Escalation Warnings ({brief.pattern_insights.length})
                 </CardTitle>
               </CardHeader>
-              <CardContent className="p-4" data-testid="twitter-highlights">
+              <CardContent className="p-4" data-testid="pattern-insights">
                 <ul className="space-y-3">
-                  {brief.twitter_highlights.map((tweet, i) => (
+                  {brief.pattern_insights.map((p, i) => (
                     <li key={i} className="border-b border-border/50 pb-3 last:border-0 last:pb-0">
                       <div className="flex items-start gap-2">
-                        <span className="text-[#1DA1F2] font-mono text-xs mt-1">{String(i + 1).padStart(2, '0')}.</span>
-                        <div>
-                      <p className="text-sm font-medium">{safeStr(tweet.handle)} <span className="text-muted-foreground font-normal">({safeStr(tweet.account_name)})</span>
+                        <span className="text-orange-400 font-mono text-xs mt-1">{String(i + 1).padStart(2, '0')}.</span>
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2">
+                            <p className="text-sm font-medium">{safeStr(p.region)} - {safeStr(p.detail)}</p>
+                            <Badge className={`rounded-none text-[9px] px-1 py-0 border ${
+                              p.escalation_risk === 'CRITICAL' ? 'bg-red-500/20 text-red-400 border-red-500/30' :
+                              p.escalation_risk === 'HIGH' ? 'bg-orange-500/20 text-orange-400 border-orange-500/30' :
+                              'bg-yellow-500/20 text-yellow-400 border-yellow-500/30'
+                            }`}>
+                              {safeStr(p.escalation_risk)}
+                            </Badge>
+                          </div>
+                          <p className="text-[10px] font-mono text-muted-foreground mt-1">
+                            {p.event_count} events / {p.window_days}d window | Avg Priority: {p.avg_priority_score}
                           </p>
-                          <p className="text-sm mt-1">{safeStr(tweet.tweet_text)}</p>
-                          {tweet.tweet_url && (
-                            <a href={tweet.tweet_url} target="_blank" rel="noopener noreferrer" 
-                               className="text-xs text-primary hover:underline flex items-center gap-1 mt-1">
-                              <ExternalLink size={10} />
-                              View Tweet
-                            </a>
+                          {p.sample_titles && p.sample_titles.length > 0 && (
+                            <div className="mt-1">
+                              {p.sample_titles.map((t, ti) => (
+                                <p key={ti} className="text-xs text-muted-foreground truncate">- {safeStr(t)}</p>
+                              ))}
+                            </div>
                           )}
                         </div>
                       </div>

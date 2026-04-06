@@ -115,7 +115,7 @@ class DailyBrief(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     date: str
     # NER Regional News
-    key_developments: List[Dict] = []  # Changed from List[str] to support source links
+    key_developments: List[Dict] = []
     state_highlights: Dict[str, str] = {}
     cross_border_insights: str = ""
     analyst_summary: str = ""
@@ -123,10 +123,12 @@ class DailyBrief(BaseModel):
     national_news: List[Dict] = []
     # International News Section
     international_news: List[Dict] = []
-    # Twitter/X Section
-    twitter_highlights: List[Dict] = []
+    # Pattern Insights
+    pattern_insights: List[Dict] = []
     # Uploaded Document Insights
     uploaded_insights: List[Dict] = []
+    # Track included item IDs for cross-brief dedup
+    included_item_ids: List[str] = []
     generated_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 
@@ -225,9 +227,12 @@ async def get_intelligence(
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
     is_cross_border: Optional[bool] = None,
+    min_priority: Optional[int] = None,
+    sort_by: Optional[str] = Query(None, description="Sort field: published_at, priority_score, severity"),
+    sort_order: Optional[str] = Query("desc", description="Sort order: asc or desc"),
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=100),
-    translate: bool = Query(True)  # Auto-translate non-English content
+    translate: bool = Query(True)
 ):
     query = {}
     if state:
@@ -248,10 +253,20 @@ async def get_intelligence(
         query.setdefault("published_at", {})["$lte"] = date_to
     if is_cross_border is not None:
         query["is_cross_border"] = is_cross_border
+    if min_priority is not None:
+        query["priority_score"] = {"$gte": min_priority}
+
+    # Sort logic
+    sort_dir = -1 if sort_order == "desc" else 1
+    sort_field = "published_at"
+    if sort_by == "priority_score":
+        sort_field = "priority_score"
+    elif sort_by == "severity":
+        sort_field = "severity"
 
     skip = (page - 1) * limit
     total = await intelligence_col.count_documents(query)
-    items = await intelligence_col.find(query, {"_id": 0}).sort("published_at", -1).skip(skip).limit(limit).to_list(limit)
+    items = await intelligence_col.find(query, {"_id": 0}).sort(sort_field, sort_dir).skip(skip).limit(limit).to_list(limit)
 
     # Translate non-English titles for display
     if translate:
@@ -739,6 +754,48 @@ def generate_brief_pdf(brief: dict, date: str, total: int, critical: int, high: 
             pdf.multi_cell(0, 4, clean_analysis)
             pdf.ln(2)
     
+    # ========== PATTERN INSIGHTS (Escalation Warnings) ==========
+    pattern_insights = brief.get('pattern_insights', [])
+    if pattern_insights:
+        pdf.section_title('PATTERN DETECTION - ESCALATION WARNINGS')
+        for i, p in enumerate(pattern_insights[:10], 1):
+            risk = p.get('escalation_risk', 'LOW')
+            region = p.get('region', 'Unknown')
+            detail = p.get('detail', p.get('pattern_type', ''))
+            events = p.get('event_count', 0)
+            avg_pri = p.get('avg_priority_score', 0)
+            window = p.get('window_days', 7)
+            
+            # Risk color
+            if risk == 'CRITICAL':
+                pdf.set_text_color(200, 30, 30)
+            elif risk == 'HIGH':
+                pdf.set_text_color(200, 100, 30)
+            elif risk == 'MODERATE':
+                pdf.set_text_color(180, 160, 30)
+            else:
+                pdf.set_text_color(40, 120, 40)
+            
+            pdf.set_font('Helvetica', 'B', 9)
+            header = f'{i}. [{risk}] {region} - {detail}'
+            clean_header = header.encode('latin-1', 'replace').decode('latin-1')
+            pdf.cell(0, 5, clean_header, new_x="LMARGIN", new_y="NEXT")
+            
+            pdf.set_font('Helvetica', '', 8)
+            pdf.set_text_color(80, 80, 80)
+            stats_line = f'   {events} events in {window} days | Avg Priority: {avg_pri}'
+            pdf.cell(0, 4, stats_line, new_x="LMARGIN", new_y="NEXT")
+            
+            # Sample titles
+            samples = p.get('sample_titles', [])
+            if samples:
+                pdf.set_font('Helvetica', 'I', 7)
+                pdf.set_text_color(100, 100, 100)
+                for title in samples[:2]:
+                    clean_t = str(title).encode('latin-1', 'replace').decode('latin-1')[:120]
+                    pdf.cell(0, 4, f'     - {clean_t}', new_x="LMARGIN", new_y="NEXT")
+            pdf.ln(2)
+    
     # ========== ANALYST SUMMARY ==========
     pdf.add_page()
     pdf.section_title('ANALYST ASSESSMENT')
@@ -973,21 +1030,49 @@ async def pipeline_status():
 
 
 async def generate_brief_for_date(date: str):
-    """Generate comprehensive daily brief with ALL critical/high items from 0600 IST previous day"""
+    """Generate comprehensive daily brief covering ONLY news since the last brief generation.
+    No item that appeared in a previous brief will be repeated."""
     
     # Define NER states (India's Northeast Region)
     NER_STATES = ["Assam", "Meghalaya", "Mizoram", "Manipur", "Arunachal Pradesh", "Tripura"]
     
-    # ========== TIME WINDOW: 0600 IST previous day to now ==========
+    # ========== TIME WINDOW: Since last brief generation ==========
     from datetime import timedelta
     import pytz
     ist = pytz.timezone("Asia/Kolkata")
     now_utc = datetime.now(timezone.utc)
-    # 0600 IST previous day
-    today_ist = now_utc.astimezone(ist).replace(hour=6, minute=0, second=0, microsecond=0)
-    cutoff_ist = today_ist - timedelta(days=1)
-    cutoff_utc = cutoff_ist.astimezone(timezone.utc).isoformat()
-    logger.info(f"Brief time window: {cutoff_ist.isoformat()} IST to now")
+    
+    # Find the previous brief to determine the cutoff
+    previous_brief = await briefs_col.find_one(
+        {"date": {"$lt": date}},
+        {"_id": 0, "generated_at": 1, "included_item_ids": 1, "date": 1},
+        sort=[("date", -1)]
+    )
+    
+    # Also check same-date brief (in case of regeneration) - skip its IDs for re-gen
+    same_date_ids = set()
+    same_date_brief_doc = await briefs_col.find_one(
+        {"date": date},
+        {"_id": 0, "included_item_ids": 1}
+    )
+    if same_date_brief_doc and same_date_brief_doc.get("included_item_ids"):
+        same_date_ids.update(same_date_brief_doc["included_item_ids"])
+    
+    # Collect item IDs from ALL previous briefs to avoid repeats
+    previous_item_ids = set()
+    if previous_brief and previous_brief.get("included_item_ids"):
+        previous_item_ids.update(previous_brief["included_item_ids"])
+    
+    # Time cutoff: use previous brief generation time, or default 24h
+    if previous_brief and previous_brief.get("generated_at"):
+        cutoff_utc = previous_brief["generated_at"]
+        logger.info(f"Brief time window: since last brief ({previous_brief.get('date')}) generated at {cutoff_utc}")
+    else:
+        # Default: 0600 IST previous day
+        today_ist = now_utc.astimezone(ist).replace(hour=6, minute=0, second=0, microsecond=0)
+        cutoff_ist = today_ist - timedelta(days=1)
+        cutoff_utc = cutoff_ist.astimezone(timezone.utc).isoformat()
+        logger.info(f"Brief time window (default): {cutoff_utc} to now")
     
     # ========== TITLE SIMILARITY DEDUP HELPER ==========
     def normalize_title(title):
@@ -1059,11 +1144,15 @@ async def generate_brief_for_date(date: str):
                 return True
         return False
     
-    # ========== 1. GET ALL CRITICAL/HIGH ITEMS since 0600 IST prev day ==========
+    # ========== 1. GET ALL CRITICAL/HIGH ITEMS since last brief ==========
+    # Base query: processed items in time window, excluding items from previous briefs
+    base_filter = {"processed": True, "published_at": {"$gte": cutoff_utc}}
+    if previous_item_ids:
+        base_filter["id"] = {"$nin": list(previous_item_ids)}
+    
     critical_high_items = await intelligence_col.find(
         {
-            "processed": True,
-            "published_at": {"$gte": cutoff_utc},
+            **base_filter,
             "$or": [
                 {"severity": {"$in": ["critical", "high"]}},
                 {"priority_score": {"$gte": 60}}
@@ -1072,12 +1161,15 @@ async def generate_brief_for_date(date: str):
         {"_id": 0}
     ).sort([("priority_score", -1), ("published_at", -1)]).to_list(100)
     
-    # Fallback: if too few items in time window, expand to most recent critical/high
+    # Fallback: if too few items in time window, expand but STILL exclude previous brief items
     if len(critical_high_items) < 5:
         logger.info(f"Brief: Only {len(critical_high_items)} items in time window, expanding to recent critical/high")
+        fallback_filter = {"processed": True}
+        if previous_item_ids:
+            fallback_filter["id"] = {"$nin": list(previous_item_ids)}
         fallback_items = await intelligence_col.find(
             {
-                "processed": True,
+                **fallback_filter,
                 "$or": [
                     {"severity": {"$in": ["critical", "high"]}},
                     {"priority_score": {"$gte": 60}}
@@ -1106,30 +1198,35 @@ async def generate_brief_for_date(date: str):
     logger.info(f"Brief: {len(critical_high_items)} critical/high items found, {len(deduped_critical)} after title dedup")
     
     # ========== 2. GET NER REGIONAL ITEMS with time window ==========
+    ner_query = {
+        "processed": True,
+        "published_at": {"$gte": cutoff_utc},
+        "state": {"$in": NER_STATES + ["Multiple"]},
+        "$or": [
+            {"priority_score": {"$gte": 30}},
+            {"tags": {"$exists": True, "$ne": []}},
+            {"severity": {"$in": ["critical", "high", "medium"]}}
+        ]
+    }
+    if previous_item_ids:
+        ner_query["id"] = {"$nin": list(previous_item_ids)}
+    
     ner_items = await intelligence_col.find(
-        {
-            "processed": True,
-            "published_at": {"$gte": cutoff_utc},
-            "state": {"$in": NER_STATES + ["Multiple"]},
-            "$or": [
-                {"priority_score": {"$gte": 30}},
-                {"tags": {"$exists": True, "$ne": []}},
-                {"severity": {"$in": ["critical", "high", "medium"]}}
-            ]
-        },
-        {"_id": 0}
+        ner_query, {"_id": 0}
     ).sort([("priority_score", -1), ("published_at", -1)]).limit(80).to_list(80)
     
     # Fallback: if too few NER items in time window
     if len(ner_items) < 5:
         logger.info(f"Brief: Only {len(ner_items)} NER items in window, expanding")
+        fallback_ner_query = {
+            "processed": True,
+            "state": {"$in": NER_STATES + ["Multiple"]},
+            "severity": {"$in": ["critical", "high", "medium"]}
+        }
+        if previous_item_ids:
+            fallback_ner_query["id"] = {"$nin": list(previous_item_ids)}
         fallback_ner = await intelligence_col.find(
-            {
-                "processed": True,
-                "state": {"$in": NER_STATES + ["Multiple"]},
-                "severity": {"$in": ["critical", "high", "medium"]}
-            },
-            {"_id": 0}
+            fallback_ner_query, {"_id": 0}
         ).sort([("priority_score", -1), ("published_at", -1)]).limit(40).to_list(40)
         existing_urls = set(i.get("source_url") for i in ner_items)
         for item in fallback_ner:
@@ -1156,14 +1253,16 @@ async def generate_brief_for_date(date: str):
     logger.info(f"Brief: {len(ner_items)} NER items, {len(diverse_ner_items)} after dedup from {len(seen_sources)} sources")
     
     # ========== 3. GET NATIONAL NEWS with time window ==========
+    national_query = {
+        "processed": True,
+        "published_at": {"$gte": cutoff_utc},
+        "source": {"$in": ["The Hindu - National", "NDTV India News", "News18 India", "Times of India", "PIB Press Releases", "PIB Defence", "MHA India"]},
+        "state": {"$nin": NER_STATES + ["Bangladesh", "Myanmar", "Multiple"]}
+    }
+    if previous_item_ids:
+        national_query["id"] = {"$nin": list(previous_item_ids)}
     national_items = await intelligence_col.find(
-        {
-            "processed": True,
-            "published_at": {"$gte": cutoff_utc},
-            "source": {"$in": ["The Hindu - National", "NDTV India News", "News18 India", "Times of India"]},
-            "state": {"$nin": NER_STATES + ["Bangladesh", "Myanmar", "Multiple"]}
-        },
-        {"_id": 0}
+        national_query, {"_id": 0}
     ).sort([("priority_score", -1), ("published_at", -1)]).limit(30).to_list(30)
     
     military_national = [
@@ -1176,27 +1275,27 @@ async def generate_brief_for_date(date: str):
     logger.info(f"Brief: {len(national_items)} national items, {len(military_national)} military-relevant")
     
     # ========== 4. GET INTERNATIONAL NEWS with time window ==========
+    intl_query = {
+        "processed": True,
+        "published_at": {"$gte": cutoff_utc},
+        "$or": [
+            {"state": {"$in": ["Bangladesh", "Myanmar"]}},
+            {"countries_involved": {"$in": ["China", "Pakistan"]}},
+            {"priority_score": {"$gte": 35}},
+            {"severity": {"$in": ["critical", "high"]}},
+            {"tags": {"$in": [
+                "Military Movement", "Cross-border Movement", "Insurgency / Militancy",
+                "Foreign Influence (China/Pakistan/USA)", "Border Security", "Arms Smuggling",
+                "Drug Trafficking", "Illegal Immigration", "Bangladesh Internal Dynamics",
+                "Myanmar Instability", "Infrastructure / Logistics"
+            ]}}
+        ],
+        "state": {"$nin": NER_STATES + ["Multiple", "India", ""]}
+    }
+    if previous_item_ids:
+        intl_query["id"] = {"$nin": list(previous_item_ids)}
     international_items = await intelligence_col.find(
-        {
-            "processed": True,
-            "published_at": {"$gte": cutoff_utc},
-            "$or": [
-                {"state": {"$in": ["Bangladesh", "Myanmar"]}},
-                {"countries_involved": {"$in": ["China", "Pakistan"]}},
-            ],
-            "state": {"$nin": NER_STATES + ["Multiple", "India", ""]},
-            "$or": [
-                {"priority_score": {"$gte": 35}},
-                {"severity": {"$in": ["critical", "high"]}},
-                {"tags": {"$in": [
-                    "Military Movement", "Cross-border Movement", "Insurgency / Militancy",
-                    "Foreign Influence (China/Pakistan/USA)", "Border Security", "Arms Smuggling",
-                    "Drug Trafficking", "Illegal Immigration", "Bangladesh Internal Dynamics",
-                    "Myanmar Instability", "Infrastructure / Logistics"
-                ]}}
-            ]
-        },
-        {"_id": 0}
+        intl_query, {"_id": 0}
     ).sort([("priority_score", -1), ("published_at", -1)]).limit(40).to_list(40)
     
     EXCLUDE_KEYWORDS = [
@@ -1244,8 +1343,13 @@ async def generate_brief_for_date(date: str):
     
     logger.info(f"Brief: {len(international_items)} intl items, {len(strategic_intl_items)} strategic, {len(diverse_intl_items)} deduplicated")
     
-    # ========== 5. GET TWITTER FEEDS ==========
-    twitter_items = await tweets_col.find({}, {"_id": 0}).sort("posted_at", -1).limit(25).to_list(25)
+    # ========== 5. GET PATTERN INSIGHTS ==========
+    from pattern_engine import detect_patterns
+    try:
+        detected_patterns = await detect_patterns(db)
+    except Exception as e:
+        logger.warning(f"Pattern detection failed during brief gen: {e}")
+        detected_patterns = await patterns_col.find({}, {"_id": 0}).to_list(50)
     
     # ========== 6. GET UPLOADED DOCUMENT INSIGHTS ==========
     uploaded_docs = await uploads_col.find({"processed": True}, {"_id": 0}).sort("uploaded_at", -1).limit(10).to_list(10)
@@ -1331,33 +1435,21 @@ async def generate_brief_for_date(date: str):
         if item.get("id") not in added_ids
     ]
     
-    # ========== 11. ADD TWITTER AND UPLOADS ==========
-    # If no tweets in DB, show the accounts being monitored with links
-    if not twitter_items:
-        brief_data["twitter_highlights"] = [
-            {
-                "handle": account.get("handle", ""),
-                "account_name": account.get("name", ""),
-                "tweet_text": f"Visit {account.get('url', '')} for latest updates from {account.get('name', '')}",
-                "tweet_url": account.get("url", ""),
-                "posted_at": "",
-                "category": account.get("category", "defense")
-            }
-            for account in TWITTER_ACCOUNTS_TO_MONITOR
-        ]
-        logger.info("Twitter: No tweets in DB, showing monitored accounts list")
-    else:
-        brief_data["twitter_highlights"] = [
-            {
-                "handle": tweet.get("handle", ""),
-                "account_name": tweet.get("account_name", ""),
-                "tweet_text": tweet.get("tweet_text", ""),
-                "tweet_url": tweet.get("tweet_url", ""),
-                "posted_at": tweet.get("posted_at", ""),
-                "category": tweet.get("category", "defense")
-            }
-            for tweet in twitter_items[:20]
-        ]
+    # ========== 11. ADD PATTERN INSIGHTS AND UPLOADS ==========
+    # Build pattern insights for the brief
+    brief_data["pattern_insights"] = [
+        {
+            "region": p.get("region", ""),
+            "detail": p.get("detail", p.get("pattern_type", "")),
+            "event_count": p.get("event_count", 0),
+            "escalation_risk": p.get("escalation_risk", "LOW"),
+            "avg_priority_score": p.get("avg_priority_score", 0),
+            "window_days": p.get("window_days", 7),
+            "sample_titles": p.get("sample_titles", [])[:2],
+        }
+        for p in detected_patterns
+        if p.get("escalation_risk") in ("CRITICAL", "HIGH", "MODERATE")
+    ][:15]
     
     brief_data["uploaded_insights"] = [
         {
@@ -1369,12 +1461,18 @@ async def generate_brief_for_date(date: str):
         for doc in uploaded_docs[:10]
     ]
     
-    # ========== 12. SAVE AND RETURN ==========
+    # ========== 12. TRACK INCLUDED ITEM IDS ==========
+    brief_data["included_item_ids"] = list(added_ids)
+    
+    # ========== 13. SAVE AND RETURN ==========
     brief = DailyBrief(**brief_data)
     doc = brief.model_dump()
-    await briefs_col.update_one({"date": date}, {"$set": doc}, upsert=True)
+    # Clear legacy fields not in the current model
+    doc.pop("twitter_highlights", None)
+    # Ensure clean upsert replacing old brief entirely
+    await briefs_col.replace_one({"date": date}, doc, upsert=True)
     
-    logger.info(f"Brief generated: {len(key_developments)} NER developments, {len(brief_data.get('national_news', []))} national, {len(brief_data.get('international_news', []))} international")
+    logger.info(f"Brief generated: {len(key_developments)} NER developments, {len(brief_data.get('national_news', []))} national, {len(brief_data.get('international_news', []))} international, {len(brief_data.get('pattern_insights', []))} patterns, {len(added_ids)} items tracked")
     
     return doc
 

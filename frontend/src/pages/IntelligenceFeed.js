@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
-  Search, Filter, X, ChevronLeft, ChevronRight, SlidersHorizontal
+  Search, Filter, X, ChevronLeft, ChevronRight, SlidersHorizontal, ArrowUpDown
 } from "lucide-react";
 import { Input } from "../components/ui/input";
 import { Button } from "../components/ui/button";
@@ -39,6 +39,9 @@ export default function IntelligenceFeed({ api, crossBorderOnly = false, alertsO
     threat_type: searchParams.get("threat_type") || "",
     severity: alertsOnly ? "" : (searchParams.get("severity") || ""),
     search: searchParams.get("search") || "",
+    min_priority: searchParams.get("min_priority") || "",
+    sort_by: searchParams.get("sort_by") || "published_at",
+    sort_order: "desc",
   });
 
   const fetchItems = useCallback(async () => {
@@ -50,6 +53,9 @@ export default function IntelligenceFeed({ api, crossBorderOnly = false, alertsO
       if (filters.severity) params.set("severity", filters.severity);
       if (filters.search) params.set("search", filters.search);
       if (crossBorderOnly) params.set("is_cross_border", "true");
+      if (filters.min_priority) params.set("min_priority", filters.min_priority);
+      if (filters.sort_by) params.set("sort_by", filters.sort_by);
+      if (filters.sort_order) params.set("sort_order", filters.sort_order);
       params.set("page", String(page));
       params.set("limit", "15");
 
@@ -90,11 +96,11 @@ export default function IntelligenceFeed({ api, crossBorderOnly = false, alertsO
   };
 
   const clearFilters = () => {
-    setFilters({ state: "", threat_type: "", severity: "", search: "" });
+    setFilters({ state: "", threat_type: "", severity: "", search: "", min_priority: "", sort_by: "published_at", sort_order: "desc" });
     setPage(1);
   };
 
-  const activeFilterCount = Object.values(filters).filter(Boolean).length;
+  const activeFilterCount = Object.entries(filters).filter(([k, v]) => v && k !== "sort_by" && k !== "sort_order").length;
   const pageTitle = alertsOnly === true ? "Critical & High Alerts" : crossBorderOnly === true ? "Cross-Border Developments" : "Intelligence Feed";
   const pageDesc = alertsOnly === true
     ? "High-priority intelligence items requiring attention"
@@ -182,6 +188,30 @@ export default function IntelligenceFeed({ api, crossBorderOnly = false, alertsO
               </SelectContent>
             </Select>
           )}
+
+          <Select value={filters.min_priority || "all"} onValueChange={(v) => updateFilter("min_priority", v === "all" ? "" : v)}>
+            <SelectTrigger className="w-[170px] rounded-none text-xs uppercase" data-testid="filter-priority">
+              <SelectValue placeholder="Min Priority" />
+            </SelectTrigger>
+            <SelectContent className="rounded-none">
+              <SelectItem value="all" className="text-xs">All Priority</SelectItem>
+              <SelectItem value="80" className="text-xs">80+ (Critical)</SelectItem>
+              <SelectItem value="60" className="text-xs">60+ (High)</SelectItem>
+              <SelectItem value="40" className="text-xs">40+ (Medium)</SelectItem>
+              <SelectItem value="20" className="text-xs">20+ (Low+)</SelectItem>
+            </SelectContent>
+          </Select>
+
+          <Select value={filters.sort_by} onValueChange={(v) => updateFilter("sort_by", v)}>
+            <SelectTrigger className="w-[170px] rounded-none text-xs uppercase" data-testid="sort-by">
+              <ArrowUpDown size={12} className="mr-1" />
+              <SelectValue placeholder="Sort By" />
+            </SelectTrigger>
+            <SelectContent className="rounded-none">
+              <SelectItem value="published_at" className="text-xs">Date (Newest)</SelectItem>
+              <SelectItem value="priority_score" className="text-xs">Priority Score</SelectItem>
+            </SelectContent>
+          </Select>
 
           {activeFilterCount > 0 && (
             <Button variant="ghost" size="sm" onClick={clearFilters} className="text-xs text-muted-foreground" data-testid="clear-filters-btn">
