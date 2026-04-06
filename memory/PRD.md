@@ -39,28 +39,24 @@ Build a full-stack AI-powered web application for intelligence aggregation, anal
 
 ### Critical Alert Acknowledgement (2026-04-06)
 - [x] `acknowledged`, `acknowledged_at` fields on intelligence items
-- [x] GET /api/alerts/unacknowledged endpoint
-- [x] POST /api/intelligence/{id}/acknowledge endpoint
 - [x] Sticky unacknowledged alerts panel on Dashboard with ACK buttons
 
-### Daily Brief Enhancements (2026-04-06)
-- [x] Cross-brief dedup: tracks `included_item_ids`, excludes from next brief
-- [x] Time window: "since last brief generation" (not fixed 24h)
+### Daily Brief Automation (2026-04-06)
+- [x] Auto-generated at 0600 IST daily via APScheduler CronTrigger
+- [x] Time window: previous day's latest brief → current generation time
+- [x] Cross-brief dedup: tracks `included_item_ids`, no repeats
 - [x] Twitter section completely removed
-- [x] Pattern Insights / Escalation Warnings section added
-- [x] PDF includes Pattern Detection section with color-coded risk levels
-- [x] Fallback window for sparse data
+- [x] Pattern Insights / Escalation Warnings in brief + PDF
+- [x] Fallback window for sparse data (first-ever brief)
 
 ### Intelligence Feed Enhancements (2026-04-06)
 - [x] Priority score filter (80+/60+/40+/20+)
 - [x] Sort by date or priority score
-- [x] Backend: min_priority, sort_by, sort_order query params
 
-### Deployment
-- [x] Vercel config (vercel.json, CI=false)
-- [x] Render config (render.yaml, Procfile)
-- [x] MongoDB Atlas migration
-- [x] CORS configuration
+### Scheduler Jobs
+- `fetch_and_process_news` — every 30 min
+- `analyze_unprocessed_items` — every 15 min
+- `generate_scheduled_daily_brief` — cron at 0030 UTC (0600 IST)
 
 ## API Endpoints
 - GET /api/dashboard/stats, GET /api/intelligence, GET /api/scan-status
@@ -80,8 +76,5 @@ Build a full-stack AI-powered web application for intelligence aggregation, anal
 ### P2 (Future)
 - Configurable News Retention Window (UI toggle)
 - Caching layer for /api/dashboard/stats
-- Email digest at 0600 IST
+- Email digest distribution at 0600 IST
 - Full-text search, Interactive map, Authentication
-
-### Vercel Deployment
-- User needs to verify Vercel webhook is picking up latest commits
