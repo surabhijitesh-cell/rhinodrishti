@@ -9,66 +9,38 @@ Build a full-stack AI-powered web application for intelligence aggregation, anal
 - **AI**: Claude Haiku 4.5 via Emergent LLM Key
 - **Deployment**: Vercel (frontend) + Render (backend) + MongoDB Atlas
 
-## What's Been Implemented
+## Completed Features
 
-### Core Features
-- [x] 32 RSS sources with keyword filtering + APScheduler
-- [x] Claude Haiku 4.5 AI classification (8-step military intelligence prompt)
-- [x] Dashboard with clickable stat cards, NER Map, charts
-- [x] RSS Scan Progress Bar (real-time, with filter/translate stats)
-- [x] Intelligence Feed with severity/state/threat/priority filters + sort
-- [x] Daily Brief with comprehensive analysis fields
-- [x] PDF export with full analysis + pattern insights
-- [x] Document Upload (PDF/Word/Excel)
-- [x] Weekly Trends charts
-- [x] Local language translation (Bengali/Assamese/Hindi -> English)
+### Core (v1)
+- [x] 32 RSS sources, AI classification, Dashboard, Intel Feed, Daily Brief, PDF, Document Upload, Weekly Trends, Translation
 
-### Advanced Relevance Filter (2026-04-06)
-- [x] Stage 1: Rule-based hard filter (HARD_REJECT/HARD_ACCEPT keywords)
-- [x] Geographic relevance matching (NER states, Bangladesh, Myanmar)
-- [x] Language detection + pre-AI translation pipeline
+### Phase 2: Advanced Relevance Filter
+- [x] Hard filter, geographic matching, language detection, pre-AI translation
 
-### Pattern Detection Engine (2026-04-06)
-- [x] `intelligence_patterns` DB collection
-- [x] Sliding-window analysis + escalation risk levels
-- [x] /patterns page + Dashboard widget + Brief/PDF integration
+### Phase 3: Pattern Detection Engine
+- [x] intelligence_patterns collection, sliding-window, escalation risk, /patterns page
 
-### Critical Alert Acknowledgement (2026-04-06)
-- [x] Sticky unacknowledged alerts panel on Dashboard with ACK buttons
+### Phase 4: Critical Alert Acknowledgement
+- [x] Sticky panel, ACK buttons, unacknowledged alerts endpoint
 
-### Daily Brief Automation (2026-04-06)
-- [x] Auto-generated at 0600 IST daily via APScheduler CronTrigger
-- [x] Cross-brief dedup: tracks included_item_ids, no repeats
-- [x] Twitter section completely removed
-- [x] Pattern Insights / Escalation Warnings in brief + PDF
+### Phase 5: Daily Brief Automation
+- [x] Auto 0600 IST, cross-brief dedup, no Twitter, pattern insights in PDF
 
-### Enhanced AI Classification (2026-04-06)
-- [x] Stricter negative filtering (explicit reject for sports/entertainment/lifestyle)
-- [x] Confidence score (0-100) in AI output
-- [x] Threat trajectory (ESCALATING/STABLE/DE-ESCALATING/NEW_THREAT)
-- [x] Named Entity Extraction (persons, organizations, locations)
-- [x] 8-step classification prompt (was 7-step)
+### Phase 6: Enhanced AI Classification
+- [x] 8-step prompt, confidence_score, threat_trajectory, named entities, stricter negative filtering
 
-### WebSocket Real-time Updates (2026-04-06)
-- [x] WebSocket endpoint at /api/ws/intelligence
-- [x] ConnectionManager with auto-reconnect
-- [x] Broadcasts new_item and critical_alert messages
-- [x] Dashboard LIVE/OFFLINE indicator
-- [x] Live feed panel showing items as they arrive
-- [x] Auto-refresh stats when new WS items arrive
+### Phase 7: WebSocket Real-time Updates
+- [x] /api/ws/intelligence, ConnectionManager, live feed panel, LIVE/OFFLINE indicator
 
-### Scheduler Jobs
-- `fetch_and_process_news` — every 30 min
-- `analyze_unprocessed_items` — every 15 min
-- `generate_scheduled_daily_brief` — cron at 0030 UTC (0600 IST)
+### Phase 8: Configurable Retention + Caching
+- [x] Retention window (7-365 days) via Settings page
+- [x] Dashboard stats cache (60s TTL, auto-invalidated)
 
 ## Prioritized Backlog
 
-### P1 (Upcoming)
-- Semantic Search via Vector Embeddings (cost analysis pending user decision)
+### P1 (Deferred)
+- Semantic Search via Vector Embeddings (cost: ~$3-5/month)
 
-### P2 (Future)
-- Configurable News Retention Window (UI toggle)
-- Caching layer for /api/dashboard/stats
-- Email digest distribution at 0600 IST
-- Full-text search, Interactive map, Authentication
+### Not Required
+- Authentication (user decision)
+- Email digest (user decision)
