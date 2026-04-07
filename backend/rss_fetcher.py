@@ -191,11 +191,11 @@ def parse_feed(source: dict) -> list:
         return []
 
 
-def is_ner_relevant(article: dict) -> bool:
+def is_ner_relevant(article: dict, dynamic_keyword_weights: list = None) -> bool:
     """Check if article is relevant to NER intelligence monitoring.
     
-    For Bangladesh/Myanmar-specific feeds, all content is considered relevant
-    since those feeds are specifically subscribed for border monitoring.
+    Uses dynamic keywords if available, falls back to static list.
+    For Bangladesh/Myanmar-specific feeds, all content is considered relevant.
     For Indian national/international feeds, keyword matching is applied.
     """
     region = article.get("region", "")
@@ -211,12 +211,22 @@ def is_ner_relevant(article: dict) -> bool:
 
     # For national/international sources, apply keyword filtering
     text = f"{article.get('title', '')} {article.get('raw_content', '')}".lower()
+    
+    # Use dynamic keywords if available (weighted matching)
+    if dynamic_keyword_weights:
+        from keyword_engine import score_article_against_keywords
+        score = score_article_against_keywords(article, dynamic_keyword_weights)
+        if score > 5:
+            return True
+    
+    # Fallback to static keywords
     return any(kw in text for kw in ALL_KEYWORDS)
 
 
-async def fetch_all_feeds(progress_callback=None, sources=None) -> list:
+async def fetch_all_feeds(progress_callback=None, sources=None, dynamic_keyword_weights=None) -> list:
     """Fetch and filter articles from RSS sources.
-    If sources is provided, only those sources are fetched."""
+    If sources is provided, only those sources are fetched.
+    If dynamic_keyword_weights is provided, uses them for relevance matching."""
     loop = asyncio.get_event_loop()
     all_articles = []
     active_sources = sources or RSS_SOURCES
@@ -234,7 +244,7 @@ async def fetch_all_feeds(progress_callback=None, sources=None) -> list:
             source_summary[source_name] = {"fetched": 0, "relevant": 0, "error": str(e)}
             continue
         
-        relevant = [a for a in result if is_ner_relevant(a)]
+        relevant = [a for a in result if is_ner_relevant(a, dynamic_keyword_weights)]
         all_articles.extend(relevant)
         source_summary[source_name] = {"fetched": len(result), "relevant": len(relevant)}
 

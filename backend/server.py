@@ -1549,6 +1549,86 @@ async def kg_network(limit: int = Query(50, ge=10, le=200)):
         "actor_count": len([n for n in nodes if n["type"] == "actor"]),
         "location_count": len([n for n in nodes if n["type"] == "location"]),
     }
+
+# ============================================================
+# KEYWORD ENGINE ENDPOINTS
+# ============================================================
+
+@api_router.get("/keywords")
+async def get_keywords(
+    type: Optional[str] = None,
+    min_score: int = Query(0, ge=0, le=100),
+    limit: int = Query(100, ge=1, le=300),
+):
+    """Get active intelligence keywords with scores."""
+    from keyword_engine import generate_keywords
+    EMERGENT_KEY = os.environ.get("EMERGENT_LLM_KEY", "")
+    
+    keywords = await generate_keywords(db, emergent_key=EMERGENT_KEY, use_ai=False)
+    
+    # Also merge in any stored/adaptive keywords
+    stored = await db.keyword_store.find(
+        {"score": {"$gte": min_score}},
+        {"_id": 0}
+    ).sort("score", -1).limit(300).to_list(300)
+    
+    # Build keyword map from generated
+    kw_map = {k["keyword"].lower(): k for k in keywords}
+    
+    # Merge stored keywords (may have updated scores from adaptive feedback)
+    for sk in stored:
+        key = sk.get("keyword", "").lower()
+        if key in kw_map:
+            # Use the higher score
+            if sk.get("score", 0) > kw_map[key]["score"]:
+                kw_map[key]["score"] = sk["score"]
+                kw_map[key]["source"] = sk.get("source", kw_map[key].get("source", ""))
+        else:
+            kw_map[key] = {
+                "keyword": sk.get("keyword", ""),
+                "type": sk.get("category", "primary"),
+                "score": sk.get("score", 50),
+                "source": sk.get("source", "stored"),
+            }
+    
+    result = sorted(kw_map.values(), key=lambda k: k["score"], reverse=True)
+    
+    if type:
+        result = [k for k in result if k["type"] == type]
+    
+    result = [k for k in result if k["score"] >= min_score][:limit]
+    
+    type_counts = {}
+    for k in result:
+        t = k["type"]
+        type_counts[t] = type_counts.get(t, 0) + 1
+    
+    return {
+        "keywords": result,
+        "count": len(result),
+        "type_breakdown": type_counts,
+    }
+
+
+@api_router.post("/keywords/refresh")
+async def refresh_keywords(background_tasks: BackgroundTasks):
+    """Force regenerate keywords using AI expansion."""
+    from keyword_engine import generate_keywords, store_keywords_to_db, _keyword_cache
+    EMERGENT_KEY = os.environ.get("EMERGENT_LLM_KEY", "")
+    
+    # Clear cache
+    _keyword_cache["generated_at"] = None
+    _keyword_cache["keywords"] = []
+    
+    async def _refresh():
+        keywords = await generate_keywords(db, emergent_key=EMERGENT_KEY, use_ai=True)
+        await store_keywords_to_db(db, keywords)
+        logger.info(f"Keyword refresh complete: {len(keywords)} keywords stored")
+    
+    background_tasks.add_task(_refresh)
+    return {"message": "Keyword refresh started with AI expansion"}
+
+
 async def generate_brief_for_date(date: str):
     """Generate comprehensive daily brief.
     
@@ -2086,8 +2166,23 @@ async def fetch_and_process_news(source_filter: str = None):
     
     logger.info(f"=== Starting news fetch cycle ({source_filter or 'all'}) ===")
     try:
+        # Step 0: Load dynamic keywords for enhanced filtering
+        dynamic_kw_weights = None
+        try:
+            from keyword_engine import generate_keywords, get_dynamic_keywords_for_matching
+            EMERGENT_KEY = os.environ.get("EMERGENT_LLM_KEY", "")
+            keywords = await generate_keywords(db, emergent_key=EMERGENT_KEY, use_ai=False)
+            dynamic_kw_weights = get_dynamic_keywords_for_matching(keywords)
+            logger.info(f"Loaded {len(dynamic_kw_weights)} dynamic keywords for RSS filtering")
+        except Exception as e:
+            logger.warning(f"Dynamic keywords unavailable, using static: {e}")
+        
         # Step 1: Fetch RSS articles with progress tracking
-        articles = await fetch_all_feeds(progress_callback=on_source_progress, sources=active_sources if source_filter else None)
+        articles = await fetch_all_feeds(
+            progress_callback=on_source_progress,
+            sources=active_sources if source_filter else None,
+            dynamic_keyword_weights=dynamic_kw_weights
+        )
         scan_status["articles_found"] = len(articles)
         logger.info(f"Fetched {len(articles)} relevant articles from RSS feeds")
 
@@ -2278,6 +2373,13 @@ async def fetch_and_process_news(source_filter: str = None):
                             )
                     except Exception as emb_err:
                         logger.debug(f"Embedding generation skipped: {emb_err}")
+                    
+                    # Adaptive keyword feedback — boost/decay keywords based on classification
+                    try:
+                        from keyword_engine import adaptive_feedback
+                        await adaptive_feedback(db, article, result)
+                    except Exception as af_err:
+                        logger.debug(f"Adaptive feedback skipped: {af_err}")
                     
                     # Broadcast to WebSocket clients
                     try:

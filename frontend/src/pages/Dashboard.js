@@ -316,6 +316,105 @@ function PatternInsights({ api }) {
   );
 }
 
+const TYPE_STYLES = {
+  primary: "bg-red-900/30 text-red-300 border-red-800/40",
+  entity: "bg-blue-900/30 text-blue-300 border-blue-800/40",
+  geo: "bg-yellow-900/30 text-yellow-300 border-yellow-800/40",
+  cross_border: "bg-purple-900/30 text-purple-300 border-purple-800/40",
+  emerging: "bg-green-900/30 text-green-300 border-green-800/40",
+  expanded: "bg-slate-800/30 text-slate-300 border-slate-700/40",
+};
+
+function ActiveKeywords({ api }) {
+  const [keywords, setKeywords] = useState([]);
+  const [typeBreakdown, setTypeBreakdown] = useState({});
+  const [refreshing, setRefreshing] = useState(false);
+  const [showAll, setShowAll] = useState(false);
+
+  useEffect(() => {
+    axios.get(`${api}/keywords?limit=100`).then(res => {
+      setKeywords(res.data.keywords || []);
+      setTypeBreakdown(res.data.type_breakdown || {});
+    }).catch(() => {});
+  }, [api]);
+
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    try {
+      await axios.post(`${api}/keywords/refresh`);
+      // Poll for completion
+      let attempts = 0;
+      const poll = setInterval(async () => {
+        attempts++;
+        const res = await axios.get(`${api}/keywords?limit=100`);
+        setKeywords(res.data.keywords || []);
+        setTypeBreakdown(res.data.type_breakdown || {});
+        if (attempts >= 8) { clearInterval(poll); setRefreshing(false); }
+      }, 3000);
+    } catch { setRefreshing(false); }
+  };
+
+  const displayKws = showAll ? keywords : keywords.slice(0, 20);
+
+  return (
+    <Card className="rounded-none border-border/40 bg-card/60" data-testid="active-keywords-widget">
+      <CardHeader className="pb-2">
+        <div className="flex items-center justify-between">
+          <CardTitle className="text-sm uppercase tracking-wider font-mono flex items-center gap-2">
+            <Target size={14} className="text-primary" /> Active Intelligence Keywords
+            <span className="text-[10px] text-muted-foreground font-normal ml-2">
+              ({keywords.length} total)
+            </span>
+          </CardTitle>
+          <div className="flex items-center gap-2">
+            <div className="flex gap-1">
+              {Object.entries(typeBreakdown).map(([type, count]) => (
+                <span key={type} className={`text-[9px] px-1.5 py-0.5 border font-mono ${TYPE_STYLES[type] || "bg-muted"}`}>
+                  {type}: {count}
+                </span>
+              ))}
+            </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleRefresh}
+              disabled={refreshing}
+              className="h-6 text-[10px] font-mono uppercase"
+              data-testid="refresh-keywords-btn"
+            >
+              <RefreshCw size={10} className={refreshing ? "animate-spin mr-1" : "mr-1"} />
+              {refreshing ? "Generating..." : "AI Refresh"}
+            </Button>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent className="pt-0">
+        <div className="flex flex-wrap gap-1.5">
+          {displayKws.map((kw, i) => (
+            <span
+              key={i}
+              className={`text-[10px] px-2 py-0.5 border font-mono inline-flex items-center gap-1 ${TYPE_STYLES[kw.type] || "bg-muted"}`}
+              title={`Type: ${kw.type} | Score: ${kw.score} | Source: ${kw.source || 'generated'}`}
+              data-testid={`keyword-tag-${i}`}
+            >
+              {kw.keyword}
+              <span className="text-[8px] opacity-60">{kw.score}</span>
+            </span>
+          ))}
+        </div>
+        {keywords.length > 20 && (
+          <button
+            onClick={() => setShowAll(!showAll)}
+            className="text-[10px] text-primary font-mono mt-2 hover:underline"
+          >
+            {showAll ? "Show less" : `Show all ${keywords.length} keywords`}
+          </button>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function Dashboard({ stats: propStats, api }) {
   const [recentItems, setRecentItems] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -672,6 +771,9 @@ export default function Dashboard({ stats: propStats, api }) {
 
       {/* Pattern Insights */}
       <PatternInsights api={api} />
+
+      {/* Active Intelligence Keywords */}
+      <ActiveKeywords api={api} />
 
       {/* Recent Intelligence */}
       <div>
