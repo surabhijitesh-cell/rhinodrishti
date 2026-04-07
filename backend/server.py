@@ -1550,6 +1550,18 @@ async def kg_network(limit: int = Query(50, ge=10, le=200)):
         "location_count": len([n for n in nodes if n["type"] == "location"]),
     }
 
+@api_router.get("/handbook")
+async def get_handbook():
+    """Serve the user handbook as markdown."""
+    handbook_path = os.path.join(os.path.dirname(__file__), '..', 'USER_HANDBOOK.md')
+    try:
+        with open(handbook_path, 'r') as f:
+            content = f.read()
+        return {"content": content}
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Handbook not found")
+
+
 # ============================================================
 # KEYWORD ENGINE ENDPOINTS
 # ============================================================

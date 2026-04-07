@@ -65,7 +65,13 @@ Build a full-stack AI-powered web application for intelligence aggregation, anal
 - [x] MongoDB `keyword_store` collection with score tracking
 - [x] Integrated into `rss_fetcher.py` — dynamic weighted matching replaces static keywords
 - [x] 2 API endpoints: GET /api/keywords (filtered), POST /api/keywords/refresh (AI regeneration)
-- [x] Dashboard widget: Active Intelligence Keywords with color-coded type tags, AI Refresh button
+- [x] Dedicated `/keywords` page with stats, search, type filters, sort, color-coded tags
+
+### Phase 12: User Handbook & UI Polish
+- [x] Comprehensive `/USER_HANDBOOK.md` (14 sections covering every feature)
+- [x] Handbook served via `/api/handbook` and rendered at `/handbook` with markdown parser
+- [x] Keyword Engine moved from Dashboard widget to dedicated sidebar page
+- [x] Navigation reordered: Keyword Engine above Upload Documents, User Handbook below it
 
 ## Prioritized Backlog
 
