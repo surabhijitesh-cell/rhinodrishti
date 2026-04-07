@@ -56,6 +56,17 @@ Build a full-stack AI-powered web application for intelligence aggregation, anal
 - [x] Frontend page at `/knowledge-graph` with stats bar, actor/location tabs, search, filters
 - [x] Actor detail view: locations, threats, co-occurring actors, movement edges, related articles
 
+### Phase 11: Dynamic Keyword Generation Engine
+- [x] `keyword_engine.py` — multi-layered keyword generation (primary, entity, geo, cross_border, emerging, expanded)
+- [x] Input sources: historical intelligence (14 days), high-priority news, static seed keywords
+- [x] AI-powered expansion: Claude Haiku generates emerging signals and synonym expansions
+- [x] Keyword scoring (0-100) based on frequency, severity, cross-border relevance, recency decay
+- [x] Adaptive learning loop: boosts keywords on HIGH/CRITICAL articles, decays on LOW
+- [x] MongoDB `keyword_store` collection with score tracking
+- [x] Integrated into `rss_fetcher.py` — dynamic weighted matching replaces static keywords
+- [x] 2 API endpoints: GET /api/keywords (filtered), POST /api/keywords/refresh (AI regeneration)
+- [x] Dashboard widget: Active Intelligence Keywords with color-coded type tags, AI Refresh button
+
 ## Prioritized Backlog
 
 ### P0 - Resolved
