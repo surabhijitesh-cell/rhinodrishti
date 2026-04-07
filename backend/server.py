@@ -230,7 +230,7 @@ async def get_dashboard_stats():
     settings = await db.app_settings.find_one({"key": "retention_days"}, {"_id": 0})
     retention_days = settings.get("value", 30) if settings else 30
     retention_cutoff = (now - timedelta(days=retention_days)).isoformat()
-    base_filter = {"published_at": {"$gte": retention_cutoff}}
+    base_filter = {"published_at": {"$gte": retention_cutoff}, "processed": True}
 
     total = await intelligence_col.count_documents(base_filter)
     critical = await intelligence_col.count_documents({**base_filter, "severity": "critical"})
@@ -309,7 +309,7 @@ async def get_intelligence(
     limit: int = Query(20, ge=1, le=100),
     translate: bool = Query(True)
 ):
-    query = {}
+    query = {"processed": True}
 
     # Apply retention window filter (unless explicit date_from is provided)
     if not date_from:
@@ -374,7 +374,7 @@ async def get_intelligence_item(item_id: str):
 @api_router.get("/alerts")
 async def get_alerts():
     items = await intelligence_col.find(
-        {"severity": {"$in": ["critical", "high"]}}, {"_id": 0}
+        {"severity": {"$in": ["critical", "high"]}, "processed": True}, {"_id": 0}
     ).sort("published_at", -1).limit(30).to_list(30)
     return {"alerts": items, "count": len(items)}
 
@@ -385,6 +385,7 @@ async def get_unacknowledged_alerts():
     items = await intelligence_col.find(
         {
             "severity": {"$in": ["critical", "high"]},
+            "processed": True,
             "$or": [
                 {"acknowledged": {"$exists": False}},
                 {"acknowledged": False}
