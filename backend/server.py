@@ -2886,10 +2886,26 @@ async def websocket_intelligence(websocket: WebSocket):
 
 app.include_router(api_router)
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_credentials=True,
-    allow_origins=os.environ.get('CORS_ORIGINS', '*').split(','),
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# CORS: Allow all origins explicitly for deployed frontend (Vercel, Render, etc.)
+cors_origins_str = os.environ.get('CORS_ORIGINS', '*')
+if cors_origins_str.strip() == '*':
+    # Wildcard mode — allow ALL origins without credentials (CORS spec requirement)
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=False,
+        allow_methods=["*"],
+        allow_headers=["*"],
+        expose_headers=["Content-Disposition"],
+    )
+else:
+    # Explicit origins mode — allow credentials
+    origins = [o.strip() for o in cors_origins_str.split(',') if o.strip()]
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+        expose_headers=["Content-Disposition"],
+    )
