@@ -45,6 +45,8 @@ Build a full-stack AI-powered web application for intelligence aggregation, anal
 - [x] Frontend Semantic Search UI toggle
 - [x] P0 Bug Fix: Custom PDF 500 error (fpdf2 effective_w fix)
 - [x] P0 Bug Fix: Embeddings 401 error (switched to OPENAI_API_KEY)
+- [x] P0 Bug Fix: Daily Brief not generating (DailyBrief.js called wrong endpoint)
+- [x] P0 Bug Fix: Sports/entertainment leaking through filter (reject now checks title+content, word-boundary regex for short keywords, runs before NER source pass-through)
 
 ## Prioritized Backlog
 
