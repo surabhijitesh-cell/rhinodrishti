@@ -1,0 +1,79 @@
+{
+  "summary": "Comprehensive testing of Knowledge Graph Prep feature. All 19 backend API tests passed. Frontend Knowledge Graph page loads correctly with stats bar (113 actors, 21 locations, 144 edges, 43 cross-border actors, 5 border zones), actor cards, location cards, actor detail view, and all filters working.",
+
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+
+  "passed_tests": [
+    "GET /api/knowledge-graph/stats - returns 200 with built:true, 113 actors, 21 locations, 144 edges",
+    "GET /api/knowledge-graph/stats - has all expected fields (actors, locations, edges, cross_border_actors, border_locations, top_actors, top_locations)",
+    "GET /api/knowledge-graph/actors - returns 200 with list of actors",
+    "GET /api/knowledge-graph/actors - actors have expected fields (name, activity_count, locations, threat_types, is_cross_border)",
+    "GET /api/knowledge-graph/actors?cross_border=true - returns only cross-border actors (43 actors)",
+    "GET /api/knowledge-graph/actors?limit=10 - respects limit parameter",
+    "GET /api/knowledge-graph/actors/Assam%20Police - returns actor detail with edges",
+    "GET /api/knowledge-graph/actors/ULFA(I) - handles special characters (regex escape test)",
+    "GET /api/knowledge-graph/actors/NonExistentActor - returns 404 for non-existent actor",
+    "GET /api/knowledge-graph/locations - returns 200 with list of locations (21 locations)",
+    "GET /api/knowledge-graph/locations - locations have expected fields (name, activity_count, actors, is_border)",
+    "GET /api/knowledge-graph/locations?is_border=true - returns only border locations (5 locations)",
+    "GET /api/knowledge-graph/edges - returns 200 with list of edges (144 edges)",
+    "GET /api/knowledge-graph/edges - edges have expected fields (actor, location, count, contexts)",
+    "GET /api/knowledge-graph/edges?min_count=2 - filters by minimum count",
+    "GET /api/knowledge-graph/network - returns 200 with nodes and links for visualization",
+    "GET /api/knowledge-graph/network - nodes have expected fields (id, label, type)",
+    "GET /api/knowledge-graph/network - links have expected fields (source, target, weight)",
+    "POST /api/knowledge-graph/build - returns 200 with 'Knowledge graph build started' message",
+    "Frontend Knowledge Graph page loads at /knowledge-graph",
+    "Frontend stats bar shows 113 actors, 21 locations, 144 edges, 43 cross-border, 5 border zones",
+    "Frontend Actors tab shows 100 actor cards with severity badges, locations, threat types",
+    "Frontend Locations tab shows 21 location cards with actors and activity counts",
+    "Frontend actor detail view shows locations, threats, co-occurring actors, movement edges, related articles",
+    "Frontend cross-border filter correctly filters to 43 actors",
+    "Frontend border zones filter correctly filters to 5 locations",
+    "Frontend search functionality works correctly",
+    "Navigation sidebar shows Knowledge Graph link"
+  ],
+
+  "test_report_links": [
+    "/app/backend/tests/test_knowledge_graph_v14.py",
+    "/app/test_reports/pytest/pytest_results_v14.xml"
+  ],
+
+  "action_items": [],
+
+  "critical_code_review_comments": [
+    "Knowledge graph builder correctly normalizes actor names (e.g., 'Border Security Force' -> 'BSF', 'ULFA (I)' -> 'ULFA(I)')",
+    "Regex escape fix in actor detail endpoint correctly handles special characters like parentheses in ULFA(I)",
+    "Frontend correctly uses data-testid attributes for all interactive elements",
+    "Stats bar correctly displays all KG metrics from the API",
+    "Actor detail view shows comprehensive information including movement edges and related articles"
+  ],
+
+  "updated_files": [
+    "/app/backend/tests/test_knowledge_graph_v14.py"
+  ],
+
+  "success_rate": {
+    "backend": "100% (19/19 tests passed)",
+    "frontend": "100% (all pages and features verified)"
+  },
+
+  "test_credentials": "No credentials needed - app has no auth system",
+
+  "seed_data_creation": "None - used existing knowledge graph data (113 actors, 21 locations, 144 edges built from intelligence items)",
+
+  "retest_needed": false,
+
+  "should_main_agent_self_test": false,
+
+  "context_for_next_testing_agent": "Knowledge Graph feature fully tested and working. Backend has 9 endpoints: POST /api/knowledge-graph/build, GET /api/knowledge-graph/stats, GET /api/knowledge-graph/actors (with cross_border filter), GET /api/knowledge-graph/actors/{name}, GET /api/knowledge-graph/locations (with is_border filter), GET /api/knowledge-graph/edges (with min_count filter), GET /api/knowledge-graph/network. Frontend page at /knowledge-graph shows stats bar, actor/location tabs, search, filters, and actor detail view. Data: 113 actors, 21 locations, 144 edges, 43 cross-border actors, 5 border zones. Test file: /app/backend/tests/test_knowledge_graph_v14.py"
+}
