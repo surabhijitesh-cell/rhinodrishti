@@ -48,13 +48,20 @@ Build a full-stack AI-powered web application for intelligence aggregation, anal
 - [x] P0 Bug Fix: Daily Brief not generating (DailyBrief.js called wrong endpoint)
 - [x] P0 Bug Fix: Sports/entertainment leaking through filter (reject now checks title+content, word-boundary regex for short keywords, runs before NER source pass-through)
 
+### Phase 10: Knowledge Graph
+- [x] `knowledge_graph.py` — aggregates actor-location-context relationships from entities/actors fields
+- [x] 3 MongoDB collections: `kg_actors` (113), `kg_locations` (21), `kg_edges` (144)
+- [x] Actor normalization (BSF, ULFA(I), NSCN variants merged)
+- [x] 9 API endpoints (build, stats, actors, actor detail, locations, edges, network graph)
+- [x] Frontend page at `/knowledge-graph` with stats bar, actor/location tabs, search, filters
+- [x] Actor detail view: locations, threats, co-occurring actors, movement edges, related articles
+
 ## Prioritized Backlog
 
 ### P0 - Resolved
 - Embeddings Backfill: Working with new OpenAI API key. 532 items being backfilled in batches of 50. Semantic search operational.
 
 ### P1 - Upcoming
-- Knowledge Graph Prep: Extract relationships (Actor-Location-Border) as structured metadata
 - Add more National Indian news sources to RSS fetcher
 - Dashboard priority_score filter/sort
 - Refactor server.py (~2600 lines) into separate router files
