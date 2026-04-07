@@ -8,22 +8,47 @@ logger = logging.getLogger(__name__)
 # STAGE 1: HARD FILTER (Rule-based noise rejection)
 # ============================================================
 
-HARD_REJECT_KEYWORDS = [
-    # Sports
-    'cricket', 'cricketer', 'ipl', 'bcci', 'odi', 't20', 'test match', 'wicket', 'batsman', 'bowler',
-    'football', 'fifa', 'premier league', 'la liga', 'champions league', 'goalkeeper', 'midfielder',
-    'striker', 'chelsea', 'manchester', 'barcelona', 'real madrid', 'tennis', 'wimbledon', 'olympics',
-    'badminton', 'kabaddi', 'hockey league', 'isl ', 'pro kabaddi',
+# Keywords that need WORD BOUNDARY matching (short/ambiguous terms)
+# These use regex \b...\b to avoid matching inside other words
+REJECT_WORD_BOUNDARY = [
+    r'\bipl\b', r'\bodi\b', r'\bt20\b', r'\bicc\b', r'\bisl\b',
+    r'\bf1\b', r'\blbw\b',
+]
+
+# Keywords that use simple substring matching (long enough to be unambiguous)
+REJECT_SUBSTRING = [
+    # Cricket
+    'cricket', 'cricketer', 'bcci', 'test match', 'wicket', 'batsman',
+    'bowler', 'batting average', 'bowling figures', 'innings defeat',
+    'world cup cricket', 'indian premier league',
+    # IPL teams (full names only)
+    'mumbai indians', 'chennai super kings', 'royal challengers bengaluru',
+    'royal challengers bangalore', 'kolkata knight riders',
+    'sunrisers hyderabad', 'rajasthan royals', 'delhi capitals',
+    'punjab kings', 'lucknow super giants', 'gujarat titans',
+    # Football
+    'premier league', 'la liga', 'champions league', 'goalkeeper',
+    'midfielder', 'striker', 'chelsea', 'real madrid',
+    'arsenal', 'liverpool fc', 'tottenham', 'serie a football',
+    'fc barcelona', 'barcelona fc',
+    # Other Sports
+    'tennis', 'wimbledon', 'olympics', 'badminton championship',
+    'kabaddi', 'hockey league', 'pro kabaddi', 'asian games medal',
+    'commonwealth games', 'formula 1', 'grand prix', 'boxing match',
+    'wrestling championship',
     # Entertainment
-    'bollywood', 'tollywood', 'kollywood', 'hollywood', 'movie review', 'box office', 'film review',
-    'celebrity', 'actress', 'actor', 'singer', 'album', 'music video', 'trailer launch', 'ott release',
-    'bigg boss', 'reality show', 'tv serial', 'web series',
+    'bollywood', 'tollywood', 'kollywood', 'movie review', 'box office',
+    'film review', 'celebrity gossip', 'trailer launch', 'ott release',
+    'bigg boss', 'reality show', 'tv serial', 'web series review',
     # Lifestyle
-    'recipe', 'cooking', 'fashion week', 'beauty tips', 'skincare', 'haircare', 'makeup tutorial',
-    'horoscope', 'astrology', 'zodiac', 'lottery result', 'lottery winner',
+    'recipe', 'fashion week', 'beauty tips', 'skincare routine',
+    'makeup tutorial', 'horoscope', 'astrology', 'zodiac',
+    'lottery result', 'lottery winner', 'teer result',
     'wedding ceremony', 'divorce settlement', 'dating app',
+    # Education spam
+    'upsc coaching', 'coaching institute', 'admission open',
     # General irrelevant
-    'game show', 'quiz show', 'crossword', 'sudoku', 'weather forecast today',
+    'game show', 'quiz show', 'crossword puzzle', 'sudoku',
     'stock market tip', 'mutual fund', 'crypto price', 'bitcoin price',
 ]
 
@@ -32,19 +57,19 @@ HARD_ACCEPT_KEYWORDS = [
     'military', 'army', 'navy', 'air force', 'defence', 'defense', 'weapon', 'ammunition',
     'missile', 'artillery', 'tank', 'warship', 'fighter jet', 'helicopter gunship',
     'bsf', 'crpf', 'assam rifles', 'itbp', 'ssb', 'nsg', 'marcos', 'para sf',
-    'bgb', 'border guard', 'tatmadaw', 'pla ',
+    'bgb', 'border guard', 'tatmadaw',
     # Insurgency/Conflict
-    'insurgent', 'militant', 'separatist', 'ulfa', 'nscn', 'pla', 'hnlc', 'nlft',
+    'insurgent', 'militant', 'separatist', 'ulfa', 'nscn', 'hnlc', 'nlft',
     'ambush', 'encounter', 'gunfight', 'firing', 'ied', 'bomb blast', 'grenade',
-    'rpg', 'ceasefire', 'surrender', 'arms cache', 'arms recovery',
+    'ceasefire', 'surrender', 'arms cache', 'arms recovery', 'explosives recovered',
     # Border/Cross-border
     'border', 'infiltration', 'cross-border', 'smuggling', 'trafficking', 'narcotics',
     'illegal immigration', 'deportation', 'rohingya', 'refugee',
     # Strategic
     'nuclear', 'submarine', 'aircraft carrier', 'radar', 'surveillance', 'drone', 'uav',
-    'cyber attack', 'espionage', 'intelligence', 'diplomatic', 'sanctions',
+    'cyber attack', 'espionage', 'intelligence agency', 'diplomatic', 'sanctions',
     # NER specific
-    'northeast india', 'north east india', 'ner ', 'manipur', 'assam', 'meghalaya',
+    'northeast india', 'north east india', 'manipur', 'assam', 'meghalaya',
     'mizoram', 'tripura', 'arunachal', 'nagaland',
 ]
 
@@ -57,25 +82,48 @@ GEO_RELEVANT = [
     'chin state', 'sagaing', 'kachin',
 ]
 
+# Pre-compile word-boundary patterns for efficiency
+_COMPILED_WB_PATTERNS = [re.compile(p, re.IGNORECASE) for p in REJECT_WORD_BOUNDARY]
+
+
+def _check_reject(text: str) -> str:
+    """Check if text matches any reject pattern. Returns matched keyword or empty string."""
+    text_lower = text.lower()
+    # Substring matches (long, unambiguous keywords)
+    for kw in REJECT_SUBSTRING:
+        if kw in text_lower:
+            return kw
+    # Word-boundary matches (short, ambiguous keywords)
+    for pattern in _COMPILED_WB_PATTERNS:
+        if pattern.search(text):
+            return pattern.pattern
+    return ""
+
 
 def hard_filter(article: dict) -> tuple:
     """
     STAGE 1: Rule-based hard filter.
     Returns: (pass: bool, reason: str)
+    
+    REJECT runs on BOTH title AND content, and runs FIRST before any accept logic.
+    This ensures sports/entertainment/lifestyle never leaks through regardless of source.
     """
     title = (article.get("title", "") or "").lower()
     content = (article.get("raw_content", "") or article.get("description", "") or "").lower()
     source_region = (article.get("region", "") or "").lower()
     text = f"{title} {content[:500]}"
 
-    # RULE 1: Bangladesh/Myanmar feeds always accepted
+    # RULE 1: Hard reject on title OR content — runs FIRST, no exceptions
+    reject_match = _check_reject(title)
+    if reject_match:
+        return False, f"hard_reject_title:{reject_match}"
+    reject_match = _check_reject(content[:800])
+    if reject_match:
+        return False, f"hard_reject_content:{reject_match}"
+
+    # RULE 2: Bangladesh/Myanmar feeds always accepted (after reject check)
     if source_region in ("bangladesh", "myanmar"):
         return True, "source_region_relevant"
-
-    # RULE 2: Hard reject on title
-    for kw in HARD_REJECT_KEYWORDS:
-        if kw in title:
-            return False, f"hard_reject:{kw}"
 
     # RULE 3: Hard accept on security signals
     for kw in HARD_ACCEPT_KEYWORDS:
@@ -91,7 +139,7 @@ def hard_filter(article: dict) -> tuple:
     if source_region in ("india", "international"):
         return False, "no_relevance_signal"
 
-    # RULE 6: NER sources accepted by default
+    # RULE 6: NER sources accepted by default (only after passing reject check)
     if source_region in ("ner", "ner "):
         return True, "ner_source"
 

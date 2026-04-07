@@ -56,10 +56,16 @@ export default function DailyBrief({ api }) {
   const generateBrief = async () => {
     setGenerating(true);
     try {
-      await axios.post(`${api}/daily-brief`);
-      setTimeout(async () => {
+      await axios.post(`${api}/generate-brief`);
+      // Brief generation runs in background; poll until ready
+      let attempts = 0;
+      const poll = setInterval(async () => {
+        attempts++;
         await fetchBrief();
-        setGenerating(false);
+        if (brief || attempts >= 12) {
+          clearInterval(poll);
+          setGenerating(false);
+        }
       }, 5000);
     } catch (e) {
       console.error("Failed to generate brief:", e);

@@ -1,0 +1,89 @@
+{
+  "summary": "Comprehensive testing of two bug fixes: (1) Daily Brief generation - DailyBrief.js now correctly calls POST /api/generate-brief instead of non-existent POST /api/daily-brief. (2) Hard filter now rejects sports/entertainment in BOTH title AND content, with word-boundary matching for short keywords (ipl, odi, t20) to avoid false positives like 'Modi'. All 20 backend tests passed. Frontend Dashboard, Daily Brief, and Intelligence Feed all working correctly.",
+
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+
+  "passed_tests": [
+    "POST /api/generate-brief - returns 200 with 'Brief generation started' message",
+    "GET /api/daily-brief - returns brief with date, key_developments (41 items), analyst_summary",
+    "GET /api/daily-brief/pdf - returns valid PDF (starts with %PDF magic bytes)",
+    "Hard filter rejects IPL cricket in title ('MI seek reset against RR Pandya fitness')",
+    "Hard filter rejects IPL in content even if title is clean ('INDIAN PREMIER LEAGUE')",
+    "Hard filter rejects lottery news ('Lottery results today')",
+    "Hard filter rejects Bollywood entertainment news",
+    "Hard filter rejects cricket in content only ('batsman scored a century')",
+    "Hard filter accepts arms/explosives recovery news ('Arms and Explosives Recovered in Manipur')",
+    "Hard filter accepts border news ('Cattle killing sparks tension along Assam-Nagaland border')",
+    "Hard filter does NOT false-reject 'PM Modi' (word-boundary matching prevents 'odi' match inside 'Modi')",
+    "Hard filter accepts military operations news",
+    "Hard filter accepts insurgency news ('ULFA militant surrenders')",
+    "Word-boundary: 'IPL' rejected as standalone, 'multiple' NOT rejected (no false positive)",
+    "Word-boundary: 'ODI' rejected as standalone, 'Modi' NOT rejected",
+    "Word-boundary: 'T20' rejected correctly",
+    "Intelligence feed has no cricket-related items (using word-boundary patterns)",
+    "Intelligence feed has no lottery-related items",
+    "Intelligence feed has no Bollywood/entertainment items",
+    "GET /api/dashboard/stats - returns 460 total items, 2 critical, 41 high, 37 medium, 380 low",
+    "Frontend Dashboard loads with stats cards, NER map, critical alerts",
+    "Frontend Daily Brief shows REGENERATE BRIEF button (calls POST /api/generate-brief)",
+    "Frontend Daily Brief shows Analyst Assessment, NER Key Developments with 'Why it matters', 'Potential impact', 'Early Warning'",
+    "Frontend Intelligence Feed shows 460 results with proper NER intelligence content"
+  ],
+
+  "bug_fixes_verified": {
+    "daily_brief_generation": {
+      "status": "FIXED",
+      "issue": "DailyBrief.js was calling POST /api/daily-brief (non-existent) instead of POST /api/generate-brief",
+      "fix": "Changed line 59 in DailyBrief.js to call /generate-brief, added polling for brief readiness",
+      "test": "POST /api/generate-brief returns 200 with 'Brief generation started', frontend button shows 'Generating...' state"
+    },
+    "sports_entertainment_filter": {
+      "status": "FIXED",
+      "issue": "Hard filter only checked title for reject keywords, not content. Also NER sources bypassed reject entirely.",
+      "fix": "intelligence_filter.py now checks BOTH title AND content BEFORE any accept logic. Short keywords (ipl, odi, t20, icc) use word-boundary regex to avoid false positives.",
+      "test": "Filter rejects 'INDIAN PREMIER LEAGUE' in content, does NOT reject 'PM Modi' (no false positive on 'odi')"
+    }
+  },
+
+  "test_report_links": [
+    "/app/backend/tests/test_filter_and_brief_v13.py",
+    "/app/test_reports/pytest/pytest_results_v13.xml"
+  ],
+
+  "action_items": [],
+
+  "critical_code_review_comments": [
+    "Word-boundary regex patterns in REJECT_WORD_BOUNDARY list correctly prevent false positives",
+    "Reject check runs on BOTH title AND content[:800] before any accept logic",
+    "DailyBrief.js correctly calls POST /api/generate-brief and polls for brief readiness",
+    "Intelligence feed shows 460 items with no sports/entertainment content visible"
+  ],
+
+  "updated_files": [
+    "/app/backend/tests/test_filter_and_brief_v13.py"
+  ],
+
+  "success_rate": {
+    "backend": "100% (20/20 tests passed)",
+    "frontend": "100% (all pages and features verified)"
+  },
+
+  "test_credentials": "No credentials needed - app has no auth system",
+
+  "seed_data_creation": "None - used existing data (460 intelligence items within retention window)",
+
+  "retest_needed": false,
+
+  "should_main_agent_self_test": false,
+
+  "context_for_next_testing_agent": "Both bugs are fixed and verified: (1) Daily Brief generation now works - DailyBrief.js calls POST /api/generate-brief (not /api/daily-brief), button shows 'Generating...' state and polls for brief readiness. (2) Hard filter now rejects sports/entertainment in BOTH title AND content. Word-boundary matching for short keywords (ipl, odi, t20) prevents false positives like 'Modi' containing 'odi'. Intelligence feed shows 460 items with no sports/cricket/lottery/entertainment content. Backend tests in /app/backend/tests/test_filter_and_brief_v13.py."
+}
