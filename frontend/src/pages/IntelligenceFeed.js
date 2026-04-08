@@ -37,6 +37,7 @@ export default function IntelligenceFeed({ api, crossBorderOnly = false, alertsO
   const [semanticQuery, setSemanticQuery] = useState("");
   const [semanticResults, setSemanticResults] = useState([]);
   const [semanticLoading, setSemanticLoading] = useState(false);
+  const [feedbackMap, setFeedbackMap] = useState({});
 
   const [filters, setFilters] = useState({
     state: searchParams.get("state") || "",
@@ -93,6 +94,22 @@ export default function IntelligenceFeed({ api, crossBorderOnly = false, alertsO
   useEffect(() => {
     fetchItems();
   }, [fetchItems]);
+
+  // Batch-fetch feedback data for displayed items
+  useEffect(() => {
+    const fetchFeedback = async () => {
+      const ids = items.map((i) => i.id).filter(Boolean);
+      if (ids.length === 0) return;
+      try {
+        const deviceId = localStorage.getItem("rhino_drishti_device_id") || "";
+        const res = await axios.post(`${api}/feedback/batch`, { item_ids: ids, device_id: deviceId });
+        setFeedbackMap(res.data.feedback || {});
+      } catch {
+        // silent - feedback is non-critical
+      }
+    };
+    fetchFeedback();
+  }, [items, api]);
 
   const updateFilter = (key, value) => {
     setFilters((prev) => ({ ...prev, [key]: value }));
@@ -296,7 +313,7 @@ export default function IntelligenceFeed({ api, crossBorderOnly = false, alertsO
                 <Badge className="absolute top-2 right-2 z-10 rounded-none bg-primary/20 text-primary border-primary/30 text-[9px] px-1">
                   {(item.similarity_score * 100).toFixed(0)}% match
                 </Badge>
-                <IntelligenceCard item={item} />
+                <IntelligenceCard item={item} api={api} />
               </div>
             ))}
           </div>
@@ -305,7 +322,7 @@ export default function IntelligenceFeed({ api, crossBorderOnly = false, alertsO
         <>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4" data-testid="intelligence-items-grid">
             {items.map((item) => (
-              <IntelligenceCard key={item.id} item={item} />
+              <IntelligenceCard key={item.id} item={item} api={api} feedbackData={feedbackMap[item.id]} />
             ))}
           </div>
 

@@ -24,3 +24,22 @@ async def set_retention_setting(body: dict):
     )
     invalidate_stats_cache()
     return {"message": f"Retention window set to {days} days", "retention_days": days}
+
+
+@router.get("/settings/feedback")
+async def get_feedback_settings():
+    settings = await db.app_settings.find_one({"key": "max_feedback_per_item"}, {"_id": 0})
+    return {"max_feedback_per_item": settings.get("value", 20) if settings else 20}
+
+
+@router.put("/settings/feedback")
+async def set_feedback_settings(body: dict):
+    max_val = body.get("max_feedback_per_item", 20)
+    if not isinstance(max_val, int) or max_val < 1 or max_val > 500:
+        raise HTTPException(status_code=400, detail="max_feedback_per_item must be integer 1-500")
+    await db.app_settings.update_one(
+        {"key": "max_feedback_per_item"},
+        {"$set": {"key": "max_feedback_per_item", "value": max_val, "updated_at": datetime.now(timezone.utc).isoformat()}},
+        upsert=True
+    )
+    return {"message": f"Max feedback per item set to {max_val}", "max_feedback_per_item": max_val}

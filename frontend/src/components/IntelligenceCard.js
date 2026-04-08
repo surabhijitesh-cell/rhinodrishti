@@ -6,6 +6,7 @@ import {
 } from "lucide-react";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
+import FeedbackWidget from "./FeedbackWidget";
 
 const THREAT_ICONS = {
   "Insurgency": Target,
@@ -63,7 +64,7 @@ function formatTime(isoStr) {
   }
 }
 
-export default function IntelligenceCard({ item, compact = false }) {
+export default function IntelligenceCard({ item, compact = false, api, feedbackData }) {
   const [expanded, setExpanded] = useState(false);
   const ThreatIcon = THREAT_ICONS[item.threat_category] || THREAT_ICONS[item.tags?.[0]] || AlertTriangle;
   const severityClass = SEVERITY_CLASSES[item.severity] || "severity-low";
@@ -254,6 +255,15 @@ export default function IntelligenceCard({ item, compact = false }) {
                 >
                   <ExternalLink size={12} /> View Source
                 </a>
+              )}
+
+              {/* Feedback Widget inside expanded section */}
+              {api && (
+                <FeedbackWidget
+                  itemId={item.id}
+                  api={api}
+                  initialData={feedbackData}
+                />
               )}
             </div>
           )}

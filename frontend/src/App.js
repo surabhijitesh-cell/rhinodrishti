@@ -14,6 +14,7 @@ import SettingsPage from "./pages/SettingsPage";
 import KnowledgeGraph from "./pages/KnowledgeGraph";
 import KeywordEngine from "./pages/KeywordEngine";
 import Handbook from "./pages/Handbook";
+import TrainingSummary from "./pages/TrainingSummary";
 import { Toaster } from "./components/ui/sonner";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
@@ -59,6 +60,7 @@ function AppRoutes() {
         <Route path="/settings" element={<SettingsPage api={API} />} />
         <Route path="/alerts" element={<IntelligenceFeed api={API} alertsOnly={true} />} />
         <Route path="/keywords" element={<KeywordEngine api={API} />} />
+        <Route path="/training" element={<TrainingSummary api={API} />} />
         <Route path="/upload" element={<DocumentUpload api={API} />} />
         <Route path="/handbook" element={<Handbook api={API} />} />
       </Routes>

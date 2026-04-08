@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Settings as SettingsIcon, Clock, Save, RefreshCw } from "lucide-react";
+import { Settings as SettingsIcon, Clock, Save, RefreshCw, ShieldCheck } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Button } from "../components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
@@ -116,6 +116,9 @@ export default function SettingsPage({ api }) {
 
       {/* Pipeline Info */}
       <PipelineInfo api={api} />
+
+      {/* Training Controls */}
+      <FeedbackSettings api={api} />
     </div>
   );
 }
@@ -165,6 +168,106 @@ function PipelineInfo({ api }) {
             <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-mono">Scheduler</p>
             <p className="text-xs font-mono mt-1">{status.scheduler}</p>
           </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+
+function FeedbackSettings({ api }) {
+  const [maxFeedback, setMaxFeedback] = useState("20");
+  const [saving, setSaving] = useState(false);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const fetch = async () => {
+      try {
+        const res = await axios.get(`${api}/settings/feedback`);
+        setMaxFeedback(String(res.data.max_feedback_per_item || 20));
+      } catch (e) {
+        console.error("Failed to fetch feedback settings:", e);
+      }
+      setLoading(false);
+    };
+    fetch();
+  }, [api]);
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      const res = await axios.put(`${api}/settings/feedback`, {
+        max_feedback_per_item: parseInt(maxFeedback, 10),
+      });
+      toast.success(res.data.message || "Feedback limit updated");
+    } catch (e) {
+      toast.error("Failed to update feedback setting");
+    }
+    setSaving(false);
+  };
+
+  const options = [
+    { value: "5", label: "5 ratings" },
+    { value: "10", label: "10 ratings" },
+    { value: "15", label: "15 ratings" },
+    { value: "20", label: "20 ratings (default)" },
+    { value: "30", label: "30 ratings" },
+    { value: "50", label: "50 ratings" },
+    { value: "100", label: "100 ratings" },
+  ];
+
+  return (
+    <Card className="border border-border rounded-none bg-card max-w-xl" data-testid="feedback-settings-card">
+      <CardHeader className="py-3 px-4 border-b border-border">
+        <CardTitle className="text-sm uppercase tracking-wider font-['Barlow_Condensed'] font-semibold flex items-center gap-2">
+          <ShieldCheck size={16} className="text-primary" />
+          Training Controls
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="p-4 space-y-4">
+        <p className="text-sm text-muted-foreground">
+          Set the maximum number of feedback ratings allowed per intelligence item.
+          This prevents over-sampling and ensures controlled data collection.
+        </p>
+
+        <div className="flex items-center gap-4">
+          <Select
+            value={maxFeedback}
+            onValueChange={setMaxFeedback}
+            disabled={loading}
+          >
+            <SelectTrigger className="w-[220px] rounded-none" data-testid="feedback-limit-select">
+              <SelectValue placeholder="Select limit" />
+            </SelectTrigger>
+            <SelectContent className="rounded-none">
+              {options.map((opt) => (
+                <SelectItem key={opt.value} value={opt.value} className="text-sm">
+                  {opt.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          <Button
+            onClick={handleSave}
+            disabled={saving}
+            className="uppercase text-xs font-bold tracking-wider rounded-none"
+            data-testid="save-feedback-limit-btn"
+          >
+            {saving ? (
+              <RefreshCw size={14} className="mr-2 animate-spin" />
+            ) : (
+              <Save size={14} className="mr-2" />
+            )}
+            Save
+          </Button>
+        </div>
+
+        <div className="p-3 border border-border bg-muted/10">
+          <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-mono mb-1">Current Limit</p>
+          <p className="text-lg font-bold font-['Barlow_Condensed']" data-testid="feedback-limit-current">
+            {maxFeedback} ratings per item
+          </p>
         </div>
       </CardContent>
     </Card>

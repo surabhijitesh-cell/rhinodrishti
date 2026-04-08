@@ -4,7 +4,7 @@ import { useTheme } from "./ThemeProvider";
 import {
   Shield, LayoutDashboard, Newspaper, FileText, TrendingUp,
   Globe, Bell, ChevronLeft, ChevronRight, Sun, Moon, Search,
-  Activity, Menu, X, Upload, GitBranch, Settings, Network, Key, BookOpen
+  Activity, Menu, X, Upload, GitBranch, Settings, Network, Key, BookOpen, Brain
 } from "lucide-react";
 import { Input } from "../components/ui/input";
 import { Button } from "../components/ui/button";
@@ -20,6 +20,7 @@ const NAV_ITEMS = [
   { path: "/knowledge-graph", label: "Knowledge Graph", icon: Network },
   { path: "/alerts", label: "Alerts", icon: Bell },
   { path: "/keywords", label: "Keyword Engine", icon: Key },
+  { path: "/training", label: "Training & Feedback", icon: Brain },
   { path: "/upload", label: "Upload Documents", icon: Upload },
   { path: "/handbook", label: "User Handbook", icon: BookOpen },
   { path: "/settings", label: "Settings", icon: Settings },

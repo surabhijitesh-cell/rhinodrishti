@@ -30,6 +30,7 @@ tweets_col = db.twitter_feeds
 national_news_col = db.national_news
 international_news_col = db.international_news
 patterns_col = db.intelligence_patterns
+feedback_col = db.intelligence_feedback
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("server")

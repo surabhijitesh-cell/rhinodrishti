@@ -24,6 +24,7 @@ from routers.documents import router as documents_router
 from routers.knowledge_graph_routes import router as kg_router
 from routers.keywords_routes import router as keywords_router
 from routers.sources import router as sources_router
+from routers.feedback import router as feedback_router
 
 # Import scheduler functions
 from routers.pipeline import (
@@ -48,6 +49,7 @@ app.include_router(documents_router, prefix="/api")
 app.include_router(kg_router, prefix="/api")
 app.include_router(keywords_router, prefix="/api")
 app.include_router(sources_router, prefix="/api")
+app.include_router(feedback_router, prefix="/api")
 
 
 # ============================================================
