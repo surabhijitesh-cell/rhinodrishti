@@ -1,10 +1,11 @@
 """Feedback endpoints: submit/update ratings, aggregation, training profile."""
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, HTTPException, Query, Request, BackgroundTasks
 from typing import Optional
 from datetime import datetime, timezone, timedelta
 import math
 import uuid
-from shared import db, feedback_col, intelligence_col, logger
+import os
+from shared import db, feedback_col, intelligence_col, activity_log_col, logger
 
 router = APIRouter()
 
@@ -32,7 +33,7 @@ def _derive_relevance(avg: float) -> str:
 # Submit / Update a Rating
 # ============================================================
 @router.post("/feedback")
-async def submit_feedback(body: dict, request: Request):
+async def submit_feedback(body: dict, request: Request, background_tasks: BackgroundTasks):
     intelligence_id = body.get("intelligence_id")
     device_id = body.get("device_id")
     rating = body.get("rating")
@@ -65,6 +66,7 @@ async def submit_feedback(body: dict, request: Request):
             }}
         )
         await _update_aggregation(intelligence_id)
+        background_tasks.add_task(_check_feedback_session, device_id)
         return {"message": "Rating updated", "action": "updated", "rating": rating}
 
     # Check cap before inserting new
@@ -93,6 +95,9 @@ async def submit_feedback(body: dict, request: Request):
 
     await feedback_col.insert_one(doc)
     await _update_aggregation(intelligence_id)
+
+    # Check if device has enough ratings for a feedback session log
+    background_tasks.add_task(_check_feedback_session, device_id)
 
     return {"message": "Rating submitted", "action": "created", "rating": rating}
 
@@ -440,3 +445,84 @@ async def _update_aggregation(intelligence_id: str):
                 "feedback_derived_relevance": derived,
             }}
         )
+
+
+FEEDBACK_SESSION_THRESHOLD = 5  # Minimum ratings to trigger a session log
+
+
+async def _check_feedback_session(device_id: str):
+    """Check if device has accumulated enough unlogged ratings to create a feedback session."""
+    try:
+        # Find the timestamp of the last feedback session for this device
+        last_session = await activity_log_col.find_one(
+            {"activity_type": "feedback_session", "device_id": device_id},
+            {"_id": 0, "timestamp": 1},
+            sort=[("timestamp", -1)]
+        )
+        since = last_session["timestamp"] if last_session else "2000-01-01T00:00:00"
+
+        # Count ratings from this device since last session
+        unlogged = await feedback_col.find(
+            {"device_id": device_id, "timestamp": {"$gt": since}},
+            {"_id": 0, "rating": 1, "intelligence_id": 1, "derived_features": 1}
+        ).to_list(200)
+
+        if len(unlogged) < FEEDBACK_SESSION_THRESHOLD:
+            return
+
+        # Build distribution
+        distribution = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0}
+        for fb in unlogged:
+            r = fb.get("rating", 0)
+            if r in distribution:
+                distribution[r] += 1
+
+        # Aggregate features from high-rated and low-rated items
+        high_regions, high_threats, high_actors = {}, {}, {}
+        low_regions, low_threats = {}, {}
+        for fb in unlogged:
+            feats = fb.get("derived_features") or {}
+            rating = fb.get("rating", 3)
+            region = feats.get("region", "")
+            threat = feats.get("threat_category", "")
+            if rating >= 4:
+                if region:
+                    high_regions[region] = high_regions.get(region, 0) + 1
+                if threat:
+                    high_threats[threat] = high_threats.get(threat, 0) + 1
+                for a in (feats.get("actors") or []):
+                    high_actors[a] = high_actors.get(a, 0) + 1
+            elif rating <= 2:
+                if region:
+                    low_regions[region] = low_regions.get(region, 0) + 1
+                if threat:
+                    low_threats[threat] = low_threats.get(threat, 0) + 1
+
+        high_features = {"regions": high_regions, "threat_categories": high_threats, "actors": high_actors}
+        low_features = {"regions": low_regions, "threat_categories": low_threats}
+
+        # Generate AI impact summary
+        from routers.training import _generate_feedback_impact_summary
+        emergent_key = os.environ.get("EMERGENT_LLM_KEY", "")
+        impact_summary = await _generate_feedback_impact_summary(
+            emergent_key, len(unlogged), distribution, high_features, low_features
+        )
+
+        # Build volume string
+        dist_parts = [f"{v}x{k}" for k, v in sorted(distribution.items()) if v > 0]
+        volume = f"{len(unlogged)} ratings ({', '.join(dist_parts)})"
+
+        await activity_log_col.insert_one({
+            "id": str(uuid.uuid4()),
+            "activity_type": "feedback_session",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "device_id": device_id[-6:],
+            "total_items": len(unlogged),
+            "volume": volume,
+            "rating_distribution": {str(k): v for k, v in distribution.items()},
+            "impact_summary": impact_summary,
+        })
+        logger.info(f"Feedback session logged for device {device_id[-6:]}: {len(unlogged)} ratings")
+
+    except Exception as e:
+        logger.error(f"Feedback session check failed: {e}")

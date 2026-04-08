@@ -45,16 +45,6 @@ async def add_training_url(body: dict):
     }
     await training_col.insert_one(doc)
 
-    # Log activity
-    await activity_log_col.insert_one({
-        "id": str(uuid.uuid4()),
-        "type": "url_added",
-        "item_id": doc["id"],
-        "description": f"URL added: {url[:80]}",
-        "relevance_tag": relevance,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-    })
-
     return {"message": "URL added to training queue", "id": doc["id"], "source": doc["source"], "relevance": relevance}
 
 
@@ -106,16 +96,6 @@ async def upload_training_file(file: UploadFile = File(...)):
         "ai_analysis": None,
     }
     await training_col.insert_one(doc)
-
-    # Log activity
-    await activity_log_col.insert_one({
-        "id": str(uuid.uuid4()),
-        "type": "file_uploaded",
-        "item_id": doc["id"],
-        "description": f"File uploaded: {file.filename}",
-        "relevance_tag": None,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-    })
 
     return {
         "message": "File uploaded to training queue",
@@ -229,58 +209,25 @@ async def get_training_insights():
 
 
 # ============================================================
-# Training Activity Log
+# Training Activity Log (clean, session-level only)
 # ============================================================
 @router.get("/training/activity-log")
-async def get_activity_log():
+async def get_activity_log(page: int = 1, page_size: int = 20):
+    skip = (page - 1) * page_size
 
-    # Fetch stored activity entries (url adds, file uploads, training runs)
-    entries = await activity_log_col.find({}, {"_id": 0}).sort("timestamp", -1).to_list(100)
-
-    # Aggregate feedback summary
-    total_feedback = await feedback_col.count_documents({})
-    week_ago = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
-    recent_feedback = await feedback_col.count_documents({"timestamp": {"$gte": week_ago}})
-
-    # Training data stats
-    total_trained = await training_col.count_documents({"status": "completed"})
-    total_errors = await training_col.count_documents({"status": "completed", "ai_analysis.error": {"$exists": True}})
-    total_with_relevance = await training_col.count_documents({"relevance": {"$ne": None}})
-
-    # Compute AI impact from completed training items
-    completed = await training_col.find(
-        {"status": "completed", "ai_analysis": {"$ne": None}, "ai_analysis.error": {"$exists": False}},
-        {"_id": 0, "ai_analysis": 1, "relevance": 1}
-    ).to_list(500)
-
-    regions_learned = {}
-    actors_learned = {}
-    keywords_learned = {}
-    for item in completed:
-        analysis = item.get("ai_analysis") or {}
-        r = analysis.get("region", "")
-        if r:
-            regions_learned[r] = regions_learned.get(r, 0) + 1
-        for a in (analysis.get("actors") or []):
-            actors_learned[a] = actors_learned.get(a, 0) + 1
-        for kw in (analysis.get("keywords") or []):
-            keywords_learned[kw] = keywords_learned.get(kw, 0) + 1
+    # Only fetch session-level entries (training_session, feedback_session)
+    query = {"activity_type": {"$in": ["training_session", "feedback_session"]}}
+    total = await activity_log_col.count_documents(query)
+    entries = await activity_log_col.find(
+        query, {"_id": 0}
+    ).sort("timestamp", -1).skip(skip).limit(page_size).to_list(page_size)
 
     return {
         "entries": entries,
-        "summary": {
-            "total_feedback_ratings": total_feedback,
-            "recent_feedback_7d": recent_feedback,
-            "total_items_trained": total_trained,
-            "training_errors": total_errors,
-            "items_with_relevance_tag": total_with_relevance,
-        },
-        "ai_impact": {
-            "regions_learned": dict(sorted(regions_learned.items(), key=lambda x: -x[1])[:8]),
-            "actors_learned": dict(sorted(actors_learned.items(), key=lambda x: -x[1])[:8]),
-            "keywords_learned": dict(sorted(keywords_learned.items(), key=lambda x: -x[1])[:10]),
-            "total_successful": len(completed),
-        },
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "total_pages": max(1, -(-total // page_size)),
     }
 
 
@@ -442,31 +389,58 @@ async def _run_training_pipeline():
     _training_status["current_title"] = ""
     logger.info(f"Training complete: {_training_status['completed']} processed, {_training_status['errors']} errors")
 
-    # Log activity for this training run
+    # Log session-level activity with AI impact summary
     try:
-        # Gather impact summary from items just processed
         run_regions = {}
         run_actors = {}
+        run_threats = {}
+        run_keywords = {}
+        url_count = 0
+        doc_count = 0
+
         for item in items:
+            if item.get("type") == "url":
+                url_count += 1
+            else:
+                doc_count += 1
             refreshed = await training_col.find_one({"id": item["id"]}, {"_id": 0, "ai_analysis": 1})
             if refreshed and refreshed.get("ai_analysis"):
                 analysis = refreshed["ai_analysis"]
                 r = analysis.get("region", "")
                 if r:
                     run_regions[r] = run_regions.get(r, 0) + 1
+                tc = analysis.get("threat_category", "")
+                if tc:
+                    run_threats[tc] = run_threats.get(tc, 0) + 1
                 for a in (analysis.get("actors") or []):
                     run_actors[a] = run_actors.get(a, 0) + 1
+                for kw in (analysis.get("keywords") or []):
+                    run_keywords[kw] = run_keywords.get(kw, 0) + 1
+
+        # Generate AI impact summary
+        impact_summary = await _generate_training_impact_summary(
+            EMERGENT_KEY, len(items), _training_status["completed"],
+            run_regions, run_actors, run_threats, run_keywords
+        )
+
+        # Build volume string
+        parts = []
+        if url_count:
+            parts.append(f"{url_count} URLs")
+        if doc_count:
+            parts.append(f"{doc_count} documents")
+        volume = f"{len(items)} items ({', '.join(parts)})" if parts else f"{len(items)} items"
 
         await activity_log_col.insert_one({
             "id": str(uuid.uuid4()),
-            "type": "training_run",
-            "description": f"Training run completed: {_training_status['completed']} processed, {_training_status['errors']} errors",
+            "activity_type": "training_session",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "volume": volume,
+            "total_items": len(items),
+            "breakdown": {"urls": url_count, "documents": doc_count},
             "items_processed": _training_status["completed"],
             "errors": _training_status["errors"],
-            "total": len(items),
-            "regions_found": dict(sorted(run_regions.items(), key=lambda x: -x[1])[:5]),
-            "actors_found": dict(sorted(run_actors.items(), key=lambda x: -x[1])[:5]),
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "impact_summary": impact_summary,
         })
 
         # Store effectiveness snapshot for trend tracking
@@ -535,3 +509,113 @@ Respond ONLY in JSON:
     except Exception as e:
         logger.error(f"AI training analysis failed: {e}")
         return {"error": str(e), "title": text[:60]}
+
+
+# ============================================================
+# AI Impact Summary Generators
+# ============================================================
+async def _generate_training_impact_summary(
+    emergent_key: str, total: int, processed: int,
+    regions: dict, actors: dict, threats: dict, keywords: dict
+) -> str:
+    """Generate a concise AI impact summary for a training session."""
+    if not emergent_key or not regions:
+        # Fallback to data-driven summary
+        return _build_training_summary_fallback(total, processed, regions, actors, threats)
+
+    try:
+        from emergentintegrations.llm.chat import LlmChat, UserMessage
+
+        data = (
+            f"Training session processed {processed}/{total} items.\n"
+            f"Regions: {dict(sorted(regions.items(), key=lambda x: -x[1])[:5])}\n"
+            f"Threat categories: {dict(sorted(threats.items(), key=lambda x: -x[1])[:5])}\n"
+            f"Actors: {dict(sorted(actors.items(), key=lambda x: -x[1])[:5])}\n"
+            f"Keywords: {dict(sorted(keywords.items(), key=lambda x: -x[1])[:8])}"
+        )
+
+        chat = LlmChat(
+            api_key=emergent_key,
+            session_id=f"impact-{uuid.uuid4()}",
+            system_message=(
+                "You are a military intelligence analyst. Generate a concise 1-2 sentence impact summary "
+                "for a training session. Focus on: what detection capabilities improved, which regions/actors/"
+                "threat categories were strengthened, and any emerging patterns. Be specific and operational. "
+                "Do NOT use bullet points. Respond with ONLY the summary text, nothing else."
+            )
+        ).with_model("anthropic", "claude-haiku-4-5-20251001")
+
+        response = await chat.send_message(UserMessage(text=data))
+        return str(response).strip()[:500]
+    except Exception as e:
+        logger.error(f"AI impact summary generation failed: {e}")
+        return _build_training_summary_fallback(total, processed, regions, actors, threats)
+
+
+def _build_training_summary_fallback(total, processed, regions, actors, threats):
+    """Data-driven fallback when AI is unavailable."""
+    parts = []
+    if regions:
+        top_r = sorted(regions.items(), key=lambda x: -x[1])[:2]
+        parts.append(f"Strengthened coverage of {', '.join(r for r, _ in top_r)}")
+    if threats:
+        top_t = sorted(threats.items(), key=lambda x: -x[1])[:2]
+        parts.append(f"enhanced detection for {', '.join(t for t, _ in top_t)}")
+    if actors:
+        top_a = sorted(actors.items(), key=lambda x: -x[1])[:2]
+        parts.append(f"with focus on {', '.join(a for a, _ in top_a)}")
+    if parts:
+        return f"{'. '.join(parts)}. ({processed}/{total} items processed)"
+    return f"Training session completed: {processed}/{total} items processed."
+
+
+async def _generate_feedback_impact_summary(
+    emergent_key: str, total_rated: int, distribution: dict,
+    high_rated_features: dict, low_rated_features: dict
+) -> str:
+    """Generate a concise AI impact summary for a feedback session."""
+    if not emergent_key:
+        return _build_feedback_summary_fallback(total_rated, distribution, high_rated_features, low_rated_features)
+
+    try:
+        from emergentintegrations.llm.chat import LlmChat, UserMessage
+
+        data = (
+            f"Feedback session: {total_rated} articles rated.\n"
+            f"Rating distribution: {distribution}\n"
+            f"High-rated content features (4-6): {high_rated_features}\n"
+            f"Low-rated content features (1-2): {low_rated_features}"
+        )
+
+        chat = LlmChat(
+            api_key=emergent_key,
+            session_id=f"fb-impact-{uuid.uuid4()}",
+            system_message=(
+                "You are a military intelligence analyst. Generate a concise 1-2 sentence impact summary "
+                "for analyst feedback activity. Focus on: what content types were upweighted (highly rated), "
+                "what was suppressed (low rated), and any consensus patterns. Be specific and operational. "
+                "Do NOT use bullet points. Respond with ONLY the summary text, nothing else."
+            )
+        ).with_model("anthropic", "claude-haiku-4-5-20251001")
+
+        response = await chat.send_message(UserMessage(text=data))
+        return str(response).strip()[:500]
+    except Exception as e:
+        logger.error(f"Feedback impact summary generation failed: {e}")
+        return _build_feedback_summary_fallback(total_rated, distribution, high_rated_features, low_rated_features)
+
+
+def _build_feedback_summary_fallback(total_rated, distribution, high_features, low_features):
+    """Data-driven fallback when AI is unavailable."""
+    parts = []
+    high = sum(distribution.get(r, 0) for r in [5, 6])
+    low = sum(distribution.get(r, 0) for r in [1, 2])
+    if high_features.get("regions"):
+        top_r = sorted(high_features["regions"].items(), key=lambda x: -x[1])[:2]
+        parts.append(f"Increased prioritization of {', '.join(r for r, _ in top_r)} content")
+    if low_features.get("threat_categories"):
+        top_t = sorted(low_features["threat_categories"].items(), key=lambda x: -x[1])[:2]
+        parts.append(f"suppressed {', '.join(t for t, _ in top_t)} signals")
+    if parts:
+        return f"{'. '.join(parts)}. ({high} high, {low} low out of {total_rated} ratings)"
+    return f"Feedback session: {total_rated} ratings ({high} high, {low} low)."
