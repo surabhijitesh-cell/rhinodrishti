@@ -52,15 +52,17 @@ Build a full-stack AI-powered web application for intelligence aggregation, anal
 ### Phase 14: Alpha Training & Feedback System (2026-04-08)
 - [x] Multi-user relevance scoring (1-6 scale with labels)
 - [x] Device-level duplicate prevention (localStorage fingerprint + backend enforcement)
-- [x] Configurable max ratings cap per news item (admin-controlled via Settings, default 20)
+- [x] Configurable max ratings cap via pill-button selector in Settings (default 20)
 - [x] Aggregation engine: avg_rating, total_ratings, confidence_factor, derived_relevance
 - [x] Training profile: positive/negative weights, preferred regions/threats/actors, noise patterns
 - [x] Batch feedback API for efficient feed page loading
-- [x] Intelligence item update with feedback_avg_rating, feedback_total_ratings, feedback_derived_relevance
-- [x] Training & Feedback summary page with full analytics dashboard
-- [x] FeedbackWidget at TOP of every IntelligenceCard (compact inline layout)
-- [x] Training Controls in Settings page with native dropdown for max ratings
-- [x] 100% test pass rate (iteration_17: 27 backend tests + full frontend verification)
+- [x] FeedbackWidget at TOP of every IntelligenceCard with spaced-out numbered stars
+- [x] Rating guide banner on Intelligence Feed page
+- [x] Training page with URL input, file upload, training queue, "Train Rhino Drishti" button
+- [x] Training pipeline: URL scraping, file text extraction, AI analysis (Claude Haiku), pattern aggregation
+- [x] Training progress tracker with polling
+- [x] Training insights page showing extracted regions, actors, keywords from uploaded data
+- [x] 100% test pass rate (iteration_18: 28 backend tests + full frontend verification)
 
 ## Key DB Collections
 - `intelligence_items`: Articles with AI classification, embeddings, feedback_avg_rating, feedback_total_ratings
