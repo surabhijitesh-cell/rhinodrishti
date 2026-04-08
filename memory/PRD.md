@@ -58,8 +58,8 @@ Build a full-stack AI-powered web application for intelligence aggregation, anal
 - [x] Batch feedback API for efficient feed page loading
 - [x] Intelligence item update with feedback_avg_rating, feedback_total_ratings, feedback_derived_relevance
 - [x] Training & Feedback summary page with full analytics dashboard
-- [x] FeedbackWidget integrated into IntelligenceCard expanded view
-- [x] Training Controls section in Settings page
+- [x] FeedbackWidget at TOP of every IntelligenceCard (compact inline layout)
+- [x] Training Controls in Settings page with native dropdown for max ratings
 - [x] 100% test pass rate (iteration_17: 27 backend tests + full frontend verification)
 
 ## Key DB Collections

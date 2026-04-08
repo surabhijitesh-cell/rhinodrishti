@@ -105,30 +105,34 @@ export default function FeedbackWidget({ itemId, api, compact = false, initialDa
 
   return (
     <div
-      className="border-t border-border pt-3 mt-3"
+      className={compact ? "flex items-center justify-between gap-2 border-b border-border pb-2 mb-2" : "border-t border-border pt-3 mt-3"}
       data-testid={`feedback-widget-${itemId}`}
     >
-      <div className="flex items-center justify-between mb-2">
-        <span className="text-[10px] uppercase tracking-[0.15em] text-muted-foreground font-mono font-semibold">
-          Relevance (Alpha Feedback)
+      {/* Label + Stats */}
+      <div className={compact ? "flex items-center gap-2" : "flex items-center justify-between mb-2"}>
+        <span className="text-[10px] uppercase tracking-[0.15em] text-muted-foreground font-mono font-semibold whitespace-nowrap">
+          {compact ? "Rate" : "Relevance (Alpha Feedback)"}
         </span>
-        <div className="flex items-center gap-2">
-          {avg > 0 && (
-            <span className="text-xs font-mono text-amber-400" data-testid={`feedback-avg-${itemId}`}>
-              {avg.toFixed(1)}
+        {!compact && (
+          <div className="flex items-center gap-2">
+            {avg > 0 && (
+              <span className="text-xs font-mono text-amber-400" data-testid={`feedback-avg-${itemId}`}>
+                {avg.toFixed(1)}
+              </span>
+            )}
+            <span
+              className={`text-[10px] font-mono ${limitReached ? "text-red-400" : "text-muted-foreground"}`}
+              data-testid={`feedback-count-${itemId}`}
+            >
+              {total}/{maxLimit}
             </span>
-          )}
-          <span
-            className={`text-[10px] font-mono ${limitReached ? "text-red-400" : "text-muted-foreground"}`}
-            data-testid={`feedback-count-${itemId}`}
-          >
-            {total}/{maxLimit}
-          </span>
-          {isLocked && <Lock size={10} className="text-red-400" />}
-        </div>
+            {isLocked && <Lock size={10} className="text-red-400" />}
+          </div>
+        )}
       </div>
 
-      <div className="flex items-center gap-1">
+      {/* Stars Row */}
+      <div className="flex items-center gap-0.5">
         {[1, 2, 3, 4, 5, 6].map((val) => {
           const isActive = rating === val;
           const isHovered = hover >= val;
@@ -141,7 +145,7 @@ export default function FeedbackWidget({ itemId, api, compact = false, initialDa
               onMouseLeave={() => setHover(0)}
               onClick={() => submitRating(val)}
               className={`
-                group relative p-1 transition-all duration-150
+                group relative p-0.5 transition-all duration-150
                 ${isLocked ? "opacity-30 cursor-not-allowed" : "cursor-pointer hover:scale-110"}
                 ${isActive ? "scale-110" : ""}
               `}
@@ -149,34 +153,52 @@ export default function FeedbackWidget({ itemId, api, compact = false, initialDa
               title={RATING_LABELS[val]}
             >
               <Star
-                size={compact ? 14 : 16}
+                size={compact ? 13 : 16}
                 className={`transition-colors duration-150 ${
                   filled ? RATING_COLORS[val] || "text-primary" : "text-muted-foreground/30"
                 }`}
                 fill={filled ? "currentColor" : "none"}
               />
               {isActive && (
-                <Check size={8} className="absolute -top-0.5 -right-0.5 text-primary" />
+                <Check size={7} className="absolute -top-0.5 -right-0.5 text-primary" />
               )}
             </button>
           );
         })}
-        {submitting && <Loader2 size={12} className="animate-spin text-muted-foreground ml-1" />}
+        {submitting && <Loader2 size={10} className="animate-spin text-muted-foreground ml-1" />}
       </div>
 
-      {hover > 0 && !isLocked && (
+      {/* Compact inline stats */}
+      {compact && (
+        <div className="flex items-center gap-2 shrink-0">
+          {avg > 0 && (
+            <span className="text-[10px] font-mono text-amber-400" data-testid={`feedback-avg-${itemId}`}>
+              {avg.toFixed(1)}
+            </span>
+          )}
+          <span
+            className={`text-[10px] font-mono ${limitReached ? "text-red-400" : "text-muted-foreground"}`}
+            data-testid={`feedback-count-${itemId}`}
+          >
+            {total}/{maxLimit}
+          </span>
+          {isLocked && <Lock size={10} className="text-red-400" />}
+        </div>
+      )}
+
+      {!compact && hover > 0 && !isLocked && (
         <p className={`text-[10px] font-mono mt-1 ${RATING_COLORS[hover]}`}>
           {hover}: {RATING_LABELS[hover]}
         </p>
       )}
 
-      {rating && hover === 0 && (
+      {!compact && rating && hover === 0 && (
         <p className={`text-[10px] font-mono mt-1 ${RATING_COLORS[rating]}`}>
           Your rating: {rating} - {RATING_LABELS[rating]}
         </p>
       )}
 
-      {isLocked && (
+      {!compact && isLocked && (
         <p className="text-[10px] text-red-400 font-mono mt-1">
           Maximum feedback limit reached for this item
         </p>

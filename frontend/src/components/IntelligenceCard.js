@@ -125,6 +125,16 @@ export default function IntelligenceCard({ item, compact = false, api, feedbackD
         </div>
       </div>
 
+      {/* Feedback Widget - TOP of card */}
+      {api && (
+        <FeedbackWidget
+          itemId={item.id}
+          api={api}
+          compact
+          initialData={feedbackData}
+        />
+      )}
+
       {/* Tags - Enhanced with multi-label support */}
       <div className="flex flex-wrap gap-1.5 mb-2">
         {item.state && (
@@ -255,15 +265,6 @@ export default function IntelligenceCard({ item, compact = false, api, feedbackD
                 >
                   <ExternalLink size={12} /> View Source
                 </a>
-              )}
-
-              {/* Feedback Widget inside expanded section */}
-              {api && (
-                <FeedbackWidget
-                  itemId={item.id}
-                  api={api}
-                  initialData={feedbackData}
-                />
               )}
             </div>
           )}

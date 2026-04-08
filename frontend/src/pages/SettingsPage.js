@@ -231,22 +231,20 @@ function FeedbackSettings({ api }) {
         </p>
 
         <div className="flex items-center gap-4">
-          <Select
+          <label className="text-xs text-muted-foreground font-mono uppercase shrink-0">Max Ratings</label>
+          <select
             value={maxFeedback}
-            onValueChange={setMaxFeedback}
+            onChange={(e) => setMaxFeedback(e.target.value)}
             disabled={loading}
+            className="h-9 w-[200px] border border-border bg-background text-foreground px-3 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+            data-testid="feedback-limit-select"
           >
-            <SelectTrigger className="w-[220px] rounded-none" data-testid="feedback-limit-select">
-              <SelectValue placeholder="Select limit" />
-            </SelectTrigger>
-            <SelectContent className="rounded-none">
-              {options.map((opt) => (
-                <SelectItem key={opt.value} value={opt.value} className="text-sm">
-                  {opt.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+            {options.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
 
           <Button
             onClick={handleSave}
