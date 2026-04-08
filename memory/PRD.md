@@ -64,7 +64,8 @@ Build a full-stack AI-powered web application for intelligence aggregation, anal
 - [x] Training insights page showing extracted regions, actors, keywords from uploaded data
 - [x] URL Relevance Tagging: 1-6 selector on URL input, stored in DB, displayed in queue with REL badge
 - [x] Training Activity Log & Impact: GET /training/activity-log endpoint, summary metrics, AI impact (regions/actors/keywords learned), recent activity timeline
-- [x] 100% test pass rate (iteration_19: 21 backend + full frontend verification)
+- [x] Training Effectiveness Score: Real-time alignment metric (0-100%) comparing AI severity to analyst ratings, with grade (EXCELLENT/GOOD/MODERATE), biggest gaps, best alignments, and trend tracking after each training run
+- [x] 100% test pass rate (iteration_20: 14 backend + full frontend verification)
 
 ## Key DB Collections
 - `intelligence_items`: Articles with AI classification, embeddings, feedback_avg_rating, feedback_total_ratings
