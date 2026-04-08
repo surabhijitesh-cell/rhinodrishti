@@ -12,17 +12,18 @@ Build a full-stack AI-powered web application for intelligence aggregation, anal
 ## Backend Structure (Post-Refactor)
 ```
 /app/backend/
-├── server.py              # ~140 lines: FastAPI app, CORS, router mounting, startup/shutdown, scheduler, WebSocket
+├── server.py              # ~150 lines: FastAPI app, CORS, router mounting, startup/shutdown, scheduler, WebSocket
 ├── shared.py              # DB connections, Pydantic models, constants, WebSocket manager, shared state, utilities
 ├── routers/
 │   ├── intelligence.py    # Dashboard stats, intelligence CRUD, alerts, patterns, semantic search, embeddings
-│   ├── settings.py        # Retention settings
+│   ├── settings.py        # Retention settings + Feedback limit settings
 │   ├── briefs.py          # Daily brief, PDF generation, custom briefs, weekly trends, brief scheduler
 │   ├── pipeline.py        # Fetch/scrape/analyze news, scan status, pipeline health, scheduler wrappers
 │   ├── documents.py       # Document upload, list, delete, AI analysis
 │   ├── knowledge_graph_routes.py  # KG build, stats, actors, locations, edges, network
 │   ├── keywords_routes.py # Keyword list, AI refresh
-│   └── sources.py         # RSS sources, Twitter accounts/feeds, handbook
+│   ├── sources.py         # RSS sources, Twitter accounts/feeds, handbook
+│   └── feedback.py        # Alpha feedback system: submit, batch, stats, training profile, aggregation
 ├── ai_pipeline.py         # Claude integration for article classification
 ├── embedding_service.py   # OpenAI embeddings
 ├── keyword_engine.py      # Dynamic AI keyword generation
@@ -39,60 +40,44 @@ Build a full-stack AI-powered web application for intelligence aggregation, anal
 ### Core (v1)
 - [x] 36 RSS sources, AI classification, Dashboard, Intel Feed, Daily Brief, PDF, Document Upload, Weekly Trends, Translation
 
-### Phase 2: Advanced Relevance Filter
-- [x] Hard filter, geographic matching, language detection, pre-AI translation
-
-### Phase 3: Pattern Detection Engine
-- [x] intelligence_patterns collection, sliding-window, escalation risk, /patterns page
-
-### Phase 4: Critical Alert Acknowledgement
-- [x] Sticky panel, ACK buttons, unacknowledged alerts endpoint
-
-### Phase 5: Daily Brief Automation
-- [x] Auto 0600 IST, cross-brief dedup, no Twitter, pattern insights in PDF
-
-### Phase 6: Enhanced AI Classification
-- [x] 8-step prompt, confidence_score, threat_trajectory, named entities, stricter negative filtering
-
-### Phase 7: WebSocket Real-time Updates
-- [x] /api/ws/intelligence, ConnectionManager, live feed panel, LIVE/OFFLINE indicator
-
-### Phase 8: Configurable Retention + Caching
-- [x] Retention window (7-365 days) via Settings page
-- [x] Dashboard stats cache (60s TTL, auto-invalidated)
-
-### Phase 9: Elite OSINT Upgrade
-- [x] Sifter (Level 1 pre-filter) - sifter.py
-- [x] Web Scraper (BS4/httpx) - web_scraper.py
-- [x] Embedding Service (OpenAI) - embedding_service.py
-- [x] Adaptive Scheduling (grassroots/60min, standard/30min, established/12hr)
-- [x] Custom PDF Briefs with RESTRICTED headers and filters
-- [x] Frontend Semantic Search UI toggle
-- [x] All P0 bug fixes (embeddings 401, custom PDF 500, daily brief endpoint, sports filter)
-
-### Phase 10: Knowledge Graph
-- [x] knowledge_graph.py, 3 MongoDB collections, 9 API endpoints, frontend visualization
-
-### Phase 11: Dynamic Keyword Generation Engine
-- [x] keyword_engine.py, AI-powered expansion, adaptive learning, 2 API endpoints, dedicated UI page
-
-### Phase 12: User Handbook & UI Polish
-- [x] USER_HANDBOOK.md, /api/handbook, /handbook page, sidebar reordering
+### Phase 2-12: (All Complete)
+- [x] Advanced Relevance Filter, Pattern Detection, Critical Alerts, Daily Brief Automation
+- [x] Enhanced AI Classification, WebSocket Real-time, Configurable Retention + Caching
+- [x] Elite OSINT (Sifter, Web Scraper, Embeddings, Adaptive Scheduling, Custom PDF)
+- [x] Knowledge Graph, Dynamic Keyword Engine, User Handbook
 
 ### Phase 13: Backend Refactoring (2026-04-08)
-- [x] Split monolithic server.py (2924 lines) into 8 modular routers + shared.py + slim server.py (~140 lines)
-- [x] All 28 API endpoints verified working post-refactor
-- [x] All frontend pages confirmed functional
-- [x] 100% test pass rate (iteration_16)
+- [x] Split monolithic server.py (2924 lines) into 8 modular routers + shared.py + slim server.py
+
+### Phase 14: Alpha Training & Feedback System (2026-04-08)
+- [x] Multi-user relevance scoring (1-6 scale with labels)
+- [x] Device-level duplicate prevention (localStorage fingerprint + backend enforcement)
+- [x] Configurable max ratings cap per news item (admin-controlled via Settings, default 20)
+- [x] Aggregation engine: avg_rating, total_ratings, confidence_factor, derived_relevance
+- [x] Training profile: positive/negative weights, preferred regions/threats/actors, noise patterns
+- [x] Batch feedback API for efficient feed page loading
+- [x] Intelligence item update with feedback_avg_rating, feedback_total_ratings, feedback_derived_relevance
+- [x] Training & Feedback summary page with full analytics dashboard
+- [x] FeedbackWidget integrated into IntelligenceCard expanded view
+- [x] Training Controls section in Settings page
+- [x] 100% test pass rate (iteration_17: 27 backend tests + full frontend verification)
+
+## Key DB Collections
+- `intelligence_items`: Articles with AI classification, embeddings, feedback_avg_rating, feedback_total_ratings
+- `intelligence_feedback`: {id, intelligence_id, device_id, rating (1-6), timestamp, derived_features}
+- `keyword_store`: Dynamic AI keywords
+- `kg_actors`, `kg_locations`, `kg_edges`: Knowledge graph
+- `app_settings`: retention_days, max_feedback_per_item
 
 ## Prioritized Backlog
 
 ### P1 - Upcoming
-- Add more National Indian news sources to RSS fetcher
 - Dashboard priority_score filter/sort
+- Add more National Indian news sources to RSS fetcher
 
 ### P2 - Future
 - Twitter/X monitoring (paused by user)
+- Integrate aggregated feedback bias into AI scoring pipeline (final_score formula)
 
 ### Not Required
 - Authentication (user decision)
