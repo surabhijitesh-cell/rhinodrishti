@@ -176,38 +176,35 @@ function PipelineInfo({ api }) {
 
 
 function FeedbackSettings({ api }) {
-  const [maxFeedback, setMaxFeedback] = useState(20);
+  const [maxFeedback, setMaxFeedback] = useState("20");
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const fetch = async () => {
+    const fetchSettings = async () => {
       try {
         const res = await axios.get(`${api}/settings/feedback`);
-        setMaxFeedback(res.data.max_feedback_per_item || 20);
+        setMaxFeedback(String(res.data.max_feedback_per_item || 20));
       } catch (e) {
         console.error("Failed to fetch feedback settings:", e);
       }
       setLoading(false);
     };
-    fetch();
+    fetchSettings();
   }, [api]);
 
-  const handleSave = async (value) => {
+  const handleSave = async () => {
     setSaving(true);
     try {
       const res = await axios.put(`${api}/settings/feedback`, {
-        max_feedback_per_item: value,
+        max_feedback_per_item: parseInt(maxFeedback, 10),
       });
-      setMaxFeedback(value);
       toast.success(res.data.message || "Feedback limit updated");
     } catch (e) {
       toast.error("Failed to update feedback setting");
     }
     setSaving(false);
   };
-
-  const options = [5, 10, 15, 20, 30, 50, 100];
 
   return (
     <Card className="border border-border rounded-none bg-card max-w-xl" data-testid="feedback-settings-card">
@@ -222,27 +219,31 @@ function FeedbackSettings({ api }) {
           Set the maximum number of feedback ratings allowed per intelligence item.
         </p>
 
-        <div>
-          <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-mono mb-2">
-            Max Feedback Per Item
-          </p>
-          <div className="flex flex-wrap gap-2" data-testid="feedback-limit-options">
-            {options.map((val) => (
-              <button
-                key={val}
-                onClick={() => handleSave(val)}
-                disabled={saving || loading}
-                className={`px-4 py-2 text-sm font-mono border transition-colors ${
-                  maxFeedback === val
-                    ? "border-primary bg-primary/20 text-primary font-bold"
-                    : "border-border text-muted-foreground hover:border-muted-foreground hover:text-foreground"
-                } ${saving ? "opacity-50" : ""}`}
-                data-testid={`feedback-limit-${val}`}
-              >
-                {val}
-              </button>
-            ))}
-          </div>
+        <div className="flex items-center gap-3">
+          <Select value={maxFeedback} onValueChange={setMaxFeedback} disabled={loading}>
+            <SelectTrigger className="w-[220px] rounded-none" data-testid="feedback-limit-select">
+              <SelectValue placeholder="Select limit" />
+            </SelectTrigger>
+            <SelectContent className="rounded-none">
+              <SelectItem value="5">5 ratings</SelectItem>
+              <SelectItem value="10">10 ratings</SelectItem>
+              <SelectItem value="15">15 ratings</SelectItem>
+              <SelectItem value="20">20 ratings (default)</SelectItem>
+              <SelectItem value="30">30 ratings</SelectItem>
+              <SelectItem value="50">50 ratings</SelectItem>
+              <SelectItem value="100">100 ratings</SelectItem>
+            </SelectContent>
+          </Select>
+
+          <Button
+            onClick={handleSave}
+            disabled={saving}
+            className="uppercase text-xs font-bold tracking-wider rounded-none"
+            data-testid="save-feedback-limit-btn"
+          >
+            {saving ? <RefreshCw size={14} className="mr-2 animate-spin" /> : <Save size={14} className="mr-2" />}
+            Save
+          </Button>
         </div>
 
         <div className="p-3 border border-border bg-muted/10">

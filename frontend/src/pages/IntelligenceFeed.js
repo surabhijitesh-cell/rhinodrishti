@@ -164,7 +164,7 @@ export default function IntelligenceFeed({ api, crossBorderOnly = false, alertsO
         <div className="hidden lg:flex items-center gap-1.5 px-3 py-1.5 border border-primary/20 bg-primary/5 shrink-0" data-testid="rating-guide-banner">
           <Star size={12} className="text-amber-400" fill="currentColor" />
           <span className="text-[10px] font-mono text-muted-foreground">
-            Rate each article 1-6 to train the system
+            Rate each article 1 (Entirely Irrelevant) to 6 (Extremely Relevant) to train the system
           </span>
         </div>
         <div className="relative flex-1 max-w-md">
