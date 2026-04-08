@@ -2,7 +2,8 @@ import { useState, useEffect, useRef } from "react";
 import {
   BarChart3, Brain, ShieldAlert, TrendingDown, TrendingUp,
   Gauge, Users, Star, AlertTriangle, Target, RefreshCw, Upload,
-  FileText, Trash2, CheckCircle, Link, Play, Loader2, Clock, Globe
+  FileText, Trash2, CheckCircle, Link, Play, Loader2, Clock, Globe,
+  Activity, Zap, Hash
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Badge } from "../components/ui/badge";
@@ -27,6 +28,8 @@ export default function TrainingSummary({ api }) {
   const [progress, setProgress] = useState(null);
   const [loading, setLoading] = useState(true);
   const [urlInput, setUrlInput] = useState("");
+  const [urlRelevance, setUrlRelevance] = useState(null);
+  const [activityLog, setActivityLog] = useState(null);
   const [addingUrl, setAddingUrl] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [training, setTraining] = useState(false);
@@ -35,16 +38,18 @@ export default function TrainingSummary({ api }) {
   const fetchAll = async () => {
     setLoading(true);
     try {
-      const [statsR, profileR, queueR, insightsR] = await Promise.all([
+      const [statsR, profileR, queueR, insightsR, activityR] = await Promise.all([
         axios.get(`${api}/feedback/stats`).catch(() => ({ data: null })),
         axios.get(`${api}/feedback/training-profile`).catch(() => ({ data: null })),
         axios.get(`${api}/training/queue`).catch(() => ({ data: { items: [] } })),
         axios.get(`${api}/training/insights`).catch(() => ({ data: null })),
+        axios.get(`${api}/training/activity-log`).catch(() => ({ data: null })),
       ]);
       setStats(statsR.data);
       setProfile(profileR.data);
       setQueue(queueR.data.items || []);
       setInsights(insightsR.data);
+      setActivityLog(activityR.data);
     } catch (e) {
       console.error(e);
     }
@@ -75,9 +80,12 @@ export default function TrainingSummary({ api }) {
     if (!urlInput.trim()) return;
     setAddingUrl(true);
     try {
-      await axios.post(`${api}/training/add-url`, { url: urlInput.trim() });
+      const payload = { url: urlInput.trim() };
+      if (urlRelevance) payload.relevance = urlRelevance;
+      await axios.post(`${api}/training/add-url`, payload);
       toast.success("URL added to training queue");
       setUrlInput("");
+      setUrlRelevance(null);
       const res = await axios.get(`${api}/training/queue`);
       setQueue(res.data.items || []);
     } catch (e) {
@@ -190,7 +198,7 @@ export default function TrainingSummary({ api }) {
                 Add Intelligence URL
               </CardTitle>
             </CardHeader>
-            <CardContent className="p-4">
+            <CardContent className="p-4 space-y-3">
               <div className="flex gap-2">
                 <Input
                   placeholder="Paste news URL here..."
@@ -203,6 +211,31 @@ export default function TrainingSummary({ api }) {
                 <Button onClick={addUrl} disabled={addingUrl || !urlInput.trim()} className="rounded-none uppercase text-xs tracking-wider shrink-0" data-testid="add-url-btn">
                   {addingUrl ? <Loader2 size={14} className="animate-spin" /> : <><Globe size={14} className="mr-1" /> Add</>}
                 </Button>
+              </div>
+              {/* Relevance Tag */}
+              <div className="flex items-center gap-3">
+                <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-mono shrink-0">Relevance Tag:</span>
+                <div className="flex gap-1.5" data-testid="url-relevance-selector">
+                  {[1, 2, 3, 4, 5, 6].map((val) => (
+                    <button
+                      key={val}
+                      onClick={() => setUrlRelevance(urlRelevance === val ? null : val)}
+                      className={`w-7 h-7 text-xs font-bold border transition-all duration-150 ${
+                        urlRelevance === val
+                          ? "bg-primary text-primary-foreground border-primary"
+                          : "border-border text-muted-foreground hover:border-muted-foreground hover:text-foreground"
+                      }`}
+                      data-testid={`url-relevance-${val}`}
+                    >
+                      {val}
+                    </button>
+                  ))}
+                </div>
+                {urlRelevance && (
+                  <span className="text-[10px] text-muted-foreground font-mono">
+                    {urlRelevance <= 2 ? "Low" : urlRelevance <= 4 ? "Moderate" : "High"}
+                  </span>
+                )}
               </div>
             </CardContent>
           </Card>
@@ -297,6 +330,11 @@ export default function TrainingSummary({ api }) {
                         <Badge variant="outline" className={`rounded-none text-[9px] px-1.5 py-0 uppercase ${STATUS_COLORS[item.status] || ""}`}>
                           {item.status}
                         </Badge>
+                        {item.relevance && (
+                          <Badge variant="outline" className="rounded-none text-[9px] px-1.5 py-0 text-primary border-primary/30">
+                            REL: {item.relevance}/6
+                          </Badge>
+                        )}
                       </div>
                     </div>
                     <button onClick={() => deleteItem(item.id)} className="p-1 hover:text-red-400 transition-colors shrink-0" data-testid={`delete-queue-${item.id}`}>
@@ -443,6 +481,140 @@ export default function TrainingSummary({ api }) {
           </CardContent>
         </Card>
       </div>
+
+      {/* ===== TRAINING ACTIVITY LOG ===== */}
+      <Card className="border border-border rounded-none bg-card" data-testid="activity-log-card">
+        <CardHeader className="py-3 px-4 border-b border-border">
+          <CardTitle className="text-sm uppercase tracking-wider font-['Barlow_Condensed'] font-semibold flex items-center gap-2">
+            <Activity size={16} className="text-cyan-400" />
+            Training Activity Log & Impact
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="p-4 space-y-5">
+          {/* Impact Summary Row */}
+          {activityLog?.summary && (
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+              {[
+                { label: "Feedback Ratings", val: activityLog.summary.total_feedback_ratings, color: "text-primary" },
+                { label: "Recent (7d)", val: activityLog.summary.recent_feedback_7d, color: "text-blue-400" },
+                { label: "Items Trained", val: activityLog.summary.total_items_trained, color: "text-emerald-400" },
+                { label: "Errors", val: activityLog.summary.training_errors, color: "text-red-400" },
+                { label: "Relevance Tagged", val: activityLog.summary.items_with_relevance_tag, color: "text-amber-400" },
+              ].map(({ label, val, color }) => (
+                <div key={label} className="p-2 border border-border">
+                  <p className="text-[9px] uppercase tracking-wider text-muted-foreground font-mono">{label}</p>
+                  <p className={`text-lg font-bold font-['Barlow_Condensed'] ${color}`}>{val}</p>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* AI Impact */}
+          {activityLog?.ai_impact?.total_successful > 0 && (
+            <div className="space-y-3">
+              <div className="flex items-center gap-2">
+                <Zap size={12} className="text-amber-400" />
+                <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-mono">
+                  AI Impact — {activityLog.ai_impact.total_successful} items analyzed
+                </span>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                {Object.keys(activityLog.ai_impact.regions_learned || {}).length > 0 && (
+                  <div>
+                    <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-mono mb-1">Regions Learned</p>
+                    <div className="flex flex-wrap gap-1">
+                      {Object.entries(activityLog.ai_impact.regions_learned).map(([r, c]) => (
+                        <Badge key={r} variant="outline" className="rounded-none text-[9px] text-cyan-400 border-cyan-500/30 px-1.5 py-0">{r} ({c})</Badge>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {Object.keys(activityLog.ai_impact.actors_learned || {}).length > 0 && (
+                  <div>
+                    <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-mono mb-1">Actors Identified</p>
+                    <div className="flex flex-wrap gap-1">
+                      {Object.entries(activityLog.ai_impact.actors_learned).map(([a, c]) => (
+                        <Badge key={a} variant="outline" className="rounded-none text-[9px] text-emerald-400 border-emerald-500/30 px-1.5 py-0">{a} ({c})</Badge>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {Object.keys(activityLog.ai_impact.keywords_learned || {}).length > 0 && (
+                  <div>
+                    <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-mono mb-1">Keywords Extracted</p>
+                    <div className="flex flex-wrap gap-1">
+                      {Object.entries(activityLog.ai_impact.keywords_learned).map(([k, c]) => (
+                        <Badge key={k} variant="outline" className="rounded-none text-[9px] text-amber-400 border-amber-500/30 px-1.5 py-0">{k} ({c})</Badge>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Activity Timeline */}
+          <div>
+            <div className="flex items-center gap-2 mb-2">
+              <Clock size={12} className="text-muted-foreground" />
+              <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-mono">Recent Activity</span>
+            </div>
+            {activityLog?.entries?.length > 0 ? (
+              <div className="max-h-[300px] overflow-y-auto divide-y divide-border border border-border">
+                {activityLog.entries.map((entry) => (
+                  <div key={entry.id} className="flex items-start gap-3 p-2.5 hover:bg-muted/5" data-testid={`activity-entry-${entry.id}`}>
+                    <div className={`mt-0.5 shrink-0 ${
+                      entry.type === "training_run" ? "text-purple-400" :
+                      entry.type === "url_added" ? "text-blue-400" :
+                      "text-emerald-400"
+                    }`}>
+                      {entry.type === "training_run" ? <Brain size={13} /> :
+                       entry.type === "url_added" ? <Globe size={13} /> :
+                       <FileText size={13} />}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs truncate">{entry.description}</p>
+                      <div className="flex items-center gap-2 mt-0.5">
+                        <span className="text-[10px] font-mono text-muted-foreground">
+                          {new Date(entry.timestamp).toLocaleString()}
+                        </span>
+                        <Badge variant="outline" className={`rounded-none text-[9px] px-1.5 py-0 uppercase ${
+                          entry.type === "training_run" ? "text-purple-400 border-purple-500/30" :
+                          entry.type === "url_added" ? "text-blue-400 border-blue-500/30" :
+                          "text-emerald-400 border-emerald-500/30"
+                        }`}>
+                          {entry.type === "training_run" ? "Run" : entry.type === "url_added" ? "URL" : "File"}
+                        </Badge>
+                        {entry.relevance_tag && (
+                          <Badge variant="outline" className="rounded-none text-[9px] px-1.5 py-0 text-primary border-primary/30">
+                            REL: {entry.relevance_tag}/6
+                          </Badge>
+                        )}
+                        {entry.type === "training_run" && entry.items_processed != null && (
+                          <span className="text-[10px] font-mono text-muted-foreground">
+                            {entry.items_processed} processed{entry.errors ? `, ${entry.errors} errors` : ""}
+                          </span>
+                        )}
+                      </div>
+                      {entry.type === "training_run" && entry.regions_found && Object.keys(entry.regions_found).length > 0 && (
+                        <div className="flex flex-wrap gap-1 mt-1">
+                          {Object.entries(entry.regions_found).map(([r, c]) => (
+                            <Badge key={r} variant="outline" className="rounded-none text-[8px] text-purple-400 border-purple-500/20 px-1 py-0">{r}</Badge>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground border border-border p-3">
+                No activity recorded yet. Add URLs, upload files, or run training to see activity here.
+              </p>
+            )}
+          </div>
+        </CardContent>
+      </Card>
     </div>
   );
 }

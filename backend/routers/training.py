@@ -1,12 +1,12 @@
 """Training pipeline: URL/file upload, AI processing, pattern aggregation."""
 from fastapi import APIRouter, HTTPException, BackgroundTasks, UploadFile, File, Form
 from typing import Optional
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import asyncio
 import uuid
 import os
 import io
-from shared import db, training_col, intelligence_col, logger
+from shared import db, training_col, intelligence_col, activity_log_col, logger
 
 router = APIRouter()
 
@@ -19,6 +19,11 @@ async def add_training_url(body: dict):
     url = (body.get("url") or "").strip()
     if not url or not url.startswith("http"):
         raise HTTPException(status_code=400, detail="A valid URL is required")
+
+    relevance = body.get("relevance")
+    if relevance is not None:
+        if not isinstance(relevance, int) or relevance < 1 or relevance > 6:
+            raise HTTPException(status_code=400, detail="relevance must be integer 1-6")
 
     existing = await training_col.find_one({"url": url}, {"_id": 0, "id": 1})
     if existing:
@@ -36,9 +41,21 @@ async def add_training_url(body: dict):
         "status": "pending",
         "uploaded_at": datetime.now(timezone.utc).isoformat(),
         "ai_analysis": None,
+        "relevance": relevance,
     }
     await training_col.insert_one(doc)
-    return {"message": "URL added to training queue", "id": doc["id"], "source": doc["source"]}
+
+    # Log activity
+    await activity_log_col.insert_one({
+        "id": str(uuid.uuid4()),
+        "type": "url_added",
+        "item_id": doc["id"],
+        "description": f"URL added: {url[:80]}",
+        "relevance_tag": relevance,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    })
+
+    return {"message": "URL added to training queue", "id": doc["id"], "source": doc["source"], "relevance": relevance}
 
 
 # ============================================================
@@ -89,6 +106,17 @@ async def upload_training_file(file: UploadFile = File(...)):
         "ai_analysis": None,
     }
     await training_col.insert_one(doc)
+
+    # Log activity
+    await activity_log_col.insert_one({
+        "id": str(uuid.uuid4()),
+        "type": "file_uploaded",
+        "item_id": doc["id"],
+        "description": f"File uploaded: {file.filename}",
+        "relevance_tag": None,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    })
+
     return {
         "message": "File uploaded to training queue",
         "id": doc["id"],
@@ -201,6 +229,63 @@ async def get_training_insights():
 
 
 # ============================================================
+# Training Activity Log
+# ============================================================
+@router.get("/training/activity-log")
+async def get_activity_log():
+    from shared import feedback_col
+
+    # Fetch stored activity entries (url adds, file uploads, training runs)
+    entries = await activity_log_col.find({}, {"_id": 0}).sort("timestamp", -1).to_list(100)
+
+    # Aggregate feedback summary
+    total_feedback = await feedback_col.count_documents({})
+    week_ago = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+    recent_feedback = await feedback_col.count_documents({"timestamp": {"$gte": week_ago}})
+
+    # Training data stats
+    total_trained = await training_col.count_documents({"status": "completed"})
+    total_errors = await training_col.count_documents({"status": "completed", "ai_analysis.error": {"$exists": True}})
+    total_with_relevance = await training_col.count_documents({"relevance": {"$ne": None}})
+
+    # Compute AI impact from completed training items
+    completed = await training_col.find(
+        {"status": "completed", "ai_analysis": {"$ne": None}, "ai_analysis.error": {"$exists": False}},
+        {"_id": 0, "ai_analysis": 1, "relevance": 1}
+    ).to_list(500)
+
+    regions_learned = {}
+    actors_learned = {}
+    keywords_learned = {}
+    for item in completed:
+        analysis = item.get("ai_analysis") or {}
+        r = analysis.get("region", "")
+        if r:
+            regions_learned[r] = regions_learned.get(r, 0) + 1
+        for a in (analysis.get("actors") or []):
+            actors_learned[a] = actors_learned.get(a, 0) + 1
+        for kw in (analysis.get("keywords") or []):
+            keywords_learned[kw] = keywords_learned.get(kw, 0) + 1
+
+    return {
+        "entries": entries,
+        "summary": {
+            "total_feedback_ratings": total_feedback,
+            "recent_feedback_7d": recent_feedback,
+            "total_items_trained": total_trained,
+            "training_errors": total_errors,
+            "items_with_relevance_tag": total_with_relevance,
+        },
+        "ai_impact": {
+            "regions_learned": dict(sorted(regions_learned.items(), key=lambda x: -x[1])[:8]),
+            "actors_learned": dict(sorted(actors_learned.items(), key=lambda x: -x[1])[:8]),
+            "keywords_learned": dict(sorted(keywords_learned.items(), key=lambda x: -x[1])[:10]),
+            "total_successful": len(completed),
+        },
+    }
+
+
+# ============================================================
 # Background pipeline
 # ============================================================
 async def _run_training_pipeline():
@@ -272,6 +357,35 @@ async def _run_training_pipeline():
     _training_status["running"] = False
     _training_status["current_title"] = ""
     logger.info(f"Training complete: {_training_status['completed']} processed, {_training_status['errors']} errors")
+
+    # Log activity for this training run
+    try:
+        # Gather impact summary from items just processed
+        run_regions = {}
+        run_actors = {}
+        for item in items:
+            refreshed = await training_col.find_one({"id": item["id"]}, {"_id": 0, "ai_analysis": 1})
+            if refreshed and refreshed.get("ai_analysis"):
+                analysis = refreshed["ai_analysis"]
+                r = analysis.get("region", "")
+                if r:
+                    run_regions[r] = run_regions.get(r, 0) + 1
+                for a in (analysis.get("actors") or []):
+                    run_actors[a] = run_actors.get(a, 0) + 1
+
+        await activity_log_col.insert_one({
+            "id": str(uuid.uuid4()),
+            "type": "training_run",
+            "description": f"Training run completed: {_training_status['completed']} processed, {_training_status['errors']} errors",
+            "items_processed": _training_status["completed"],
+            "errors": _training_status["errors"],
+            "total": len(items),
+            "regions_found": dict(sorted(run_regions.items(), key=lambda x: -x[1])[:5]),
+            "actors_found": dict(sorted(run_actors.items(), key=lambda x: -x[1])[:5]),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        })
+    except Exception as e:
+        logger.error(f"Failed to log training activity: {e}")
 
 
 async def _scrape_url(url: str) -> str:
