@@ -131,7 +131,7 @@ export default function FeedbackWidget({ itemId, api, compact = false, initialDa
         )}
       </div>
 
-      {/* Stars Row */}
+      {/* Stars Row + Hover Label */}
       <div className="flex items-center gap-0.5">
         {[1, 2, 3, 4, 5, 6].map((val) => {
           const isActive = rating === val;
@@ -166,6 +166,17 @@ export default function FeedbackWidget({ itemId, api, compact = false, initialDa
           );
         })}
         {submitting && <Loader2 size={10} className="animate-spin text-muted-foreground ml-1" />}
+        {/* Hover relevance label — always visible */}
+        {hover > 0 && !isLocked && (
+          <span className={`text-[10px] font-mono ml-1.5 whitespace-nowrap ${RATING_COLORS[hover]}`}>
+            {RATING_LABELS[hover]}
+          </span>
+        )}
+        {hover === 0 && rating && compact && (
+          <span className={`text-[10px] font-mono ml-1.5 whitespace-nowrap ${RATING_COLORS[rating]}`}>
+            {RATING_LABELS[rating]}
+          </span>
+        )}
       </div>
 
       {/* Compact inline stats */}

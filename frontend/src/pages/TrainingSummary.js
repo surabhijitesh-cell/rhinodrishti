@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import {
   BarChart3, Brain, ShieldAlert, TrendingDown, TrendingUp,
-  Gauge, Users, Star, AlertTriangle, Target, RefreshCw
+  Gauge, Users, Star, AlertTriangle, Target, RefreshCw, Upload, FileText, Trash2, CheckCircle
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Badge } from "../components/ui/badge";
@@ -21,16 +21,21 @@ export default function TrainingSummary({ api }) {
   const [stats, setStats] = useState(null);
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [uploadedDocs, setUploadedDocs] = useState([]);
+  const [uploading, setUploading] = useState(false);
+  const [dragActive, setDragActive] = useState(false);
 
   const fetchData = async () => {
     setLoading(true);
     try {
-      const [statsRes, profileRes] = await Promise.all([
+      const [statsRes, profileRes, docsRes] = await Promise.all([
         axios.get(`${api}/feedback/stats`),
         axios.get(`${api}/feedback/training-profile`),
+        axios.get(`${api}/uploaded-documents`),
       ]);
       setStats(statsRes.data);
       setProfile(profileRes.data);
+      setUploadedDocs(docsRes.data.documents || []);
     } catch (e) {
       console.error("Failed to load training data:", e);
     }
@@ -336,7 +341,7 @@ export default function TrainingSummary({ api }) {
         </Card>
       </div>
 
-      {/* Updated Intelligence Bias Formula */}
+      {/* Scoring Integration */}
       <Card className="border border-border rounded-none bg-card" data-testid="scoring-formula-card">
         <CardHeader className="py-3 px-4 border-b border-border">
           <CardTitle className="text-sm uppercase tracking-wider font-['Barlow_Condensed'] font-semibold flex items-center gap-2">
@@ -373,6 +378,131 @@ export default function TrainingSummary({ api }) {
           </div>
         </CardContent>
       </Card>
+
+      {/* Upload Training Documents */}
+      <Card className="border border-border rounded-none bg-card" data-testid="upload-training-card">
+        <CardHeader className="py-3 px-4 border-b border-border">
+          <CardTitle className="text-sm uppercase tracking-wider font-['Barlow_Condensed'] font-semibold flex items-center gap-2">
+            <Upload size={16} className="text-primary" />
+            Upload Training Data
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="p-4 space-y-4">
+          <p className="text-sm text-muted-foreground">
+            Upload intelligence documents (PDF, Word, Excel, TXT) to feed into the analysis pipeline.
+            Uploaded documents are processed by AI and their insights are combined with feedback patterns.
+          </p>
+
+          {/* Drop Zone */}
+          <div
+            className={`border-2 border-dashed p-6 text-center transition-colors cursor-pointer ${
+              dragActive
+                ? "border-primary bg-primary/5"
+                : "border-border hover:border-muted-foreground"
+            }`}
+            onDragOver={(e) => { e.preventDefault(); setDragActive(true); }}
+            onDragLeave={() => setDragActive(false)}
+            onDrop={async (e) => {
+              e.preventDefault();
+              setDragActive(false);
+              const files = Array.from(e.dataTransfer.files);
+              if (files.length > 0) await handleUpload(files[0]);
+            }}
+            onClick={() => document.getElementById("training-file-input").click()}
+            data-testid="upload-dropzone"
+          >
+            <Upload size={24} className="mx-auto text-muted-foreground mb-2" />
+            <p className="text-sm text-muted-foreground">
+              {uploading ? "Uploading..." : "Drop file here or click to browse"}
+            </p>
+            <p className="text-[10px] text-muted-foreground/60 font-mono mt-1">
+              PDF, DOCX, XLSX, TXT
+            </p>
+          </div>
+          <input
+            id="training-file-input"
+            type="file"
+            className="hidden"
+            accept=".pdf,.docx,.doc,.xlsx,.xls,.txt"
+            onChange={async (e) => {
+              if (e.target.files?.[0]) await handleUpload(e.target.files[0]);
+              e.target.value = "";
+            }}
+          />
+
+          {/* Uploaded Documents List */}
+          {uploadedDocs.length > 0 && (
+            <div>
+              <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-mono mb-2">
+                Uploaded Documents ({uploadedDocs.length})
+              </p>
+              <div className="space-y-2 max-h-[300px] overflow-y-auto">
+                {uploadedDocs.map((doc) => (
+                  <div
+                    key={doc.id}
+                    className="flex items-start gap-3 p-3 border border-border"
+                    data-testid={`uploaded-doc-${doc.id}`}
+                  >
+                    <FileText size={16} className="text-muted-foreground shrink-0 mt-0.5" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-semibold truncate">{doc.filename}</p>
+                      <p className="text-[10px] text-muted-foreground font-mono">
+                        {doc.file_type?.toUpperCase()} | {new Date(doc.uploaded_at).toLocaleDateString()}
+                        {doc.processed && <span className="text-emerald-400 ml-2">AI Processed</span>}
+                      </p>
+                      {doc.ai_analysis && (
+                        <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{doc.ai_analysis}</p>
+                      )}
+                      {!doc.ai_analysis && doc.content_summary && (
+                        <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{doc.content_summary}</p>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-1 shrink-0">
+                      {doc.processed ? (
+                        <CheckCircle size={14} className="text-emerald-400" />
+                      ) : (
+                        <span className="text-[9px] font-mono text-yellow-400">PENDING</span>
+                      )}
+                      <button
+                        onClick={async (e) => {
+                          e.stopPropagation();
+                          try {
+                            await axios.delete(`${api}/uploaded-documents/${doc.id}`);
+                            setUploadedDocs((prev) => prev.filter((d) => d.id !== doc.id));
+                            toast.success("Document deleted");
+                          } catch {
+                            toast.error("Failed to delete document");
+                          }
+                        }}
+                        className="p-1 hover:text-red-400 transition-colors"
+                        data-testid={`delete-doc-${doc.id}`}
+                      >
+                        <Trash2 size={12} />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
+
+  async function handleUpload(file) {
+    setUploading(true);
+    const formData = new FormData();
+    formData.append("file", file);
+    try {
+      const res = await axios.post(`${api}/upload-document`, formData);
+      toast.success(`Uploaded: ${file.name} (${res.data.extracted_chars} chars extracted)`);
+      // Re-fetch docs list
+      const docsRes = await axios.get(`${api}/uploaded-documents`);
+      setUploadedDocs(docsRes.data.documents || []);
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Upload failed");
+    }
+    setUploading(false);
+  }
 }

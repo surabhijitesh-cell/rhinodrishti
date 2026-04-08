@@ -21,9 +21,9 @@ const NAV_ITEMS = [
   { path: "/alerts", label: "Alerts", icon: Bell },
   { path: "/keywords", label: "Keyword Engine", icon: Key },
   { path: "/training", label: "Training & Feedback", icon: Brain },
+  { path: "/settings", label: "Settings", icon: Settings },
   { path: "/upload", label: "Upload Documents", icon: Upload },
   { path: "/handbook", label: "User Handbook", icon: BookOpen },
-  { path: "/settings", label: "Settings", icon: Settings },
 ];
 
 export default function Layout({ children, alertCount = 0, onSearch }) {

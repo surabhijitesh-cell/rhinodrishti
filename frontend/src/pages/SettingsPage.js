@@ -236,11 +236,21 @@ function FeedbackSettings({ api }) {
             value={maxFeedback}
             onChange={(e) => setMaxFeedback(e.target.value)}
             disabled={loading}
-            className="h-9 w-[200px] border border-border bg-background text-foreground px-3 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+            style={{
+              height: '36px',
+              width: '200px',
+              border: '1px solid hsl(var(--border))',
+              backgroundColor: 'hsl(var(--card))',
+              color: 'hsl(var(--foreground))',
+              padding: '0 12px',
+              fontSize: '14px',
+              outline: 'none',
+              appearance: 'auto',
+            }}
             data-testid="feedback-limit-select"
           >
             {options.map((opt) => (
-              <option key={opt.value} value={opt.value}>
+              <option key={opt.value} value={opt.value} style={{ backgroundColor: '#1a1f14', color: '#e0e0d0' }}>
                 {opt.label}
               </option>
             ))}
