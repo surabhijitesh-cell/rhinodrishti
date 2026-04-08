@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
-  Search, Filter, X, ChevronLeft, ChevronRight, SlidersHorizontal, ArrowUpDown, Sparkles
+  Search, Filter, X, ChevronLeft, ChevronRight, SlidersHorizontal, ArrowUpDown, Sparkles, Star
 } from "lucide-react";
 import { Input } from "../components/ui/input";
 import { Button } from "../components/ui/button";
@@ -160,6 +160,13 @@ export default function IntelligenceFeed({ api, crossBorderOnly = false, alertsO
 
       {/* Search + Filter toggle + Semantic Search */}
       <div className="flex items-center gap-3">
+        {/* Rating guide */}
+        <div className="hidden lg:flex items-center gap-1.5 px-3 py-1.5 border border-primary/20 bg-primary/5 shrink-0" data-testid="rating-guide-banner">
+          <Star size={12} className="text-amber-400" fill="currentColor" />
+          <span className="text-[10px] font-mono text-muted-foreground">
+            Rate each article 1-6 to train the system
+          </span>
+        </div>
         <div className="relative flex-1 max-w-md">
           <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
           <Input

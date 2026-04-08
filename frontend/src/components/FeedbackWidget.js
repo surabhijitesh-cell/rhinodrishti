@@ -1,6 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { Star, Lock, Check, Loader2 } from "lucide-react";
-import { Button } from "../components/ui/button";
+import { Star, Lock, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import axios from "axios";
 
@@ -79,22 +78,16 @@ export default function FeedbackWidget({ itemId, api, compact = false, initialDa
         rating: value,
       });
       setRating(value);
-      if (res.data.action === "created") {
-        setTotal((p) => p + 1);
-      }
-      // Recalculate avg roughly
+      if (res.data.action === "created") setTotal((p) => p + 1);
       const newTotal = res.data.action === "created" ? total + 1 : total;
       if (newTotal > 0) {
         const oldSum = avg * total;
-        const newSum = res.data.action === "created"
-          ? oldSum + value
-          : oldSum - (rating || 0) + value;
+        const newSum = res.data.action === "created" ? oldSum + value : oldSum - (rating || 0) + value;
         setAvg(Math.round((newSum / newTotal) * 100) / 100);
       }
       toast.success(res.data.action === "updated" ? "Rating updated" : "Rating submitted");
     } catch (e) {
-      const msg = e.response?.data?.detail || "Failed to submit rating";
-      toast.error(msg);
+      toast.error(e.response?.data?.detail || "Failed to submit rating");
     }
     setSubmitting(false);
   };
@@ -105,34 +98,15 @@ export default function FeedbackWidget({ itemId, api, compact = false, initialDa
 
   return (
     <div
-      className={compact ? "flex items-center justify-between gap-2 border-b border-border pb-2 mb-2" : "border-t border-border pt-3 mt-3"}
+      className={compact ? "flex items-center gap-3 border-b border-border pb-2 mb-2" : "border-t border-border pt-3 mt-3"}
       data-testid={`feedback-widget-${itemId}`}
     >
-      {/* Label + Stats */}
-      <div className={compact ? "flex items-center gap-2" : "flex items-center justify-between mb-2"}>
-        <span className="text-[10px] uppercase tracking-[0.15em] text-muted-foreground font-mono font-semibold whitespace-nowrap">
-          {compact ? "Rate" : "Relevance (Alpha Feedback)"}
-        </span>
-        {!compact && (
-          <div className="flex items-center gap-2">
-            {avg > 0 && (
-              <span className="text-xs font-mono text-amber-400" data-testid={`feedback-avg-${itemId}`}>
-                {avg.toFixed(1)}
-              </span>
-            )}
-            <span
-              className={`text-[10px] font-mono ${limitReached ? "text-red-400" : "text-muted-foreground"}`}
-              data-testid={`feedback-count-${itemId}`}
-            >
-              {total}/{maxLimit}
-            </span>
-            {isLocked && <Lock size={10} className="text-red-400" />}
-          </div>
-        )}
-      </div>
+      <span className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground font-mono font-semibold whitespace-nowrap">
+        {compact ? "Rate" : "Relevance (Alpha Feedback)"}
+      </span>
 
-      {/* Stars Row + Hover Label */}
-      <div className="flex items-center gap-0.5">
+      {/* Stars — spaced out with number labels */}
+      <div className="flex items-center gap-2">
         {[1, 2, 3, 4, 5, 6].map((val) => {
           const isActive = rating === val;
           const isHovered = hover >= val;
@@ -145,75 +119,43 @@ export default function FeedbackWidget({ itemId, api, compact = false, initialDa
               onMouseLeave={() => setHover(0)}
               onClick={() => submitRating(val)}
               className={`
-                group relative p-0.5 transition-all duration-150
+                flex flex-col items-center gap-0 transition-all duration-150
                 ${isLocked ? "opacity-30 cursor-not-allowed" : "cursor-pointer hover:scale-110"}
-                ${isActive ? "scale-110" : ""}
               `}
               data-testid={`feedback-star-${itemId}-${val}`}
               title={RATING_LABELS[val]}
             >
               <Star
-                size={compact ? 13 : 16}
+                size={compact ? 14 : 16}
                 className={`transition-colors duration-150 ${
-                  filled ? RATING_COLORS[val] || "text-primary" : "text-muted-foreground/30"
+                  filled ? RATING_COLORS[val] : "text-muted-foreground/30"
                 }`}
                 fill={filled ? "currentColor" : "none"}
               />
-              {isActive && (
-                <Check size={7} className="absolute -top-0.5 -right-0.5 text-primary" />
-              )}
+              <span className={`text-[8px] font-mono leading-none mt-0.5 ${
+                isActive ? RATING_COLORS[val] : "text-muted-foreground/40"
+              }`}>{val}</span>
             </button>
           );
         })}
-        {submitting && <Loader2 size={10} className="animate-spin text-muted-foreground ml-1" />}
-        {/* Hover relevance label — always visible */}
-        {hover > 0 && !isLocked && (
-          <span className={`text-[10px] font-mono ml-1.5 whitespace-nowrap ${RATING_COLORS[hover]}`}>
-            {RATING_LABELS[hover]}
-          </span>
-        )}
-        {hover === 0 && rating && compact && (
-          <span className={`text-[10px] font-mono ml-1.5 whitespace-nowrap ${RATING_COLORS[rating]}`}>
-            {RATING_LABELS[rating]}
-          </span>
-        )}
+        {submitting && <Loader2 size={10} className="animate-spin text-muted-foreground" />}
       </div>
 
-      {/* Compact inline stats */}
-      {compact && (
-        <div className="flex items-center gap-2 shrink-0">
-          {avg > 0 && (
-            <span className="text-[10px] font-mono text-amber-400" data-testid={`feedback-avg-${itemId}`}>
-              {avg.toFixed(1)}
-            </span>
-          )}
-          <span
-            className={`text-[10px] font-mono ${limitReached ? "text-red-400" : "text-muted-foreground"}`}
-            data-testid={`feedback-count-${itemId}`}
-          >
-            {total}/{maxLimit}
+      {/* Stats */}
+      <div className="flex items-center gap-2 shrink-0 ml-auto">
+        {avg > 0 && (
+          <span className="text-[10px] font-mono text-amber-400" data-testid={`feedback-avg-${itemId}`}>
+            {avg.toFixed(1)}
           </span>
-          {isLocked && <Lock size={10} className="text-red-400" />}
-        </div>
-      )}
-
-      {!compact && hover > 0 && !isLocked && (
-        <p className={`text-[10px] font-mono mt-1 ${RATING_COLORS[hover]}`}>
-          {hover}: {RATING_LABELS[hover]}
-        </p>
-      )}
-
-      {!compact && rating && hover === 0 && (
-        <p className={`text-[10px] font-mono mt-1 ${RATING_COLORS[rating]}`}>
-          Your rating: {rating} - {RATING_LABELS[rating]}
-        </p>
-      )}
-
-      {!compact && isLocked && (
-        <p className="text-[10px] text-red-400 font-mono mt-1">
-          Maximum feedback limit reached for this item
-        </p>
-      )}
+        )}
+        <span
+          className={`text-[10px] font-mono ${limitReached ? "text-red-400" : "text-muted-foreground"}`}
+          data-testid={`feedback-count-${itemId}`}
+        >
+          {total}/{maxLimit}
+        </span>
+        {isLocked && <Lock size={10} className="text-red-400" />}
+      </div>
     </div>
   );
 }

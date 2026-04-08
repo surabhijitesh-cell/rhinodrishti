@@ -176,7 +176,7 @@ function PipelineInfo({ api }) {
 
 
 function FeedbackSettings({ api }) {
-  const [maxFeedback, setMaxFeedback] = useState("20");
+  const [maxFeedback, setMaxFeedback] = useState(20);
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
 
@@ -184,7 +184,7 @@ function FeedbackSettings({ api }) {
     const fetch = async () => {
       try {
         const res = await axios.get(`${api}/settings/feedback`);
-        setMaxFeedback(String(res.data.max_feedback_per_item || 20));
+        setMaxFeedback(res.data.max_feedback_per_item || 20);
       } catch (e) {
         console.error("Failed to fetch feedback settings:", e);
       }
@@ -193,12 +193,13 @@ function FeedbackSettings({ api }) {
     fetch();
   }, [api]);
 
-  const handleSave = async () => {
+  const handleSave = async (value) => {
     setSaving(true);
     try {
       const res = await axios.put(`${api}/settings/feedback`, {
-        max_feedback_per_item: parseInt(maxFeedback, 10),
+        max_feedback_per_item: value,
       });
+      setMaxFeedback(value);
       toast.success(res.data.message || "Feedback limit updated");
     } catch (e) {
       toast.error("Failed to update feedback setting");
@@ -206,15 +207,7 @@ function FeedbackSettings({ api }) {
     setSaving(false);
   };
 
-  const options = [
-    { value: "5", label: "5 ratings" },
-    { value: "10", label: "10 ratings" },
-    { value: "15", label: "15 ratings" },
-    { value: "20", label: "20 ratings (default)" },
-    { value: "30", label: "30 ratings" },
-    { value: "50", label: "50 ratings" },
-    { value: "100", label: "100 ratings" },
-  ];
+  const options = [5, 10, 15, 20, 30, 50, 100];
 
   return (
     <Card className="border border-border rounded-none bg-card max-w-xl" data-testid="feedback-settings-card">
@@ -227,48 +220,29 @@ function FeedbackSettings({ api }) {
       <CardContent className="p-4 space-y-4">
         <p className="text-sm text-muted-foreground">
           Set the maximum number of feedback ratings allowed per intelligence item.
-          This prevents over-sampling and ensures controlled data collection.
         </p>
 
-        <div className="flex items-center gap-4">
-          <label className="text-xs text-muted-foreground font-mono uppercase shrink-0">Max Ratings</label>
-          <select
-            value={maxFeedback}
-            onChange={(e) => setMaxFeedback(e.target.value)}
-            disabled={loading}
-            style={{
-              height: '36px',
-              width: '200px',
-              border: '1px solid hsl(var(--border))',
-              backgroundColor: 'hsl(var(--card))',
-              color: 'hsl(var(--foreground))',
-              padding: '0 12px',
-              fontSize: '14px',
-              outline: 'none',
-              appearance: 'auto',
-            }}
-            data-testid="feedback-limit-select"
-          >
-            {options.map((opt) => (
-              <option key={opt.value} value={opt.value} style={{ backgroundColor: '#1a1f14', color: '#e0e0d0' }}>
-                {opt.label}
-              </option>
+        <div>
+          <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-mono mb-2">
+            Max Feedback Per Item
+          </p>
+          <div className="flex flex-wrap gap-2" data-testid="feedback-limit-options">
+            {options.map((val) => (
+              <button
+                key={val}
+                onClick={() => handleSave(val)}
+                disabled={saving || loading}
+                className={`px-4 py-2 text-sm font-mono border transition-colors ${
+                  maxFeedback === val
+                    ? "border-primary bg-primary/20 text-primary font-bold"
+                    : "border-border text-muted-foreground hover:border-muted-foreground hover:text-foreground"
+                } ${saving ? "opacity-50" : ""}`}
+                data-testid={`feedback-limit-${val}`}
+              >
+                {val}
+              </button>
             ))}
-          </select>
-
-          <Button
-            onClick={handleSave}
-            disabled={saving}
-            className="uppercase text-xs font-bold tracking-wider rounded-none"
-            data-testid="save-feedback-limit-btn"
-          >
-            {saving ? (
-              <RefreshCw size={14} className="mr-2 animate-spin" />
-            ) : (
-              <Save size={14} className="mr-2" />
-            )}
-            Save
-          </Button>
+          </div>
         </div>
 
         <div className="p-3 border border-border bg-muted/10">

@@ -1,0 +1,90 @@
+{
+  "summary": "Comprehensive testing of Training Pipeline & Feedback System (Iteration 18). All 28 backend API tests passed (100%). All frontend pages verified working correctly including: Training page with URL input, file upload, training queue, Train button; Feed page with star ratings and rating guide banner; Settings page with pill-button max ratings selector; Sidebar with correct navigation order.",
+
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+
+  "passed_tests": [
+    "POST /api/training/add-url - adds URL to training queue (200)",
+    "POST /api/training/add-url - rejects duplicate URLs (409)",
+    "POST /api/training/add-url - rejects invalid URLs (400)",
+    "POST /api/training/add-url - rejects empty URLs (400)",
+    "POST /api/training/upload-file - accepts TXT files with text extraction",
+    "POST /api/training/upload-file - rejects unsupported file types (400)",
+    "GET /api/training/queue - lists all training items with status counts",
+    "DELETE /api/training/queue/{id} - removes item from queue (200)",
+    "DELETE /api/training/queue/{id} - returns 404 for non-existent item",
+    "POST /api/training/run - returns 400 when no pending items",
+    "GET /api/training/progress - returns training progress status",
+    "GET /api/training/insights - returns aggregated training insights",
+    "POST /api/feedback - creates new rating (1-6 scale)",
+    "POST /api/feedback - updates existing rating (same device_id)",
+    "POST /api/feedback - rejects invalid ratings (400)",
+    "POST /api/feedback - rejects missing fields (400)",
+    "POST /api/feedback - returns 404 for non-existent intelligence item",
+    "POST /api/feedback/batch - returns feedback for multiple items",
+    "POST /api/feedback/batch - rejects empty item_ids (400)",
+    "POST /api/feedback/batch - rejects > 50 item_ids (400)",
+    "GET /api/feedback/stats - returns global feedback statistics",
+    "GET /api/feedback/training-profile - returns analyst training profile",
+    "GET /api/settings/feedback - returns max_feedback_per_item",
+    "PUT /api/settings/feedback - updates max_feedback_per_item",
+    "PUT /api/settings/feedback - rejects invalid values (400)",
+    "Route ordering: /feedback/stats works correctly",
+    "Route ordering: /feedback/training-profile works correctly",
+    "Route ordering: /feedback/batch works correctly",
+    "Frontend: /training page loads with URL input, file upload, training queue, Train button",
+    "Frontend: /training page shows training queue with 1 item (indianexpress.com)",
+    "Frontend: /training page shows Analyst Preferences and Training Insights cards",
+    "Frontend: /feed page shows rating guide banner 'Rate each article 1-6 to train the system'",
+    "Frontend: /feed page shows spread-out star ratings on every intelligence card",
+    "Frontend: /feed page shows rating count (e.g., '5.0 2/20')",
+    "Frontend: /settings page shows pill buttons for max ratings (5,10,15,20,30,50,100)",
+    "Frontend: /settings page pill button click updates setting with toast notification",
+    "Frontend: Sidebar shows correct order: Training & Feedback > Settings > Upload Documents"
+  ],
+
+  "test_report_links": [
+    "/app/backend/tests/test_training_feedback_v18.py",
+    "/app/test_reports/pytest/pytest_results_v18.xml"
+  ],
+
+  "action_items": [],
+
+  "critical_code_review_comments": [
+    "Training pipeline correctly implements URL scraping with httpx and BeautifulSoup",
+    "AI analysis uses Claude Haiku via Emergent LLM key for content processing",
+    "File upload supports PDF, DOCX, TXT with proper text extraction",
+    "Training progress polling implemented with background task pattern",
+    "Feedback widget shows spread-out stars with number labels (1-6)",
+    "Settings page uses clickable pill buttons instead of dropdown for max ratings",
+    "Route ordering correctly places static routes before dynamic {id} route"
+  ],
+
+  "updated_files": [
+    "/app/backend/tests/test_training_feedback_v18.py"
+  ],
+
+  "success_rate": {
+    "backend": "100% (28/28 tests passed)",
+    "frontend": "100% (all pages and components verified)"
+  },
+
+  "test_credentials": "No credentials needed - app has no auth system",
+
+  "seed_data_creation": "Test URLs and ratings created during testing with unique IDs (cleaned up after tests)",
+
+  "retest_needed": false,
+
+  "should_main_agent_self_test": false,
+
+  "context_for_next_testing_agent": "Training Pipeline & Feedback System fully implemented and tested. Key training endpoints: POST /api/training/add-url, POST /api/training/upload-file, GET /api/training/queue, DELETE /api/training/queue/{id}, POST /api/training/run, GET /api/training/progress, GET /api/training/insights. Feedback endpoints: POST /api/feedback, POST /api/feedback/batch, GET /api/feedback/stats, GET /api/feedback/training-profile, GET/PUT /api/settings/feedback. Frontend: TrainingSummary.js (/training), FeedbackWidget.js (on feed cards), SettingsPage.js (pill buttons). Current data: 1 URL in training queue (indianexpress.com), 9 total ratings, 2 items rated, avg 5.0. Test file: /app/backend/tests/test_training_feedback_v18.py"
+}

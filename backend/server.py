@@ -25,6 +25,7 @@ from routers.knowledge_graph_routes import router as kg_router
 from routers.keywords_routes import router as keywords_router
 from routers.sources import router as sources_router
 from routers.feedback import router as feedback_router
+from routers.training import router as training_router
 
 # Import scheduler functions
 from routers.pipeline import (
@@ -50,6 +51,7 @@ app.include_router(kg_router, prefix="/api")
 app.include_router(keywords_router, prefix="/api")
 app.include_router(sources_router, prefix="/api")
 app.include_router(feedback_router, prefix="/api")
+app.include_router(training_router, prefix="/api")
 
 
 # ============================================================
