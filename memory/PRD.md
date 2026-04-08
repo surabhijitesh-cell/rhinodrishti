@@ -62,11 +62,15 @@ Build a full-stack AI-powered web application for intelligence aggregation, anal
 - [x] Training pipeline: URL scraping, file text extraction, AI analysis (Claude Haiku), pattern aggregation
 - [x] Training progress tracker with polling
 - [x] Training insights page showing extracted regions, actors, keywords from uploaded data
-- [x] 100% test pass rate (iteration_18: 28 backend tests + full frontend verification)
+- [x] URL Relevance Tagging: 1-6 selector on URL input, stored in DB, displayed in queue with REL badge
+- [x] Training Activity Log & Impact: GET /training/activity-log endpoint, summary metrics, AI impact (regions/actors/keywords learned), recent activity timeline
+- [x] 100% test pass rate (iteration_19: 21 backend + full frontend verification)
 
 ## Key DB Collections
 - `intelligence_items`: Articles with AI classification, embeddings, feedback_avg_rating, feedback_total_ratings
 - `intelligence_feedback`: {id, intelligence_id, device_id, rating (1-6), timestamp, derived_features}
+- `training_data`: {id, title, source, url, type, status, ai_analysis, relevance (1-6 optional)}
+- `training_activity_log`: {id, type (url_added/file_uploaded/training_run), description, relevance_tag, timestamp, items_processed, errors, regions_found, actors_found}
 - `keyword_store`: Dynamic AI keywords
 - `kg_actors`, `kg_locations`, `kg_edges`: Knowledge graph
 - `app_settings`: retention_days, max_feedback_per_item
