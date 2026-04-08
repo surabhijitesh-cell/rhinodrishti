@@ -1,110 +1,158 @@
-"""Intelligence feed, alerts, acknowledgement, semantic search, embeddings."""
+"""Intelligence feed, alerts, acknowledgement, semantic search, embeddings, patterns."""
 from fastapi import APIRouter, Query, HTTPException, BackgroundTasks
 from typing import Optional
 from datetime import datetime, timezone, timedelta
-from shared import db, intelligence_col, _stats_cache, STATS_CACHE_TTL, invalidate_stats_cache, SEVERITY_LEVELS, logger
+from shared import (
+    db, intelligence_col, patterns_col, _stats_cache, STATS_CACHE_TTL,
+    invalidate_stats_cache, SEVERITY_LEVELS, logger,
+    has_non_latin_chars, translate_to_english,
+)
 
 router = APIRouter()
 
 
 @router.get("/dashboard/stats")
 async def get_dashboard_stats():
-    if _stats_cache["data"] and _stats_cache["expires_at"] and datetime.now(timezone.utc) < _stats_cache["expires_at"]:
+    now = datetime.now(timezone.utc)
+    if _stats_cache["data"] and _stats_cache["expires_at"] and now < _stats_cache["expires_at"]:
         return _stats_cache["data"]
 
-    retention = await db.app_settings.find_one({"key": "retention_days"}, {"_id": 0})
-    retention_days = retention.get("value", 30) if retention else 30
-    retention_cutoff = (datetime.now(timezone.utc) - timedelta(days=retention_days)).isoformat()
+    settings = await db.app_settings.find_one({"key": "retention_days"}, {"_id": 0})
+    retention_days = settings.get("value", 30) if settings else 30
+    retention_cutoff = (now - timedelta(days=retention_days)).isoformat()
     base_filter = {"published_at": {"$gte": retention_cutoff}, "processed": True}
 
     total = await intelligence_col.count_documents(base_filter)
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    today_count = await intelligence_col.count_documents({**base_filter, "published_at": {"$regex": f"^{today}"}})
-    severity_counts = {}
-    for sev in SEVERITY_LEVELS:
-        severity_counts[sev] = await intelligence_col.count_documents({**base_filter, "severity": sev})
-    cross_border = await intelligence_col.count_documents({**base_filter, "is_cross_border": True})
-    state_distribution = {}
-    for state in ["Assam", "Meghalaya", "Mizoram", "Manipur", "Arunachal Pradesh", "Tripura", "Nagaland", "Bangladesh", "Myanmar"]:
-        state_distribution[state] = await intelligence_col.count_documents({**base_filter, "state": state})
-    recent = await intelligence_col.find(
-        {**base_filter, "severity": {"$in": ["critical", "high"]}}, {"_id": 0}
-    ).sort("published_at", -1).limit(10).to_list(10)
+    critical = await intelligence_col.count_documents({**base_filter, "severity": "critical"})
+    high = await intelligence_col.count_documents({**base_filter, "severity": "high"})
+    medium = await intelligence_col.count_documents({**base_filter, "severity": "medium"})
+    low = await intelligence_col.count_documents({**base_filter, "severity": "low"})
+
+    state_dist = {}
+    async for doc in intelligence_col.aggregate([
+        {"$match": base_filter},
+        {"$group": {"_id": "$state", "count": {"$sum": 1}}},
+        {"$sort": {"count": -1}}
+    ]):
+        if doc["_id"]:
+            state_dist[doc["_id"]] = doc["count"]
+
+    threat_dist = {}
+    async for doc in intelligence_col.aggregate([
+        {"$match": base_filter},
+        {"$group": {"_id": "$threat_category", "count": {"$sum": 1}}},
+        {"$sort": {"count": -1}}
+    ]):
+        if doc["_id"]:
+            threat_dist[doc["_id"]] = doc["count"]
+
+    recent_critical = await intelligence_col.find(
+        {**base_filter, "severity": {"$in": ["critical", "high"]}},
+        {"_id": 0}
+    ).sort("published_at", -1).limit(5).to_list(5)
+
+    today = now.strftime("%Y-%m-%d")
+    today_count = await intelligence_col.count_documents(
+        {"published_at": {"$regex": f"^{today}"}}
+    )
+
     trend_data = []
-    for i in range(7):
-        date = (datetime.now(timezone.utc) - timedelta(days=i)).strftime("%Y-%m-%d")
-        day_data = {"date": date}
-        for sev in SEVERITY_LEVELS:
-            day_data[sev] = await intelligence_col.count_documents({
-                **base_filter, "severity": sev, "published_at": {"$regex": f"^{date}"}
-            })
-        trend_data.append(day_data)
+    async for doc in intelligence_col.aggregate([
+        {"$match": base_filter},
+        {"$group": {
+            "_id": {"$substr": ["$published_at", 0, 10]},
+            "count": {"$sum": 1},
+            "critical": {"$sum": {"$cond": [{"$eq": ["$severity", "critical"]}, 1, 0]}},
+            "high": {"$sum": {"$cond": [{"$eq": ["$severity", "high"]}, 1, 0]}}
+        }},
+        {"$sort": {"_id": 1}}
+    ]):
+        trend_data.append({"date": doc["_id"], "count": doc["count"], "critical": doc["critical"], "high": doc["high"]})
 
     result = {
         "total_items": total, "today_count": today_count,
-        "critical_count": severity_counts.get("critical", 0),
-        "high_count": severity_counts.get("high", 0),
-        "medium_count": severity_counts.get("medium", 0),
-        "low_count": severity_counts.get("low", 0),
-        "cross_border_count": cross_border,
-        "state_distribution": state_distribution,
-        "recent_critical": recent, "trend_data": trend_data,
+        "critical_count": critical, "high_count": high,
+        "medium_count": medium, "low_count": low,
+        "state_distribution": state_dist, "threat_distribution": threat_dist,
+        "recent_critical": recent_critical, "trend_7d": trend_data[-7:],
         "retention_days": retention_days,
     }
+
     _stats_cache["data"] = result
-    _stats_cache["expires_at"] = datetime.now(timezone.utc) + timedelta(seconds=STATS_CACHE_TTL)
+    _stats_cache["expires_at"] = now + timedelta(seconds=STATS_CACHE_TTL)
     return result
 
 
 @router.get("/intelligence")
 async def get_intelligence(
-    page: int = Query(1, ge=1), limit: int = Query(20, ge=1, le=100),
-    severity: Optional[str] = None, state: Optional[str] = None,
-    threat: Optional[str] = None, date_from: Optional[str] = None,
-    date_to: Optional[str] = None, search: Optional[str] = None,
-    sort: Optional[str] = "published_at", cross_border: Optional[bool] = None,
-    priority_min: Optional[int] = None,
+    state: Optional[str] = None,
+    threat_type: Optional[str] = None,
+    severity: Optional[str] = None,
+    search: Optional[str] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    is_cross_border: Optional[bool] = None,
+    min_priority: Optional[int] = None,
+    sort_by: Optional[str] = Query(None, description="Sort field: published_at, priority_score, severity"),
+    sort_order: Optional[str] = Query("desc", description="Sort order: asc or desc"),
+    page: int = Query(1, ge=1),
+    limit: int = Query(20, ge=1, le=100),
+    translate: bool = Query(True)
 ):
     query = {"processed": True}
+
     if not date_from:
-        retention = await db.app_settings.find_one({"key": "retention_days"}, {"_id": 0})
-        retention_days = retention.get("value", 30) if retention else 30
+        settings = await db.app_settings.find_one({"key": "retention_days"}, {"_id": 0})
+        retention_days = settings.get("value", 30) if settings else 30
         retention_cutoff = (datetime.now(timezone.utc) - timedelta(days=retention_days)).isoformat()
         query["published_at"] = {"$gte": retention_cutoff}
-    if severity:
-        query["severity"] = severity
+
     if state:
         query["state"] = state
-    if threat:
-        query["threat_category"] = threat
-    if date_from:
-        query.setdefault("published_at", {})
-        query["published_at"]["$gte"] = date_from
-    if date_to:
-        query.setdefault("published_at", {})
-        query["published_at"]["$lte"] = date_to
+    if threat_type:
+        query["threat_category"] = threat_type
+    if severity:
+        query["severity"] = severity
     if search:
         query["$or"] = [
             {"title": {"$regex": search, "$options": "i"}},
             {"ai_summary": {"$regex": search, "$options": "i"}},
-            {"raw_content": {"$regex": search, "$options": "i"}},
+            {"raw_content": {"$regex": search, "$options": "i"}}
         ]
-    if cross_border is not None:
-        query["is_cross_border"] = cross_border
-    if priority_min is not None:
-        query["priority_score"] = {"$gte": priority_min}
+    if date_from:
+        query.setdefault("published_at", {})["$gte"] = date_from
+    if date_to:
+        query.setdefault("published_at", {})["$lte"] = date_to
+    if is_cross_border is not None:
+        query["is_cross_border"] = is_cross_border
+    if min_priority is not None:
+        query["priority_score"] = {"$gte": min_priority}
 
-    total = await intelligence_col.count_documents(query)
-    sort_field = sort if sort in ("published_at", "severity", "priority_score") else "published_at"
-    sort_dir = -1
+    sort_dir = -1 if sort_order == "desc" else 1
+    sort_field = "published_at"
+    if sort_by == "priority_score":
+        sort_field = "priority_score"
+    elif sort_by == "severity":
+        sort_field = "severity"
+
     skip = (page - 1) * limit
-    items = await intelligence_col.find(query, {"_id": 0, "embedding": 0}).sort(sort_field, sort_dir).skip(skip).limit(limit).to_list(limit)
-    return {"items": items, "total": total, "page": page, "limit": limit}
+    total = await intelligence_col.count_documents(query)
+    items = await intelligence_col.find(query, {"_id": 0}).sort(sort_field, sort_dir).skip(skip).limit(limit).to_list(limit)
+
+    if translate:
+        for item in items:
+            if has_non_latin_chars(item.get("title", "")):
+                item["title"] = await translate_to_english(item["title"])
+
+    return {
+        "items": items, "total": total, "page": page,
+        "limit": limit, "pages": max((total + limit - 1) // limit, 0)
+    }
 
 
 @router.get("/intelligence/{item_id}")
 async def get_intelligence_item(item_id: str):
-    item = await intelligence_col.find_one({"id": item_id}, {"_id": 0, "embedding": 0})
+    item = await intelligence_col.find_one({"id": item_id}, {"_id": 0})
     if not item:
         raise HTTPException(status_code=404, detail="Item not found")
     return item
@@ -115,7 +163,7 @@ async def get_alerts():
     items = await intelligence_col.find(
         {"severity": {"$in": ["critical", "high"]}, "processed": True}, {"_id": 0}
     ).sort("published_at", -1).limit(30).to_list(30)
-    return {"alerts": items}
+    return {"alerts": items, "count": len(items)}
 
 
 @router.get("/alerts/unacknowledged")
@@ -128,7 +176,8 @@ async def get_unacknowledged_alerts():
                 {"acknowledged": {"$exists": False}},
                 {"acknowledged": False}
             ]
-        }, {"_id": 0}
+        },
+        {"_id": 0}
     ).sort("published_at", -1).limit(50).to_list(50)
     return {"alerts": items, "count": len(items)}
 
@@ -137,49 +186,46 @@ async def get_unacknowledged_alerts():
 async def acknowledge_alert(item_id: str):
     result = await intelligence_col.update_one(
         {"id": item_id},
-        {"$set": {"acknowledged": True, "acknowledged_at": datetime.now(timezone.utc).isoformat()}}
+        {"$set": {
+            "acknowledged": True,
+            "acknowledged_at": datetime.now(timezone.utc).isoformat()
+        }}
     )
-    if result.modified_count == 0:
+    if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Item not found")
-    return {"message": "Alert acknowledged"}
+    return {"message": "Alert acknowledged", "id": item_id}
+
+
+@router.get("/patterns")
+async def get_patterns():
+    patterns = await patterns_col.find({}, {"_id": 0}).to_list(100)
+    return {"patterns": patterns, "count": len(patterns)}
+
+
+@router.post("/patterns/detect")
+async def trigger_pattern_detection(background_tasks: BackgroundTasks):
+    from pattern_engine import detect_patterns
+    background_tasks.add_task(detect_patterns, db)
+    return {"message": "Pattern detection started"}
 
 
 @router.post("/intelligence/semantic-search")
 async def intelligence_semantic_search(body: dict):
-    query_text = body.get("query", "")
+    query = body.get("query", "")
     limit = body.get("limit", 10)
     min_score = body.get("min_score", 0.3)
-    if not query_text:
-        raise HTTPException(status_code=400, detail="Query text required")
-    try:
-        from embedding_service import generate_embedding, cosine_similarity
-        query_emb = await generate_embedding(query_text)
-        if not query_emb:
-            return {"results": [], "message": "Could not generate query embedding"}
-        cursor = intelligence_col.find(
-            {"embedding": {"$exists": True, "$ne": None}, "processed": True},
-            {"_id": 0, "embedding": 1, "id": 1, "title": 1, "ai_summary": 1,
-             "severity": 1, "state": 1, "source": 1, "published_at": 1,
-             "priority_score": 1, "threat_category": 1}
-        )
-        results = []
-        async for item in cursor:
-            emb = item.get("embedding")
-            if emb:
-                score = cosine_similarity(query_emb, emb)
-                if score >= min_score:
-                    item.pop("embedding", None)
-                    item["similarity_score"] = round(score, 4)
-                    results.append(item)
-        results.sort(key=lambda x: x["similarity_score"], reverse=True)
-        return {"results": results[:limit], "total_searched": len(results)}
-    except Exception as e:
-        logger.error(f"Semantic search error: {e}")
-        return {"results": [], "error": str(e)}
+
+    if not query or len(query.strip()) < 3:
+        raise HTTPException(status_code=400, detail="Query must be at least 3 characters")
+
+    from embedding_service import semantic_search
+    results = await semantic_search(db, query, limit=limit, min_score=min_score)
+
+    return {"results": results, "count": len(results), "query": query}
 
 
 @router.post("/embeddings/backfill")
 async def trigger_embedding_backfill(background_tasks: BackgroundTasks):
     from embedding_service import backfill_embeddings
-    background_tasks.add_task(backfill_embeddings, db)
+    background_tasks.add_task(backfill_embeddings, db, 50)
     return {"message": "Embedding backfill started (batch of 50)"}

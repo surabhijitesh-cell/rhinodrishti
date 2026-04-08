@@ -201,3 +201,39 @@ STATS_CACHE_TTL = 60
 def invalidate_stats_cache():
     _stats_cache["data"] = None
     _stats_cache["expires_at"] = None
+
+
+def has_non_latin_chars(text: str) -> bool:
+    if not text:
+        return False
+    for char in text:
+        code = ord(char)
+        if (0x0900 <= code <= 0x097F) or \
+           (0x0980 <= code <= 0x09FF) or \
+           (0x0A00 <= code <= 0x0A7F) or \
+           (0x0A80 <= code <= 0x0AFF) or \
+           (0x0B00 <= code <= 0x0B7F) or \
+           (0x0B80 <= code <= 0x0BFF) or \
+           (0x0C00 <= code <= 0x0C7F) or \
+           (0x0C80 <= code <= 0x0CFF) or \
+           (0x0D00 <= code <= 0x0D7F):
+            return True
+    return False
+
+
+async def translate_to_english(text: str) -> str:
+    if not text or not has_non_latin_chars(text):
+        return text
+    try:
+        from emergentintegrations.llm.chat import LlmChat, UserMessage
+        EMERGENT_LLM_KEY = os.environ.get('EMERGENT_LLM_KEY', '')
+        chat = LlmChat(
+            api_key=EMERGENT_LLM_KEY,
+            session_id=f"translate-{hash(text[:50])}",
+            system_message="You are a translator. Translate the following text to English. Return ONLY the English translation, nothing else."
+        ).with_model("anthropic", "claude-haiku-4-5-20251001")
+        response = await chat.send_message(UserMessage(text=text[:1000]))
+        return str(response).strip()
+    except Exception as e:
+        logger.error(f"Translation failed: {e}")
+        return text.encode('ascii', 'ignore').decode('ascii') or "[Non-English content]"
