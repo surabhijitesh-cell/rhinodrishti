@@ -39,7 +39,7 @@ export default function Layout({ children, alertCount = 0, onSearch }) {
   };
 
   const SidebarContent = () => (
-    <nav className="flex flex-col gap-1 mt-4 px-2" data-testid="sidebar-nav">
+    <nav className="flex flex-col gap-0 mt-2 px-2" data-testid="sidebar-nav">
       {NAV_ITEMS.map((item) => {
         const Icon = item.icon;
         const isActive = location.pathname === item.path;

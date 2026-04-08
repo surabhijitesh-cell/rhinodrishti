@@ -2,7 +2,7 @@
 
 /* Sidebar */
 .sidebar-nav-item {
-    @apply flex items-center gap-3 px-3 py-2.5 text-sm font-medium uppercase tracking-wider transition-all duration-75;
+    @apply flex items-center gap-3 px-3 py-1.5 text-xs font-medium uppercase tracking-wider transition-all duration-75;
 }
 .sidebar-nav-item:hover {
     @apply bg-secondary text-foreground;
