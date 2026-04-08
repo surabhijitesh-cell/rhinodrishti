@@ -16,10 +16,11 @@
 8. [Knowledge Graph](#8-knowledge-graph)
 9. [Alerts](#9-alerts)
 10. [Keyword Engine](#10-keyword-engine)
-11. [Document Upload](#11-document-upload)
-12. [Settings](#12-settings)
-13. [How the AI Pipeline Works](#13-how-the-ai-pipeline-works)
-14. [Glossary](#14-glossary)
+11. [Training & Feedback](#11-training--feedback)
+12. [Document Upload](#12-document-upload)
+13. [Settings](#13-settings)
+14. [How the AI Pipeline Works](#14-how-the-ai-pipeline-works)
+15. [Glossary](#15-glossary)
 
 ---
 
@@ -37,7 +38,7 @@ Rhino Drishti is an AI-powered military intelligence aggregation and analysis pl
 ### Navigation
 The sidebar contains all pages:
 - **Dashboard** — Overview of intelligence landscape
-- **Intelligence Feed** — Full searchable list of classified items
+- **Intelligence Feed** — Full searchable list of classified items with analyst rating
 - **Cross-Border** — Items specifically involving cross-border activity
 - **Daily Brief** — Automated daily intelligence summary
 - **Weekly Trends** — 7-day severity and threat type charts
@@ -45,8 +46,10 @@ The sidebar contains all pages:
 - **Knowledge Graph** — Actor-location relationship mapping
 - **Alerts** — Critical and high-severity items requiring attention
 - **Keyword Engine** — AI-powered keyword management for detection
+- **Training & Feedback** — Rate articles, upload training data, monitor AI learning
+- **Settings** — Configure retention window and feedback limits
 - **Upload Documents** — Upload offline intelligence materials (PDF, Word, Excel)
-- **Settings** — Configure retention window
+- **User Handbook** — This guide
 
 ---
 
@@ -101,6 +104,7 @@ The full searchable, filterable list of all classified intelligence items.
 
 ### Item Cards
 Each intelligence item shows:
+- **Relevance Rating** (top of card): 1-6 scale for analyst feedback (see Section 11)
 - **Title** with severity badge (color-coded: red=Critical, orange=High, yellow=Medium, green=Low)
 - **Priority Score** (0-100): AI-assigned importance score. Higher = more urgent
 - **Confidence Score** (0-100): How confident the AI is in its classification
@@ -112,6 +116,9 @@ Each intelligence item shows:
 - **Tags**: Classification labels (Military Movement, Border Security, etc.)
 - **Actors**: Named organizations/groups involved
 - **Source**: Original news source with link
+
+### Rating Banner
+At the top of the Intelligence Feed, a guide banner explains: "Rate each article 1 (Entirely Irrelevant) to 6 (Extremely Relevant) to train the system." This feedback directly shapes how the AI prioritizes future intelligence.
 
 ### Sorting
 - By publication date (newest first)
@@ -283,7 +290,120 @@ During each RSS fetch cycle, the system uses these keywords for weighted matchin
 
 ---
 
-## 11. Document Upload
+## 11. Training & Feedback
+
+The Training & Feedback page is the central hub for shaping the AI's intelligence priorities. It combines analyst feedback ratings, training data uploads, and AI learning analytics into a single operational view.
+
+### Analyst Feedback (1-6 Rating Scale)
+
+Every intelligence item on the Intelligence Feed has a numbered rating bar (1-6) at the top of the card. Rating an article tells the system what you consider relevant.
+
+| Rating | Label | Effect |
+|--------|-------|--------|
+| 1 | Entirely Irrelevant | Suppresses similar content |
+| 2 | Mostly Irrelevant | Reduces weight for this category |
+| 3 | Slightly Relevant | Neutral signal |
+| 4 | Moderately Relevant | Mild positive signal |
+| 5 | Highly Relevant | Boosts similar content |
+| 6 | Extremely Relevant | Strongly prioritizes this type |
+
+- **One rating per device per item**: The system uses device fingerprinting to prevent duplicate manipulation. You can update your rating at any time.
+- **Max ratings cap**: An admin-configurable limit controls how many total ratings each item can receive (default: 20). Once reached, no further ratings are accepted for that item.
+
+### Key Metrics (Top Row)
+
+The Training page shows five summary metrics:
+- **Total Ratings**: All feedback ratings submitted across all analysts
+- **Items Rated**: How many unique intelligence items have been rated
+- **Analysts**: Number of distinct devices that have submitted ratings
+- **Avg Rating**: Global average rating across all feedback
+- **Training Queue**: Items waiting to be processed by the training pipeline
+
+### Training Effectiveness Score
+
+A prominent metric showing how well the AI's classifications align with analyst feedback.
+
+- **Score (0-100%)**: Measures agreement between AI severity levels and analyst ratings
+- **Grade**: EXCELLENT (80+), GOOD (65+), MODERATE (50+), NEEDS_IMPROVEMENT (35+), POOR (<35)
+- **Biggest Gaps**: The 5 items where AI and analyst ratings disagree the most — useful for identifying where the AI needs improvement
+- **Best Alignments**: The 5 items where AI and analyst ratings agree the most
+- **Trend**: Historical scores captured after each training run, showing whether the system is improving over time
+- **Delta**: Change from the last recorded score (e.g., "+3.2% since last run")
+
+### Upload Intelligence URLs
+
+Paste any news URL into the input field to add it to the training queue. The system will scrape the article content and run AI analysis on it.
+
+- **Relevance Tag (1-6)**: Before adding a URL, optionally tag it with a relevance score (1-6) using the numbered buttons below the input. This tells the system how important you consider this source.
+- Press Enter or click **Add** to submit
+
+### Upload Documents
+
+Click the upload area to browse for PDF, DOCX, or TXT files. The system extracts text and adds it to the training queue.
+
+### Training Queue
+
+The right panel shows all items awaiting processing:
+- **Status badges**: Pending (yellow), Ready (blue), Processing (amber), Completed (green)
+- **REL badge**: Shows the relevance tag if one was assigned (e.g., "REL: 5/6")
+- Click the trash icon to remove an item from the queue
+
+### Train Rhino Drishti
+
+Click this button to start the training pipeline. The system will:
+1. Scrape content from any pending URLs
+2. Extract text from uploaded documents
+3. Run AI analysis (Claude Haiku) on each item using the military intelligence framework
+4. Extract regions, actors, threat categories, and keywords
+5. Store results for the Training Pipeline Insights
+
+A progress tracker shows real-time status: items processed, current item title, and percentage complete.
+
+### Analyst Preferences (Feedback)
+
+Aggregated view of what highly-rated content has in common:
+- **Preferred Regions**: Regions that analysts consistently rate highly
+- **Preferred Threats**: Threat categories that analysts consider most relevant
+
+### Noise Patterns (Low-Rated)
+
+Shows content characteristics that analysts consistently rate as irrelevant. Helps identify what the AI should deprioritize.
+
+### Training Pipeline Insights
+
+After running training, this section shows what the AI learned from uploaded content:
+- **Priority Regions**: Regions mentioned in processed training data
+- **Key Signals**: Keywords extracted from training articles
+
+### Activity Log
+
+The Activity Log is a clean, session-level table showing the outcome of training and feedback activity. Individual uploads and ratings are NOT logged — only meaningful sessions are recorded.
+
+| Column | Description |
+|--------|-------------|
+| **Timestamp** | When the session occurred |
+| **Device** | Analyst device ID (last 6 characters, for feedback sessions only) |
+| **Activity Type** | "URL/Article Training" or "Rating Feedback" |
+| **Volume** | Item count with breakdown (e.g., "12 items (8 URLs, 4 documents)" or "5 ratings (1x3, 2x4, 1x5, 1x6)") |
+| **Impact** | AI-generated summary of what the system learned from this session |
+
+**Training Sessions** are logged when you click "Train Rhino Drishti". The impact summary describes which regions, actors, and threat categories were strengthened.
+
+**Feedback Sessions** are automatically created when an analyst submits 5 or more ratings. The impact summary describes what content types were upweighted or suppressed based on the rating distribution.
+
+### Scoring Integration
+
+The Scoring Integration panel shows the formula used to combine AI and analyst feedback:
+```
+final_score = base_ai_score + training_bias + feedback_bias
+training_bias = log(total_ratings + 1) * (avg_rating - 3.5)
+```
+
+This means items with high analyst ratings get boosted in the intelligence feed, while low-rated items are deprioritized.
+
+---
+
+## 12. Document Upload
 
 Upload offline intelligence materials for AI analysis.
 
@@ -307,7 +427,7 @@ Upload offline intelligence materials for AI analysis.
 
 ---
 
-## 12. Settings
+## 13. Settings
 
 ### News Retention Window
 Controls how far back the system looks when displaying intelligence items.
@@ -323,9 +443,16 @@ Changing the retention window immediately affects:
 - Alert counts
 - Pattern detection window
 
+### Maximum Feedback Ratings Per Item
+Controls how many analyst ratings each intelligence item can receive before the system stops accepting new feedback. This prevents over-rating or manipulation.
+
+Default: 20 ratings per item. Use the dropdown to adjust.
+
+When the limit is reached for an item, the rating widget will indicate that no further ratings are accepted.
+
 ---
 
-## 13. How the AI Pipeline Works
+## 14. How the AI Pipeline Works
 
 ### Data Flow
 ```
@@ -341,7 +468,7 @@ RSS Sources (36) + Elite Web Scraping
     Dynamic Keyword Matching (weighted relevance scoring)
         |
         v
-    Language Detection & Translation (Bengali/Assamese/Hindi → English)
+    Language Detection & Translation (Bengali/Assamese/Hindi -> English)
         |
         v
     Level 1 Sifter (pre-filter for border instability, militant activity)
@@ -354,6 +481,9 @@ RSS Sources (36) + Elite Web Scraping
         |
         v
     Adaptive Keyword Feedback (boost/decay keyword scores)
+        |
+        v
+    Analyst Feedback Integration (rating-based bias adjustment)
         |
         v
     WebSocket Broadcast (real-time push to connected clients)
@@ -386,26 +516,34 @@ The AI operates as a Senior Military Intelligence Analyst and performs:
 
 ---
 
-## 14. Glossary
+## 15. Glossary
 
 | Term | Definition |
 |------|-----------|
 | **ACK** | Acknowledge — mark an alert as reviewed |
+| **Activity Log** | Session-level record of training runs and feedback sessions with AI-generated impact summaries |
 | **Cross-border** | Activity involving more than one country |
+| **Device Fingerprint** | Unique identifier generated per browser/device to prevent duplicate ratings |
+| **Effectiveness Score** | Percentage (0-100) measuring alignment between AI classifications and analyst feedback ratings |
 | **Escalation Risk** | Likelihood that a pattern of events will intensify |
+| **Feedback Session** | Aggregated log entry created after an analyst submits 5+ ratings, with AI-generated impact summary |
 | **Hard Filter** | Rule-based rejection of irrelevant content (sports, entertainment) |
+| **Impact Summary** | AI-generated description of what the system learned from a training run or feedback session |
 | **Knowledge Graph** | Network of relationships between actors and locations |
 | **NER** | North Eastern Region of India (Assam, Manipur, Meghalaya, Mizoram, Tripura, Nagaland, Arunachal Pradesh, Sikkim) |
 | **Pattern** | Cluster of 3+ intelligence items sharing the same region, threat type, or actor |
 | **Priority Score** | AI-assigned importance score from 0-100 |
+| **Relevance Tag** | Optional 1-6 score an analyst assigns to a URL when adding it to the training queue |
 | **Semantic Search** | AI-powered search using vector embeddings that finds related concepts |
 | **Severity** | Classification level: Critical > High > Medium > Low |
 | **Sifter** | Level 1 pre-filter that screens articles for border/militant relevance |
 | **Special Flags** | AI-detected indicators: PLA_PAKISTAN_PRESENCE, COORDINATED_NARRATIVE, INFRASTRUCTURE_DUAL_USE |
 | **Threat Trajectory** | Direction of a threat: ESCALATING, STABLE, DE-ESCALATING, NEW_THREAT |
+| **Training Pipeline** | Process of scraping, analyzing, and learning from analyst-submitted URLs and documents |
+| **Training Session** | Log entry created when "Train Rhino Drishti" is clicked, capturing volume breakdown and AI impact |
 | **Vector Embedding** | Mathematical representation of text meaning, enabling semantic similarity search |
 
 ---
 
-*Rhino Drishti v3.0 — Elite OSINT Intelligence Platform*
-*Handbook generated: April 2026*
+*Rhino Drishti v4.0 — Elite OSINT Intelligence Platform with Alpha Training System*
+*Handbook updated: April 2026*
