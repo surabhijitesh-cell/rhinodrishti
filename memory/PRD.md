@@ -9,6 +9,31 @@ Build a full-stack AI-powered web application for intelligence aggregation, anal
 - **AI**: Claude Haiku 4.5 via Emergent LLM Key (classification), OpenAI text-embedding-3-small (embeddings)
 - **PDF**: fpdf2 for daily briefs and custom filtered reports with RESTRICTED headers
 
+## Backend Structure (Post-Refactor)
+```
+/app/backend/
+├── server.py              # ~140 lines: FastAPI app, CORS, router mounting, startup/shutdown, scheduler, WebSocket
+├── shared.py              # DB connections, Pydantic models, constants, WebSocket manager, shared state, utilities
+├── routers/
+│   ├── intelligence.py    # Dashboard stats, intelligence CRUD, alerts, patterns, semantic search, embeddings
+│   ├── settings.py        # Retention settings
+│   ├── briefs.py          # Daily brief, PDF generation, custom briefs, weekly trends, brief scheduler
+│   ├── pipeline.py        # Fetch/scrape/analyze news, scan status, pipeline health, scheduler wrappers
+│   ├── documents.py       # Document upload, list, delete, AI analysis
+│   ├── knowledge_graph_routes.py  # KG build, stats, actors, locations, edges, network
+│   ├── keywords_routes.py # Keyword list, AI refresh
+│   └── sources.py         # RSS sources, Twitter accounts/feeds, handbook
+├── ai_pipeline.py         # Claude integration for article classification
+├── embedding_service.py   # OpenAI embeddings
+├── keyword_engine.py      # Dynamic AI keyword generation
+├── knowledge_graph.py     # Entity relationship extraction
+├── rss_fetcher.py         # RSS feed ingestion with dynamic keywords
+├── intelligence_filter.py # Hard filter for non-intelligence content
+├── sifter.py              # Level 1 pre-filter
+├── pattern_engine.py      # Pattern detection
+└── web_scraper.py         # Elite source scraping
+```
+
 ## Completed Features
 
 ### Core (v1)
@@ -36,52 +61,35 @@ Build a full-stack AI-powered web application for intelligence aggregation, anal
 - [x] Retention window (7-365 days) via Settings page
 - [x] Dashboard stats cache (60s TTL, auto-invalidated)
 
-### Phase 9: Elite OSINT Upgrade (In Progress)
+### Phase 9: Elite OSINT Upgrade
 - [x] Sifter (Level 1 pre-filter) - sifter.py
 - [x] Web Scraper (BS4/httpx) - web_scraper.py
-- [x] Embedding Service (OpenAI) - embedding_service.py (auth fixed, needs quota)
+- [x] Embedding Service (OpenAI) - embedding_service.py
 - [x] Adaptive Scheduling (grassroots/60min, standard/30min, established/12hr)
 - [x] Custom PDF Briefs with RESTRICTED headers and filters
 - [x] Frontend Semantic Search UI toggle
-- [x] P0 Bug Fix: Custom PDF 500 error (fpdf2 effective_w fix)
-- [x] P0 Bug Fix: Embeddings 401 error (switched to OPENAI_API_KEY)
-- [x] P0 Bug Fix: Daily Brief not generating (DailyBrief.js called wrong endpoint)
-- [x] P0 Bug Fix: Sports/entertainment leaking through filter (reject now checks title+content, word-boundary regex for short keywords, runs before NER source pass-through)
+- [x] All P0 bug fixes (embeddings 401, custom PDF 500, daily brief endpoint, sports filter)
 
 ### Phase 10: Knowledge Graph
-- [x] `knowledge_graph.py` — aggregates actor-location-context relationships from entities/actors fields
-- [x] 3 MongoDB collections: `kg_actors` (113), `kg_locations` (21), `kg_edges` (144)
-- [x] Actor normalization (BSF, ULFA(I), NSCN variants merged)
-- [x] 9 API endpoints (build, stats, actors, actor detail, locations, edges, network graph)
-- [x] Frontend page at `/knowledge-graph` with stats bar, actor/location tabs, search, filters
-- [x] Actor detail view: locations, threats, co-occurring actors, movement edges, related articles
+- [x] knowledge_graph.py, 3 MongoDB collections, 9 API endpoints, frontend visualization
 
 ### Phase 11: Dynamic Keyword Generation Engine
-- [x] `keyword_engine.py` — multi-layered keyword generation (primary, entity, geo, cross_border, emerging, expanded)
-- [x] Input sources: historical intelligence (14 days), high-priority news, static seed keywords
-- [x] AI-powered expansion: Claude Haiku generates emerging signals and synonym expansions
-- [x] Keyword scoring (0-100) based on frequency, severity, cross-border relevance, recency decay
-- [x] Adaptive learning loop: boosts keywords on HIGH/CRITICAL articles, decays on LOW
-- [x] MongoDB `keyword_store` collection with score tracking
-- [x] Integrated into `rss_fetcher.py` — dynamic weighted matching replaces static keywords
-- [x] 2 API endpoints: GET /api/keywords (filtered), POST /api/keywords/refresh (AI regeneration)
-- [x] Dedicated `/keywords` page with stats, search, type filters, sort, color-coded tags
+- [x] keyword_engine.py, AI-powered expansion, adaptive learning, 2 API endpoints, dedicated UI page
 
 ### Phase 12: User Handbook & UI Polish
-- [x] Comprehensive `/USER_HANDBOOK.md` (14 sections covering every feature)
-- [x] Handbook served via `/api/handbook` and rendered at `/handbook` with markdown parser
-- [x] Keyword Engine moved from Dashboard widget to dedicated sidebar page
-- [x] Navigation reordered: Keyword Engine above Upload Documents, User Handbook below it
+- [x] USER_HANDBOOK.md, /api/handbook, /handbook page, sidebar reordering
+
+### Phase 13: Backend Refactoring (2026-04-08)
+- [x] Split monolithic server.py (2924 lines) into 8 modular routers + shared.py + slim server.py (~140 lines)
+- [x] All 28 API endpoints verified working post-refactor
+- [x] All frontend pages confirmed functional
+- [x] 100% test pass rate (iteration_16)
 
 ## Prioritized Backlog
-
-### P0 - Resolved
-- Embeddings Backfill: Working with new OpenAI API key. 532 items being backfilled in batches of 50. Semantic search operational.
 
 ### P1 - Upcoming
 - Add more National Indian news sources to RSS fetcher
 - Dashboard priority_score filter/sort
-- Refactor server.py (~2600 lines) into separate router files
 
 ### P2 - Future
 - Twitter/X monitoring (paused by user)
