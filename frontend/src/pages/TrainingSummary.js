@@ -30,6 +30,7 @@ export default function TrainingSummary({ api }) {
   const [urlInput, setUrlInput] = useState("");
   const [urlRelevance, setUrlRelevance] = useState(null);
   const [activityLog, setActivityLog] = useState(null);
+  const [effectiveness, setEffectiveness] = useState(null);
   const [addingUrl, setAddingUrl] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [training, setTraining] = useState(false);
@@ -38,18 +39,20 @@ export default function TrainingSummary({ api }) {
   const fetchAll = async () => {
     setLoading(true);
     try {
-      const [statsR, profileR, queueR, insightsR, activityR] = await Promise.all([
+      const [statsR, profileR, queueR, insightsR, activityR, effR] = await Promise.all([
         axios.get(`${api}/feedback/stats`).catch(() => ({ data: null })),
         axios.get(`${api}/feedback/training-profile`).catch(() => ({ data: null })),
         axios.get(`${api}/training/queue`).catch(() => ({ data: { items: [] } })),
         axios.get(`${api}/training/insights`).catch(() => ({ data: null })),
         axios.get(`${api}/training/activity-log`).catch(() => ({ data: null })),
+        axios.get(`${api}/training/effectiveness`).catch(() => ({ data: null })),
       ]);
       setStats(statsR.data);
       setProfile(profileR.data);
       setQueue(queueR.data.items || []);
       setInsights(insightsR.data);
       setActivityLog(activityR.data);
+      setEffectiveness(effR.data);
     } catch (e) {
       console.error(e);
     }
@@ -186,6 +189,134 @@ export default function TrainingSummary({ api }) {
           </Card>
         ))}
       </div>
+
+      {/* ===== TRAINING EFFECTIVENESS SCORE ===== */}
+      <Card className="border border-border rounded-none bg-card" data-testid="effectiveness-score-card">
+        <CardHeader className="py-3 px-4 border-b border-border">
+          <CardTitle className="text-sm uppercase tracking-wider font-['Barlow_Condensed'] font-semibold flex items-center gap-2">
+            <Gauge size={16} className="text-cyan-400" />
+            Training Effectiveness Score
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="p-4">
+          {effectiveness?.score != null ? (
+            <div className="grid grid-cols-1 md:grid-cols-[auto_1fr] gap-6">
+              {/* Score dial */}
+              <div className="flex flex-col items-center justify-center gap-1.5">
+                <div className={`relative w-28 h-28 rounded-full border-4 flex items-center justify-center ${
+                  effectiveness.grade === "EXCELLENT" ? "border-emerald-400" :
+                  effectiveness.grade === "GOOD" ? "border-blue-400" :
+                  effectiveness.grade === "MODERATE" ? "border-amber-400" :
+                  "border-red-400"
+                }`} data-testid="effectiveness-dial">
+                  <div className="text-center">
+                    <p className={`text-3xl font-black font-['Barlow_Condensed'] ${
+                      effectiveness.grade === "EXCELLENT" ? "text-emerald-400" :
+                      effectiveness.grade === "GOOD" ? "text-blue-400" :
+                      effectiveness.grade === "MODERATE" ? "text-amber-400" :
+                      "text-red-400"
+                    }`}>{effectiveness.score}%</p>
+                  </div>
+                </div>
+                <Badge variant="outline" className={`rounded-none text-[10px] px-2.5 py-0.5 uppercase tracking-wider ${
+                  effectiveness.grade === "EXCELLENT" ? "text-emerald-400 border-emerald-500/40" :
+                  effectiveness.grade === "GOOD" ? "text-blue-400 border-blue-500/40" :
+                  effectiveness.grade === "MODERATE" ? "text-amber-400 border-amber-500/40" :
+                  "text-red-400 border-red-500/40"
+                }`} data-testid="effectiveness-grade">
+                  {effectiveness.grade?.replace("_", " ")}
+                </Badge>
+                <p className="text-[10px] text-muted-foreground font-mono">{effectiveness.sample_size} items analyzed</p>
+                {effectiveness.delta_from_last != null && (
+                  <div className={`flex items-center gap-1 text-xs font-mono ${
+                    effectiveness.delta_from_last > 0 ? "text-emerald-400" :
+                    effectiveness.delta_from_last < 0 ? "text-red-400" :
+                    "text-muted-foreground"
+                  }`} data-testid="effectiveness-delta">
+                    {effectiveness.delta_from_last > 0 ? <TrendingUp size={12} /> :
+                     effectiveness.delta_from_last < 0 ? <TrendingDown size={12} /> : null}
+                    {effectiveness.delta_from_last > 0 ? "+" : ""}{effectiveness.delta_from_last}% since last run
+                  </div>
+                )}
+              </div>
+
+              {/* Details */}
+              <div className="space-y-4">
+                <p className="text-xs text-muted-foreground">
+                  Measures alignment between AI classifications (severity) and analyst feedback ratings.
+                  Higher scores mean the AI is classifying articles closer to how analysts rate them.
+                </p>
+
+                {/* Worst misalignments */}
+                {effectiveness.worst_misalignments?.length > 0 && (
+                  <div>
+                    <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-mono mb-1.5 flex items-center gap-1">
+                      <AlertTriangle size={10} className="text-red-400" /> Biggest Gaps (AI vs Analyst)
+                    </p>
+                    <div className="space-y-1">
+                      {effectiveness.worst_misalignments.map((m) => (
+                        <div key={m.id} className="flex items-center gap-2 text-xs border border-border p-1.5" data-testid={`misalign-${m.id}`}>
+                          <span className="text-red-400 font-mono text-[10px] shrink-0 w-12">{Math.round(m.alignment * 100)}%</span>
+                          <span className="truncate flex-1">{m.title || m.id}</span>
+                          <span className="text-[9px] font-mono text-muted-foreground shrink-0">
+                            AI:{m.ai_severity} | User:{m.analyst_avg}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Best alignments */}
+                {effectiveness.best_alignments?.length > 0 && (
+                  <div>
+                    <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-mono mb-1.5 flex items-center gap-1">
+                      <CheckCircle size={10} className="text-emerald-400" /> Best Alignments
+                    </p>
+                    <div className="space-y-1">
+                      {effectiveness.best_alignments.map((m) => (
+                        <div key={m.id} className="flex items-center gap-2 text-xs border border-border p-1.5" data-testid={`align-${m.id}`}>
+                          <span className="text-emerald-400 font-mono text-[10px] shrink-0 w-12">{Math.round(m.alignment * 100)}%</span>
+                          <span className="truncate flex-1">{m.title || m.id}</span>
+                          <span className="text-[9px] font-mono text-muted-foreground shrink-0">
+                            AI:{m.ai_severity} | User:{m.analyst_avg}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Trend sparkline */}
+                {effectiveness.trend?.length > 1 && (
+                  <div>
+                    <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-mono mb-1.5 flex items-center gap-1">
+                      <Hash size={10} /> Score History
+                    </p>
+                    <div className="flex items-end gap-1 h-10" data-testid="effectiveness-trend">
+                      {[...effectiveness.trend].reverse().map((s, i) => (
+                        <div key={i} className="flex flex-col items-center gap-0.5" title={`${s.score}% — ${new Date(s.timestamp).toLocaleDateString()}`}>
+                          <div
+                            className={`w-5 ${
+                              s.score >= 65 ? "bg-emerald-500/60" : s.score >= 50 ? "bg-amber-500/60" : "bg-red-500/60"
+                            }`}
+                            style={{ height: `${Math.max(4, (s.score / 100) * 40)}px` }}
+                          />
+                          <span className="text-[8px] font-mono text-muted-foreground">{s.score}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              Not enough data yet. Rate more articles on the Intelligence Feed to build an effectiveness baseline.
+            </p>
+          )}
+        </CardContent>
+      </Card>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* ===== LEFT: UPLOAD + QUEUE ===== */}

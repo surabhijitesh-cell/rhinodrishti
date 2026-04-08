@@ -6,7 +6,7 @@ import asyncio
 import uuid
 import os
 import io
-from shared import db, training_col, intelligence_col, activity_log_col, logger
+from shared import db, training_col, intelligence_col, activity_log_col, feedback_col, logger
 
 router = APIRouter()
 
@@ -233,7 +233,6 @@ async def get_training_insights():
 # ============================================================
 @router.get("/training/activity-log")
 async def get_activity_log():
-    from shared import feedback_col
 
     # Fetch stored activity entries (url adds, file uploads, training runs)
     entries = await activity_log_col.find({}, {"_id": 0}).sort("timestamp", -1).to_list(100)
@@ -282,6 +281,91 @@ async def get_activity_log():
             "keywords_learned": dict(sorted(keywords_learned.items(), key=lambda x: -x[1])[:10]),
             "total_successful": len(completed),
         },
+    }
+
+
+# ============================================================
+# Training Effectiveness Score
+# ============================================================
+SEVERITY_MAP = {"critical": 6.0, "high": 5.0, "medium": 3.5, "low": 2.0}
+
+
+async def _compute_effectiveness():
+    """Compute alignment between AI classifications and analyst feedback ratings.
+    Returns score 0-100 and per-item breakdown."""
+    rated_items = await intelligence_col.find(
+        {"feedback_avg_rating": {"$exists": True, "$gt": 0}, "feedback_total_ratings": {"$gte": 1}},
+        {"_id": 0, "id": 1, "severity": 1, "priority_score": 1,
+         "feedback_avg_rating": 1, "feedback_total_ratings": 1, "title": 1}
+    ).to_list(1000)
+
+    if not rated_items:
+        return {"score": None, "sample_size": 0, "alignments": [], "grade": "INSUFFICIENT_DATA"}
+
+    alignments = []
+    for item in rated_items:
+        sev = (item.get("severity") or "").lower()
+        ai_score = SEVERITY_MAP.get(sev, 3.0)
+        analyst_avg = item["feedback_avg_rating"]
+        # Alignment: 1 means perfect match, 0 means max disagreement
+        alignment = max(0, 1.0 - abs(ai_score - analyst_avg) / 5.0)
+        alignments.append({
+            "id": item["id"],
+            "title": (item.get("title") or "")[:60],
+            "ai_severity": sev or "unknown",
+            "ai_mapped": ai_score,
+            "analyst_avg": round(analyst_avg, 2),
+            "ratings_count": item.get("feedback_total_ratings", 0),
+            "alignment": round(alignment, 3),
+        })
+
+    avg_alignment = sum(a["alignment"] for a in alignments) / len(alignments)
+    score = round(avg_alignment * 100, 1)
+
+    if score >= 80:
+        grade = "EXCELLENT"
+    elif score >= 65:
+        grade = "GOOD"
+    elif score >= 50:
+        grade = "MODERATE"
+    elif score >= 35:
+        grade = "NEEDS_IMPROVEMENT"
+    else:
+        grade = "POOR"
+
+    # Sort: worst alignments first so analysts see what needs attention
+    alignments.sort(key=lambda a: a["alignment"])
+
+    return {
+        "score": score,
+        "sample_size": len(alignments),
+        "grade": grade,
+        "worst_misalignments": alignments[:5],
+        "best_alignments": alignments[-5:][::-1],
+    }
+
+
+@router.get("/training/effectiveness")
+async def get_effectiveness_score():
+    current = await _compute_effectiveness()
+
+    # Fetch historical snapshots for trend
+    snapshots = await activity_log_col.find(
+        {"type": "effectiveness_snapshot"},
+        {"_id": 0}
+    ).sort("timestamp", -1).to_list(20)
+
+    trend = [{"score": s["score"], "sample_size": s["sample_size"], "timestamp": s["timestamp"]} for s in snapshots]
+
+    # Compute delta from last snapshot
+    delta = None
+    if trend and current["score"] is not None and trend[0].get("score") is not None:
+        delta = round(current["score"] - trend[0]["score"], 1)
+
+    return {
+        **current,
+        "trend": trend[:10],
+        "delta_from_last": delta,
     }
 
 
@@ -384,6 +468,18 @@ async def _run_training_pipeline():
             "actors_found": dict(sorted(run_actors.items(), key=lambda x: -x[1])[:5]),
             "timestamp": datetime.now(timezone.utc).isoformat(),
         })
+
+        # Store effectiveness snapshot for trend tracking
+        eff = await _compute_effectiveness()
+        if eff["score"] is not None:
+            await activity_log_col.insert_one({
+                "id": str(uuid.uuid4()),
+                "type": "effectiveness_snapshot",
+                "score": eff["score"],
+                "grade": eff["grade"],
+                "sample_size": eff["sample_size"],
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            })
     except Exception as e:
         logger.error(f"Failed to log training activity: {e}")
 

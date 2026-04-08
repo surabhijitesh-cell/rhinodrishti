@@ -1,0 +1,77 @@
+{
+  "summary": "Iteration 20: Comprehensive testing of NEW Training Effectiveness Score feature. All 14 backend API tests passed (100%). All frontend UI components verified working correctly. The effectiveness score shows 77% GOOD based on 23 analyst-rated items.",
+
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+
+  "passed_tests": [
+    "GET /api/training/effectiveness returns 200",
+    "Response contains required fields: score, grade, sample_size, worst_misalignments, best_alignments, trend, delta_from_last",
+    "Score is 77.0 (within valid 0-100 range)",
+    "Grade mapping correct: score 77 -> GOOD (>=65 threshold)",
+    "worst_misalignments returns 5 items sorted by lowest alignment first (0.2, 0.6, 0.6, 0.7, 0.8)",
+    "best_alignments returns 5 items sorted by highest alignment first (1.0, 1.0, 0.8, ...)",
+    "Alignment items have valid structure: id, title, ai_severity, ai_mapped, analyst_avg, ratings_count, alignment",
+    "Alignment values are in 0-1 range",
+    "trend is empty array (no training runs since feature added - expected)",
+    "delta_from_last is null (no previous snapshot - expected)",
+    "Severity mapping verified: critical=6, high=5, medium=3.5, low=2",
+    "POST /api/training/add-url with relevance still works",
+    "GET /api/training/activity-log still works",
+    "GET /api/feedback/stats still works",
+    "GET /api/training/queue still works",
+    "Frontend: Training Effectiveness Score card renders with data-testid='effectiveness-score-card'",
+    "Frontend: Circular dial shows 77% with data-testid='effectiveness-dial'",
+    "Frontend: Grade badge displays 'GOOD' in blue with data-testid='effectiveness-grade'",
+    "Frontend: Sample size text shows '23 items analyzed'",
+    "Frontend: Description text explains alignment between AI classifications and analyst feedback",
+    "Frontend: 'Biggest Gaps (AI vs Analyst)' section shows 5 misalignment items with percentages",
+    "Frontend: 'Best Alignments' section shows 5 alignment items with percentages",
+    "Frontend: Each alignment item shows AI severity and User rating (e.g., 'AI:low | User:6')"
+  ],
+
+  "test_report_links": [
+    "/app/backend/tests/test_training_effectiveness_v20.py",
+    "/app/test_reports/pytest/pytest_results_v20.xml"
+  ],
+
+  "action_items": [],
+
+  "critical_code_review_comments": [
+    "Effectiveness score computation correctly uses SEVERITY_MAP: critical=6, high=5, medium=3.5, low=2",
+    "Alignment formula: max(0, 1.0 - abs(ai_score - analyst_avg) / 5.0) produces 0-1 range",
+    "Grade thresholds correctly implemented: >=80 EXCELLENT, >=65 GOOD, >=50 MODERATE, >=35 NEEDS_IMPROVEMENT, <35 POOR",
+    "worst_misalignments correctly sorted ascending by alignment (worst first)",
+    "best_alignments correctly sorted descending by alignment (best first)",
+    "effectiveness_snapshot entries will be stored in activity_log when training runs complete",
+    "Frontend correctly handles null score case with 'Not enough data yet' message",
+    "Frontend grade badge color coding: EXCELLENT=emerald, GOOD=blue, MODERATE=amber, others=red"
+  ],
+
+  "updated_files": [
+    "/app/backend/tests/test_training_effectiveness_v20.py"
+  ],
+
+  "success_rate": {
+    "backend": "100% (14/14 tests passed)",
+    "frontend": "100% (all UI components verified)"
+  },
+
+  "test_credentials": "No credentials needed - app has no auth system",
+
+  "seed_data_creation": "No seed data created - tested with existing 23 analyst-rated items",
+
+  "retest_needed": false,
+
+  "should_main_agent_self_test": false,
+
+  "context_for_next_testing_agent": "Iteration 20 tested the NEW Training Effectiveness Score feature. GET /api/training/effectiveness returns: score (0-100 or null), grade (EXCELLENT/GOOD/MODERATE/NEEDS_IMPROVEMENT/POOR/INSUFFICIENT_DATA), sample_size, worst_misalignments (max 5, sorted by lowest alignment), best_alignments (max 5, sorted by highest alignment), trend (historical snapshots from activity_log), delta_from_last (change from last snapshot). Current live data: 77% GOOD with 23 items. The effectiveness_snapshot entries are stored in training_activity_log collection when training runs complete (none stored yet since no training run has been done since the feature was added). Frontend shows circular dial with percentage, grade badge, description text, Biggest Gaps section, Best Alignments section. Test file: /app/backend/tests/test_training_effectiveness_v20.py"
+}
