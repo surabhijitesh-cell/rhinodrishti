@@ -149,6 +149,10 @@ if cors_origins_str.strip() == '*':
     )
 else:
     origins = [o.strip() for o in cors_origins_str.split(',') if o.strip()]
+    # Always include common deployment domains
+    for domain in ["https://rhinodrishti.vercel.app", "https://www.rhinodrishti.vercel.app"]:
+        if domain not in origins:
+            origins.append(domain)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=origins,
