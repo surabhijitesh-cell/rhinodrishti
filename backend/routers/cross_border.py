@@ -72,8 +72,13 @@ async def get_cross_border_watch(
 
     base_query = {
         "processed": True,
-        "is_cross_border": True,
+        "ai_summary": {"$exists": True, "$ne": ""},
         "published_at": {"$gte": retention_cutoff},
+        "$or": [
+            {"is_cross_border": True},
+            {"countries_involved": {"$elemMatch": {"$in": ["Bangladesh", "Myanmar"]}}},
+            {"state": {"$in": ["Bangladesh", "Myanmar"]}},
+        ]
     }
 
     if min_signal:
@@ -92,53 +97,62 @@ async def get_cross_border_watch(
         "threat_category": 1,
     }
 
-    all_items = await intelligence_col.find(base_query, PROJECTION).sort("priority_score", -1).limit(limit * 2).to_list(limit * 2)
+    all_items = await intelligence_col.find(base_query, PROJECTION).sort("priority_score", -1).limit(limit * 3).to_list(limit * 3)
 
-    # Also fetch items tagged with Bangladesh/Myanmar in state/regions but not flagged cross_border
-    region_query = {
-        "processed": True,
-        "published_at": {"$gte": retention_cutoff},
-        "$or": [
-            {"state": {"$in": ["Bangladesh", "Myanmar"]}},
-            {"regions": {"$elemMatch": {"$in": ["Bangladesh", "Myanmar"]}}},
-            {"countries_involved": {"$elemMatch": {"$in": ["Bangladesh", "Myanmar"]}}},
-        ]
-    }
-    region_items = await intelligence_col.find(region_query, PROJECTION).sort("priority_score", -1).limit(limit).to_list(limit)
+    # Indian states that border Bangladesh/Myanmar
+    INDIA_BORDER_STATES = {"manipur", "mizoram", "nagaland", "assam", "tripura", "meghalaya", "arunachal pradesh", "arunachal", "sikkim"}
+    BD_KEYWORDS = {"bangladesh", "dhaka", "bgb", "rohingya", "cox's bazar", "chittagong", "sylhet", "teknaf", "bandarban", "awami league", "bnp", "hasina", "yunus", "indo-bangladesh"}
+    MM_KEYWORDS = {"myanmar", "burma", "tatmadaw", "chin state", "sagaing", "rakhine", "kachin", "shan state", "tamu", "nscn", "kalay", "hakha", "min aung hlaing", "junta", "indo-myanmar", "chin hills"}
 
-    # Merge and deduplicate
+    # Strict classification
     seen_ids = set()
-    merged = []
-    for item in all_items + region_items:
-        item_id = item.get("id", "")
-        if item_id and item_id not in seen_ids:
-            seen_ids.add(item_id)
-            # Apply geographic boost to priority for sorting
-            geo_boost = _apply_geo_boost(item)
-            item["geo_boost"] = geo_boost
-            item["effective_priority"] = item.get("priority_score", 0) + geo_boost
-            merged.append(item)
-
-    # Split by country
     bangladesh_items = []
     myanmar_items = []
-    for item in merged:
-        countries = [c.lower() for c in (item.get("countries_involved", []) or [])]
-        regions = [r.lower() for r in (item.get("regions", []) or [])]
-        state = (item.get("state", "") or "").lower()
-        all_context = " ".join(countries + regions + [state])
 
-        if "bangladesh" in all_context:
+    for item in all_items:
+        item_id = item.get("id", "")
+        if not item_id or item_id in seen_ids:
+            continue
+        seen_ids.add(item_id)
+
+        if not item.get("ai_summary"):
+            continue
+
+        geo_boost = _apply_geo_boost(item)
+        item["geo_boost"] = geo_boost
+        item["effective_priority"] = item.get("priority_score", 0) + geo_boost
+
+        countries = [c.lower() for c in (item.get("countries_involved", []) or [])]
+        state_val = (item.get("state", "") or "").lower()
+        title_lower = (item.get("title", "") or "").lower()
+        text_all = (title_lower + " " + (item.get("ai_summary", "") or "") + " " + (item.get("why_it_matters", "") or "")).lower()
+
+        # RULE 1: If state IS Bangladesh/Myanmar → goes to that section (primary origin)
+        if state_val == "bangladesh":
             bangladesh_items.append(item)
-        if "myanmar" in all_context:
+            continue
+        if state_val == "myanmar":
             myanmar_items.append(item)
-        # Items not matching either but cross-border — check title/summary
-        if "bangladesh" not in all_context and "myanmar" not in all_context:
-            text = (item.get("title", "") + " " + item.get("ai_summary", "")).lower()
-            if any(kw in text for kw in ["bangladesh", "dhaka", "bgb", "rohingya", "cox's bazar", "chittagong"]):
+            continue
+
+        # RULE 2: Indian border state items — require STRONG evidence of target country focus
+        if state_val in INDIA_BORDER_STATES:
+            # Only include if the TITLE explicitly mentions the target country or its keywords
+            title_has_bd = any(kw in title_lower for kw in BD_KEYWORDS)
+            title_has_mm = any(kw in title_lower for kw in MM_KEYWORDS)
+
+            if title_has_bd and "bangladesh" in countries:
                 bangladesh_items.append(item)
-            elif any(kw in text for kw in ["myanmar", "tatmadaw", "chin state", "sagaing", "rakhine", "kachin"]):
+            if title_has_mm and "myanmar" in countries:
                 myanmar_items.append(item)
+            # If title doesn't mention target country by name, skip — it's Indian domestic news
+            continue
+
+        # RULE 3: Other states (e.g., national-level news)
+        if "bangladesh" in countries and any(kw in text_all for kw in BD_KEYWORDS):
+            bangladesh_items.append(item)
+        if "myanmar" in countries and any(kw in text_all for kw in MM_KEYWORDS):
+            myanmar_items.append(item)
 
     # Sort by effective priority
     bangladesh_items.sort(key=lambda x: -x.get("effective_priority", 0))
@@ -176,5 +190,5 @@ async def get_cross_border_watch(
         },
         "watchpoints": watchpoints,
         "signal_distribution": dict(sorted(bucket_dist.items(), key=lambda x: -x[1])),
-        "total": len(seen_ids),
+        "total": len(bangladesh_items) + len(myanmar_items),
     }
