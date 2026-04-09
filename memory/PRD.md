@@ -68,6 +68,18 @@ Build a full-stack AI-powered web application for intelligence aggregation, anal
 - [x] Training Effectiveness Score: Real-time alignment metric (0-100%) comparing AI severity to analyst ratings, with grade (EXCELLENT/GOOD/MODERATE), biggest gaps, best alignments, and trend tracking after each training run
 - [x] 100% test pass rate (iteration_20: 14 backend + full frontend verification)
 
+### Phase 15: Cross-Border Watch Module (2026-04-09)
+- [x] Dedicated Cross-Border Watch page: Bangladesh & Myanmar split view with country posture badges
+- [x] Watchpoints: Auto-detected trend themes from signal_bucket + early_warning_signal
+- [x] Signal Distribution: Visual distribution of signal bucket categories
+- [x] Signal Filtering: ALL / MEDIUM / HIGH signal strength filter buttons
+- [x] Expandable signal items: "What happened" + "India-relevant implication" + "Early warning" format
+- [x] Geographic boost: +2-3 priority for items mentioning border locations (Moreh, Champhai, Cox's Bazar, Chin State, etc.)
+- [x] RSS Expansion: 15 new Bangladesh/Myanmar feeds (BDNews24, DVB, Shan Herald, BNI, Narinjara, Chin World, etc.)
+- [x] AI Prompt Enhancement: India-relevance scoring (0-20), signal bucket classification (12 categories), signal strength (HIGH/MEDIUM/LOW)
+- [x] Posture computation: auto-calculated from priority scores + escalation ratio per country
+- [x] 100% test pass rate (iteration_22: 17 backend + full frontend verification)
+
 ## Key DB Collections
 - `intelligence_items`: Articles with AI classification, embeddings, feedback_avg_rating, feedback_total_ratings
 - `intelligence_feedback`: {id, intelligence_id, device_id, rating (1-6), timestamp, derived_features}
