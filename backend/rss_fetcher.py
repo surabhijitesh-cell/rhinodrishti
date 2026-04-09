@@ -60,6 +60,25 @@ RSS_SOURCES = [
 
     # ---- MYANMAR (Standard) ----
     {"name": "Mizzima News", "url": "https://www.mizzima.com/rss.xml", "category": "myanmar", "language": "en", "region": "Myanmar", "priority": "standard"},
+
+    # ---- EXPANDED BANGLADESH SOURCES ----
+    {"name": "BDNews24", "url": "https://bdnews24.com/feed", "category": "bangladesh", "language": "en", "region": "Bangladesh", "priority": "grassroots"},
+    {"name": "New Age BD", "url": "https://www.newagebd.net/rss", "category": "bangladesh", "language": "en", "region": "Bangladesh", "priority": "standard"},
+    {"name": "The Daily Observer BD", "url": "https://www.observerbd.com/rss.php", "category": "bangladesh", "language": "en", "region": "Bangladesh", "priority": "standard"},
+    {"name": "The Business Standard BD", "url": "https://www.tbsnews.net/feed", "category": "bangladesh", "language": "en", "region": "Bangladesh", "priority": "standard"},
+    {"name": "Bangladesh Post", "url": "https://bangladeshpost.net/feed", "category": "bangladesh", "language": "en", "region": "Bangladesh", "priority": "standard"},
+    {"name": "Bangla Tribune", "url": "https://www.banglatribune.com/rss.xml", "category": "bangladesh", "language": "bn", "region": "Bangladesh", "priority": "standard"},
+    {"name": "Samakal BD", "url": "https://samakal.com/feed", "category": "bangladesh", "language": "bn", "region": "Bangladesh", "priority": "standard"},
+    {"name": "Daily Ittefaq", "url": "https://www.ittefaq.com.bd/feed", "category": "bangladesh", "language": "bn", "region": "Bangladesh", "priority": "standard"},
+
+    # ---- EXPANDED MYANMAR SOURCES ----
+    {"name": "DVB (Democratic Voice of Burma)", "url": "https://english.dvb.no/feed/", "category": "myanmar", "language": "en", "region": "Myanmar", "priority": "grassroots"},
+    {"name": "Shan Herald", "url": "https://english.shannews.org/feed", "category": "myanmar", "language": "en", "region": "Myanmar", "priority": "standard"},
+    {"name": "Khit Thit Media", "url": "https://khitthit.com/feed/", "category": "myanmar", "language": "en", "region": "Myanmar", "priority": "standard"},
+    {"name": "BNI (Burma News International)", "url": "https://www.bnionline.net/en/feed", "category": "myanmar", "language": "en", "region": "Myanmar", "priority": "standard"},
+    {"name": "Myanmar Peace Monitor", "url": "https://www.mmpeacemonitor.org/feed/", "category": "myanmar", "language": "en", "region": "Myanmar", "priority": "standard"},
+    {"name": "Narinjara News (Rakhine)", "url": "https://www.narinjara.com/feed/", "category": "myanmar", "language": "en", "region": "Myanmar", "priority": "grassroots"},
+    {"name": "Chin World", "url": "https://www.chinworld.co/feed/", "category": "myanmar", "language": "en", "region": "Myanmar", "priority": "grassroots"},
 ]
 
 def get_sources_by_priority(priority: str) -> list:

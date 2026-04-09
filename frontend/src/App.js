@@ -15,6 +15,7 @@ import KnowledgeGraph from "./pages/KnowledgeGraph";
 import KeywordEngine from "./pages/KeywordEngine";
 import Handbook from "./pages/Handbook";
 import TrainingSummary from "./pages/TrainingSummary";
+import CrossBorderWatch from "./pages/CrossBorderWatch";
 import { Toaster } from "./components/ui/sonner";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
@@ -52,7 +53,7 @@ function AppRoutes() {
       <Routes>
         <Route path="/" element={<Dashboard stats={stats} api={API} />} />
         <Route path="/feed" element={<IntelligenceFeed api={API} />} />
-        <Route path="/cross-border" element={<IntelligenceFeed api={API} crossBorderOnly={true} />} />
+        <Route path="/cross-border" element={<CrossBorderWatch api={API} />} />
         <Route path="/daily-brief" element={<DailyBrief api={API} />} />
         <Route path="/weekly-trends" element={<WeeklyTrends api={API} />} />
         <Route path="/patterns" element={<Patterns api={API} />} />

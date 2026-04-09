@@ -1,0 +1,79 @@
+{
+  "summary": "Iteration 22: Comprehensive testing of Cross-Border Watch module (Bangladesh & Myanmar intelligence engine). All 17 backend API tests passed (100%). All frontend UI components verified working correctly. The Cross-Border Watch page renders with two country sections, watchpoints card, signal filters, expandable items with 'What happened', 'India-relevant implication', and 'Early warning' sections.",
+
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+
+  "passed_tests": [
+    "GET /api/cross-border/watch returns 200",
+    "Response contains bangladesh section with items, count, posture",
+    "Response contains myanmar section with items, count, posture",
+    "Response contains watchpoints array",
+    "Response contains signal_distribution object",
+    "Posture values are valid (stable/watchful/elevated/deteriorating)",
+    "Items have required fields: id, title, severity, priority_score",
+    "Items have optional signal fields (signal_strength, signal_bucket, india_relevance_score) - currently empty for pre-update items",
+    "GET /api/cross-border/watch?min_signal=HIGH returns 200",
+    "GET /api/cross-border/watch?min_signal=MEDIUM returns 200",
+    "HIGH filter only returns HIGH signal items",
+    "MEDIUM filter returns HIGH + MEDIUM signal items",
+    "Items have geo_boost and effective_priority fields",
+    "Items sorted by effective_priority descending",
+    "GET /api/intelligence still works",
+    "GET /api/feedback/stats still works",
+    "GET /api/training/effectiveness still works",
+    "Frontend: Cross-Border Watch page renders with title 'CROSS-BORDER WATCH'",
+    "Frontend: Bangladesh Intelligence section visible with item count (50) and STABLE posture badge",
+    "Frontend: Myanmar Intelligence section visible with item count (23) and ELEVATED posture badge",
+    "Frontend: Watchpoints card shows detected trends (5 watchpoints)",
+    "Frontend: Signal filter buttons (ALL/MEDIUM/HIGH) visible and functional",
+    "Frontend: Clicking signal item expands to show 'What happened', 'India-relevant implication', 'Early warning'",
+    "Frontend: Each item shows priority score, severity badge, signal strength badge",
+    "Frontend: Filter behavior correct - ALL(73) >= MEDIUM(52) >= HIGH(52)"
+  ],
+
+  "test_report_links": [
+    "/app/backend/tests/test_cross_border_watch_v22.py",
+    "/app/test_reports/pytest/pytest_results_v22.xml"
+  ],
+
+  "action_items": [],
+
+  "critical_code_review_comments": [
+    "Cross-border endpoint correctly splits items by Bangladesh/Myanmar using countries_involved, regions, state fields",
+    "_compute_posture uses avg_priority + escalation_ratio to determine posture (deteriorating/elevated/watchful/stable)",
+    "_compute_watchpoints extracts top 5 themes from signal_bucket and early_warning_signal",
+    "_apply_geo_boost adds +2-3 to effective_priority for items mentioning border locations (Moreh, Champhai, Cox's Bazar, etc.)",
+    "Signal filtering correctly uses MongoDB query: signal_strength='HIGH' or signal_strength in ['HIGH','MEDIUM']",
+    "Items without signal_strength/signal_bucket are expected - processed before AI prompt update",
+    "Frontend SignalItem component correctly handles expand/collapse with 'What happened', 'India-relevant implication', 'Early warning' sections",
+    "Frontend CountrySection component correctly displays posture badges with appropriate colors (red=deteriorating, orange=elevated, amber=watchful, emerald=stable)"
+  ],
+
+  "updated_files": [
+    "/app/backend/tests/test_cross_border_watch_v22.py"
+  ],
+
+  "success_rate": {
+    "backend": "100% (17/17 tests passed)",
+    "frontend": "100% (all UI components verified)"
+  },
+
+  "test_credentials": "No credentials needed - app has no auth system",
+
+  "seed_data_creation": "None - used existing cross-border items in database",
+
+  "retest_needed": false,
+
+  "should_main_agent_self_test": false,
+
+  "context_for_next_testing_agent": "Iteration 22 tested the Cross-Border Watch module. GET /api/cross-border/watch returns bangladesh and myanmar sections with items, count, posture. Signal filtering works via min_signal query param (HIGH/MEDIUM). Most items don't have signal_bucket/signal_strength/india_relevance_score yet because they were processed before the AI prompt was updated - new items will have these fields. Current data: 50 Bangladesh items, 23 Myanmar items. Watchpoints are extracted from signal_bucket and early_warning_signal fields. Geographic boost adds +2-3 to effective_priority for border locations. Test file: /app/backend/tests/test_cross_border_watch_v22.py"
+}

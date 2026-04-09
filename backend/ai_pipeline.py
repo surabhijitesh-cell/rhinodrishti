@@ -172,10 +172,49 @@ Explicitly check and flag in special_flags array:
 - PATTERN_DETECTED: Any repeated incidents forming a pattern
 
 --------------------------------------------------
-STEP 8: LANGUAGE RULE
+STEP 8: INDIA-RELEVANCE SCORING (CROSS-BORDER)
 --------------------------------------------------
 
-If input is non-English (Bengali, Hindi, Assamese, etc.) → ALL OUTPUT MUST BE IN ENGLISH
+Compute india_relevance_score (0-20) for CROSS-BORDER items:
+
++4 → India explicitly mentioned
++3 → NER states mentioned (Assam, Manipur, Mizoram, Tripura, Meghalaya, Nagaland, Arunachal)
++3 → Border keywords present (infiltration, smuggling, refugee, border crossing, illegal migration)
++2 → Armed actors mentioned (Tatmadaw, BGB, BSF, Assam Rifles, insurgent groups)
++2 → Economic spillover signals (trade disruption, fuel dependency, supply chain)
++1 → Diplomatic/security cooperation mentions
++3 → Key border locations mentioned (Moreh, Champhai, Cox's Bazar, Bandarban, Chin State, Sagaing, Tamu, Teknaf, Chittagong, Sylhet)
++2 → Conflict near India-facing sectors
+
+--------------------------------------------------
+STEP 9: SIGNAL CLASSIFICATION (CROSS-BORDER)
+--------------------------------------------------
+
+For articles involving Bangladesh or Myanmar, assign signal_bucket (one primary):
+
+- border_security
+- infiltration
+- smuggling
+- migration_refugees
+- insurgency
+- extremism
+- military_movement
+- conflict_escalation
+- trade_logistics_disruption
+- political_instability
+- external_influence
+- humanitarian_stress
+
+Assign signal_strength:
+- HIGH → direct India-facing impact (india_relevance_score >= 8)
+- MEDIUM → indirect but meaningful (india_relevance_score 4-7)
+- LOW → minimal India relevance (india_relevance_score < 4)
+
+--------------------------------------------------
+STEP 10: LANGUAGE RULE
+--------------------------------------------------
+
+If input is non-English (Bengali, Hindi, Assamese, Burmese, etc.) → ALL OUTPUT MUST BE IN ENGLISH
 
 --------------------------------------------------
 FINAL OUTPUT FORMAT (JSON ONLY)
@@ -202,7 +241,10 @@ FINAL OUTPUT FORMAT (JSON ONLY)
   "early_warning_signal": "1 line",
   "recommended_attention": "Immediate Action Required/Priority Monitoring/Active Monitoring/Routine Monitoring",
   "special_flags": ["flag1", "flag2"],
-  "title_english": "translated title"
+  "title_english": "translated title",
+  "india_relevance_score": 0-20,
+  "signal_bucket": "border_security/infiltration/smuggling/migration_refugees/insurgency/extremism/military_movement/conflict_escalation/trade_logistics_disruption/political_instability/external_influence/humanitarian_stress",
+  "signal_strength": "HIGH/MEDIUM/LOW"
 }"""
 
 BRIEF_PROMPT = """You are a senior military intelligence analyst. Generate a structured Daily Intelligence Brief for India's North Eastern Region (NER) AND bordering countries (Bangladesh, Myanmar) based on the following intelligence items.
@@ -309,7 +351,12 @@ async def classify_and_analyze_article(article: dict) -> dict:
             "severity": severity,
             "is_cross_border": analysis.get("cross_border", False),
             "countries_involved": analysis.get("countries", []),
-            
+
+            # Cross-border intelligence fields
+            "india_relevance_score": analysis.get("india_relevance_score", 0),
+            "signal_bucket": analysis.get("signal_bucket", ""),
+            "signal_strength": analysis.get("signal_strength", ""),
+
             "is_relevant": analysis.get("relevant", True),
             "processed": True
         }
