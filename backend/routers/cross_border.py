@@ -2,7 +2,7 @@
 from fastapi import APIRouter, Query
 from typing import Optional
 from datetime import datetime, timezone, timedelta
-from shared import db, intelligence_col, feedback_col, logger
+from shared import db, intelligence_col, feedback_col, logger, has_non_latin_chars
 
 router = APIRouter()
 
@@ -106,6 +106,7 @@ async def get_cross_border_watch(
         "processed": True,
         "ai_summary": {"$exists": True, "$ne": ""},
         "published_at": {"$gte": retention_cutoff},
+        "severity": {"$nin": ["low", "LOW"]},
         "$or": [
             {"is_cross_border": True},
             {"countries_involved": {"$elemMatch": {"$in": ["Bangladesh", "Myanmar"]}}},
@@ -149,6 +150,16 @@ async def get_cross_border_watch(
         seen_ids.add(item_id)
 
         if not item.get("ai_summary"):
+            continue
+
+        # Skip untranslated items (title or summary still in non-Latin script)
+        title_text = item.get("title", "") or ""
+        summary_text = item.get("ai_summary", "") or ""
+        if has_non_latin_chars(title_text) or has_non_latin_chars(summary_text):
+            continue
+
+        # Skip LOW severity items that slipped through
+        if (item.get("severity") or "").lower() == "low":
             continue
 
         geo_boost = _apply_geo_boost(item)

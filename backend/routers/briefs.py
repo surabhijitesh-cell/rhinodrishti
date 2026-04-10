@@ -494,13 +494,13 @@ def generate_brief_pdf(brief: dict, date: str, total: int, critical: int, high: 
     # NER REGIONAL SECTION
     pdf.section_title('NORTHEAST REGION - KEY DEVELOPMENTS')
 
-    NER_STATES_PDF = ["Assam", "Meghalaya", "Mizoram", "Manipur", "Arunachal Pradesh", "Tripura", "Multiple", ""]
+    NER_STATES_PDF = ["Assam", "Meghalaya", "Mizoram", "Manipur", "Arunachal Pradesh", "Tripura", "Nagaland", "Sikkim", "Multiple"]
     developments = brief.get('key_developments', [])
     ner_developments = []
     for dev in developments:
         if isinstance(dev, dict):
             state = dev.get('state', '')
-            if state in NER_STATES_PDF or not state:
+            if state in NER_STATES_PDF:
                 ner_developments.append(dev)
         else:
             ner_developments.append(dev)
@@ -752,10 +752,11 @@ async def generate_brief_for_date(date: str):
     logger.info(f"Brief: {len(critical_high_items)} critical/high items found, {len(deduped_critical)} after title dedup")
 
     # 2. GET NER REGIONAL ITEMS
+    ner_states_full = NER_STATES + ["Nagaland", "Sikkim", "Multiple"]
     ner_query = {
         "processed": True,
         "published_at": {"$gte": cutoff_utc},
-        "state": {"$in": NER_STATES + ["Multiple"]},
+        "state": {"$in": ner_states_full},
         "$or": [
             {"priority_score": {"$gte": 30}},
             {"tags": {"$exists": True, "$ne": []}},
@@ -773,7 +774,7 @@ async def generate_brief_for_date(date: str):
         logger.info(f"Brief: Only {len(ner_items)} NER items in window, expanding")
         fallback_ner_query = {
             "processed": True,
-            "state": {"$in": NER_STATES + ["Multiple"]},
+            "state": {"$in": ner_states_full},
             "severity": {"$in": ["critical", "high", "medium"]}
         }
         if previous_item_ids:
@@ -946,10 +947,11 @@ async def generate_brief_for_date(date: str):
     key_developments = []
     added_ids = set()
 
+    NER_STATES_FULL = NER_STATES + ["Nagaland", "Sikkim", "Multiple"]
     for item in deduped_critical:
         item_id = item.get("id")
         if item_id and item_id not in added_ids:
-            if item.get("state") in NER_STATES + ["Multiple", "Bangladesh", "Myanmar", ""]:
+            if item.get("state") in NER_STATES_FULL:
                 key_developments.append(build_brief_item(item))
                 added_ids.add(item_id)
 
