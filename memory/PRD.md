@@ -93,6 +93,18 @@ Build a full-stack AI-powered web application for intelligence aggregation, anal
 - [x] Daily Brief PDF: Removed `or not state` catch-all that let empty-state items into NER section
 - [x] 100% test pass rate (iteration_24: 22 backend + full frontend verification)
 
+### Phase 17: Multi-Article Fusion & Deduplication (2026-04-10)
+- [x] `fusion_engine.py`: Title normalization, entity extraction, word overlap + entity similarity detection (threshold 0.50)
+- [x] Embedding cosine similarity fallback (threshold 0.88) for items with vector embeddings
+- [x] Cluster management: picks best/longest summary as primary, cites all covering sources
+- [x] Real-time fusion: hooks into AI classification pipeline (`pipeline.py`) — new articles auto-merge with existing clusters
+- [x] Scheduled batch fusion: runs every 30 min via APScheduler, processes unclustered items + merges orphans into existing clusters
+- [x] Intelligence Feed query updated: only shows cluster primaries (`is_cluster_primary != False`), hiding duplicates
+- [x] API endpoints: `POST /api/fusion/run` (manual trigger), `GET /api/fusion/stats` (dedup statistics)
+- [x] Frontend `IntelligenceCard.js`: "X sources" badge with expandable panel showing all covering sources with clickable links
+- [x] Initial batch fusion: 30 clusters from 72 items, 8.3% dedup ratio, feed reduced from 506 to 464 visible items
+- [x] 100% test pass rate (iteration_25: 19 backend + full frontend verification, plus P0 regression passing)
+
 ## Key DB Collections
 - `intelligence_items`: Articles with AI classification, embeddings, feedback_avg_rating, feedback_total_ratings
 - `intelligence_feedback`: {id, intelligence_id, device_id, rating (1-6), timestamp, derived_features}

@@ -73,7 +73,7 @@ async def pipeline_status():
             "last_filtered_out": scan_status.get("filtered_out", 0),
             "last_translated": scan_status.get("translated", 0),
         },
-        "scheduler": "grassroots/60min, standard/30min, established/12hr, retry/15min, brief/0600 IST, embeddings/6hr"
+        "scheduler": "grassroots/60min, standard/30min, established/12hr, retry/15min, brief/0600 IST, embeddings/6hr, fusion/30min"
     }
 
 
