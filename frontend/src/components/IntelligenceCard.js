@@ -2,7 +2,7 @@ import { useState } from "react";
 import {
   Target, MapPin, Users, Package, Shield, AlertTriangle,
   Wifi, Building, Clock, ExternalLink, ChevronDown, ChevronUp,
-  Flag, TrendingUp, Radar
+  Flag, TrendingUp, Radar, Layers
 } from "lucide-react";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
@@ -66,6 +66,7 @@ function formatTime(isoStr) {
 
 export default function IntelligenceCard({ item, compact = false, api, feedbackData }) {
   const [expanded, setExpanded] = useState(false);
+  const [sourcesExpanded, setSourcesExpanded] = useState(false);
   const ThreatIcon = THREAT_ICONS[item.threat_category] || THREAT_ICONS[item.tags?.[0]] || AlertTriangle;
   const severityClass = SEVERITY_CLASSES[item.severity] || "severity-low";
   const borderClass = CARD_BORDER_CLASSES[item.severity] || "intel-card-low";
@@ -89,6 +90,16 @@ export default function IntelligenceCard({ item, compact = false, api, feedbackD
               <span>|</span>
               <Clock size={10} />
               <span>{formatTime(item.published_at)}</span>
+              {item.cluster_size > 1 && (
+                <button
+                  onClick={(e) => { e.stopPropagation(); setSourcesExpanded(!sourcesExpanded); }}
+                  className="inline-flex items-center gap-1 ml-1 px-1.5 py-0.5 bg-blue-500/15 border border-blue-500/30 text-blue-400 hover:bg-blue-500/25 transition-colors cursor-pointer rounded-sm"
+                  data-testid="cluster-sources-badge"
+                >
+                  <Layers size={10} />
+                  <span className="text-[10px] font-semibold">{item.cluster_size} sources</span>
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -133,6 +144,35 @@ export default function IntelligenceCard({ item, compact = false, api, feedbackD
           compact
           initialData={feedbackData}
         />
+      )}
+
+      {/* Fused Sources Panel */}
+      {sourcesExpanded && item.cluster_sources && item.cluster_sources.length > 0 && (
+        <div className="mb-2 p-2 bg-blue-500/5 border border-blue-500/20 rounded space-y-1 animate-slide-in" data-testid="cluster-sources-panel">
+          <p className="text-[10px] uppercase tracking-widest text-blue-400 font-mono mb-1">
+            Covered by {item.cluster_sources.length} sources
+          </p>
+          {item.cluster_sources.map((src, idx) => (
+            <div key={idx} className="flex items-center gap-2 text-xs">
+              <span className="text-muted-foreground font-mono shrink-0 w-4">{idx + 1}.</span>
+              <span className="text-muted-foreground font-semibold shrink-0">{src.source}</span>
+              {src.source_url ? (
+                <a
+                  href={src.source_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-blue-400 hover:underline truncate"
+                  data-testid={`cluster-source-link-${idx}`}
+                >
+                  {src.title?.slice(0, 60) || "View"}
+                  {src.title?.length > 60 ? "..." : ""}
+                </a>
+              ) : (
+                <span className="text-muted-foreground truncate">{src.title?.slice(0, 60)}</span>
+              )}
+            </div>
+          ))}
+        </div>
       )}
 
       {/* Tags - Enhanced with multi-label support */}

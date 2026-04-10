@@ -99,7 +99,7 @@ async def get_intelligence(
     limit: int = Query(20, ge=1, le=100),
     translate: bool = Query(True)
 ):
-    query = {"processed": True}
+    query = {"processed": True, "is_cluster_primary": {"$ne": False}}
 
     if not date_from:
         settings = await db.app_settings.find_one({"key": "retention_days"}, {"_id": 0})
@@ -229,3 +229,52 @@ async def trigger_embedding_backfill(background_tasks: BackgroundTasks):
     from embedding_service import backfill_embeddings
     background_tasks.add_task(backfill_embeddings, db, 50)
     return {"message": "Embedding backfill started (batch of 50)"}
+
+
+@router.post("/fusion/run")
+async def trigger_batch_fusion(background_tasks: BackgroundTasks):
+    from fusion_engine import run_batch_fusion
+    background_tasks.add_task(run_batch_fusion, db)
+    return {"message": "Batch fusion started"}
+
+
+@router.get("/fusion/stats")
+async def get_fusion_stats():
+    from datetime import timedelta
+    settings = await db.app_settings.find_one({"key": "retention_days"}, {"_id": 0})
+    retention_days = settings.get("value", 30) if settings else 30
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=retention_days)).isoformat()
+
+    total_items = await intelligence_col.count_documents({"processed": True, "published_at": {"$gte": cutoff}})
+    clustered = await intelligence_col.count_documents({
+        "processed": True,
+        "published_at": {"$gte": cutoff},
+        "cluster_id": {"$exists": True, "$ne": None},
+    })
+    primaries = await intelligence_col.count_documents({
+        "processed": True,
+        "published_at": {"$gte": cutoff},
+        "cluster_id": {"$exists": True, "$ne": None},
+        "is_cluster_primary": True,
+    })
+    unclustered = total_items - clustered
+
+    # Get cluster size distribution
+    cluster_sizes = []
+    async for doc in intelligence_col.aggregate([
+        {"$match": {"cluster_id": {"$exists": True, "$ne": None}, "is_cluster_primary": True, "published_at": {"$gte": cutoff}}},
+        {"$project": {"_id": 0, "cluster_size": 1, "title": 1}},
+        {"$sort": {"cluster_size": -1}},
+        {"$limit": 20}
+    ]):
+        cluster_sizes.append({"title": (doc.get("title", "")[:80]), "size": doc.get("cluster_size", 0)})
+
+    return {
+        "total_items": total_items,
+        "clustered_items": clustered,
+        "unique_clusters": primaries,
+        "unclustered_items": unclustered,
+        "dedup_ratio": round((1 - (primaries + unclustered) / total_items) * 100, 1) if total_items > 0 else 0,
+        "visible_items": primaries + unclustered,
+        "top_clusters": cluster_sizes,
+    }

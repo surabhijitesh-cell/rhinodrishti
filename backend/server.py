@@ -35,6 +35,7 @@ from routers.pipeline import (
     run_embedding_backfill,
 )
 from routers.briefs import generate_scheduled_daily_brief
+from fusion_engine import run_batch_fusion
 
 
 app = FastAPI(title="Rhino Drishti API")
@@ -125,8 +126,15 @@ async def startup():
             misfire_grace_time=3600
         )
         scheduler.add_job(run_embedding_backfill, 'interval', hours=6, id='embedding_backfill')
+        async def _run_batch_fusion():
+            try:
+                stats = await run_batch_fusion(db)
+                logger.info(f"Scheduled batch fusion: {stats}")
+            except Exception as e:
+                logger.warning(f"Scheduled batch fusion failed: {e}")
+        scheduler.add_job(_run_batch_fusion, 'interval', minutes=30, id='batch_fusion')
         scheduler.start()
-        logger.info("Scheduler: grassroots/60min, standard/30min, established/12hr, retry/15min, brief/0600 IST, embeddings/6hr")
+        logger.info("Scheduler: grassroots/60min, standard/30min, established/12hr, retry/15min, brief/0600 IST, embeddings/6hr, fusion/30min")
     except Exception as e:
         logger.warning(f"Scheduler setup failed: {e}")
 

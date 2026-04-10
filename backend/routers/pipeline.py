@@ -573,6 +573,18 @@ async def analyze_unprocessed_items():
             update_fields = {k: v for k, v in result.items() if k != "_id"}
             update_fields["processed"] = True
             update_fields.pop("is_relevant", None)
+
+            # Real-time fusion: check for duplicates before saving
+            try:
+                from fusion_engine import find_and_merge_cluster
+                merged = await find_and_merge_cluster(db, {**item, **update_fields})
+                # Copy cluster fields if fusion found a match
+                for fkey in ("cluster_id", "is_cluster_primary", "cluster_sources", "cluster_size"):
+                    if fkey in merged:
+                        update_fields[fkey] = merged[fkey]
+            except Exception as e:
+                logger.warning(f"Real-time fusion failed for {item.get('id','')}: {e}")
+
             await intelligence_col.update_one(
                 {"id": item["id"]},
                 {"$set": update_fields}

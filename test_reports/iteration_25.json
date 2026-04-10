@@ -1,0 +1,83 @@
+{
+  "summary": "Iteration 25: Multi-Article Fusion and Deduplication Feature Testing Complete. All fusion-specific features verified working: GET /api/fusion/stats returns correct statistics (506 total items, 72 clustered, 30 unique clusters, 8.3% dedup ratio), POST /api/fusion/run triggers batch fusion successfully, GET /api/intelligence correctly filters to show only cluster primaries (464 visible items vs 506 total), fused items display cluster_size and cluster_sources with proper structure. Frontend shows 'X sources' badge on fused items with expandable panel showing all covering sources with links. Regression tests for P0 fixes (cross-border/daily-brief) all passed.",
+
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/pipeline/status", "issue": "Scheduler string in response doesn't include 'fusion/30min' even though scheduler is configured in server.py - hardcoded string in pipeline.py line 76 is outdated"}
+    ]
+  },
+
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+
+  "passed_tests": [
+    "GET /api/fusion/stats returns 200",
+    "GET /api/fusion/stats has required fields (total_items, clustered_items, unique_clusters, dedup_ratio, top_clusters)",
+    "GET /api/fusion/stats values are logically valid (total=506, clustered=72, clusters=30, dedup_ratio=8.3%)",
+    "GET /api/fusion/stats top_clusters has correct structure with title and size",
+    "POST /api/fusion/run returns 200 and triggers batch fusion",
+    "POST /api/fusion/run returns expected message",
+    "GET /api/intelligence returns 200",
+    "GET /api/intelligence only returns cluster primaries (no is_cluster_primary=False items)",
+    "GET /api/intelligence fused items have cluster_size > 1 and cluster_sources array",
+    "GET /api/intelligence cluster_sources has correct structure (source, source_url, title, published_at)",
+    "GET /api/intelligence visible count (464) is less than total DB items (506) due to dedup",
+    "GET /api/cross-border/watch returns 200 (regression)",
+    "GET /api/cross-border/watch has Bangladesh and Myanmar sections (regression)",
+    "GET /api/cross-border/watch has no LOW severity items (P0 fix verified)",
+    "GET /api/cross-border/watch has no non-Latin characters in titles/summaries (P0 fix verified)",
+    "GET /api/daily-brief returns 200 (regression)",
+    "GET /api/daily-brief has required fields (date, key_developments, analyst_summary)",
+    "GET /api/daily-brief key_developments only contains NER states (P0 fix verified)",
+    "GET /api/pipeline/status returns 200",
+    "Frontend: Intelligence Feed page loads at /feed with 464 results",
+    "Frontend: Fused items show 'X sources' badge (found 1 fused item with 4 sources)",
+    "Frontend: Clicking sources badge expands panel showing all covering sources with links",
+    "Frontend: Non-fused items display normally without sources badge",
+    "Frontend: Cross-Border Watch page loads with Bangladesh and Myanmar sections",
+    "Frontend: Cross-Border has category tabs (Diplomatic, Defence, Internal Politics, Economics)",
+    "Frontend: Daily Brief page loads with NER Key Developments section",
+    "Frontend: Daily Brief shows Export PDF button"
+  ],
+
+  "test_report_links": [
+    "/app/backend/tests/test_fusion_v25.py",
+    "/app/test_reports/pytest/pytest_results_v25.xml"
+  ],
+
+  "action_items": [
+    "Minor: Update /app/backend/routers/pipeline.py line 76 scheduler string to include 'fusion/30min' for consistency with actual scheduler config in server.py"
+  ],
+
+  "critical_code_review_comments": [
+    "fusion_engine.py: Well-structured with title normalization, entity extraction, and similarity scoring. Batch fusion correctly groups unclustered items and merges orphans into existing clusters.",
+    "intelligence.py line 102: is_cluster_primary filter correctly excludes non-primary cluster items from feed",
+    "intelligence.py lines 234-280: Fusion endpoints properly implemented with stats aggregation and batch trigger",
+    "pipeline.py lines 572-589: Real-time fusion hook correctly calls find_and_merge_cluster after AI classification",
+    "server.py lines 128-134: Batch fusion scheduler correctly configured to run every 30 minutes",
+    "IntelligenceCard.js: cluster_sources badge and expandable panel correctly implemented with data-testid attributes"
+  ],
+
+  "updated_files": [
+    "/app/backend/tests/test_fusion_v25.py"
+  ],
+
+  "success_rate": {
+    "backend": "100% (19/19 tests passed)",
+    "frontend": "100% (all UI components verified)"
+  },
+
+  "test_credentials": "No credentials needed - app has no auth system",
+
+  "seed_data_creation": "None - used existing data (506 items with 30 clusters from batch fusion)",
+
+  "retest_needed": false,
+
+  "should_main_agent_self_test": false,
+
+  "context_for_next_testing_agent": "Iteration 25 verified multi-article fusion feature: 506 total items, 72 clustered into 30 unique clusters, 464 visible items after dedup (8.3% reduction). Fused items have cluster_size, cluster_sources, cluster_id, is_cluster_primary fields. Frontend shows 'X sources' badge on fused items with expandable panel. Batch fusion runs every 30 min via scheduler. Real-time fusion hooks into AI classification pipeline. P0 fixes from iteration 24 (cross-border LOW severity filter, daily-brief NER states filter) remain working. Test file: /app/backend/tests/test_fusion_v25.py"
+}
