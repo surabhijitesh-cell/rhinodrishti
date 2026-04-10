@@ -75,10 +75,15 @@ Build a full-stack AI-powered web application for intelligence aggregation, anal
 - [x] Signal Filtering: ALL / MEDIUM / HIGH signal strength filter buttons
 - [x] Expandable signal items: "What happened" + "India-relevant implication" + "Early warning" format
 - [x] Geographic boost: +2-3 priority for items mentioning border locations (Moreh, Champhai, Cox's Bazar, Chin State, etc.)
-- [x] RSS Expansion: 15 new Bangladesh/Myanmar feeds (BDNews24, DVB, Shan Herald, BNI, Narinjara, Chin World, etc.)
-- [x] AI Prompt Enhancement: India-relevance scoring (0-20), signal bucket classification (12 categories), signal strength (HIGH/MEDIUM/LOW)
+- [x] RSS Expansion: 24+ new Bangladesh/Myanmar feeds (Dhaka Tribune, BSS News, Daily Star BD, Irrawaddy, Mizzima, DVB, Shan Herald, BNI, Narinjara, Chin World, ANI, etc.)
+- [x] AI Prompt Enhancement: India-relevance scoring (0-20), signal bucket classification (12 categories), signal strength (HIGH/MEDIUM/LOW), cross_border_category (diplomatic/defence/internal_politics/economics)
 - [x] Posture computation: auto-calculated from priority scores + escalation ratio per country
-- [x] 100% test pass rate (iteration_22: 17 backend + full frontend verification)
+- [x] Sub-categorization: Items grouped by Diplomatic/Defence/Internal Politics/Economics with icons and numbered display
+- [x] Keyword-based auto-categorization fallback for items processed before prompt update
+- [x] Training/Feedback integration: feedback_avg_rating bias applied to cross-border item scoring (feedback_bias = log(n+1) * (avg-3.5))
+- [x] Strict country classification: Indian border state items only shown if title explicitly references BD/MM
+- [x] Unprocessed items filtered out (require ai_summary)
+- [x] 100% test pass rate (iteration_23: 21 backend + full frontend verification)
 
 ## Key DB Collections
 - `intelligence_items`: Articles with AI classification, embeddings, feedback_avg_rating, feedback_total_ratings
