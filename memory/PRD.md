@@ -85,6 +85,14 @@ Build a full-stack AI-powered web application for intelligence aggregation, anal
 - [x] Unprocessed items filtered out (require ai_summary)
 - [x] 100% test pass rate (iteration_23: 21 backend + full frontend verification)
 
+### Phase 16: P0 Bug Fixes - Noise Elimination (2026-04-10)
+- [x] Cross-Border Watch: Added `severity != low` DB query filter + application-level LOW severity exclusion
+- [x] Cross-Border Watch: Added `has_non_latin_chars()` check to filter untranslated Bengali/Hindi/Assamese items from UI
+- [x] Daily Brief PDF: Removed Bangladesh, Myanmar, and empty-state from NER Key Developments allowed states
+- [x] Daily Brief PDF: Added Nagaland and Sikkim to NER state lists across all queries (ner_query, fallback_ner_query, NER_STATES_PDF)
+- [x] Daily Brief PDF: Removed `or not state` catch-all that let empty-state items into NER section
+- [x] 100% test pass rate (iteration_24: 22 backend + full frontend verification)
+
 ## Key DB Collections
 - `intelligence_items`: Articles with AI classification, embeddings, feedback_avg_rating, feedback_total_ratings
 - `intelligence_feedback`: {id, intelligence_id, device_id, rating (1-6), timestamp, derived_features}
