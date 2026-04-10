@@ -210,6 +210,12 @@ Assign signal_strength:
 - MEDIUM → indirect but meaningful (india_relevance_score 4-7)
 - LOW → minimal India relevance (india_relevance_score < 4)
 
+Also assign cross_border_category (one of):
+- diplomatic → foreign affairs, bilateral relations, delegations, treaties, international cooperation
+- defence → military operations, border forces (BGB/BSF/Coast Guard), seizures, deployments, airstrikes, arms
+- internal_politics → government, parliament, elections, reforms, political arrests, institutional changes
+- economics → trade, exports, banking, infrastructure, PMI, investment, logistics, economic policy
+
 --------------------------------------------------
 STEP 10: LANGUAGE RULE
 --------------------------------------------------
@@ -244,7 +250,8 @@ FINAL OUTPUT FORMAT (JSON ONLY)
   "title_english": "translated title",
   "india_relevance_score": 0-20,
   "signal_bucket": "border_security/infiltration/smuggling/migration_refugees/insurgency/extremism/military_movement/conflict_escalation/trade_logistics_disruption/political_instability/external_influence/humanitarian_stress",
-  "signal_strength": "HIGH/MEDIUM/LOW"
+  "signal_strength": "HIGH/MEDIUM/LOW",
+  "cross_border_category": "diplomatic/defence/internal_politics/economics"
 }"""
 
 BRIEF_PROMPT = """You are a senior military intelligence analyst. Generate a structured Daily Intelligence Brief for India's North Eastern Region (NER) AND bordering countries (Bangladesh, Myanmar) based on the following intelligence items.
@@ -356,6 +363,7 @@ async def classify_and_analyze_article(article: dict) -> dict:
             "india_relevance_score": analysis.get("india_relevance_score", 0),
             "signal_bucket": analysis.get("signal_bucket", ""),
             "signal_strength": analysis.get("signal_strength", ""),
+            "cross_border_category": analysis.get("cross_border_category", ""),
 
             "is_relevant": analysis.get("relevant", True),
             "processed": True

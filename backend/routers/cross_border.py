@@ -2,14 +2,46 @@
 from fastapi import APIRouter, Query
 from typing import Optional
 from datetime import datetime, timezone, timedelta
-from shared import db, intelligence_col, logger
+from shared import db, intelligence_col, feedback_col, logger
 
 router = APIRouter()
 
 # Geographic boost locations
 GEO_BOOST_INDIA = {"moreh", "champhai", "agartala", "dawki", "sutarkandi", "karimganj", "silchar", "churachandpur"}
-GEO_BOOST_BD = {"cox's bazar", "bandarban", "chittagong", "sylhet", "teknaf", "rangamati", "comilla", "brahmanbaria", "dhaka"}
-GEO_BOOST_MM = {"chin state", "sagaing", "tamu", "rakhine", "kachin", "shan", "mandalay", "kalay", "hakha", "falam"}
+GEO_BOOST_BD = {"cox's bazar", "bandarban", "chittagong", "sylhet", "teknaf", "rangamati", "comilla", "brahmanbaria", "dhaka", "moulvibazar", "beanibazar", "bogura", "sherpur"}
+GEO_BOOST_MM = {"chin state", "sagaing", "tamu", "rakhine", "kachin", "shan", "mandalay", "kalay", "hakha", "falam", "nay pyi taw", "yangon", "minbya"}
+
+CATEGORY_ORDER = ["diplomatic", "defence", "internal_politics", "economics"]
+CATEGORY_LABELS = {
+    "diplomatic": "Diplomatic",
+    "defence": "Defence",
+    "internal_politics": "Internal Politics",
+    "economics": "Economics",
+}
+
+# Keyword-based auto-categorization for items processed before prompt update
+_CAT_KEYWORDS = {
+    "diplomatic": {"bilateral", "delegation", "diplomat", "ambassador", "foreign affair", "foreign minister", "cooperation", "treaty", "mou signed", "visit", "invited", "summit", "relations"},
+    "defence": {"military", "army", "bgb", "bsf", "coast guard", "seized", "arrested", "raid", "deployed", "platoon", "airstrike", "gunfight", "arms", "weapons", "heroin", "drug", "smuggl", "militant", "killed", "operation", "security force"},
+    "internal_politics": {"parliament", "election", "minister", "government", "reform", "bill passed", "speaker", "opposition", "political", "protest", "arrest", "junta", "party", "ispr"},
+    "economics": {"trade", "export", "import", "economy", "bank", "revenue", "inflation", "pmi", "gdp", "investment", "business", "infra", "logistics", "reserve", "remittance", "jetty", "port"},
+}
+
+
+def _auto_categorize(item):
+    """Keyword-based fallback categorization for items without AI category."""
+    cat = item.get("cross_border_category", "")
+    if cat and cat in CATEGORY_LABELS:
+        return cat
+    text = ((item.get("title", "") or "") + " " + (item.get("ai_summary", "") or "")).lower()
+    scores = {}
+    for category, keywords in _CAT_KEYWORDS.items():
+        score = sum(1 for kw in keywords if kw in text)
+        if score > 0:
+            scores[category] = score
+    if scores:
+        return max(scores, key=scores.get)
+    return "other"
 
 POSTURE_THRESHOLDS = {"deteriorating": 75, "elevated": 60, "watchful": 40, "stable": 0}
 
@@ -94,7 +126,8 @@ async def get_cross_border_watch(
         "state": 1, "regions": 1, "actors": 1, "entities": 1, "source": 1,
         "source_url": 1, "published_at": 1, "tags": 1, "special_flags": 1,
         "india_relevance_score": 1, "signal_bucket": 1, "signal_strength": 1,
-        "threat_category": 1,
+        "threat_category": 1, "cross_border_category": 1,
+        "feedback_avg_rating": 1, "feedback_total_ratings": 1,
     }
 
     all_items = await intelligence_col.find(base_query, PROJECTION).sort("priority_score", -1).limit(limit * 3).to_list(limit * 3)
@@ -154,6 +187,17 @@ async def get_cross_border_watch(
         if "myanmar" in countries and any(kw in text_all for kw in MM_KEYWORDS):
             myanmar_items.append(item)
 
+    # Apply feedback/training bias to effective_priority
+    import math
+    for items_list in [bangladesh_items, myanmar_items]:
+        for item in items_list:
+            fb_avg = item.get("feedback_avg_rating")
+            fb_count = item.get("feedback_total_ratings", 0)
+            if fb_avg and fb_count > 0:
+                feedback_bias = math.log(fb_count + 1) * (fb_avg - 3.5)
+                item["effective_priority"] = item.get("effective_priority", item.get("priority_score", 0)) + feedback_bias
+                item["feedback_boosted"] = True
+
     # Sort by effective priority
     bangladesh_items.sort(key=lambda x: -x.get("effective_priority", 0))
     myanmar_items.sort(key=lambda x: -x.get("effective_priority", 0))
@@ -161,6 +205,27 @@ async def get_cross_border_watch(
     # Trim to limit
     bangladesh_items = bangladesh_items[:limit]
     myanmar_items = myanmar_items[:limit]
+
+    # Group by cross_border_category (with fallback auto-categorization)
+    def _group_by_category(items):
+        grouped = {}
+        for item in items:
+            cat = _auto_categorize(item)
+            item["cross_border_category"] = cat  # Set for frontend display
+            if cat in CATEGORY_LABELS:
+                grouped.setdefault(cat, []).append(item)
+            else:
+                grouped.setdefault("other", []).append(item)
+        result = []
+        for cat in CATEGORY_ORDER:
+            if cat in grouped:
+                result.append({"category": cat, "label": CATEGORY_LABELS[cat], "items": grouped[cat]})
+        if "other" in grouped:
+            result.append({"category": "other", "label": "Other", "items": grouped["other"]})
+        return result
+
+    bd_grouped = _group_by_category(bangladesh_items)
+    mm_grouped = _group_by_category(myanmar_items)
 
     # Compute posture
     bd_posture = _compute_posture(bangladesh_items)
@@ -180,11 +245,13 @@ async def get_cross_border_watch(
     return {
         "bangladesh": {
             "items": bangladesh_items,
+            "grouped": bd_grouped,
             "count": len(bangladesh_items),
             "posture": bd_posture,
         },
         "myanmar": {
             "items": myanmar_items,
+            "grouped": mm_grouped,
             "count": len(myanmar_items),
             "posture": mm_posture,
         },

@@ -79,6 +79,17 @@ RSS_SOURCES = [
     {"name": "Myanmar Peace Monitor", "url": "https://www.mmpeacemonitor.org/feed/", "category": "myanmar", "language": "en", "region": "Myanmar", "priority": "standard"},
     {"name": "Narinjara News (Rakhine)", "url": "https://www.narinjara.com/feed/", "category": "myanmar", "language": "en", "region": "Myanmar", "priority": "grassroots"},
     {"name": "Chin World", "url": "https://www.chinworld.co/feed/", "category": "myanmar", "language": "en", "region": "Myanmar", "priority": "grassroots"},
+
+    # ---- USER-REFERENCED SOURCES (HIGH QUALITY) ----
+    {"name": "Dhaka Tribune", "url": "https://www.dhakatribune.com/feed", "category": "bangladesh", "language": "en", "region": "Bangladesh", "priority": "elite"},
+    {"name": "BSS News BD", "url": "https://www.bssnews.net/feed", "category": "bangladesh", "language": "en", "region": "Bangladesh", "priority": "elite"},
+    {"name": "Daily Star BD", "url": "https://www.thedailystar.net/feed", "category": "bangladesh", "language": "en", "region": "Bangladesh", "priority": "elite"},
+    {"name": "Daily Sun BD", "url": "https://www.daily-sun.com/feed", "category": "bangladesh", "language": "en", "region": "Bangladesh", "priority": "standard"},
+    {"name": "Ekhon TV", "url": "https://ekhon.tv/feed", "category": "bangladesh", "language": "bn", "region": "Bangladesh", "priority": "standard"},
+    {"name": "Irrawaddy", "url": "https://www.irrawaddy.com/feed", "category": "myanmar", "language": "en", "region": "Myanmar", "priority": "elite"},
+    {"name": "Mizzima English", "url": "https://eng.mizzima.com/feed", "category": "myanmar", "language": "en", "region": "Myanmar", "priority": "elite"},
+    {"name": "DVB Burmese", "url": "https://burmese.dvb.no/feed/", "category": "myanmar", "language": "my", "region": "Myanmar", "priority": "grassroots"},
+    {"name": "ANI News", "url": "https://aninews.in/feed/", "category": "national", "language": "en", "region": "India", "priority": "elite"},
 ]
 
 def get_sources_by_priority(priority: str) -> list:

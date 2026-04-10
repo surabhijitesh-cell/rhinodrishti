@@ -1,7 +1,8 @@
 import { useState, useEffect } from "react";
 import {
   Globe, ShieldAlert, AlertTriangle, TrendingUp, TrendingDown,
-  Eye, Loader2, ChevronDown, ChevronUp, ExternalLink, Filter
+  Eye, Loader2, ChevronDown, ChevronUp, ExternalLink, Filter,
+  Handshake, Swords, Landmark, BarChart3
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Badge } from "../components/ui/badge";
@@ -15,59 +16,38 @@ const POSTURE_CONFIG = {
   stable: { color: "text-emerald-400 border-emerald-500/40 bg-emerald-500/10", label: "STABLE", icon: ShieldAlert },
 };
 
-const SIGNAL_COLORS = {
-  HIGH: "text-red-400 border-red-500/30",
-  MEDIUM: "text-amber-400 border-amber-500/30",
-  LOW: "text-muted-foreground border-border",
+const CATEGORY_ICONS = {
+  diplomatic: Handshake,
+  defence: Swords,
+  internal_politics: Landmark,
+  economics: BarChart3,
+  other: Globe,
 };
 
-const BUCKET_LABELS = {
-  border_security: "Border Security",
-  infiltration: "Infiltration",
-  smuggling: "Smuggling",
-  migration_refugees: "Migration / Refugees",
-  insurgency: "Insurgency",
-  extremism: "Extremism",
-  military_movement: "Military Movement",
-  conflict_escalation: "Conflict Escalation",
-  trade_logistics_disruption: "Trade / Logistics",
-  political_instability: "Political Instability",
-  external_influence: "External Influence",
-  humanitarian_stress: "Humanitarian Stress",
+const CATEGORY_COLORS = {
+  diplomatic: "text-blue-400 border-blue-500/30",
+  defence: "text-red-400 border-red-500/30",
+  internal_politics: "text-purple-400 border-purple-500/30",
+  economics: "text-emerald-400 border-emerald-500/30",
+  other: "text-muted-foreground border-border",
 };
 
-function SignalItem({ item }) {
+function SignalItem({ item, index }) {
   const [expanded, setExpanded] = useState(false);
-  const signal = SIGNAL_COLORS[item.signal_strength] || SIGNAL_COLORS.LOW;
 
   return (
-    <div
-      className="border border-border hover:border-primary/20 transition-colors"
-      data-testid={`signal-item-${item.id}`}
-    >
+    <div className="border-b border-border/50 last:border-b-0" data-testid={`signal-item-${item.id}`}>
       <div
-        className="p-3 cursor-pointer flex items-start gap-3"
+        className="p-3 cursor-pointer flex items-start gap-3 hover:bg-muted/5 transition-colors"
         onClick={() => setExpanded(!expanded)}
       >
-        <div className="shrink-0 mt-0.5 flex flex-col items-center gap-1">
-          {item.signal_strength && (
-            <Badge variant="outline" className={`rounded-none text-[8px] px-1 py-0 ${signal}`}>
-              {item.signal_strength}
-            </Badge>
-          )}
-          <span className="text-[9px] font-mono text-muted-foreground">{item.priority_score || 0}</span>
-        </div>
+        <span className="text-xs font-mono text-muted-foreground/50 w-5 shrink-0 mt-0.5">{index}.</span>
         <div className="flex-1 min-w-0">
           <p className="text-sm font-medium leading-snug">{item.title}</p>
-          <p className="text-xs text-muted-foreground mt-1 line-clamp-1">
-            {item.ai_summary || item.why_it_matters || ""}
-          </p>
-          <div className="flex items-center gap-2 mt-1.5 flex-wrap">
-            {item.signal_bucket && (
-              <Badge variant="outline" className="rounded-none text-[8px] px-1.5 py-0 text-cyan-400 border-cyan-500/30">
-                {BUCKET_LABELS[item.signal_bucket] || item.signal_bucket}
-              </Badge>
-            )}
+          {!expanded && item.ai_summary && (
+            <p className="text-xs text-muted-foreground mt-1 line-clamp-1">{item.ai_summary}</p>
+          )}
+          <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
             {item.severity && (
               <Badge variant="outline" className={`rounded-none text-[8px] px-1.5 py-0 ${
                 item.severity === "critical" ? "text-red-400 border-red-500/30" :
@@ -78,26 +58,30 @@ function SignalItem({ item }) {
                 {item.severity.toUpperCase()}
               </Badge>
             )}
-            {item.threat_trajectory && item.threat_trajectory !== "INDETERMINATE" && (
+            {item.threat_trajectory && item.threat_trajectory !== "INDETERMINATE" && item.threat_trajectory !== "STABLE" && (
               <Badge variant="outline" className={`rounded-none text-[8px] px-1.5 py-0 ${
                 item.threat_trajectory === "ESCALATING" ? "text-red-400 border-red-500/30" :
                 item.threat_trajectory === "DE-ESCALATING" ? "text-emerald-400 border-emerald-500/30" :
+                item.threat_trajectory === "NEW_THREAT" ? "text-amber-400 border-amber-500/30" :
                 "text-muted-foreground border-border"
               }`}>
                 {item.threat_trajectory}
               </Badge>
             )}
-            <span className="text-[9px] font-mono text-muted-foreground ml-auto">
-              {item.source}
-            </span>
+            {item.feedback_boosted && (
+              <Badge variant="outline" className="rounded-none text-[8px] px-1 py-0 text-primary border-primary/30">
+                ANALYST BOOSTED
+              </Badge>
+            )}
+            <span className="text-[9px] font-mono text-muted-foreground/60 ml-auto">{item.source}</span>
           </div>
         </div>
-        {expanded ? <ChevronUp size={14} className="text-muted-foreground shrink-0" /> :
-                    <ChevronDown size={14} className="text-muted-foreground shrink-0" />}
+        {expanded ? <ChevronUp size={12} className="text-muted-foreground shrink-0 mt-1" /> :
+                    <ChevronDown size={12} className="text-muted-foreground shrink-0 mt-1" />}
       </div>
 
       {expanded && (
-        <div className="px-3 pb-3 pt-0 border-t border-border space-y-2">
+        <div className="px-3 pb-3 pl-11 space-y-2 border-t border-border/30">
           {item.ai_summary && (
             <div>
               <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-mono">What happened</p>
@@ -117,14 +101,9 @@ function SignalItem({ item }) {
             </div>
           )}
           <div className="flex items-center gap-2 flex-wrap">
-            {(item.actors || []).map((a) => (
+            {(item.actors || []).slice(0, 5).map((a) => (
               <Badge key={a} variant="outline" className="rounded-none text-[8px] px-1 py-0">{a}</Badge>
             ))}
-            {item.india_relevance_score > 0 && (
-              <Badge variant="outline" className="rounded-none text-[8px] px-1.5 py-0 text-primary border-primary/30">
-                IRS: {item.india_relevance_score}/20
-              </Badge>
-            )}
           </div>
           {item.source_url && (
             <a
@@ -142,16 +121,44 @@ function SignalItem({ item }) {
   );
 }
 
-function CountrySection({ title, flag, items, posture, isLoading }) {
+function CategoryGroup({ group, startIndex }) {
+  const CatIcon = CATEGORY_ICONS[group.category] || Globe;
+  const color = CATEGORY_COLORS[group.category] || CATEGORY_COLORS.other;
+  let idx = startIndex;
+
+  return (
+    <div className="mb-3" data-testid={`category-${group.category}`}>
+      <div className="flex items-center gap-2 px-3 py-1.5 bg-muted/5 border-b border-border">
+        <CatIcon size={13} className={color.split(" ")[0]} />
+        <span className="text-[10px] uppercase tracking-wider font-mono font-semibold">{group.label}</span>
+        <Badge variant="outline" className={`rounded-none text-[8px] px-1 py-0 ${color}`}>
+          {group.items.length}
+        </Badge>
+      </div>
+      {group.items.map((item) => {
+        idx++;
+        return <SignalItem key={item.id} item={item} index={idx} />;
+      })}
+    </div>
+  );
+}
+
+function CountrySection({ title, flag, data, isLoading }) {
+  const items = data?.items || [];
+  const grouped = data?.grouped || [];
+  const posture = data?.posture || "stable";
   const postureConf = POSTURE_CONFIG[posture] || POSTURE_CONFIG.stable;
   const PostureIcon = postureConf.icon;
+
+  // Compute running index for numbered items
+  let runningIndex = 0;
 
   return (
     <Card className="border border-border rounded-none bg-card" data-testid={`section-${title.toLowerCase()}`}>
       <CardHeader className="py-3 px-4 border-b border-border flex flex-row items-center justify-between">
         <CardTitle className="text-sm uppercase tracking-wider font-['Barlow_Condensed'] font-semibold flex items-center gap-2">
           <span className="text-lg">{flag}</span>
-          {title} Intelligence
+          {title}
           <Badge variant="outline" className="rounded-none text-[10px] px-1.5 py-0 ml-1">
             {items.length}
           </Badge>
@@ -166,15 +173,23 @@ function CountrySection({ title, flag, items, posture, isLoading }) {
           <div className="flex items-center justify-center p-8">
             <Loader2 className="animate-spin text-muted-foreground" size={20} />
           </div>
+        ) : grouped.length > 0 ? (
+          <div className="max-h-[700px] overflow-y-auto">
+            {grouped.map((group) => {
+              const startIdx = runningIndex;
+              runningIndex += group.items.length;
+              return <CategoryGroup key={group.category} group={group} startIndex={startIdx} />;
+            })}
+          </div>
         ) : items.length > 0 ? (
-          <div className="divide-y divide-border max-h-[600px] overflow-y-auto">
-            {items.map((item) => (
-              <SignalItem key={item.id} item={item} />
+          <div className="max-h-[700px] overflow-y-auto">
+            {items.map((item, i) => (
+              <SignalItem key={item.id} item={item} index={i + 1} />
             ))}
           </div>
         ) : (
           <p className="text-sm text-muted-foreground p-4">
-            No cross-border signals detected for this country in the current retention window.
+            No intelligence signals detected for this country in the current retention window.
           </p>
         )}
       </CardContent>
@@ -193,6 +208,7 @@ export default function CrossBorderWatch({ api }) {
       try {
         const params = new URLSearchParams();
         if (signalFilter) params.set("min_signal", signalFilter);
+        params.set("limit", "50");
         const res = await axios.get(`${api}/cross-border/watch?${params.toString()}`);
         setData(res.data);
       } catch (e) {
@@ -203,8 +219,10 @@ export default function CrossBorderWatch({ api }) {
     fetchData();
   }, [api, signalFilter]);
 
+  const today = new Date().toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }).toUpperCase();
+
   return (
-    <div className="space-y-6" data-testid="cross-border-watch">
+    <div className="space-y-5" data-testid="cross-border-watch">
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
@@ -212,7 +230,7 @@ export default function CrossBorderWatch({ api }) {
             Cross-Border Watch
           </h1>
           <p className="text-xs text-muted-foreground font-mono uppercase tracking-wider mt-0.5">
-            Bangladesh & Myanmar — India-Facing Intelligence
+            Bangladesh & Myanmar — India-Facing Intelligence — {today}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -250,7 +268,7 @@ export default function CrossBorderWatch({ api }) {
                   {data.watchpoints.map((wp, i) => (
                     <li key={i} className="flex items-start gap-2 text-xs">
                       <span className="text-amber-400 shrink-0 mt-0.5">-</span>
-                      <span>{BUCKET_LABELS[wp] || wp}</span>
+                      <span>{wp}</span>
                     </li>
                   ))}
                 </ul>
@@ -268,7 +286,7 @@ export default function CrossBorderWatch({ api }) {
                 <div className="flex flex-wrap gap-1.5" data-testid="signal-distribution">
                   {Object.entries(data.signal_distribution).map(([bucket, count]) => (
                     <Badge key={bucket} variant="outline" className="rounded-none text-[9px] px-1.5 py-0 text-cyan-400 border-cyan-500/30">
-                      {BUCKET_LABELS[bucket] || bucket} ({count})
+                      {bucket.replace(/_/g, " ")} ({count})
                     </Badge>
                   ))}
                 </div>
@@ -282,16 +300,14 @@ export default function CrossBorderWatch({ api }) {
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
         <CountrySection
           title="Bangladesh"
-          flag="🇧🇩"
-          items={data?.bangladesh?.items || []}
-          posture={data?.bangladesh?.posture || "stable"}
+          flag="&#x1F1E7;&#x1F1E9;"
+          data={data?.bangladesh}
           isLoading={loading}
         />
         <CountrySection
           title="Myanmar"
-          flag="🇲🇲"
-          items={data?.myanmar?.items || []}
-          posture={data?.myanmar?.posture || "stable"}
+          flag="&#x1F1F2;&#x1F1F2;"
+          data={data?.myanmar}
           isLoading={loading}
         />
       </div>
