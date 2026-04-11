@@ -958,8 +958,11 @@ async def generate_brief_for_date(date: str):
         logger.warning(f"Pattern detection failed during brief gen: {e}")
         detected_patterns = await patterns_col.find({}, {"_id": 0}).to_list(50)
 
-    # 6. UPLOADED DOCUMENT INSIGHTS
-    uploaded_docs = await uploads_col.find({"processed": True}, {"_id": 0}).sort("uploaded_at", -1).limit(10).to_list(10)
+    # 6. UPLOADED DOCUMENT INSIGHTS (only for current brief period)
+    uploaded_docs = await uploads_col.find(
+        {"processed": True, "uploaded_at": {"$gte": cutoff_utc}},
+        {"_id": 0}
+    ).sort("uploaded_at", -1).limit(10).to_list(10)
 
     # 7. GENERATE AI BRIEF
     items_for_ai = deduped_critical + diverse_ner_items[:20]
