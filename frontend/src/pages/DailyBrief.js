@@ -308,23 +308,6 @@ export default function DailyBrief({ api }) {
             </Card>
           )}
 
-          {/* International News Section */}
-          {brief.international_news && brief.international_news.length > 0 && (
-            <Card className="border border-border rounded-none bg-card">
-              <CardHeader className="py-3 px-4 border-b border-border">
-                <CardTitle className="text-sm uppercase tracking-wider font-['Barlow_Condensed'] font-semibold flex items-center gap-2">
-                  <Globe size={16} className="text-green-400" />
-                  International News ({brief.international_news.length})
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="p-4" data-testid="international-news">
-                <ul className="space-y-3">
-                  {brief.international_news.map((news, i) => renderNewsItem(news, i))}
-                </ul>
-              </CardContent>
-            </Card>
-          )}
-
           {/* Cross-Border Intelligence */}
           {((brief.cross_border_bangladesh && brief.cross_border_bangladesh.length > 0) ||
             (brief.cross_border_myanmar && brief.cross_border_myanmar.length > 0)) && (
@@ -398,6 +381,23 @@ export default function DailyBrief({ api }) {
                     </ul>
                   </div>
                 )}
+              </CardContent>
+            </Card>
+          )}
+
+          {/* International News Section */}
+          {brief.international_news && brief.international_news.length > 0 && (
+            <Card className="border border-border rounded-none bg-card">
+              <CardHeader className="py-3 px-4 border-b border-border">
+                <CardTitle className="text-sm uppercase tracking-wider font-['Barlow_Condensed'] font-semibold flex items-center gap-2">
+                  <Globe size={16} className="text-green-400" />
+                  International News ({brief.international_news.length})
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="p-4" data-testid="international-news">
+                <ul className="space-y-3">
+                  {brief.international_news.map((news, i) => renderNewsItem(news, i))}
+                </ul>
               </CardContent>
             </Card>
           )}

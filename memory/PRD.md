@@ -105,6 +105,14 @@ Build a full-stack AI-powered web application for intelligence aggregation, anal
 - [x] Initial batch fusion: 30 clusters from 72 items, 8.3% dedup ratio, feed reduced from 506 to 464 visible items
 - [x] 100% test pass rate (iteration_25: 19 backend + full frontend verification, plus P0 regression passing)
 
+### Phase 18: Feed Quality, Training UX, Cross-Border Brief (2026-04-11)
+- [x] Intelligence Feed: Added `severity != low` and `tags != not_relevant/unprocessed` DB filters — feed reduced from 464 to 82 high-value items
+- [x] Training Queue: Live sequential clearing during training — polls queue every 2s alongside progress, completed items disappear in real-time
+- [x] Daily Brief: Added Cross-Border Intelligence section (Bangladesh & Myanmar) with category grouping (Diplomatic/Defence/Economics/Internal Politics)
+- [x] Daily Brief PDF: Cross-Border section renders with per-country category headers, severity markers, summaries and sources
+- [x] Frontend: Cross-Border section positioned before International News per user request
+- [x] 100% test pass rate (iteration_26: 18 backend + full frontend verification)
+
 ## Key DB Collections
 - `intelligence_items`: Articles with AI classification, embeddings, feedback_avg_rating, feedback_total_ratings
 - `intelligence_feedback`: {id, intelligence_id, device_id, rating (1-6), timestamp, derived_features}
