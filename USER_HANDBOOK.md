@@ -105,7 +105,7 @@ The full searchable, filterable list of all classified intelligence items.
 ### Item Cards
 Each intelligence item shows:
 - **Relevance Rating** (top of card): 1-6 scale for analyst feedback (see Section 11)
-- **Title** with severity badge (color-coded: red=Critical, orange=High, yellow=Medium, green=Low)
+- **Title** with severity badge (color-coded: red=Critical, orange=High, yellow=Medium)
 - **Priority Score** (0-100): AI-assigned importance score. Higher = more urgent
 - **Confidence Score** (0-100): How confident the AI is in its classification
 - **Threat Trajectory**: ESCALATING / STABLE / DE-ESCALATING / NEW_THREAT
@@ -116,6 +116,23 @@ Each intelligence item shows:
 - **Tags**: Classification labels (Military Movement, Border Security, etc.)
 - **Actors**: Named organizations/groups involved
 - **Source**: Original news source with link
+- **Fused Sources Badge** (if applicable): Shows "X sources" when multiple outlets cover the same story. Click to expand and see all covering sources with links.
+
+### Feed Quality Filter
+The Intelligence Feed automatically excludes:
+- **LOW severity** items — noise and low-value articles are hidden
+- **Unprocessed** items — articles still awaiting AI classification are kept in the background
+- **Duplicate articles** — when multiple sources cover the same story, only the best summary is shown (see Multi-Article Fusion below)
+
+Only fully processed, medium-to-critical severity, deduplicated intelligence items appear in the feed.
+
+### Multi-Article Fusion
+When multiple news sources cover the same event, the system automatically detects and clusters them:
+- A blue **"X sources"** badge appears on the card showing how many outlets covered the story
+- Click the badge to expand a panel listing every source with the original article title and clickable link
+- The system picks the **longest/best summary** as the primary display and cites all others
+- Fusion runs both **in real-time** (as articles arrive) and as a **scheduled batch** every 30 minutes
+- Detection uses title word overlap, entity matching (shared locations, actors, events), and vector embedding similarity
 
 ### Rating Banner
 At the top of the Intelligence Feed, a guide banner explains: "Rate each article 1 (Entirely Irrelevant) to 6 (Extremely Relevant) to train the system." This feedback directly shapes how the AI prioritizes future intelligence.
@@ -128,15 +145,27 @@ At the top of the Intelligence Feed, a guide banner explains: "Rate each article
 
 ## 4. Cross-Border Intelligence
 
-A filtered view of the Intelligence Feed showing ONLY items flagged as cross-border activity. These are items involving:
-- India-Bangladesh border incidents
-- India-Myanmar border activity
-- China-India border tensions (Arunachal)
-- Pakistan-linked activity in NER
-- Rohingya movement tracking
-- Myanmar junta spillover effects
+A dedicated module for monitoring intelligence involving India's borders with Bangladesh and Myanmar. The view is **split into two sections** — Bangladesh and Myanmar — with strict quality filters applied.
 
-This view uses the same filters and search capabilities as the main Intelligence Feed.
+### Geographic Split
+- **Bangladesh**: Items involving India-Bangladesh border incidents, Rohingya movement, BGP/BGB activity, Dhaka politics with NER impact, economic relations
+- **Myanmar**: Items involving India-Myanmar border activity, Tatmadaw operations, Chin/Sagaing/Rakhine spillover, NSCN-K cross-border operations
+
+### Category Classification
+Each item is auto-categorized into one of four intelligence domains:
+- **Diplomatic**: Bilateral relations, diplomatic outreach, treaties, high-level engagements
+- **Defence**: Military operations, border force activity, arms seizures, armed encounters
+- **Internal Politics**: Domestic political events with cross-border implications (elections, arrests, protests)
+- **Economics**: Trade, smuggling, economic agreements, sanctions impact
+
+### Quality Filters
+The Cross-Border view enforces strict quality standards:
+- **No LOW severity items** — only Medium, High, and Critical intelligence appears
+- **No untranslated content** — items with Bengali, Assamese, or Hindi script that failed translation are hidden
+- **Processed only** — items awaiting AI classification are excluded
+
+### Feedback Integration
+Analyst feedback ratings on cross-border items are factored into the display scores. Items with high analyst ratings are prioritized within their section.
 
 ---
 
@@ -148,11 +177,12 @@ Automated daily intelligence summary generated at 0600 IST each day.
 AI-generated strategic overview summarizing the day's most significant developments, identifying trends, and highlighting items requiring immediate attention.
 
 ### Sections
-- **NER Key Developments**: Top intelligence items from the Northeast, each with full analysis (Why It Matters, Early Warning, Source, Actors)
+- **NER Key Developments**: Top intelligence items strictly from Northeast Indian states (Assam, Manipur, Mizoram, Meghalaya, Nagaland, Tripura, Arunachal Pradesh, Sikkim). No international or non-NER items appear here
+- **Cross-Border Intelligence**: Categorized Bangladesh and Myanmar news (Diplomatic, Defence, Internal Politics, Economics) — only items with India-facing relevance are included
 - **National News**: Relevant national-level developments affecting NER security
-- **International News**: Cross-border and strategic international items
+- **International News**: Strategic international items
 - **Pattern Insights**: Detected escalation patterns from the Pattern Detection Engine
-- **Document Insights**: Analysis from any uploaded documents
+- **Document Insights**: Analysis from documents uploaded during the current brief period only. Older document analyses do not carry over to new briefs
 
 ### Actions
 - **REGENERATE BRIEF**: Force regenerate today's brief with the latest data. The brief runs automatically at 0600 IST, but you can manually trigger it anytime
@@ -359,6 +389,8 @@ Click this button to start the training pipeline. The system will:
 
 A progress tracker shows real-time status: items processed, current item title, and percentage complete.
 
+**Live Queue Clearing**: As each item is processed, it automatically disappears from the Training Queue in real-time. You can watch items clear sequentially without needing to refresh the page.
+
 ### Analyst Preferences (Feedback)
 
 Aggregated view of what highly-rated content has in common:
@@ -513,6 +545,7 @@ The AI operates as a Senior Military Intelligence Analyst and performs:
 | AI Retry | Every 15 min | Reprocess any items that failed AI classification |
 | Daily Brief | 0600 IST daily | Auto-generate the daily intelligence brief |
 | Embedding Backfill | Every 6 hours | Generate vector embeddings for semantic search |
+| Article Fusion | Every 30 min | Detect and cluster duplicate articles across sources |
 
 ---
 
@@ -522,6 +555,7 @@ The AI operates as a Senior Military Intelligence Analyst and performs:
 |------|-----------|
 | **ACK** | Acknowledge — mark an alert as reviewed |
 | **Activity Log** | Session-level record of training runs and feedback sessions with AI-generated impact summaries |
+| **Cluster / Fusion** | Group of similar articles from multiple sources merged into a single intelligence item |
 | **Cross-border** | Activity involving more than one country |
 | **Device Fingerprint** | Unique identifier generated per browser/device to prevent duplicate ratings |
 | **Effectiveness Score** | Percentage (0-100) measuring alignment between AI classifications and analyst feedback ratings |
@@ -545,5 +579,5 @@ The AI operates as a Senior Military Intelligence Analyst and performs:
 
 ---
 
-*Rhino Drishti v4.0 — Elite OSINT Intelligence Platform with Alpha Training System*
+*Rhino Drishti v5.0 — Elite OSINT Intelligence Platform with Multi-Source Fusion*
 *Handbook updated: April 2026*
