@@ -112,6 +112,8 @@ class DailyBrief(BaseModel):
     key_developments: List[Dict] = []
     state_highlights: Dict[str, str] = {}
     cross_border_insights: str = ""
+    cross_border_bangladesh: List[Dict] = []
+    cross_border_myanmar: List[Dict] = []
     analyst_summary: str = ""
     national_news: List[Dict] = []
     international_news: List[Dict] = []

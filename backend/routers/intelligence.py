@@ -99,7 +99,12 @@ async def get_intelligence(
     limit: int = Query(20, ge=1, le=100),
     translate: bool = Query(True)
 ):
-    query = {"processed": True, "is_cluster_primary": {"$ne": False}}
+    query = {
+        "processed": True,
+        "is_cluster_primary": {"$ne": False},
+        "severity": {"$nin": ["low", "LOW"]},
+        "tags": {"$nin": ["not_relevant", "unprocessed"]},
+    }
 
     if not date_from:
         settings = await db.app_settings.find_one({"key": "retention_days"}, {"_id": 0})

@@ -71,14 +71,19 @@ export default function TrainingSummary({ api }) {
     }
   }, [logPage]);
 
-  // Poll training progress
+  // Poll training progress + queue refresh
   useEffect(() => {
     if (!training) return;
     pollRef.current = setInterval(async () => {
       try {
-        const res = await axios.get(`${api}/training/progress`);
-        setProgress(res.data);
-        if (!res.data.running && res.data.total > 0) {
+        const [progRes, queueRes] = await Promise.all([
+          axios.get(`${api}/training/progress`),
+          axios.get(`${api}/training/queue`),
+        ]);
+        setProgress(progRes.data);
+        // Update queue live — completed items will disappear from pending view
+        setQueue(queueRes.data.items || []);
+        if (!progRes.data.running && progRes.data.total > 0) {
           setTraining(false);
           clearInterval(pollRef.current);
           toast.success("Training complete!");
@@ -146,6 +151,10 @@ export default function TrainingSummary({ api }) {
   const pendingCount = queue.filter((i) => ["pending", "ready"].includes(i.status)).length;
   const completedCount = queue.filter((i) => i.status === "completed").length;
   const pct = progress && progress.total > 0 ? Math.round((progress.current / progress.total) * 100) : 0;
+  // During training, only show non-completed items so they clear sequentially
+  const displayQueue = training
+    ? queue.filter((i) => i.status !== "completed")
+    : queue;
 
   if (loading) {
     return (
@@ -444,15 +453,17 @@ export default function TrainingSummary({ api }) {
           <CardHeader className="py-3 px-4 border-b border-border">
             <CardTitle className="text-sm uppercase tracking-wider font-['Barlow_Condensed'] font-semibold flex items-center gap-2">
               <FileText size={16} className="text-blue-400" />
-              Training Queue ({queue.length})
+              Training Queue ({displayQueue.length}{training && completedCount > 0 ? ` / ${queue.length} total` : ""})
             </CardTitle>
           </CardHeader>
           <CardContent className="p-0">
-            {queue.length === 0 ? (
-              <p className="text-sm text-muted-foreground p-4">No items in training queue. Add URLs or upload files above.</p>
+            {displayQueue.length === 0 ? (
+              <p className="text-sm text-muted-foreground p-4">
+                {training ? "All items processed!" : "No items in training queue. Add URLs or upload files above."}
+              </p>
             ) : (
               <div className="max-h-[420px] overflow-y-auto divide-y divide-border">
-                {queue.map((item) => (
+                {displayQueue.map((item) => (
                   <div key={item.id} className="flex items-start gap-3 p-3 hover:bg-muted/5" data-testid={`queue-item-${item.id}`}>
                     {item.type === "url" ? (
                       <Globe size={14} className="text-blue-400 shrink-0 mt-0.5" />

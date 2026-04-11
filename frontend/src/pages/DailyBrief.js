@@ -325,6 +325,83 @@ export default function DailyBrief({ api }) {
             </Card>
           )}
 
+          {/* Cross-Border Intelligence */}
+          {((brief.cross_border_bangladesh && brief.cross_border_bangladesh.length > 0) ||
+            (brief.cross_border_myanmar && brief.cross_border_myanmar.length > 0)) && (
+            <Card className="border border-border rounded-none bg-card border-l-4 border-l-red-500" data-testid="cross-border-section">
+              <CardHeader className="py-3 px-4 border-b border-border">
+                <CardTitle className="text-sm uppercase tracking-wider font-['Barlow_Condensed'] font-semibold flex items-center gap-2">
+                  <Shield size={16} className="text-red-400" />
+                  Cross-Border Intelligence ({(brief.cross_border_bangladesh?.length || 0) + (brief.cross_border_myanmar?.length || 0)})
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="p-4 space-y-4" data-testid="cross-border-content">
+                {brief.cross_border_bangladesh && brief.cross_border_bangladesh.length > 0 && (
+                  <div>
+                    <h3 className="text-xs uppercase tracking-widest font-bold text-amber-400 mb-2 font-mono">Bangladesh ({brief.cross_border_bangladesh.length})</h3>
+                    <ul className="space-y-3">
+                      {brief.cross_border_bangladesh.map((item, i) => (
+                        <li key={i} className="border-b border-border/50 pb-2 last:border-0 last:pb-0">
+                          <div className="flex items-start gap-2">
+                            <span className="text-muted-foreground font-mono text-xs mt-0.5">{String(i + 1).padStart(2, '0')}.</span>
+                            <div className="flex-1">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <p className="text-sm font-medium">{safeStr(item.title)}</p>
+                                {item.category && (
+                                  <Badge className="rounded-none text-[9px] px-1 py-0 border bg-blue-500/20 text-blue-300 border-blue-500/30">{item.category}</Badge>
+                                )}
+                                {item.severity && item.severity !== 'medium' && (
+                                  <Badge className={`rounded-none text-[9px] px-1 py-0 border ${
+                                    item.severity === 'critical' ? 'bg-red-500/20 text-red-400 border-red-500/30' :
+                                    item.severity === 'high' ? 'bg-orange-500/20 text-orange-400 border-orange-500/30' :
+                                    'bg-muted text-muted-foreground border-border'
+                                  }`}>{item.severity?.toUpperCase()}</Badge>
+                                )}
+                              </div>
+                              {item.summary && <p className="text-xs text-muted-foreground mt-1 leading-relaxed">{safeStr(item.summary)}</p>}
+                              {item.source && <p className="text-[10px] text-muted-foreground/60 mt-1 font-mono">Source: {item.source}</p>}
+                            </div>
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {brief.cross_border_myanmar && brief.cross_border_myanmar.length > 0 && (
+                  <div>
+                    <h3 className="text-xs uppercase tracking-widest font-bold text-amber-400 mb-2 font-mono">Myanmar ({brief.cross_border_myanmar.length})</h3>
+                    <ul className="space-y-3">
+                      {brief.cross_border_myanmar.map((item, i) => (
+                        <li key={i} className="border-b border-border/50 pb-2 last:border-0 last:pb-0">
+                          <div className="flex items-start gap-2">
+                            <span className="text-muted-foreground font-mono text-xs mt-0.5">{String(i + 1).padStart(2, '0')}.</span>
+                            <div className="flex-1">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <p className="text-sm font-medium">{safeStr(item.title)}</p>
+                                {item.category && (
+                                  <Badge className="rounded-none text-[9px] px-1 py-0 border bg-blue-500/20 text-blue-300 border-blue-500/30">{item.category}</Badge>
+                                )}
+                                {item.severity && item.severity !== 'medium' && (
+                                  <Badge className={`rounded-none text-[9px] px-1 py-0 border ${
+                                    item.severity === 'critical' ? 'bg-red-500/20 text-red-400 border-red-500/30' :
+                                    item.severity === 'high' ? 'bg-orange-500/20 text-orange-400 border-orange-500/30' :
+                                    'bg-muted text-muted-foreground border-border'
+                                  }`}>{item.severity?.toUpperCase()}</Badge>
+                                )}
+                              </div>
+                              {item.summary && <p className="text-xs text-muted-foreground mt-1 leading-relaxed">{safeStr(item.summary)}</p>}
+                              {item.source && <p className="text-[10px] text-muted-foreground/60 mt-1 font-mono">Source: {item.source}</p>}
+                            </div>
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
           {/* Pattern Insights / Escalation Warnings */}
           {brief.pattern_insights && brief.pattern_insights.length > 0 && (
             <Card className="border border-border rounded-none bg-card border-l-4 border-l-orange-500">

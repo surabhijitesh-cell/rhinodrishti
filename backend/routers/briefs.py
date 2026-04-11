@@ -519,6 +519,61 @@ def generate_brief_pdf(brief: dict, date: str, total: int, critical: int, high: 
         pdf.body_text('No key developments recorded for this period.')
     pdf.ln(2)
 
+    # CROSS-BORDER INTELLIGENCE
+    bd_items = brief.get('cross_border_bangladesh', [])
+    mm_items = brief.get('cross_border_myanmar', [])
+    if bd_items or mm_items:
+        pdf.section_title("CROSS-BORDER INTELLIGENCE")
+        pdf.ln(1)
+
+        def _render_cb_section(country_name, items_list):
+            if not items_list:
+                return
+            if pdf.get_y() > 250:
+                pdf.add_page()
+            pdf.set_font('Helvetica', 'B', 11)
+            pdf.set_text_color(30, 60, 40)
+            pdf.cell(0, 6, country_name, new_x="LMARGIN", new_y="NEXT")
+            pdf.ln(1)
+            by_cat = {}
+            for item in items_list:
+                cat = item.get('category', 'Other')
+                by_cat.setdefault(cat, []).append(item)
+            for cat_name, cat_items in by_cat.items():
+                pdf.set_font('Helvetica', 'I', 9)
+                pdf.set_text_color(80, 80, 80)
+                cat_clean = cat_name.encode('latin-1', 'replace').decode('latin-1')
+                pdf.cell(0, 5, f"  {cat_clean}", new_x="LMARGIN", new_y="NEXT")
+                pdf.ln(0.5)
+                for idx, item in enumerate(cat_items, 1):
+                    if pdf.get_y() > 260:
+                        pdf.add_page()
+                    severity = (item.get('severity', '') or '').upper()
+                    sev_marker = f"[{severity}] " if severity and severity != "MEDIUM" else ""
+                    raw_title = item.get('title', '')
+                    title_text = f"  {idx}. {sev_marker}{raw_title}"
+                    title_clean = title_text.encode('latin-1', 'replace').decode('latin-1')[:150]
+                    pdf.set_font('Helvetica', 'B', 9)
+                    pdf.set_text_color(40, 60, 80)
+                    pdf.multi_cell(0, 4.5, title_clean, new_x="LMARGIN", new_y="NEXT")
+                    summary = item.get('summary', '')
+                    if summary:
+                        pdf.set_font('Helvetica', '', 8)
+                        pdf.set_text_color(40, 40, 40)
+                        s_clean = summary[:300].encode('latin-1', 'replace').decode('latin-1')
+                        pdf.multi_cell(0, 4, f"     {s_clean}", new_x="LMARGIN", new_y="NEXT")
+                    source = item.get('source', '')
+                    if source:
+                        pdf.set_font('Helvetica', 'I', 7)
+                        pdf.set_text_color(100, 100, 100)
+                        pdf.cell(0, 3.5, f"     Source: {source}", new_x="LMARGIN", new_y="NEXT")
+                    pdf.ln(1)
+            pdf.ln(1)
+
+        _render_cb_section("BANGLADESH", bd_items)
+        _render_cb_section("MYANMAR", mm_items)
+        pdf.ln(2)
+
     # UPLOADED DOCUMENT INSIGHTS
     ner_keywords = ['assam', 'meghalaya', 'mizoram', 'manipur', 'arunachal', 'tripura', 'nagaland',
                     'northeast', 'ner', 'nscn', 'ulfa', 'pla', 'rpf', 'myanmar', 'border',
@@ -982,6 +1037,70 @@ async def generate_brief_for_date(date: str):
         for item in diverse_intl_items
         if item.get("id") not in added_ids
     ]
+
+    # 10.5 CROSS-BORDER INTELLIGENCE (Bangladesh & Myanmar)
+    from routers.cross_border import _auto_categorize, CATEGORY_LABELS
+    cb_cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+    cb_query = {
+        "processed": True,
+        "ai_summary": {"$exists": True, "$ne": ""},
+        "severity": {"$nin": ["low", "LOW"]},
+        "published_at": {"$gte": cb_cutoff},
+        "$or": [
+            {"is_cross_border": True},
+            {"countries_involved": {"$elemMatch": {"$in": ["Bangladesh", "Myanmar"]}}},
+            {"state": {"$in": ["Bangladesh", "Myanmar"]}},
+        ]
+    }
+    cb_items = await intelligence_col.find(
+        cb_query, {"_id": 0}
+    ).sort("priority_score", -1).limit(80).to_list(80)
+
+    BD_KW = {"bangladesh", "dhaka", "bgb", "rohingya", "cox's bazar", "chittagong", "sylhet", "awami league", "bnp", "hasina", "yunus"}
+    MM_KW = {"myanmar", "burma", "tatmadaw", "chin state", "sagaing", "rakhine", "kachin", "shan state", "tamu", "nscn", "junta", "min aung hlaing"}
+
+    bd_brief_items = []
+    mm_brief_items = []
+    for item in cb_items:
+        if not item.get("ai_summary"):
+            continue
+        if has_non_latin_chars(item.get("title", "") or ""):
+            continue
+        state_val = (item.get("state", "") or "").lower()
+        text_all = ((item.get("title", "") or "") + " " + (item.get("ai_summary", "") or "")).lower()
+        cat = _auto_categorize(item)
+        cat_label = CATEGORY_LABELS.get(cat, cat.replace("_", " ").title() if cat else "Other")
+        brief_item = {**build_brief_item(item), "category": cat_label}
+
+        if state_val == "bangladesh" or any(kw in text_all for kw in BD_KW):
+            bd_brief_items.append(brief_item)
+        elif state_val == "myanmar" or any(kw in text_all for kw in MM_KW):
+            mm_brief_items.append(brief_item)
+
+    # Deduplicate by title within each section
+    def _dedup_cb(items):
+        seen = []
+        result = []
+        for item in items:
+            norm = normalize_title(item.get("title", ""))
+            if not any(title_similarity(norm, s) > 0.5 for s in seen):
+                result.append(item)
+                seen.append(norm)
+        return result
+
+    def title_similarity(a, b):
+        wa, wb = set(a.split()), set(b.split())
+        if not wa or not wb:
+            return 0
+        return len(wa & wb) / max(len(wa), len(wb))
+
+    bd_brief_items = _dedup_cb(bd_brief_items)[:15]
+    mm_brief_items = _dedup_cb(mm_brief_items)[:15]
+
+    brief_data["cross_border_bangladesh"] = bd_brief_items
+    brief_data["cross_border_myanmar"] = mm_brief_items
+
+    logger.info(f"Brief cross-border: {len(bd_brief_items)} Bangladesh, {len(mm_brief_items)} Myanmar")
 
     # 11. PATTERN INSIGHTS AND UPLOADS
     brief_data["pattern_insights"] = [
