@@ -6,37 +6,89 @@
 
 ## Table of Contents
 
-1. [Getting Started](#1-getting-started)
-2. [Dashboard](#2-dashboard)
-3. [Intelligence Feed](#3-intelligence-feed)
-4. [Cross-Border Intelligence](#4-cross-border-intelligence)
-5. [Daily Brief](#5-daily-brief)
-6. [Weekly Trends](#6-weekly-trends)
-7. [Pattern Detection](#7-pattern-detection)
-8. [Knowledge Graph](#8-knowledge-graph)
-9. [Alerts](#9-alerts)
-10. [Keyword Engine](#10-keyword-engine)
-11. [Training & Feedback](#11-training--feedback)
-12. [Document Upload](#12-document-upload)
-13. [Settings](#13-settings)
-14. [How the AI Pipeline Works](#14-how-the-ai-pipeline-works)
-15. [Glossary](#15-glossary)
+1. [Authentication & Access Control](#1-authentication--access-control)
+2. [Getting Started](#2-getting-started)
+3. [Dashboard](#3-dashboard)
+4. [Intelligence Feed](#4-intelligence-feed)
+5. [Cross-Border Intelligence](#5-cross-border-intelligence)
+6. [Daily Brief](#6-daily-brief)
+7. [Weekly Trends](#7-weekly-trends)
+8. [Pattern Detection](#8-pattern-detection)
+9. [Knowledge Graph](#9-knowledge-graph)
+10. [Alerts](#10-alerts)
+11. [Keyword Engine](#11-keyword-engine)
+12. [Training & Feedback](#12-training--feedback)
+13. [Document Upload](#13-document-upload)
+14. [User Management](#14-user-management)
+15. [Settings](#15-settings)
+16. [How the AI Pipeline Works](#16-how-the-ai-pipeline-works)
+17. [Glossary](#17-glossary)
 
 ---
 
-## 1. Getting Started
+## 1. Authentication & Access Control
+
+### Login
+- Open the application URL — you will be presented with the **Login** screen
+- Enter your **username** (or email address) and **password**
+- Click **Authenticate** to log in
+- Use the **eye icon** to toggle password visibility
+- Invalid credentials display an error message — contact your administrator if locked out
+
+### Default Admin Account
+On first deployment, the system automatically creates an admin account:
+- **Username:** `admin`
+- **Password:** `Admin@2026!`
+- **IMPORTANT:** Change this password immediately after first login via User Management
+
+### Roles & Permissions
+
+The platform uses Role-Based Access Control (RBAC) with three roles:
+
+| Feature | Admin | Analyst | Viewer |
+|---------|-------|---------|--------|
+| View Dashboard, Feeds, Briefs | Yes | Yes | Yes |
+| Download/Export PDFs | Yes | Yes | Yes |
+| Submit Feedback Ratings | Yes | Yes | No |
+| Generate Briefs, Train AI | Yes | Yes | No |
+| Upload Documents/URLs | Yes | Yes | No |
+| Run Keyword Refresh | Yes | Yes | No |
+| User Management | Yes | No | No |
+| Settings | Yes | No | No |
+
+**Admin** — Full access to all features including user creation, password resets, and system settings.
+
+**Analyst** — Can access all intelligence features (feeds, briefs, training, uploads, feedback). Cannot access User Management or Settings. Redirects to Intelligence Feed after login.
+
+**Viewer** — Read-only access. Can view all intelligence data, dashboards, and download PDFs. All action buttons (generate, train, upload, rate) are disabled. Redirects to Dashboard after login.
+
+### Session Management
+- Sessions last **24 hours** (JWT token expiry)
+- Token persists across page refreshes (stored in browser)
+- If your session expires, you'll be automatically redirected to the Login page
+- Click the **Logout** button (top-right, next to your name) to end your session
+
+### Sidebar Navigation
+The sidebar menu adapts to your role:
+- **Admin**: All menu items visible (including User Management and Settings)
+- **Analyst**: User Management and Settings are hidden
+- **Viewer**: User Management and Settings are hidden
+
+---
+
+## 2. Getting Started
 
 ### What is Rhino Drishti?
 Rhino Drishti is an AI-powered military intelligence aggregation and analysis platform designed for monitoring India's North Eastern Region (NER), Bangladesh, and Myanmar. It automatically collects news from 36+ RSS sources, runs AI classification using a military intelligence framework, detects patterns, and generates daily intelligence briefs.
 
 ### First-time Access
 - Open the application URL in your browser (Chrome, Firefox, or Edge recommended)
-- No login is required — the system is designed for deployment within secured networks
-- The Dashboard loads automatically as your home screen
+- You will be presented with the **Login** screen — enter your credentials (see Section 1)
+- After login, the Dashboard loads as your home screen (Admin/Viewer) or Intelligence Feed (Analyst)
 - The left sidebar provides navigation to all features
 
 ### Navigation
-The sidebar contains all pages:
+The sidebar contains all pages (visibility depends on your role):
 - **Dashboard** — Overview of intelligence landscape
 - **Intelligence Feed** — Full searchable list of classified items with analyst rating
 - **Cross-Border** — Items specifically involving cross-border activity
@@ -47,13 +99,14 @@ The sidebar contains all pages:
 - **Alerts** — Critical and high-severity items requiring attention
 - **Keyword Engine** — AI-powered keyword management for detection
 - **Training & Feedback** — Rate articles, upload training data, monitor AI learning
-- **Settings** — Configure retention window and feedback limits
 - **Upload Documents** — Upload offline intelligence materials (PDF, Word, Excel)
+- **User Management** — Create/manage users and reset passwords (Admin only)
+- **Settings** — Configure retention window and feedback limits (Admin only)
 - **User Handbook** — This guide
 
 ---
 
-## 2. Dashboard
+## 3. Dashboard
 
 The Dashboard is your command center showing the current intelligence landscape at a glance.
 
@@ -88,7 +141,7 @@ Summary of the most significant detected threat patterns, showing escalation ris
 
 ---
 
-## 3. Intelligence Feed
+## 4. Intelligence Feed
 
 The full searchable, filterable list of all classified intelligence items.
 
@@ -143,7 +196,7 @@ At the top of the Intelligence Feed, a guide banner explains: "Rate each article
 
 ---
 
-## 4. Cross-Border Intelligence
+## 5. Cross-Border Intelligence
 
 A dedicated module for monitoring intelligence involving India's borders with Bangladesh and Myanmar. The view is **split into two sections** — Bangladesh and Myanmar — with strict quality filters applied.
 
@@ -169,7 +222,7 @@ Analyst feedback ratings on cross-border items are factored into the display sco
 
 ---
 
-## 5. Daily Brief
+## 6. Daily Brief
 
 Automated daily intelligence summary generated at 0600 IST each day.
 
@@ -193,7 +246,7 @@ News items included in one day's brief are NOT repeated in subsequent briefs. Ea
 
 ---
 
-## 6. Weekly Trends
+## 7. Weekly Trends
 
 Visual analytics showing intelligence trends over the past 7 days.
 
@@ -207,7 +260,7 @@ Use this page to identify whether the overall threat environment is escalating, 
 
 ---
 
-## 7. Pattern Detection
+## 8. Pattern Detection
 
 The Pattern Detection Engine automatically groups intelligence items to identify recurring threats and escalation corridors.
 
@@ -237,7 +290,7 @@ Each pattern shows:
 
 ---
 
-## 8. Knowledge Graph
+## 9. Knowledge Graph
 
 Entity relationship mapping that cross-references actors, locations, and contexts across the entire intelligence corpus. This surfaces connections that no single article reveals.
 
@@ -275,7 +328,7 @@ Click **Rebuild Graph** to regenerate the knowledge graph from the latest data.
 
 ---
 
-## 9. Alerts
+## 10. Alerts
 
 Filtered view of CRITICAL and HIGH severity items. This is effectively the Intelligence Feed filtered to only show items requiring immediate attention.
 
@@ -284,7 +337,7 @@ Each alert has an **ACK** button. Clicking it marks the alert as reviewed/handle
 
 ---
 
-## 10. Keyword Engine
+## 11. Keyword Engine
 
 The Dynamic Keyword Engine generates and manages intelligence-relevant keywords that drive RSS detection and filtering.
 
@@ -320,7 +373,7 @@ During each RSS fetch cycle, the system uses these keywords for weighted matchin
 
 ---
 
-## 11. Training & Feedback
+## 12. Training & Feedback
 
 The Training & Feedback page is the central hub for shaping the AI's intelligence priorities. It combines analyst feedback ratings, training data uploads, and AI learning analytics into a single operational view.
 
@@ -435,7 +488,7 @@ This means items with high analyst ratings get boosted in the intelligence feed,
 
 ---
 
-## 12. Document Upload
+## 13. Document Upload
 
 Upload offline intelligence materials for AI analysis.
 
@@ -459,7 +512,54 @@ Upload offline intelligence materials for AI analysis.
 
 ---
 
-## 13. Settings
+## 14. User Management
+
+*Admin only — not visible to Analyst or Viewer roles.*
+
+### Accessing User Management
+Click **User Management** in the sidebar (visible to Admin users only).
+
+### User List
+Displays all registered users with:
+- **Username** — login identifier
+- **Name** — display name
+- **Role** — Admin / Analyst / Viewer (color-coded badges)
+- **Status** — Active (green) or Inactive (red). Click to toggle.
+- **Last Login** — timestamp of most recent login
+- **Actions** — Reset password, Delete user
+
+### Creating a New User
+1. Click **Create User** (top-right)
+2. Fill in the form:
+   - **Username** (required) — unique login identifier
+   - **Email** — optional but useful for login flexibility (users can log in with either)
+   - **Full Name** — display name shown in the interface
+   - **Role** — select Admin, Analyst, or Viewer
+   - **Password** (required, min 8 characters)
+3. Use **Generate** button to create a strong 14-character random password
+4. Use **Copy** button to copy the password to clipboard
+5. Click **Create User** to save
+
+**WARNING:** Passwords are shown only once during creation. Copy the password before closing the form.
+
+### Resetting a Password
+1. Click the **Key** icon next to any user in the table
+2. Enter a new password manually, or click **Generate** for a random one
+3. Click **Copy** to save the password to clipboard
+4. Click **Reset** to apply
+5. Share the new password securely with the user
+
+**Passwords cannot be retrieved** — they can only be reset. This is by design for security.
+
+### Deactivating a User
+Click the **Active/Inactive** status text for any user to toggle their access. Deactivated users cannot log in but their account is preserved.
+
+### Deleting a User
+Click the **Trash** icon to permanently delete a user. You cannot delete your own account. This action cannot be undone.
+
+---
+
+## 15. Settings
 
 ### News Retention Window
 Controls how far back the system looks when displaying intelligence items.
@@ -484,7 +584,7 @@ When the limit is reached for an item, the rating widget will indicate that no f
 
 ---
 
-## 14. How the AI Pipeline Works
+## 16. How the AI Pipeline Works
 
 ### Data Flow
 ```
@@ -549,12 +649,14 @@ The AI operates as a Senior Military Intelligence Analyst and performs:
 
 ---
 
-## 15. Glossary
+## 17. Glossary
 
 | Term | Definition |
 |------|-----------|
 | **ACK** | Acknowledge — mark an alert as reviewed |
 | **Activity Log** | Session-level record of training runs and feedback sessions with AI-generated impact summaries |
+| **JWT** | JSON Web Token — authentication token used for session management |
+| **RBAC** | Role-Based Access Control — restricts features based on user role |
 | **Cluster / Fusion** | Group of similar articles from multiple sources merged into a single intelligence item |
 | **Cross-border** | Activity involving more than one country |
 | **Device Fingerprint** | Unique identifier generated per browser/device to prevent duplicate ratings |
@@ -579,5 +681,5 @@ The AI operates as a Senior Military Intelligence Analyst and performs:
 
 ---
 
-*Rhino Drishti v5.0 — Elite OSINT Intelligence Platform with Multi-Source Fusion*
+*Rhino Drishti v6.0 — Elite OSINT Intelligence Platform with Authentication & RBAC*
 *Handbook updated: April 2026*
