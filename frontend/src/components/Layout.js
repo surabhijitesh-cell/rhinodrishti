@@ -1,29 +1,32 @@
 import { useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { useTheme } from "./ThemeProvider";
+import { useAuth } from "../contexts/AuthContext";
 import {
   Shield, LayoutDashboard, Newspaper, FileText, TrendingUp,
   Globe, Bell, ChevronLeft, ChevronRight, Sun, Moon, Search,
-  Activity, Menu, X, Upload, GitBranch, Settings, Network, Key, BookOpen, Brain
+  Activity, Menu, X, Upload, GitBranch, Settings, Network, Key, BookOpen, Brain,
+  LogOut, Users
 } from "lucide-react";
 import { Input } from "../components/ui/input";
 import { Button } from "../components/ui/button";
 import { Badge } from "../components/ui/badge";
 
-const NAV_ITEMS = [
-  { path: "/", label: "Dashboard", icon: LayoutDashboard },
-  { path: "/feed", label: "Intelligence Feed", icon: Newspaper },
-  { path: "/cross-border", label: "Cross-Border", icon: Globe },
-  { path: "/daily-brief", label: "Daily Brief", icon: FileText },
-  { path: "/weekly-trends", label: "Weekly Trends", icon: TrendingUp },
-  { path: "/patterns", label: "Patterns", icon: GitBranch },
-  { path: "/knowledge-graph", label: "Knowledge Graph", icon: Network },
-  { path: "/alerts", label: "Alerts", icon: Bell },
-  { path: "/keywords", label: "Keyword Engine", icon: Key },
-  { path: "/training", label: "Training & Feedback", icon: Brain },
-  { path: "/settings", label: "Settings", icon: Settings },
-  { path: "/upload", label: "Upload Documents", icon: Upload },
-  { path: "/handbook", label: "User Handbook", icon: BookOpen },
+const ALL_NAV_ITEMS = [
+  { path: "/", label: "Dashboard", icon: LayoutDashboard, roles: ["admin", "analyst", "viewer"] },
+  { path: "/feed", label: "Intelligence Feed", icon: Newspaper, roles: ["admin", "analyst", "viewer"] },
+  { path: "/cross-border", label: "Cross-Border", icon: Globe, roles: ["admin", "analyst", "viewer"] },
+  { path: "/daily-brief", label: "Daily Brief", icon: FileText, roles: ["admin", "analyst", "viewer"] },
+  { path: "/weekly-trends", label: "Weekly Trends", icon: TrendingUp, roles: ["admin", "analyst", "viewer"] },
+  { path: "/patterns", label: "Patterns", icon: GitBranch, roles: ["admin", "analyst", "viewer"] },
+  { path: "/knowledge-graph", label: "Knowledge Graph", icon: Network, roles: ["admin", "analyst", "viewer"] },
+  { path: "/alerts", label: "Alerts", icon: Bell, roles: ["admin", "analyst", "viewer"] },
+  { path: "/keywords", label: "Keyword Engine", icon: Key, roles: ["admin", "analyst", "viewer"] },
+  { path: "/training", label: "Training & Feedback", icon: Brain, roles: ["admin", "analyst", "viewer"] },
+  { path: "/upload", label: "Upload Documents", icon: Upload, roles: ["admin", "analyst", "viewer"] },
+  { path: "/user-management", label: "User Management", icon: Users, roles: ["admin"] },
+  { path: "/settings", label: "Settings", icon: Settings, roles: ["admin"] },
+  { path: "/handbook", label: "User Handbook", icon: BookOpen, roles: ["admin", "analyst", "viewer"] },
 ];
 
 export default function Layout({ children, alertCount = 0, onSearch }) {
@@ -32,6 +35,10 @@ export default function Layout({ children, alertCount = 0, onSearch }) {
   const [searchVal, setSearchVal] = useState("");
   const { theme, toggleTheme } = useTheme();
   const location = useLocation();
+  const { user, logout } = useAuth();
+
+  const userRole = user?.role || "viewer";
+  const navItems = ALL_NAV_ITEMS.filter((item) => item.roles.includes(userRole));
 
   const handleSearch = (e) => {
     e.preventDefault();
@@ -40,7 +47,7 @@ export default function Layout({ children, alertCount = 0, onSearch }) {
 
   const SidebarContent = () => (
     <nav className="flex flex-col gap-0 mt-2 px-2" data-testid="sidebar-nav">
-      {NAV_ITEMS.map((item) => {
+      {navItems.map((item) => {
         const Icon = item.icon;
         const isActive = location.pathname === item.path;
         return (
@@ -176,6 +183,26 @@ export default function Layout({ children, alertCount = 0, onSearch }) {
                 )}
               </Button>
             </Link>
+
+            {/* User info + Logout */}
+            {user && (
+              <div className="flex items-center gap-2 ml-1 pl-2 border-l border-border">
+                <div className="hidden sm:block text-right">
+                  <p className="text-xs font-mono leading-tight" data-testid="user-display-name">{user.name || user.username}</p>
+                  <p className="text-[9px] uppercase tracking-widest text-muted-foreground">{user.role}</p>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={logout}
+                  className="text-muted-foreground hover:text-red-400"
+                  title="Logout"
+                  data-testid="logout-btn"
+                >
+                  <LogOut size={16} />
+                </Button>
+              </div>
+            )}
           </div>
         </header>
 

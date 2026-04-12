@@ -3,7 +3,10 @@ import "@/App.css";
 import { BrowserRouter, Routes, Route, useNavigate } from "react-router-dom";
 import axios from "axios";
 import { ThemeProvider } from "./components/ThemeProvider";
+import { AuthProvider, useAuth } from "./contexts/AuthContext";
+import ProtectedRoute from "./components/ProtectedRoute";
 import Layout from "./components/Layout";
+import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
 import IntelligenceFeed from "./pages/IntelligenceFeed";
 import DailyBrief from "./pages/DailyBrief";
@@ -16,6 +19,7 @@ import KeywordEngine from "./pages/KeywordEngine";
 import Handbook from "./pages/Handbook";
 import TrainingSummary from "./pages/TrainingSummary";
 import CrossBorderWatch from "./pages/CrossBorderWatch";
+import UserManagement from "./pages/UserManagement";
 import { Toaster } from "./components/ui/sonner";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
@@ -25,8 +29,10 @@ function AppRoutes() {
   const [alertCount, setAlertCount] = useState(0);
   const [stats, setStats] = useState(null);
   const navigate = useNavigate();
+  const { isAuthenticated } = useAuth();
 
   const fetchStats = useCallback(async () => {
+    if (!isAuthenticated) return;
     try {
       const res = await axios.get(`${API}/dashboard/stats`);
       setStats(res.data);
@@ -34,7 +40,7 @@ function AppRoutes() {
     } catch (e) {
       console.error("Failed to fetch stats:", e);
     }
-  }, []);
+  }, [isAuthenticated]);
 
   useEffect(() => {
     fetchStats();
@@ -49,23 +55,34 @@ function AppRoutes() {
   };
 
   return (
-    <Layout alertCount={alertCount} onSearch={handleSearch}>
-      <Routes>
-        <Route path="/" element={<Dashboard stats={stats} api={API} />} />
-        <Route path="/feed" element={<IntelligenceFeed api={API} />} />
-        <Route path="/cross-border" element={<CrossBorderWatch api={API} />} />
-        <Route path="/daily-brief" element={<DailyBrief api={API} />} />
-        <Route path="/weekly-trends" element={<WeeklyTrends api={API} />} />
-        <Route path="/patterns" element={<Patterns api={API} />} />
-        <Route path="/knowledge-graph" element={<KnowledgeGraph api={API} />} />
-        <Route path="/settings" element={<SettingsPage api={API} />} />
-        <Route path="/alerts" element={<IntelligenceFeed api={API} alertsOnly={true} />} />
-        <Route path="/keywords" element={<KeywordEngine api={API} />} />
-        <Route path="/training" element={<TrainingSummary api={API} />} />
-        <Route path="/upload" element={<DocumentUpload api={API} />} />
-        <Route path="/handbook" element={<Handbook api={API} />} />
-      </Routes>
-    </Layout>
+    <Routes>
+      <Route path="/login" element={<Login />} />
+      <Route
+        path="/*"
+        element={
+          <ProtectedRoute>
+            <Layout alertCount={alertCount} onSearch={handleSearch}>
+              <Routes>
+                <Route path="/" element={<Dashboard stats={stats} api={API} />} />
+                <Route path="/feed" element={<IntelligenceFeed api={API} />} />
+                <Route path="/cross-border" element={<CrossBorderWatch api={API} />} />
+                <Route path="/daily-brief" element={<DailyBrief api={API} />} />
+                <Route path="/weekly-trends" element={<WeeklyTrends api={API} />} />
+                <Route path="/patterns" element={<Patterns api={API} />} />
+                <Route path="/knowledge-graph" element={<KnowledgeGraph api={API} />} />
+                <Route path="/settings" element={<SettingsPage api={API} />} />
+                <Route path="/alerts" element={<IntelligenceFeed api={API} alertsOnly={true} />} />
+                <Route path="/keywords" element={<KeywordEngine api={API} />} />
+                <Route path="/training" element={<TrainingSummary api={API} />} />
+                <Route path="/upload" element={<DocumentUpload api={API} />} />
+                <Route path="/handbook" element={<Handbook api={API} />} />
+                <Route path="/user-management" element={<UserManagement api={API} />} />
+              </Routes>
+            </Layout>
+          </ProtectedRoute>
+        }
+      />
+    </Routes>
   );
 }
 
@@ -73,7 +90,9 @@ function App() {
   return (
     <ThemeProvider>
       <BrowserRouter>
-        <AppRoutes />
+        <AuthProvider api={API}>
+          <AppRoutes />
+        </AuthProvider>
       </BrowserRouter>
       <Toaster />
     </ThemeProvider>
