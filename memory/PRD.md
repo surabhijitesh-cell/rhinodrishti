@@ -113,6 +113,18 @@ Build a full-stack AI-powered web application for intelligence aggregation, anal
 - [x] Frontend: Cross-Border section positioned before International News per user request
 - [x] 100% test pass rate (iteration_26: 18 backend + full frontend verification)
 
+### Phase 19: JWT Authentication & RBAC (2026-04-12)
+- [x] Backend auth utilities: bcrypt password hashing, JWT creation/verification (PyJWT), get_current_user + require_admin_role dependencies
+- [x] Auth endpoints: POST /api/auth/login (accepts username OR email via $or), GET /api/auth/me
+- [x] User Management endpoints: GET/POST /api/users (admin only), PUT/DELETE /api/users/{id}, PUT /api/users/{id}/password (password reset)
+- [x] Three roles: Admin (full access), Analyst (no User Management/Settings), Viewer (read-only)
+- [x] Frontend AuthContext with axios interceptors (token attachment + 401 redirect)
+- [x] ProtectedRoute wrapper, Login page with password visibility toggle
+- [x] User Management page: create/delete users, password reset with generate/copy, role assignment, active/inactive toggle
+- [x] Layout RBAC: sidebar filters menu items by role, logout button with user display
+- [x] Admin seed script: username=admin, password=Admin@2026!
+- [x] 100% test pass rate (iteration_27: 22 backend + full frontend verification)
+
 ## Key DB Collections
 - `intelligence_items`: Articles with AI classification, embeddings, feedback_avg_rating, feedback_total_ratings
 - `intelligence_feedback`: {id, intelligence_id, device_id, rating (1-6), timestamp, derived_features}
