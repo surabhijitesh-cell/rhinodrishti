@@ -1,4 +1,5 @@
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from datetime import datetime, timezone
 from starlette.middleware.cors import CORSMiddleware
 import os
 import uuid
@@ -101,6 +102,24 @@ async def initialize_sources():
 
 @app.on_event("startup")
 async def startup():
+    # Auto-seed admin user if no users exist
+    user_count = await db.users.count_documents({})
+    if user_count == 0:
+        from utils.auth import hash_password
+        admin_doc = {
+            "id": "admin-001",
+            "username": "admin",
+            "email": "admin@rhinodrishti.local",
+            "password_hash": hash_password("Admin@2026!"),
+            "name": "System Administrator",
+            "role": "admin",
+            "is_active": True,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "last_login": None,
+        }
+        await db.users.insert_one(admin_doc)
+        logger.info("Auto-seeded admin user (admin / Admin@2026!) — change password after first login")
+
     await initialize_sources()
     item_count = await intelligence_col.count_documents({})
     if item_count == 0:
