@@ -391,10 +391,10 @@ function BiasSettings({ api }) {
               <p className="text-[9px] uppercase tracking-wider text-muted-foreground font-mono">Influence</p>
               <p className={`text-sm font-bold font-['Barlow_Condensed'] ${currentInfluence.color}`} data-testid="bias-influence-current">
                 {currentInfluence.label}
-                <Badge variant="outline" className={`ml-2 rounded-none text-[9px] px-1.5 py-0 ${currentInfluence.color}`}>
-                  {currentInfluence.pct}
-                </Badge>
               </p>
+              <Badge variant="outline" className={`rounded-none text-[9px] px-1.5 py-0 mt-0.5 ${currentInfluence.color}`}>
+                {currentInfluence.pct}
+              </Badge>
               <p className="text-[10px] text-muted-foreground">{currentInfluence.desc}</p>
             </div>
           </div>
