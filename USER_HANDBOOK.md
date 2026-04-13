@@ -18,7 +18,7 @@
 10. [Alerts](#10-alerts)
 11. [Keyword Engine](#11-keyword-engine)
 12. [Training & Feedback](#12-training--feedback)
-13. [Document Upload](#13-document-upload)
+13. [Intelligence Analysis (Upload & URL)](#13-intelligence-analysis-upload--url)
 14. [User Management](#14-user-management)
 15. [Settings](#15-settings)
 16. [How the AI Pipeline Works](#16-how-the-ai-pipeline-works)
@@ -99,7 +99,7 @@ The sidebar contains all pages (visibility depends on your role):
 - **Alerts** — Critical and high-severity items requiring attention
 - **Keyword Engine** — AI-powered keyword management for detection
 - **Training & Feedback** — Rate articles, upload training data, monitor AI learning
-- **Upload Documents** — Upload offline intelligence materials (PDF, Word, Excel)
+- **Upload Documents** — Upload intelligence materials or paste URLs for contextual AI threat assessment
 - **User Management** — Create/manage users and reset passwords (Admin only)
 - **Settings** — Configure retention window and feedback limits (Admin only)
 - **User Handbook** — This guide
@@ -185,7 +185,7 @@ When multiple news sources cover the same event, the system automatically detect
 - Click the badge to expand a panel listing every source with the original article title and clickable link
 - The system picks the **longest/best summary** as the primary display and cites all others
 - Fusion runs both **in real-time** (as articles arrive) and as a **scheduled batch** every 30 minutes
-- Detection uses title word overlap, entity matching (shared locations, actors, events), and vector embedding similarity
+- Detection uses 6 methods: exact title matching, source URL deduplication, title word overlap, named entity overlap (organizations, places, events), compound keyphrase matching (e.g., "ULFA-I chief", "shots fired", "bunkers destroyed"), and same-source geographic clustering
 
 ### Rating Banner
 At the top of the Intelligence Feed, a guide banner explains: "Rate each article 1 (Entirely Irrelevant) to 6 (Extremely Relevant) to train the system." This feedback directly shapes how the AI prioritizes future intelligence.
@@ -488,27 +488,58 @@ This means items with high analyst ratings get boosted in the intelligence feed,
 
 ---
 
-## 13. Document Upload
+## 13. Intelligence Analysis (Upload & URL)
 
-Upload offline intelligence materials for AI analysis.
+Upload offline intelligence materials or paste article URLs for comprehensive AI-powered contextual threat assessment against the current NER security environment.
 
-### Supported Formats
-- **PDF** (.pdf): Intelligence reports, classified documents
-- **Word** (.docx): Written assessments, memos
-- **Excel** (.xlsx): Structured data, logs, manifests
+### Two Input Methods
 
-### How It Works
+**Upload File:**
 1. Click **Upload Documents** in the sidebar
-2. Drag and drop or select your file
-3. The system extracts text content from the document
-4. AI processes the extracted text using the same military intelligence framework
-5. Insights from uploaded documents appear in the Daily Brief under "Document Insights"
+2. Select the **Upload File** tab
+3. Drag and drop a file, or click **Select File**
+4. Supported formats: PDF (.pdf), Word (.docx), Excel (.xlsx), Text (.txt)
+5. The system extracts text and begins contextual analysis automatically
+
+**Analyze URL:**
+1. Select the **Analyze URL** tab
+2. Paste the article/report URL
+3. Optionally enter a **Specific Analysis Query** (e.g., "Assess implications for Manipur border security")
+4. Click **Analyze** — the system fetches the article, extracts content, and runs analysis
+
+### What the Analysis Produces
+
+Each uploaded document/URL receives a comprehensive **Contextual Intelligence Assessment** containing:
+
+| Section | Description |
+|---------|-------------|
+| **Executive Summary** | 3-4 sentence overview of the document and its significance |
+| **Threat Classification** | Severity (CRITICAL/HIGH/MEDIUM/LOW), threat category (Insurgency, Border Security, Drug Trafficking, etc.), and confidence level |
+| **Pattern Analysis** | Whether the document matches any emerging patterns detected by the platform, with escalation indicator (ESCALATING/STABLE/DE-ESCALATING/NEW_THREAT) |
+| **Relevance Assessment** | Score (1-10) indicating how relevant the document is to current NER security, with primary and secondary affected regions |
+| **Key Entities** | Named actors, locations, and events extracted from the document |
+| **Recommended Actions** | Prioritized actionable recommendations (IMMEDIATE/HIGH/MEDIUM/LOW) |
+| **Cross-References** | How the document connects to the platform's existing intelligence |
+| **Intelligence Gaps** | What additional information would improve the assessment |
+
+### How It Works Internally
+The AI analyzes the submitted document **in context** of the last 7 days of intelligence collected by the platform — including high-priority developments, detected patterns, and threat trends. This means the assessment is not just about the document itself, but about how it fits into the **current operational picture**.
+
+### Analysis Cards
+Each analysis appears as a card in the **Analysis History** showing:
+- **Severity badge** (color-coded: red=CRITICAL, orange=HIGH, yellow=MEDIUM, green=LOW)
+- **Threat category badge**
+- **Region** with map pin
+- **Escalation indicator**
+- Click to **expand** for full assessment details
 
 ### Use Cases
-- Upload field reports from ground units
-- Process intercepted communications transcripts
-- Analyze seized document scans (if text-extractable PDF)
-- Import structured data from border checkpoint logs
+- Upload field reports from ground units for threat classification
+- Paste a breaking news URL for immediate contextual assessment
+- Analyze intercepted communications transcripts against known patterns
+- Process seized document scans for relevance to ongoing operations
+- Assess foreign intelligence reports for NER implications
+- Upload border checkpoint logs for pattern detection
 
 ---
 
