@@ -20,11 +20,11 @@ Build a military-grade OSINT application ("Rhino Drishti") for India's North Eas
 
 ### Core Features (Complete)
 - RSS ingestion from 72 sources (19 national, NER regional, cross-border, international, government)
-- Claude Haiku 4.5 AI classification with 10-step intelligence pipeline
+- Claude Haiku 4.5 AI classification with 10-step intelligence pipeline + dynamic feedback bias injection
 - Multi-article fusion & deduplication engine
 - Vector search (semantic search), Knowledge graph & pattern detection
-- Daily Intelligence Brief PDF generator (NER, cross-border, national, international sections)
-- Cross-Border Watch module (Bangladesh/Myanmar with category grouping)
+- Daily Intelligence Brief PDF generator
+- Cross-Border Watch module (Bangladesh/Myanmar)
 - Intelligence Analysis tool (contextual URL/PDF evaluation)
 - Training & Feedback pipeline with effectiveness scoring
 - JWT Authentication with RBAC (admin/analyst/viewer)
@@ -32,37 +32,36 @@ Build a military-grade OSINT application ("Rhino Drishti") for India's North Eas
 - Dashboard priority filter/sort controls
 
 ### Feedback Bias System (Complete)
-- **feedback_bias.py** engine aggregates analyst ratings into dynamic bias context injected into AI prompts
+- **feedback_bias.py** engine: rolling window or all-time feedback aggregation
 - **Configurable settings** via Settings page:
-  - **Feedback Window**: Rolling 30 Days (default) or All Time
-  - **Influence Level**: Light (~10-15%), Moderate (~20-25% default), High (~35-40%)
-- Settings stored in `app_settings` collection, cache invalidated on change
-- Active bias profile visible on Training & Feedback page with upweight/downweight patterns
-- New endpoints: `GET/PUT /api/settings/bias`, `GET /api/feedback/bias-profile`
+  - Feedback Window: Rolling 30 Days / All Time
+  - Influence Level: Light (~10-15%) / Moderate (~20-25%) / High (~35-40%)
+- **Bias Impact Report**: Shows before/after score comparison for all rated items
+- Active bias profile visible on Training & Feedback page
+
+### Settings Page (Complete)
+- Side-by-side card layout (2-column grid)
+- Row 1: Retention Window + Pipeline Status
+- Row 2: Bias Configuration + Training Controls
+- Row 3: Full-width Bias Impact Report with items table
+- Viewer role blocked (redirect to dashboard)
 
 ## Key API Endpoints
 - `POST /api/auth/login` — Accepts username OR email
-- `GET /api/intelligence?sort_by=priority_score&min_priority=80` — Feed with filter/sort
+- `GET /api/intelligence?sort_by=priority_score&min_priority=80`
 - `GET /api/feedback/bias-profile` — Active feedback bias profile
-- `GET/PUT /api/settings/bias` — Bias window & influence configuration
+- `GET /api/feedback/bias-impact` — Bias Impact Report (before/after scores)
+- `GET/PUT /api/settings/bias` — Window & influence configuration
 - `POST /api/documents/analyze-url` — Contextual intelligence analysis
-- `POST /api/intelligence/fuse` — Manual trigger for fusion engine
 
-## Auth Credentials
-- Default admin: `admin` / `Admin@2026!` (auto-seeded on empty DB)
-- Roles: admin, analyst, viewer
-
-## Deployment Notes
-- **Render**: Must use: `pip install -r requirements.txt --extra-index-url https://d33sy5i8bnduwe.cloudfront.net/simple/`
-- **CORS**: Auth requires `allow_credentials=True`, explicit origin matching
+## Auth & Credentials
+- Default admin: `admin` / `Admin@2026!`
+- Test viewer: `testviewer` / `Viewer@2026!`
+- Roles: admin (full), analyst (no user mgmt/settings), viewer (read-only)
 
 ## Pending / Backlog
-### P0 (Deferred by user)
-- Complete Viewer Role Restrictions Sweep across all pages
-
-### P2 (Future)
-- Twitter/X monitoring integration (paused by user)
+- P0 (Deferred): Complete Viewer Role Restrictions Sweep across all feature pages
+- P2 (Future): Twitter/X monitoring integration (paused)
 
 ## Testing Status
-- Iterations 24-31 all passed 100%
-- No known regressions
+- Iterations 24-32 all passed 100%. No known regressions.
