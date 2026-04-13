@@ -4,11 +4,15 @@ import {
   Shield, AlertTriangle, Activity, TrendingUp,
   ChevronRight, RefreshCw, Target, ArrowUp,
   Rss, Eye, EyeOff, Clock, CheckCircle2, Loader2,
-  Filter, Languages, BellRing, GitBranch, Check, Wifi, WifiOff
+  Filter, Languages, BellRing, GitBranch, Check, Wifi, WifiOff,
+  ArrowUpDown
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue
+} from "../components/ui/select";
 import NERMap from "../components/NERMap";
 import IntelligenceCard from "../components/IntelligenceCard";
 import { useIntelligenceWS } from "../hooks/useIntelligenceWS";
@@ -320,6 +324,8 @@ export default function Dashboard({ stats: propStats, api }) {
   const [recentItems, setRecentItems] = useState([]);
   const [loading, setLoading] = useState(false);
   const [localStats, setLocalStats] = useState(null);
+  const [sortBy, setSortBy] = useState("published_at");
+  const [minPriority, setMinPriority] = useState("");
   const navigate = useNavigate();
 
   // WebSocket real-time connection
@@ -333,6 +339,11 @@ export default function Dashboard({ stats: propStats, api }) {
       fetchStats();
     }
   }, [api, propStats]);
+
+  // Refetch items when sort/filter changes
+  useEffect(() => {
+    fetchRecent();
+  }, [sortBy, minPriority]);
 
   // Auto-refresh stats when new WS items arrive
   useEffect(() => {
@@ -352,7 +363,12 @@ export default function Dashboard({ stats: propStats, api }) {
 
   const fetchRecent = async () => {
     try {
-      const res = await axios.get(`${api}/intelligence?limit=6`);
+      const params = new URLSearchParams();
+      params.set("limit", "6");
+      if (sortBy) params.set("sort_by", sortBy);
+      params.set("sort_order", "desc");
+      if (minPriority) params.set("min_priority", minPriority);
+      const res = await axios.get(`${api}/intelligence?${params.toString()}`);
       setRecentItems(res.data.items || []);
     } catch (e) {
       console.error("Failed to fetch recent items:", e);
@@ -675,19 +691,43 @@ export default function Dashboard({ stats: propStats, api }) {
 
       {/* Recent Intelligence */}
       <div>
-        <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
           <h2 className="text-xl uppercase tracking-wide font-['Barlow_Condensed'] font-semibold">
             Latest Intelligence
           </h2>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="text-xs text-primary uppercase tracking-wider"
-            onClick={() => navigate("/feed")}
-            data-testid="view-all-feed-btn"
-          >
-            View Full Feed <ChevronRight size={14} />
-          </Button>
+          <div className="flex items-center gap-2 flex-wrap">
+            <Select value={minPriority || "all"} onValueChange={(v) => setMinPriority(v === "all" ? "" : v)}>
+              <SelectTrigger className="w-[150px] rounded-none text-[10px] uppercase h-7" data-testid="dashboard-priority-filter">
+                <Filter size={11} className="mr-1" />
+                <SelectValue placeholder="All Priority" />
+              </SelectTrigger>
+              <SelectContent className="rounded-none">
+                <SelectItem value="all" className="text-xs">All Priority</SelectItem>
+                <SelectItem value="80" className="text-xs">80+ (Critical)</SelectItem>
+                <SelectItem value="60" className="text-xs">60+ (High)</SelectItem>
+                <SelectItem value="40" className="text-xs">40+ (Medium)</SelectItem>
+              </SelectContent>
+            </Select>
+            <Select value={sortBy} onValueChange={(v) => setSortBy(v)}>
+              <SelectTrigger className="w-[155px] rounded-none text-[10px] uppercase h-7" data-testid="dashboard-sort-by">
+                <ArrowUpDown size={11} className="mr-1" />
+                <SelectValue placeholder="Sort By" />
+              </SelectTrigger>
+              <SelectContent className="rounded-none">
+                <SelectItem value="published_at" className="text-xs">Most Recent</SelectItem>
+                <SelectItem value="priority_score" className="text-xs">Highest Priority</SelectItem>
+              </SelectContent>
+            </Select>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-xs text-primary uppercase tracking-wider h-7"
+              onClick={() => navigate("/feed")}
+              data-testid="view-all-feed-btn"
+            >
+              View Full Feed <ChevronRight size={14} />
+            </Button>
+          </div>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4" data-testid="recent-intelligence-grid">
           {recentItems.map((item) => (

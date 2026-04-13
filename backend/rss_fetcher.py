@@ -90,6 +90,20 @@ RSS_SOURCES = [
     {"name": "Mizzima English", "url": "https://eng.mizzima.com/feed", "category": "myanmar", "language": "en", "region": "Myanmar", "priority": "elite"},
     {"name": "DVB Burmese", "url": "https://burmese.dvb.no/feed/", "category": "myanmar", "language": "my", "region": "Myanmar", "priority": "grassroots"},
     {"name": "ANI News", "url": "https://aninews.in/feed/", "category": "national", "language": "en", "region": "India", "priority": "elite"},
+
+    # ---- EXPANDED NATIONAL INDIAN SOURCES ----
+    {"name": "India Today", "url": "https://www.indiatoday.in/rss/home", "category": "national", "language": "en", "region": "India", "priority": "standard"},
+    {"name": "Hindustan Times", "url": "https://www.hindustantimes.com/feeds/rss/india-news/rssfeed.xml", "category": "national", "language": "en", "region": "India", "priority": "standard"},
+    {"name": "Deccan Herald", "url": "https://www.deccanherald.com/rss/national.xml", "category": "national", "language": "en", "region": "India", "priority": "standard"},
+    {"name": "The Wire", "url": "https://thewire.in/feed", "category": "national", "language": "en", "region": "India", "priority": "standard"},
+    {"name": "Scroll.in", "url": "https://scroll.in/rss/feed", "category": "national", "language": "en", "region": "India", "priority": "standard"},
+    {"name": "The Print", "url": "https://theprint.in/feed/", "category": "national", "language": "en", "region": "India", "priority": "standard"},
+    {"name": "The Quint", "url": "https://www.thequint.com/quintlab/rss-feeds/rss-news", "category": "national", "language": "en", "region": "India", "priority": "standard"},
+    {"name": "Mint - Defence", "url": "https://www.livemint.com/rss/news", "category": "national", "language": "en", "region": "India", "priority": "standard"},
+    {"name": "Economic Times - Defence", "url": "https://economictimes.indiatimes.com/news/defence/rssfeeds/68740888.cms", "category": "national", "language": "en", "region": "India", "priority": "standard"},
+    {"name": "Firstpost", "url": "https://www.firstpost.com/rss/india.xml", "category": "national", "language": "en", "region": "India", "priority": "standard"},
+    {"name": "The Indian Express - India", "url": "https://indianexpress.com/section/india/feed/", "category": "national", "language": "en", "region": "India", "priority": "standard"},
+    {"name": "The Tribune India", "url": "https://www.tribuneindia.com/rss/feed?catId=2", "category": "national", "language": "en", "region": "India", "priority": "standard"},
 ]
 
 def get_sources_by_priority(priority: str) -> list:
@@ -281,7 +295,7 @@ async def fetch_all_feeds(progress_callback=None, sources=None, dynamic_keyword_
     if progress_callback:
         await progress_callback(len(active_sources), len(active_sources), "Complete")
 
-    logger.info(f"=== RSS Fetch Summary ===")
+    logger.info("=== RSS Fetch Summary ===")
     for name, stats in source_summary.items():
         if "error" in stats:
             logger.info(f"  {name}: ERROR - {stats['error'][:80]}")
