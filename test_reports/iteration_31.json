@@ -1,0 +1,74 @@
+{
+  "summary": "Iteration 31: Feedback Bias Settings Feature - All tests passed. Backend: 12/12 tests passed for GET/PUT /api/settings/bias endpoints including default values, updates, validation, and bias profile reflection. Frontend: Settings page shows Feedback Bias Configuration card with window dropdown (Rolling 30 Days, All Time) and influence dropdown (Light, Moderate, High). Save button works, Active Configuration summary updates correctly. Training & Feedback page bias card reflects updated settings.",
+
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {
+        "screen": "Settings page - Bias Settings card",
+        "issues": ["Minor HTML nesting warning: <p> cannot contain nested <div> in bias-influence-current element (cosmetic, doesn't affect functionality)"]
+      }
+    ]
+  },
+
+  "passed_tests": [
+    "POST /api/auth/login with admin credentials returns token",
+    "GET /api/settings/bias returns default values (rolling_30, moderate)",
+    "PUT /api/settings/bias with {bias_window: 'all_time', bias_influence: 'high'} updates settings",
+    "PUT /api/settings/bias with invalid window returns 400",
+    "PUT /api/settings/bias with invalid influence returns 400",
+    "PUT /api/settings/bias partial update (window only) works",
+    "PUT /api/settings/bias partial update (influence only) works",
+    "GET /api/feedback/bias-profile reflects window_mode from settings",
+    "GET /api/feedback/bias-profile reflects influence from settings",
+    "GET /api/feedback/bias-profile shows 'all time' window_label after change",
+    "GET /api/feedback/bias-profile shows '30 days' window_label after reset",
+    "Reset settings to defaults (rolling_30, moderate) works",
+    "Frontend: Settings page loads with Feedback Bias Configuration card (data-testid='bias-settings-card')",
+    "Frontend: Bias window dropdown (data-testid='bias-window-select') has options: Rolling 30 Days, All Time",
+    "Frontend: Bias influence dropdown (data-testid='bias-influence-select') has options: Light, Moderate, High",
+    "Frontend: Save button (data-testid='save-bias-settings-btn') saves settings successfully",
+    "Frontend: Active Configuration summary updates after save",
+    "Frontend: Training & Feedback page bias card shows updated influence and window from settings"
+  ],
+
+  "test_report_links": [
+    "/app/backend/tests/test_bias_settings_v31.py",
+    "/app/test_reports/pytest/pytest_results_v31.xml"
+  ],
+
+  "action_items": [],
+
+  "critical_code_review_comments": [
+    "settings.py: Lines 52-102 correctly implement GET/PUT /settings/bias with validation for VALID_WINDOWS and VALID_INFLUENCES",
+    "feedback_bias.py: Lines 48-55 _get_bias_settings() correctly reads from DB with defaults",
+    "feedback_bias.py: Lines 93-189 _compute_bias_profile() correctly uses window_mode and influence from settings",
+    "SettingsPage.js: Lines 277-405 BiasSettings component correctly implements dropdowns with data-testid attributes",
+    "TrainingSummary.js: Lines 650-780 feedback-bias-card correctly displays dynamic influence/window from bias profile"
+  ],
+
+  "updated_files": [
+    "/app/backend/tests/test_bias_settings_v31.py"
+  ],
+
+  "success_rate": {
+    "backend": "100% (12/12 tests passed)",
+    "frontend": "100% (all UI elements verified, settings save and reflect correctly)"
+  },
+
+  "test_credentials": "Admin: username=admin, password=Admin@2026!",
+
+  "seed_data_creation": "None - used existing data",
+
+  "retest_needed": false,
+
+  "should_main_agent_self_test": false,
+
+  "context_for_next_testing_agent": "Iteration 31 verified Feedback Bias Settings feature: (1) GET/PUT /api/settings/bias endpoints work correctly with validation, (2) Settings page has BiasSettings component with data-testid='bias-settings-card', 'bias-window-select', 'bias-influence-select', 'save-bias-settings-btn', (3) bias_window options: 'rolling_30' (default), 'all_time', (4) bias_influence options: 'light', 'moderate' (default), 'high', (5) Training & Feedback page bias card (data-testid='feedback-bias-card') reflects settings dynamically. Settings were reset to defaults (rolling_30, moderate) after testing. Test file: /app/backend/tests/test_bias_settings_v31.py"
+}

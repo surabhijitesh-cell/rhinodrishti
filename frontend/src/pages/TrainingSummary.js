@@ -671,7 +671,7 @@ export default function TrainingSummary({ api }) {
               <p className="text-xs text-muted-foreground">
                 Based on <span className="text-foreground font-semibold">{biasProfile.total_ratings}</span> ratings across{" "}
                 <span className="text-foreground font-semibold">{biasProfile.unique_items}</span> articles in the last{" "}
-                <span className="text-foreground font-semibold">{biasProfile.window_days}</span> days.
+                <span className="text-foreground font-semibold">{biasProfile.window_label || "30 days"}</span>.
                 This bias is dynamically injected into the AI classification pipeline.
               </p>
 
@@ -761,7 +761,9 @@ export default function TrainingSummary({ api }) {
 
               <div className="bg-muted/20 border border-border p-3 font-mono text-xs space-y-1 mt-2">
                 <p className="text-primary">pipeline_prompt = base_classification + feedback_bias_context</p>
-                <p className="text-muted-foreground mt-1">influence: ~20-25% weight | window: rolling 30 days | cache: 5 min TTL</p>
+                <p className="text-muted-foreground mt-1">
+                  influence: {biasProfile.influence_pct || "~20-25%"} weight ({biasProfile.influence || "moderate"}) | window: {biasProfile.window_label || "30 days"} ({biasProfile.window_mode || "rolling_30"}) | cache: 5 min TTL
+                </p>
               </div>
             </div>
           ) : (
