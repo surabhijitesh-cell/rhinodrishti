@@ -125,6 +125,17 @@ Build a full-stack AI-powered web application for intelligence aggregation, anal
 - [x] Admin seed script: username=admin, password=Admin@2026!
 - [x] 100% test pass rate (iteration_27: 22 backend + full frontend verification)
 
+### Phase 20: Multi-Article Fusion Fix + Intelligence Analysis Tool (2026-04-13)
+- [x] Fusion engine overhaul: 6 detection methods (exact title, source_url, title word overlap 0.40, entity overlap 2+, keyphrase matching, same-source+state)
+- [x] Added compound keyphrase extraction (ULFA-I chief, shots fired, bunkers destroyed, etc.)
+- [x] Expanded entity dictionaries: added NER-specific orgs (manipur police, kuki, meitei), places (dibrugarh, chabua, churachandpur), events (encounter, yaba, smuggling)
+- [x] Re-ran batch fusion: 46 clusters from 140 items, 17.8% dedup (up from 8.3%)
+- [x] Reworked Upload Documents → Intelligence Analysis tool: upload PDF/Word/TXT or paste URL
+- [x] AI generates comprehensive contextual analysis: threat classification, pattern matching vs current NER security env, relevance score, recommended actions, cross-references, intelligence gaps
+- [x] Frontend: tabbed interface (Upload File / Analyze URL), analysis cards with expandable detail (severity, category, escalation, entities)
+- [x] Backend auto-seeds admin user on startup if users collection is empty (no MongoDB access needed for deployment)
+- [x] 100% test pass rate (iteration_28: 13 backend + full frontend verification)
+
 ## Key DB Collections
 - `intelligence_items`: Articles with AI classification, embeddings, feedback_avg_rating, feedback_total_ratings
 - `intelligence_feedback`: {id, intelligence_id, device_id, rating (1-6), timestamp, derived_features}
