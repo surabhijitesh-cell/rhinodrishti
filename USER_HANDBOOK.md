@@ -79,7 +79,7 @@ The sidebar menu adapts to your role:
 ## 2. Getting Started
 
 ### What is Rhino Drishti?
-Rhino Drishti is an AI-powered military intelligence aggregation and analysis platform designed for monitoring India's North Eastern Region (NER), Bangladesh, and Myanmar. It automatically collects news from 36+ RSS sources, runs AI classification using a military intelligence framework, detects patterns, and generates daily intelligence briefs.
+Rhino Drishti is an AI-powered military intelligence aggregation and analysis platform designed for monitoring India's North Eastern Region (NER), Bangladesh, and Myanmar. It automatically collects news from 72+ RSS sources, runs AI classification using a military intelligence framework with dynamic analyst feedback bias, detects patterns, and generates daily intelligence briefs.
 
 ### First-time Access
 - Open the application URL in your browser (Chrome, Firefox, or Edge recommended)
@@ -101,7 +101,7 @@ The sidebar contains all pages (visibility depends on your role):
 - **Training & Feedback** — Rate articles, upload training data, monitor AI learning
 - **Upload Documents** — Upload intelligence materials or paste URLs for contextual AI threat assessment
 - **User Management** — Create/manage users and reset passwords (Admin only)
-- **Settings** — Configure retention window and feedback limits (Admin only)
+- **Settings** — Configure retention, feedback limits, and AI bias settings (Admin only)
 - **User Handbook** — This guide
 
 ---
@@ -121,7 +121,7 @@ The Dashboard is your command center showing the current intelligence landscape 
 ### RSS Scanner Panel
 Shows real-time progress when a fetch cycle is running:
 - Source being scanned
-- Progress bar (X of 36 sources)
+- Progress bar (X of 72 sources)
 - Articles found, filtered, and translated
 
 ### NER Threat Map
@@ -135,6 +135,13 @@ Real-time updates via WebSocket — new items appear here as they are processed 
 
 ### Pattern Insights
 Summary of the most significant detected threat patterns, showing escalation risk levels (CRITICAL, HIGH, MODERATE, LOW).
+
+### Latest Intelligence (Priority Filter & Sort)
+The bottom section shows the 6 most recent intelligence items. Two controls let you customize the view:
+- **Priority Filter** dropdown: Filter by minimum priority score — All Priority, 80+ (Critical), 60+ (High), 40+ (Medium)
+- **Sort By** dropdown: Sort items by Most Recent (date) or Highest Priority (priority score descending)
+
+Click **View Full Feed** to open the complete Intelligence Feed.
 
 ### Trend Charts
 7-day severity distribution showing whether threat levels are increasing or decreasing.
@@ -486,6 +493,26 @@ training_bias = log(total_ratings + 1) * (avg_rating - 3.5)
 
 This means items with high analyst ratings get boosted in the intelligence feed, while low-rated items are deprioritized.
 
+### Active Feedback Bias (Live AI Pipeline)
+
+This card shows whether analyst feedback is actively influencing the AI classification pipeline. When the status badge reads **ACTIVE**, the system is dynamically injecting analyst preferences into every new article classification.
+
+**What it shows:**
+- **Status**: ACTIVE (enough data) or NEEDS DATA (below minimum threshold)
+- **Upweighted by Analysts**: Regions, threat categories, and actors that analysts consistently rate highly. These get a priority score boost of +3 to +20 points (depending on the influence setting)
+- **Downweighted by Analysts**: Regions and categories that analysts consistently rate as irrelevant. These get a priority score reduction
+- **Pipeline Formula**: Shows the live equation: `pipeline_prompt = base_classification + feedback_bias_context`
+- **Configuration Summary**: Current influence level and feedback window (configurable in Settings)
+
+**How it works:**
+1. Analysts rate articles 1-6 on the Intelligence Feed
+2. The system aggregates ratings into a bias profile (upweight/downweight patterns)
+3. This bias is appended to the Claude AI's classification prompt as "Analyst Feedback Calibration"
+4. New articles are scored with these analyst-driven adjustments factored in
+5. The bias recalculates every 5 minutes (cache TTL)
+
+The influence level and feedback window are configurable in **Settings > Feedback Bias Configuration** (see Section 15).
+
 ---
 
 ## 13. Intelligence Analysis (Upload & URL)
@@ -592,6 +619,10 @@ Click the **Trash** icon to permanently delete a user. You cannot delete your ow
 
 ## 15. Settings
 
+*Admin only — not visible to Analyst or Viewer roles. Viewers are redirected to the Dashboard if they navigate to /settings directly.*
+
+The Settings page uses a **side-by-side card layout** for quick access to all configuration options without excessive scrolling.
+
 ### News Retention Window
 Controls how far back the system looks when displaying intelligence items.
 
@@ -600,18 +631,61 @@ Options: 7 / 14 / 30 / 60 / 90 / 180 / 365 days
 - **Shorter window** (7-14 days): See only recent intelligence, faster page loads
 - **Longer window** (90-365 days): See historical trends, more items to search through
 
-Changing the retention window immediately affects:
-- Dashboard statistics
-- Intelligence Feed item count
-- Alert counts
-- Pattern detection window
+Changing the retention window immediately affects Dashboard statistics, Intelligence Feed item count, alert counts, and pattern detection window.
 
-### Maximum Feedback Ratings Per Item
-Controls how many analyst ratings each intelligence item can receive before the system stops accepting new feedback. This prevents over-rating or manipulation.
+### Pipeline Status
+Shows current system health: total items, AI processing rate, RSS source count, and scheduler configuration.
 
-Default: 20 ratings per item. Use the dropdown to adjust.
+### Feedback Bias Configuration
 
-When the limit is reached for an item, the rating widget will indicate that no further ratings are accepted.
+Controls how analyst feedback influences the AI classification pipeline. Two settings:
+
+**Feedback Window** — Determines which ratings the system uses:
+- **Rolling 30 Days** (default): Only recent feedback counts. Most adaptive — the system responds quickly to changing analyst preferences. Older ratings expire and stop influencing classifications.
+- **All Time**: Every rating ever submitted counts. Cumulative learning — builds a comprehensive picture but slower to adapt to changing priorities.
+
+**Influence Level** — How strongly feedback overrides the AI's independent judgment:
+
+| Level | Weight | Score Adjustment | Best For |
+|-------|--------|-----------------|----------|
+| **Light** | ~10-15% | +/-3 to 5 points | Minimal correction — let the AI lead |
+| **Moderate** | ~20-25% | +/-5 to 10 points | Balanced — noticeable impact from analyst consensus |
+| **High** | ~35-40% | +/-10 to 20 points | Heavy override — analyst ratings strongly reshape priorities |
+
+After saving, the bias cache is immediately invalidated so the next RSS fetch cycle uses the new settings.
+
+### Training Controls
+Sets the maximum number of feedback ratings allowed per intelligence item (default: 20). Once reached, no further ratings are accepted for that item. This prevents over-rating or manipulation.
+
+### Bias Impact Report
+
+A full-width analytics table showing **exactly how analyst feedback changes article scores**. This is the most direct way to see the real-world effect of the bias system.
+
+**Summary Row** (top):
+- **Influence**: Current influence level and percentage weight
+- **Boosted**: Number of items whose priority score increased due to feedback
+- **Reduced**: Number of items whose priority score decreased
+- **Unchanged**: Items not affected (their region/threat doesn't match any bias pattern)
+- **Avg Delta**: Average absolute score change across all items
+
+**Items Table**:
+Each row shows a rated article with:
+
+| Column | Description |
+|--------|-------------|
+| **Article** | Title and threat category |
+| **Region** | NER state or country |
+| **Original** | Priority score as assigned by the AI alone |
+| **Biased** | Score after applying feedback bias adjustments |
+| **Delta** | Point difference. Green ↑ = boosted, Red ↓ = reduced, — = unchanged |
+| **Rating** | Average analyst rating (1-6) with number of ratings in parentheses |
+| **Reason** | Specific explanation of why the score changed (e.g., "Region 'Manipur' upweighted; Threat 'Ethnic / Tribal Tension' upweighted") |
+
+**How to read the report:**
+- If you see many items **boosted** with high analyst ratings, the system is correctly amplifying content that analysts find important
+- If **Avg Delta** is very low, consider switching from Light to Moderate or High influence
+- Items showing **"No bias match"** in the Reason column are unaffected because their region/threat category doesn't appear in any strong analyst consensus pattern
+- Use the **Refresh** button to recalculate after changing bias settings
 
 ---
 
@@ -619,7 +693,7 @@ When the limit is reached for an item, the rating widget will indicate that no f
 
 ### Data Flow
 ```
-RSS Sources (36) + Elite Web Scraping
+RSS Sources (72) + Elite Web Scraping
         |
         v
     Deduplication (URL + title similarity)
@@ -637,7 +711,7 @@ RSS Sources (36) + Elite Web Scraping
     Level 1 Sifter (pre-filter for border instability, militant activity)
         |
         v
-    Level 2 Deep Analyst (8-step Claude AI classification)
+    Level 2 Deep Analyst (10-step Claude AI classification + feedback bias injection)
         |
         v
     Vector Embedding (OpenAI text-embedding-3-small)
@@ -655,7 +729,7 @@ RSS Sources (36) + Elite Web Scraping
     Pattern Detection (sliding-window cluster analysis)
 ```
 
-### AI Classification (8-Step Military Intelligence Prompt)
+### AI Classification (10-Step Military Intelligence Prompt)
 The AI operates as a Senior Military Intelligence Analyst and performs:
 
 1. **Relevance Filter**: Strict rejection of sports, entertainment, lifestyle content
@@ -665,14 +739,18 @@ The AI operates as a Senior Military Intelligence Analyst and performs:
 5. **Named Entity Extraction**: Persons, organizations, locations
 6. **Intelligence Output**: Summary, why it matters, early warning signal, attention level
 7. **Special Detection**: PLA_PAKISTAN_PRESENCE, COORDINATED_NARRATIVE, etc.
-8. **Language Rule**: All output in English regardless of input language
+8. **India-Relevance Scoring**: Cross-border items scored 0-20 for India-facing impact
+9. **Signal Classification**: Cross-border signal bucket and strength assignment
+10. **Language Rule**: All output in English regardless of input language
+
+**Feedback Bias Injection**: When sufficient analyst ratings exist, a dynamic "Analyst Feedback Calibration" section is appended to the classification prompt. This tells the AI which regions, threat categories, and actors analysts have consistently rated highly or poorly — causing the AI to adjust priority scores accordingly (see Section 15 for configuration).
 
 ### Scheduler (Automated Tasks)
 | Task | Frequency | Purpose |
 |------|-----------|---------|
 | Grassroots Source Fetch | Every 60 min | Small/hard-to-reach NER news sources |
-| Standard Source Fetch | Every 30 min | Main RSS feeds (PIB, NDTV, The Hindu, etc.) |
-| Established Source Fetch | Every 12 hours | Stable large sources |
+| Standard Source Fetch | Every 30 min | Main RSS feeds (national + international) |
+| Established Source Fetch | Every 12 hours | Stable large sources (PIB, MHA) |
 | AI Retry | Every 15 min | Reprocess any items that failed AI classification |
 | Daily Brief | 0600 IST daily | Auto-generate the daily intelligence brief |
 | Embedding Backfill | Every 6 hours | Generate vector embeddings for semantic search |
@@ -686,6 +764,11 @@ The AI operates as a Senior Military Intelligence Analyst and performs:
 |------|-----------|
 | **ACK** | Acknowledge — mark an alert as reviewed |
 | **Activity Log** | Session-level record of training runs and feedback sessions with AI-generated impact summaries |
+| **Bias Impact Report** | Analytics view showing how analyst feedback changes article priority scores — before vs after comparison |
+| **Bias Window** | Time range of analyst feedback used by the bias engine — Rolling 30 Days or All Time |
+| **Delta** | The point difference between an article's original AI score and its feedback-adjusted score. Positive = boosted, negative = reduced |
+| **Feedback Bias** | Dynamic analyst-driven adjustment injected into the AI classification prompt, causing the AI to upweight or downweight certain regions and threat categories |
+| **Influence Level** | Controls how strongly feedback overrides AI judgment — Light (~10-15%), Moderate (~20-25%), High (~35-40%) |
 | **JWT** | JSON Web Token — authentication token used for session management |
 | **RBAC** | Role-Based Access Control — restricts features based on user role |
 | **Cluster / Fusion** | Group of similar articles from multiple sources merged into a single intelligence item |
@@ -699,7 +782,7 @@ The AI operates as a Senior Military Intelligence Analyst and performs:
 | **Knowledge Graph** | Network of relationships between actors and locations |
 | **NER** | North Eastern Region of India (Assam, Manipur, Meghalaya, Mizoram, Tripura, Nagaland, Arunachal Pradesh, Sikkim) |
 | **Pattern** | Cluster of 3+ intelligence items sharing the same region, threat type, or actor |
-| **Priority Score** | AI-assigned importance score from 0-100 |
+| **Priority Score** | AI-assigned importance score from 0-100, adjusted by feedback bias |
 | **Relevance Tag** | Optional 1-6 score an analyst assigns to a URL when adding it to the training queue |
 | **Semantic Search** | AI-powered search using vector embeddings that finds related concepts |
 | **Severity** | Classification level: Critical > High > Medium > Low |
@@ -708,9 +791,10 @@ The AI operates as a Senior Military Intelligence Analyst and performs:
 | **Threat Trajectory** | Direction of a threat: ESCALATING, STABLE, DE-ESCALATING, NEW_THREAT |
 | **Training Pipeline** | Process of scraping, analyzing, and learning from analyst-submitted URLs and documents |
 | **Training Session** | Log entry created when "Train Rhino Drishti" is clicked, capturing volume breakdown and AI impact |
+| **Upweight / Downweight** | Bias adjustments applied to article scores — upweight boosts priority, downweight reduces it |
 | **Vector Embedding** | Mathematical representation of text meaning, enabling semantic similarity search |
 
 ---
 
-*Rhino Drishti v6.0 — Elite OSINT Intelligence Platform with Authentication & RBAC*
+*Rhino Drishti v8.0 — Elite OSINT Intelligence Platform with Feedback-Driven AI*
 *Handbook updated: April 2026*
