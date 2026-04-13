@@ -1,0 +1,82 @@
+{
+  "summary": "Iteration 32: Settings Page Layout Redesign, Bias Impact Report, Viewer Role Restriction - All tests passed. Backend: 15/15 tests passed for bias-impact endpoint, bias settings, viewer role restrictions, retention and feedback settings. Frontend: Settings page shows side-by-side layout (Row 1: Retention + Pipeline, Row 2: Bias Config + Training Controls, Row 3: Full-width Bias Impact Report). Viewer role correctly blocked from Settings page via sidebar hiding and redirect.",
+
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+
+  "passed_tests": [
+    "GET /api/feedback/bias-impact returns 200",
+    "Bias impact response has required fields (status, influence, influence_label, window, total_items_analyzed, summary, items)",
+    "Bias impact summary has boosted/reduced/unchanged counts (18/0/23)",
+    "Bias impact items have correct structure (id, title, region, threat_category, original_score, biased_score, delta, direction, reasons)",
+    "Total items analyzed (41) matches items returned (30 max)",
+    "GET /api/settings/bias returns current settings (rolling_30, moderate)",
+    "PUT /api/settings/bias updates settings correctly",
+    "PUT /api/settings/bias rejects invalid window with 400",
+    "PUT /api/settings/bias rejects invalid influence with 400",
+    "Viewer can access public endpoints (/api/intelligence)",
+    "Viewer can access bias impact report (read-only)",
+    "Viewer cannot create users (returns 401/403)",
+    "GET /api/settings/retention returns current retention",
+    "PUT /api/settings/retention updates retention correctly",
+    "GET /api/settings/feedback returns current settings",
+    "Frontend: Settings page loads with side-by-side layout",
+    "Frontend: Row 1 has Retention + Pipeline cards side by side",
+    "Frontend: Row 2 has Bias Config + Training Controls side by side",
+    "Frontend: Row 3 has full-width Bias Impact Report card",
+    "Frontend: Bias Impact Report shows 41 items badge, Boosted: 18, Reduced: 0, Unchanged: 23, Avg Delta: 6.4 pts",
+    "Frontend: Impact items table shows 30 rows with original_score, biased_score, delta, reasons",
+    "Frontend: Bias window dropdown has Rolling 30 Days and All Time options",
+    "Frontend: Bias influence dropdown has Light, Moderate, High options",
+    "Frontend: Save Bias Settings button works correctly",
+    "Frontend: Settings link NOT visible in sidebar for viewer role",
+    "Frontend: User Management link NOT visible in sidebar for viewer role",
+    "Frontend: Viewer redirected to Dashboard when navigating to /settings directly",
+    "Frontend: Dashboard priority filter cards present (CRITICAL, HIGH, MEDIUM, LOW)",
+    "Frontend: Training & Feedback page has Feedback Bias card"
+  ],
+
+  "test_report_links": [
+    "/app/backend/tests/test_iteration_32.py",
+    "/app/test_reports/pytest/pytest_results_v32.xml"
+  ],
+
+  "action_items": [],
+
+  "critical_code_review_comments": [
+    "SettingsPage.js: Lines 36-44 correctly implement viewer redirect using useAuth + Navigate",
+    "SettingsPage.js: Lines 89-128 implement Row 1 with grid-cols-2 for Retention + Pipeline side by side",
+    "SettingsPage.js: Lines 130-134 implement Row 2 with grid-cols-2 for Bias Config + Training Controls side by side",
+    "SettingsPage.js: Lines 136-137 implement Row 3 with full-width Bias Impact Report",
+    "SettingsPage.js: Lines 384-545 BiasImpactReport component correctly fetches and displays bias impact data",
+    "feedback.py: Lines 298-420 GET /feedback/bias-impact endpoint correctly calculates impact with boosted/reduced/unchanged counts",
+    "Layout.js: Line 28 correctly restricts Settings to ['admin'] role in sidebar"
+  ],
+
+  "updated_files": [
+    "/app/backend/tests/test_iteration_32.py"
+  ],
+
+  "success_rate": {
+    "backend": "100% (15/15 tests passed)",
+    "frontend": "100% (all UI elements verified, layout correct, viewer restriction working)"
+  },
+
+  "test_credentials": "Admin: username=admin, password=Admin@2026! | Viewer: username=testviewer, password=Viewer@2026!",
+
+  "seed_data_creation": "Created testviewer user with viewer role for testing",
+
+  "retest_needed": false,
+
+  "should_main_agent_self_test": false,
+
+  "context_for_next_testing_agent": "Iteration 32 verified: (1) Settings page layout redesign with side-by-side cards using grid-cols-2, (2) Bias Impact Report card (data-testid='bias-impact-card') shows 41 items analyzed with 18 boosted, 0 reduced, 23 unchanged, avg delta 6.4 pts, (3) GET /api/feedback/bias-impact endpoint returns impact data with items table showing original_score, biased_score, delta, reasons, (4) Viewer role cannot access Settings page - sidebar hides link and page redirects to dashboard, (5) Test viewer user created: testviewer/Viewer@2026!. Test file: /app/backend/tests/test_iteration_32.py"
+}

@@ -293,6 +293,134 @@ async def get_active_bias_profile():
 
 
 # ============================================================
+# Bias Impact Report
+# ============================================================
+@router.get("/feedback/bias-impact")
+async def get_bias_impact_report():
+    """Compare how items with feedback would score with vs without bias.
+    Shows concrete examples of how analyst ratings shift AI priorities."""
+    from feedback_bias import _get_bias_settings, INFLUENCE_CONFIG
+
+    settings = await _get_bias_settings()
+    influence = settings["influence"]
+    inf_conf = INFLUENCE_CONFIG.get(influence, INFLUENCE_CONFIG["moderate"])
+
+    # Get items that have feedback aggregation
+    rated_items = await intelligence_col.find(
+        {"feedback_avg_rating": {"$exists": True, "$gt": 0}, "feedback_total_ratings": {"$gte": 1}},
+        {"_id": 0, "id": 1, "title": 1, "severity": 1, "priority_score": 1, "state": 1,
+         "threat_category": 1, "feedback_avg_rating": 1, "feedback_total_ratings": 1}
+    ).sort("feedback_total_ratings", -1).to_list(200)
+
+    if not rated_items:
+        return {
+            "status": "no_data",
+            "message": "No rated items found. Rate articles on the Intelligence Feed to generate impact data.",
+            "items": [],
+            "summary": {},
+        }
+
+    # Get the current bias profile to know what's upweighted/downweighted
+    profile = await get_feedback_bias_profile()
+    upweight_regions = set(profile.get("upweight_regions", {}).keys())
+    upweight_threats = set(profile.get("upweight_threats", {}).keys())
+    downweight_regions = set(profile.get("downweight_regions", {}).keys())
+    downweight_threats = set(profile.get("downweight_threats", {}).keys())
+
+    # Boost/reduce ranges based on influence
+    boost_map = {"light": (3, 5), "moderate": (5, 10), "high": (10, 20)}
+    reduce_map = {"light": (3, 5), "moderate": (5, 10), "high": (10, 20)}
+    boost_lo, boost_hi = boost_map.get(influence, (5, 10))
+    reduce_lo, reduce_hi = reduce_map.get(influence, (5, 10))
+
+    impact_items = []
+    total_boosted = 0
+    total_reduced = 0
+    total_unchanged = 0
+    total_delta = 0
+
+    for item in rated_items:
+        original_score = item.get("priority_score", 30)
+        region = item.get("state", "")
+        threat = item.get("threat_category", "")
+        avg_rating = item.get("feedback_avg_rating", 3.0)
+        rating_count = item.get("feedback_total_ratings", 0)
+
+        # Estimate bias delta
+        delta = 0
+        reasons = []
+
+        if region in upweight_regions:
+            avg_boost = (boost_lo + boost_hi) / 2
+            delta += avg_boost
+            reasons.append(f"Region '{region}' upweighted")
+        elif region in downweight_regions:
+            avg_reduce = (reduce_lo + reduce_hi) / 2
+            delta -= avg_reduce
+            reasons.append(f"Region '{region}' downweighted")
+
+        if threat in upweight_threats:
+            avg_boost = (boost_lo + boost_hi) / 2
+            delta += avg_boost
+            reasons.append(f"Threat '{threat}' upweighted")
+        elif threat in downweight_threats:
+            avg_reduce = (reduce_lo + reduce_hi) / 2
+            delta -= avg_reduce
+            reasons.append(f"Threat '{threat}' downweighted")
+
+        # Clamp to -30..+30 and round
+        delta = max(-30, min(30, round(delta)))
+        biased_score = max(0, min(100, original_score + delta))
+
+        if delta > 0:
+            total_boosted += 1
+            direction = "boosted"
+        elif delta < 0:
+            total_reduced += 1
+            direction = "reduced"
+        else:
+            total_unchanged += 1
+            direction = "unchanged"
+
+        total_delta += abs(delta)
+
+        impact_items.append({
+            "id": item["id"],
+            "title": (item.get("title") or "")[:80],
+            "region": region,
+            "threat_category": threat,
+            "severity": item.get("severity", ""),
+            "original_score": original_score,
+            "biased_score": biased_score,
+            "delta": delta,
+            "direction": direction,
+            "analyst_avg_rating": round(avg_rating, 1),
+            "rating_count": rating_count,
+            "reasons": reasons,
+        })
+
+    # Sort: biggest absolute deltas first
+    impact_items.sort(key=lambda x: -abs(x["delta"]))
+
+    avg_delta = round(total_delta / max(len(impact_items), 1), 1)
+
+    return {
+        "status": "active",
+        "influence": influence,
+        "influence_label": inf_conf["pct_label"],
+        "window": settings["window"],
+        "total_items_analyzed": len(impact_items),
+        "summary": {
+            "boosted": total_boosted,
+            "reduced": total_reduced,
+            "unchanged": total_unchanged,
+            "avg_absolute_delta": avg_delta,
+        },
+        "items": impact_items[:30],
+    }
+
+
+# ============================================================
 # Feedback Summary Stats
 # ============================================================
 @router.get("/feedback/stats")
