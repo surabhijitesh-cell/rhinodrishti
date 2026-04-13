@@ -6,6 +6,7 @@ import math
 import uuid
 import os
 from shared import db, feedback_col, intelligence_col, activity_log_col, logger
+from feedback_bias import get_feedback_bias_profile, invalidate_bias_cache
 
 router = APIRouter()
 
@@ -66,6 +67,7 @@ async def submit_feedback(body: dict, request: Request, background_tasks: Backgr
             }}
         )
         await _update_aggregation(intelligence_id)
+        invalidate_bias_cache()
         background_tasks.add_task(_check_feedback_session, device_id)
         return {"message": "Rating updated", "action": "updated", "rating": rating}
 
@@ -95,6 +97,9 @@ async def submit_feedback(body: dict, request: Request, background_tasks: Backgr
 
     await feedback_col.insert_one(doc)
     await _update_aggregation(intelligence_id)
+
+    # Invalidate feedback bias cache so classifications reflect latest ratings
+    invalidate_bias_cache()
 
     # Check if device has enough ratings for a feedback session log
     background_tasks.add_task(_check_feedback_session, device_id)
@@ -274,6 +279,17 @@ async def get_training_profile():
         "high_rated_count": len(high_ids),
         "low_rated_count": len(low_ids),
     }
+
+
+# ============================================================
+# Active Feedback Bias Profile (used by AI classification)
+# ============================================================
+@router.get("/feedback/bias-profile")
+async def get_active_bias_profile():
+    """Returns the current feedback bias profile that is dynamically
+    injected into the AI classification pipeline."""
+    profile = await get_feedback_bias_profile()
+    return profile
 
 
 # ============================================================

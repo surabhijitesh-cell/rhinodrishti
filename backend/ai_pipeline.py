@@ -272,7 +272,8 @@ Respond ONLY in valid JSON:
 
 
 async def classify_and_analyze_article(article: dict) -> dict:
-    """Classify and analyze a news article using Claude Haiku 4.5 with enhanced military intelligence prompt"""
+    """Classify and analyze a news article using Claude Haiku 4.5 with enhanced military intelligence prompt.
+    Dynamically injects analyst feedback bias when available."""
     title = article.get("title", "")
     content = article.get("raw_content", "") or article.get("description", "") or title
 
@@ -280,11 +281,18 @@ async def classify_and_analyze_article(article: dict) -> dict:
 
     try:
         from emergentintegrations.llm.chat import LlmChat, UserMessage
+        from feedback_bias import get_feedback_bias_context
+
+        # Build dynamic prompt with feedback bias
+        bias_context = await get_feedback_bias_context()
+        system_prompt = CLASSIFICATION_PROMPT
+        if bias_context:
+            system_prompt = CLASSIFICATION_PROMPT + "\n" + bias_context
 
         chat = LlmChat(
             api_key=EMERGENT_LLM_KEY,
             session_id=f"classify-{article.get('id', 'unknown')}",
-            system_message=CLASSIFICATION_PROMPT
+            system_message=system_prompt
         ).with_model("anthropic", "claude-haiku-4-5-20251001")
 
         user_message = UserMessage(text=f"Analyze this article:\n\n{article_text}")

@@ -3,7 +3,7 @@ import {
   BarChart3, Brain, ShieldAlert, TrendingDown, TrendingUp,
   Gauge, Users, Star, AlertTriangle, Target, RefreshCw, Upload,
   FileText, Trash2, CheckCircle, Link, Play, Loader2, Clock, Globe,
-  Activity, Hash
+  Activity, Hash, Zap
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Badge } from "../components/ui/badge";
@@ -12,6 +12,7 @@ import { Input } from "../components/ui/input";
 import { Progress } from "../components/ui/progress";
 import { toast } from "sonner";
 import axios from "axios";
+import { useAuth } from "../contexts/AuthContext";
 
 const STATUS_COLORS = {
   pending: "text-yellow-400 border-yellow-500/30",
@@ -21,6 +22,8 @@ const STATUS_COLORS = {
 };
 
 export default function TrainingSummary({ api }) {
+  const { user } = useAuth();
+  const isViewer = user?.role === "viewer";
   const [stats, setStats] = useState(null);
   const [profile, setProfile] = useState(null);
   const [queue, setQueue] = useState([]);
@@ -32,6 +35,7 @@ export default function TrainingSummary({ api }) {
   const [activityLog, setActivityLog] = useState(null);
   const [logPage, setLogPage] = useState(1);
   const [effectiveness, setEffectiveness] = useState(null);
+  const [biasProfile, setBiasProfile] = useState(null);
   const [addingUrl, setAddingUrl] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [training, setTraining] = useState(false);
@@ -40,13 +44,14 @@ export default function TrainingSummary({ api }) {
   const fetchAll = async () => {
     setLoading(true);
     try {
-      const [statsR, profileR, queueR, insightsR, activityR, effR] = await Promise.all([
+      const [statsR, profileR, queueR, insightsR, activityR, effR, biasR] = await Promise.all([
         axios.get(`${api}/feedback/stats`).catch(() => ({ data: null })),
         axios.get(`${api}/feedback/training-profile`).catch(() => ({ data: null })),
         axios.get(`${api}/training/queue`).catch(() => ({ data: { items: [] } })),
         axios.get(`${api}/training/insights`).catch(() => ({ data: null })),
         axios.get(`${api}/training/activity-log?page=${logPage}`).catch(() => ({ data: null })),
         axios.get(`${api}/training/effectiveness`).catch(() => ({ data: null })),
+        axios.get(`${api}/feedback/bias-profile`).catch(() => ({ data: null })),
       ]);
       setStats(statsR.data);
       setProfile(profileR.data);
@@ -54,6 +59,7 @@ export default function TrainingSummary({ api }) {
       setInsights(insightsR.data);
       setActivityLog(activityR.data);
       setEffectiveness(effR.data);
+      setBiasProfile(biasR.data);
     } catch (e) {
       console.error(e);
     }
@@ -341,11 +347,12 @@ export default function TrainingSummary({ api }) {
         {/* ===== LEFT: UPLOAD + QUEUE ===== */}
         <div className="space-y-4">
           {/* URL Input */}
-          <Card className="border border-border rounded-none bg-card" data-testid="url-input-card">
+          <Card className={`border border-border rounded-none bg-card ${isViewer ? "opacity-50" : ""}`} data-testid="url-input-card">
             <CardHeader className="py-3 px-4 border-b border-border">
               <CardTitle className="text-sm uppercase tracking-wider font-['Barlow_Condensed'] font-semibold flex items-center gap-2">
                 <Link size={16} className="text-primary" />
                 Add Intelligence URL
+                {isViewer && <span className="text-[9px] text-muted-foreground font-normal ml-auto">View Only</span>}
               </CardTitle>
             </CardHeader>
             <CardContent className="p-4 space-y-3">
@@ -354,11 +361,13 @@ export default function TrainingSummary({ api }) {
                   placeholder="Paste news URL here..."
                   value={urlInput}
                   onChange={(e) => setUrlInput(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && addUrl()}
+                  onKeyDown={(e) => e.key === "Enter" && !isViewer && addUrl()}
                   className="rounded-none flex-1"
+                  disabled={isViewer}
                   data-testid="training-url-input"
                 />
-                <Button onClick={addUrl} disabled={addingUrl || !urlInput.trim()} className="rounded-none uppercase text-xs tracking-wider shrink-0" data-testid="add-url-btn">
+                <Button onClick={addUrl} disabled={isViewer || addingUrl || !urlInput.trim()} className="rounded-none uppercase text-xs tracking-wider shrink-0 disabled:opacity-50 disabled:cursor-not-allowed" data-testid="add-url-btn"
+                  title={isViewer ? "Viewers cannot upload training data" : "Add URL"}>
                   {addingUrl ? <Loader2 size={14} className="animate-spin" /> : <><Globe size={14} className="mr-1" /> Add</>}
                 </Button>
               </div>
@@ -391,25 +400,28 @@ export default function TrainingSummary({ api }) {
           </Card>
 
           {/* File Upload */}
-          <Card className="border border-border rounded-none bg-card" data-testid="file-upload-card">
+          <Card className={`border border-border rounded-none bg-card ${isViewer ? "opacity-50" : ""}`} data-testid="file-upload-card">
             <CardHeader className="py-3 px-4 border-b border-border">
               <CardTitle className="text-sm uppercase tracking-wider font-['Barlow_Condensed'] font-semibold flex items-center gap-2">
                 <Upload size={16} className="text-emerald-400" />
                 Upload Document
+                {isViewer && <span className="text-[9px] text-muted-foreground font-normal ml-auto">View Only</span>}
               </CardTitle>
             </CardHeader>
             <CardContent className="p-4">
               <div
-                className="border-2 border-dashed border-border p-5 text-center cursor-pointer hover:border-muted-foreground transition-colors"
-                onClick={() => document.getElementById("train-file-input").click()}
+                className={`border-2 border-dashed border-border p-5 text-center transition-colors ${isViewer ? "cursor-not-allowed" : "cursor-pointer hover:border-muted-foreground"}`}
+                onClick={() => !isViewer && document.getElementById("train-file-input").click()}
+                title={isViewer ? "Viewers cannot upload training data" : ""}
                 data-testid="upload-dropzone"
               >
                 <Upload size={20} className="mx-auto text-muted-foreground mb-1.5" />
-                <p className="text-sm text-muted-foreground">{uploading ? "Uploading..." : "Click to browse or drop file"}</p>
+                <p className="text-sm text-muted-foreground">{isViewer ? "Upload disabled for viewers" : uploading ? "Uploading..." : "Click to browse or drop file"}</p>
                 <p className="text-[10px] text-muted-foreground/50 font-mono mt-0.5">PDF, DOCX, TXT</p>
               </div>
               <input id="train-file-input" type="file" className="hidden" accept=".pdf,.docx,.doc,.txt"
                 onChange={async (e) => { if (e.target.files?.[0]) await uploadFile(e.target.files[0]); e.target.value = ""; }}
+                disabled={isViewer}
               />
             </CardContent>
           </Card>
@@ -419,9 +431,10 @@ export default function TrainingSummary({ api }) {
             <CardContent className="p-4 space-y-3">
               <Button
                 onClick={startTraining}
-                disabled={training || pendingCount === 0}
-                className="w-full rounded-none uppercase text-sm font-bold tracking-wider py-5"
+                disabled={isViewer || training || pendingCount === 0}
+                className="w-full rounded-none uppercase text-sm font-bold tracking-wider py-5 disabled:opacity-50 disabled:cursor-not-allowed"
                 data-testid="train-btn"
+                title={isViewer ? "Viewers cannot trigger training" : ""}
               >
                 {training ? (
                   <><Loader2 size={16} className="mr-2 animate-spin" /> Training in Progress...</>
@@ -633,6 +646,136 @@ export default function TrainingSummary({ api }) {
           </CardContent>
         </Card>
       </div>
+
+      {/* ===== ACTIVE FEEDBACK BIAS (AI PIPELINE INTEGRATION) ===== */}
+      <Card className="border border-border rounded-none bg-card border-l-4 border-l-primary" data-testid="feedback-bias-card">
+        <CardHeader className="py-3 px-4 border-b border-border">
+          <CardTitle className="text-sm uppercase tracking-wider font-['Barlow_Condensed'] font-semibold flex items-center gap-2">
+            <Zap size={16} className="text-primary" />
+            Active Feedback Bias (Live AI Pipeline)
+            {biasProfile?.status === "active" && (
+              <Badge className="rounded-none text-[9px] px-1.5 py-0 bg-green-500/20 text-green-400 border-green-500/30 ml-2">
+                ACTIVE
+              </Badge>
+            )}
+            {biasProfile?.status === "insufficient_data" && (
+              <Badge className="rounded-none text-[9px] px-1.5 py-0 bg-amber-500/20 text-amber-400 border-amber-500/30 ml-2">
+                NEEDS DATA
+              </Badge>
+            )}
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="p-4">
+          {biasProfile?.status === "active" ? (
+            <div className="space-y-4">
+              <p className="text-xs text-muted-foreground">
+                Based on <span className="text-foreground font-semibold">{biasProfile.total_ratings}</span> ratings across{" "}
+                <span className="text-foreground font-semibold">{biasProfile.unique_items}</span> articles in the last{" "}
+                <span className="text-foreground font-semibold">{biasProfile.window_days}</span> days.
+                This bias is dynamically injected into the AI classification pipeline.
+              </p>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* Upweighted */}
+                <div className="space-y-2">
+                  <p className="text-[10px] uppercase tracking-wider text-emerald-400 font-mono font-semibold flex items-center gap-1">
+                    <TrendingUp size={10} /> Upweighted by Analysts ({biasProfile.high_rated_items} items)
+                  </p>
+                  {Object.keys(biasProfile.upweight_regions || {}).length > 0 && (
+                    <div>
+                      <p className="text-[9px] uppercase tracking-wider text-muted-foreground font-mono mb-1">Regions (+5 to +10 priority)</p>
+                      <div className="flex flex-wrap gap-1">
+                        {Object.entries(biasProfile.upweight_regions).map(([r, c]) => (
+                          <Badge key={r} variant="outline" className="rounded-none text-[10px] text-emerald-400 border-emerald-500/30 px-2 py-0.5">
+                            {r} ({c})
+                          </Badge>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {Object.keys(biasProfile.upweight_threats || {}).length > 0 && (
+                    <div>
+                      <p className="text-[9px] uppercase tracking-wider text-muted-foreground font-mono mb-1">Threat Categories</p>
+                      <div className="flex flex-wrap gap-1">
+                        {Object.entries(biasProfile.upweight_threats).map(([t, c]) => (
+                          <Badge key={t} variant="outline" className="rounded-none text-[10px] text-blue-400 border-blue-500/30 px-2 py-0.5">
+                            {t} ({c})
+                          </Badge>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {Object.keys(biasProfile.upweight_actors || {}).length > 0 && (
+                    <div>
+                      <p className="text-[9px] uppercase tracking-wider text-muted-foreground font-mono mb-1">Key Actors</p>
+                      <div className="flex flex-wrap gap-1">
+                        {Object.entries(biasProfile.upweight_actors).map(([a, c]) => (
+                          <Badge key={a} variant="outline" className="rounded-none text-[10px] text-cyan-400 border-cyan-500/30 px-2 py-0.5">
+                            {a} ({c})
+                          </Badge>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {Object.keys(biasProfile.upweight_regions || {}).length === 0 &&
+                   Object.keys(biasProfile.upweight_threats || {}).length === 0 && (
+                    <p className="text-xs text-muted-foreground">No strong upweight signals yet.</p>
+                  )}
+                </div>
+
+                {/* Downweighted */}
+                <div className="space-y-2">
+                  <p className="text-[10px] uppercase tracking-wider text-red-400 font-mono font-semibold flex items-center gap-1">
+                    <TrendingDown size={10} /> Downweighted by Analysts ({biasProfile.low_rated_items} items)
+                  </p>
+                  {Object.keys(biasProfile.downweight_regions || {}).length > 0 && (
+                    <div>
+                      <p className="text-[9px] uppercase tracking-wider text-muted-foreground font-mono mb-1">Regions (-5 to -10 priority)</p>
+                      <div className="flex flex-wrap gap-1">
+                        {Object.entries(biasProfile.downweight_regions).map(([r, c]) => (
+                          <Badge key={r} variant="outline" className="rounded-none text-[10px] text-red-400 border-red-500/30 px-2 py-0.5">
+                            {r} ({c})
+                          </Badge>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {Object.keys(biasProfile.downweight_threats || {}).length > 0 && (
+                    <div>
+                      <p className="text-[9px] uppercase tracking-wider text-muted-foreground font-mono mb-1">Threat Categories</p>
+                      <div className="flex flex-wrap gap-1">
+                        {Object.entries(biasProfile.downweight_threats).map(([t, c]) => (
+                          <Badge key={t} variant="outline" className="rounded-none text-[10px] text-orange-400 border-orange-500/30 px-2 py-0.5">
+                            {t} ({c})
+                          </Badge>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {Object.keys(biasProfile.downweight_regions || {}).length === 0 &&
+                   Object.keys(biasProfile.downweight_threats || {}).length === 0 && (
+                    <p className="text-xs text-muted-foreground">No strong downweight signals yet.</p>
+                  )}
+                </div>
+              </div>
+
+              <div className="bg-muted/20 border border-border p-3 font-mono text-xs space-y-1 mt-2">
+                <p className="text-primary">pipeline_prompt = base_classification + feedback_bias_context</p>
+                <p className="text-muted-foreground mt-1">influence: ~20-25% weight | window: rolling 30 days | cache: 5 min TTL</p>
+              </div>
+            </div>
+          ) : (
+            <div className="text-center py-4">
+              <Zap size={24} className="mx-auto text-muted-foreground/30 mb-2" />
+              <p className="text-sm text-muted-foreground">
+                {biasProfile?.status === "insufficient_data"
+                  ? `Need at least ${biasProfile.min_required} ratings to activate bias. Currently: ${biasProfile.total_ratings}.`
+                  : "Rate articles on the Intelligence Feed to build feedback bias for the AI pipeline."}
+              </p>
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       {/* ===== TRAINING ACTIVITY LOG ===== */}
       <Card className="border border-border rounded-none bg-card" data-testid="activity-log-card">

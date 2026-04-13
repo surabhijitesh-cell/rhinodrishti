@@ -1,0 +1,76 @@
+{
+  "summary": "Iteration 29: Feedback Bias Feature (P2) - All tests passed. Backend: 15/15 tests passed including bias-profile endpoint, active status verification, upweight/downweight data, cache invalidation, auth regression. Frontend: Training & Feedback page shows Active Feedback Bias card with ACTIVE badge, upweight regions/threats/actors, pipeline formula. KeywordEngine page loads without syntax errors.",
+
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+
+  "passed_tests": [
+    "POST /api/auth/login with valid admin credentials returns token",
+    "POST /api/auth/login with invalid credentials returns 401",
+    "GET /api/feedback/bias-profile returns 200",
+    "GET /api/feedback/bias-profile has status=active with 57+ ratings",
+    "GET /api/feedback/bias-profile has total_ratings field (57 ratings)",
+    "GET /api/feedback/bias-profile has unique_items field (40 items)",
+    "GET /api/feedback/bias-profile has upweight_regions (Manipur, Assam, Nagaland, Mizoram, Tripura)",
+    "GET /api/feedback/bias-profile has upweight_threats (Ethnic/Tribal Tension, Insurgency/Militancy, etc.)",
+    "GET /api/feedback/bias-profile has upweight_actors (Assam Rifles, Security Forces, Manipur Police, etc.)",
+    "GET /api/feedback/bias-profile has downweight_regions and downweight_threats fields",
+    "GET /api/feedback/bias-profile uses 30-day rolling window",
+    "GET /api/feedback/bias-profile has high_rated_items (13) and low_rated_items (18) counts",
+    "POST /api/feedback invalidates bias cache on new feedback submission",
+    "GET /api/feedback/stats returns expected fields (total_feedback, unique_items_rated, etc.)",
+    "GET /api/feedback/training-profile returns expected fields (confidence_level, positive_weights, etc.)",
+    "Frontend: Training & Feedback page loads with data-testid='training-summary-page'",
+    "Frontend: Active Feedback Bias card visible with data-testid='feedback-bias-card'",
+    "Frontend: ACTIVE badge displayed on Feedback Bias card",
+    "Frontend: Upweighted by Analysts section shows regions (Manipur 6, Assam 3, Nagaland 2, etc.)",
+    "Frontend: Upweighted by Analysts section shows threat categories",
+    "Frontend: Upweighted by Analysts section shows key actors",
+    "Frontend: Downweighted by Analysts section present (no strong signals yet)",
+    "Frontend: Pipeline formula section shows 'pipeline_prompt = base_classification + feedback_bias_context'",
+    "Frontend: Influence info shows '~20-25% weight | window: rolling 30 days | cache: 5 min TTL'",
+    "Frontend: KeywordEngine page loads without syntax errors",
+    "Frontend: KeywordEngine shows 300 keywords with stats and grid"
+  ],
+
+  "test_report_links": [
+    "/app/backend/tests/test_feedback_bias_v29.py",
+    "/app/test_reports/pytest/pytest_results_v29.xml"
+  ],
+
+  "action_items": [],
+
+  "critical_code_review_comments": [
+    "feedback_bias.py: Well-structured bias engine with 5-minute cache TTL, 30-day rolling window, and proper aggregation of high/low rated items",
+    "ai_pipeline.py: Lines 274-290 correctly inject feedback bias context into classification prompt when sufficient data exists",
+    "routers/feedback.py: Properly invalidates bias cache on feedback submit/update via invalidate_bias_cache()",
+    "TrainingSummary.js: New Active Feedback Bias card with proper data-testid and conditional rendering based on bias status"
+  ],
+
+  "updated_files": [
+    "/app/backend/tests/test_feedback_bias_v29.py"
+  ],
+
+  "success_rate": {
+    "backend": "100% (15/15 tests passed)",
+    "frontend": "100% (all UI elements verified)"
+  },
+
+  "test_credentials": "Admin: username=admin, password=Admin@2026!",
+
+  "seed_data_creation": "None - used existing 57 feedback ratings across 40 items",
+
+  "retest_needed": false,
+
+  "should_main_agent_self_test": false,
+
+  "context_for_next_testing_agent": "Iteration 29 verified: (1) Feedback Bias feature fully working - GET /api/feedback/bias-profile returns active profile with 57 ratings, 40 items, upweight regions (Manipur, Assam, Nagaland), upweight threats (Ethnic/Tribal Tension, Insurgency/Militancy), upweight actors (Assam Rifles, Security Forces), (2) Bias is dynamically injected into AI classification prompt via ai_pipeline.py lines 274-290, (3) Frontend shows Active Feedback Bias card on Training & Feedback page with ACTIVE badge, all upweight/downweight data, and pipeline formula, (4) KeywordEngine page syntax error fixed and loads correctly. Test file: /app/backend/tests/test_feedback_bias_v29.py"
+}
