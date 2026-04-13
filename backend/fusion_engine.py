@@ -22,16 +22,21 @@ def normalize_title(title: str) -> str:
     return t
 
 
-KNOWN_ORGS = {'ulfa', 'nscn', 'rpf', 'pla', 'hnlc', 'gnla', 'kla', 'mnf', 'unlf', 'prepak',
+KNOWN_ORGS = {'ulfa', 'ulfa-i', 'nscn', 'nscn-k', 'rpf', 'pla', 'hnlc', 'gnla', 'kla', 'mnf', 'unlf', 'prepak',
               'knf', 'arsa', 'tnla', 'mndaa', 'assam rifles', 'bsf', 'crpf', 'army', 'bgb',
-              'tatmadaw', 'ispr', 'nia', 'bro', 'nhidcl'}
+              'tatmadaw', 'ispr', 'nia', 'bro', 'nhidcl', 'dri', 'ncb', 'manipur police',
+              'kuki', 'meitei', 'naga', 'bodo', 'dimasa', 'karbi'}
 KNOWN_PLACES = {'manipur', 'assam', 'meghalaya', 'mizoram', 'tripura', 'arunachal', 'nagaland',
                 'sikkim', 'tinsukia', 'changlang', 'tamenglong', 'imphal', 'dimapur', 'guwahati',
                 'silchar', 'agartala', 'shillong', 'aizawl', 'itanagar', 'kohima', 'myanmar',
-                'bangladesh', 'dhaka', 'chittagong', 'cox', 'moreh', 'champhai', 'sivasagar'}
+                'bangladesh', 'dhaka', 'chittagong', 'cox', 'moreh', 'champhai', 'sivasagar',
+                'dibrugarh', 'chabua', 'jorhat', 'tezpur', 'haflong', 'diphu', 'churachandpur',
+                'kangpokpi', 'tengnoupal', 'ukhrul', 'senapati', 'bishnupur'}
 KNOWN_EVENTS = {'gunfire', 'gunfight', 'bomb', 'blast', 'attack', 'ambush', 'shootout', 'firing',
                 'seized', 'arrested', 'killed', 'injured', 'protest', 'blockade', 'collapse',
-                'election', 'turnout', 'heroin', 'drugs', 'arms', 'grenade', 'rocket', 'militant'}
+                'election', 'turnout', 'heroin', 'drugs', 'arms', 'grenade', 'rocket', 'militant',
+                'shots fired', 'bunker', 'encounter', 'kidnap', 'extortion', 'arson',
+                'yaba', 'smuggling', 'contraband', 'explosive'}
 
 
 def extract_key_entities(title: str) -> set:
@@ -72,21 +77,71 @@ def entity_similarity(title_a: str, title_b: str) -> int:
     return len(ents_a & ents_b)
 
 
-def are_similar(item_a: dict, item_b: dict, title_threshold: float = 0.50) -> bool:
+def are_similar(item_a: dict, item_b: dict, title_threshold: float = 0.40) -> bool:
     title_a = item_a.get("title", "")
     title_b = item_b.get("title", "")
 
-    # Title word overlap
+    # 1. Exact normalized title match (same article re-ingested)
+    norm_a = normalize_title(title_a)
+    norm_b = normalize_title(title_b)
+    if norm_a and norm_b and norm_a == norm_b:
+        return True
+
+    # 2. Same source_url → always merge
+    url_a = item_a.get("source_url", "")
+    url_b = item_b.get("source_url", "")
+    if url_a and url_b and url_a == url_b:
+        return True
+
+    # 3. Title word overlap
     t_sim = title_similarity(title_a, title_b)
     if t_sim >= title_threshold:
         return True
 
-    # Entity overlap — strong entity match even with different wording
+    # 4. Entity overlap — 2+ shared entities + any title overlap
     ent_overlap = entity_similarity(title_a, title_b)
-    if ent_overlap >= 3 and t_sim >= 0.30:
+    if ent_overlap >= 2 and t_sim >= 0.20:
+        return True
+
+    # 5. Key phrase matching — shared multi-word phrases (e.g., "ULFA-I chief", "bunkers destroyed")
+    phrases_a = _extract_keyphrases(title_a)
+    phrases_b = _extract_keyphrases(title_b)
+    shared_phrases = phrases_a & phrases_b
+    if len(shared_phrases) >= 1 and t_sim >= 0.15:
+        return True
+
+    # 6. Same source + same state + high entity overlap
+    if (item_a.get("source") == item_b.get("source") and
+        item_a.get("state") == item_b.get("state") and
+        ent_overlap >= 2):
         return True
 
     return False
+
+
+def _extract_keyphrases(title: str) -> set:
+    """Extract 2-3 word meaningful phrases from a title."""
+    t = (title or "").lower()
+    phrases = set()
+    # Known compound entities
+    compounds = [
+        'ulfa-i chief', 'paresh baruah', 'assam rifles', 'manipur police',
+        'shots fired', 'rounds fired', 'bunkers destroyed', 'arms seized',
+        'drugs seized', 'yaba tablets', 'heroin seized', 'arms cache',
+        'border security', 'counter insurgency', 'nscn-k', 'voter turnout',
+        'election turnout', 'bridge collapse', 'bomb blast', 'ied found',
+        'grenade attack', 'encounter killing', 'ceasefire violation',
+    ]
+    for phrase in compounds:
+        if phrase in t:
+            phrases.add(phrase)
+
+    # Also extract "NUMBER + noun" patterns (e.g., "21 bunkers", "two arrested")
+    number_patterns = re.findall(r'(\d+|two|three|four|five|six|seven|eight|nine|ten)\s+(bunkers?|arrested|killed|injured|seized|destroyed)', t)
+    for num, noun in number_patterns:
+        phrases.add(f"{num} {noun}")
+
+    return phrases
 
 
 def embedding_similarity(emb_a, emb_b) -> float:

@@ -1,0 +1,77 @@
+{
+  "summary": "Iteration 28: Multi-Article Fusion Fix + Intelligence Analysis Tool - All tests passed. Backend: 13/13 tests passed including fusion dedup verification, document analysis endpoints, auth regression. Frontend: Intelligence Analysis page working with Upload File/Analyze URL tabs, analysis cards with severity badges, threat classification, pattern analysis, and all required sections.",
+
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+
+  "passed_tests": [
+    "POST /api/auth/login with valid admin credentials returns token",
+    "POST /api/auth/login with invalid credentials returns 401",
+    "GET /api/cross-border/watch returns country-grouped data (bangladesh, myanmar)",
+    "GET /api/intelligence - no duplicate titles from same source found",
+    "GET /api/fusion/stats - returns dedup ratio and cluster stats",
+    "GET /api/uploaded-documents - returns documents list with count",
+    "GET /api/uploaded-documents/{id} - returns document with full analysis (executive_summary, threat_classification, pattern_analysis, relevance_assessment, recommended_actions)",
+    "GET /api/uploaded-documents/{id} - returns 404 for non-existent doc",
+    "POST /api/analyze-url - rejects invalid URL with 400",
+    "POST /api/analyze-url - endpoint exists and accepts valid structure",
+    "POST /api/upload-document - rejects unsupported file types with 400",
+    "POST /api/upload-document - accepts TXT files and returns document_id",
+    "DELETE /api/uploaded-documents/{id} - returns 404 for non-existent doc",
+    "Frontend: 'Intelligence Analysis' header displayed on /upload page",
+    "Frontend: 'Upload File' and 'Analyze URL' tabs present and functional",
+    "Frontend: URL tab has url input and optional query textarea",
+    "Frontend: Analysis cards show severity badge (LOW/MEDIUM/HIGH/CRITICAL)",
+    "Frontend: Analysis cards show threat category badge",
+    "Frontend: Analysis cards show region with MapPin icon",
+    "Frontend: Analysis cards show escalation indicator (STABLE/ESCALATING/etc)",
+    "Frontend: Expanded card shows Executive Summary section",
+    "Frontend: Expanded card shows Threat Classification (Severity, Category, Confidence)",
+    "Frontend: Expanded card shows Relevance (Score, Primary, Secondary regions)",
+    "Frontend: Expanded card shows Pattern Analysis section",
+    "Frontend: Expanded card shows Recommended Actions section",
+    "Frontend: Expanded card shows Cross-References section",
+    "Frontend: Expanded card shows Intelligence Gaps section",
+    "Frontend: Expanded card shows Key Entities section"
+  ],
+
+  "test_report_links": [
+    "/app/backend/tests/test_iteration_28_fusion_analysis.py",
+    "/app/test_reports/pytest/pytest_results_v28.xml"
+  ],
+
+  "action_items": [],
+
+  "critical_code_review_comments": [
+    "fusion_engine.py: 6 detection methods for similarity (exact title, source_url, title overlap, entity overlap, keyphrase matching, same source+state) - well implemented",
+    "documents.py: Contextual analysis prompt is comprehensive with proper JSON structure for threat_classification, pattern_analysis, relevance_assessment, recommended_actions",
+    "DocumentUpload.js: AnalysisCard component properly displays all analysis fields with appropriate styling and badges"
+  ],
+
+  "updated_files": [
+    "/app/backend/tests/test_iteration_28_fusion_analysis.py"
+  ],
+
+  "success_rate": {
+    "backend": "100% (13/13 tests passed)",
+    "frontend": "100% (all UI elements verified)"
+  },
+
+  "test_credentials": "Admin: username=admin, password=Admin@2026!",
+
+  "seed_data_creation": "None - used existing analyzed document (a79cb742-43a1-4ab9-84ae-26078b78411d)",
+
+  "retest_needed": false,
+
+  "should_main_agent_self_test": false,
+
+  "context_for_next_testing_agent": "Iteration 28 verified: (1) Multi-article fusion fix with 6 detection methods - no duplicate titles from same source in /api/intelligence, (2) Intelligence Analysis tool at /upload route with Upload File and Analyze URL tabs, (3) Analysis cards display severity badges, threat category, region, escalation indicator, (4) Expanded cards show Executive Summary, Threat Classification, Relevance, Pattern Analysis, Recommended Actions, Cross-References, Intelligence Gaps, Key Entities. Test file: /app/backend/tests/test_iteration_28_fusion_analysis.py. WebSocket warning about connection closing before established is non-blocking."
+}

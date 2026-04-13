@@ -1,13 +1,120 @@
-"""Document upload and management endpoints."""
+"""Document upload, URL analysis, and contextual intelligence assessment."""
 from fastapi import APIRouter, HTTPException, BackgroundTasks, UploadFile, File
-from datetime import datetime, timezone
+from pydantic import BaseModel
+from datetime import datetime, timezone, timedelta
 import io
 import os
+import re
 import uuid
-from shared import db, uploads_col, logger
+import json
+from shared import db, uploads_col, intelligence_col, patterns_col, logger
 
 router = APIRouter()
 
+EMERGENT_LLM_KEY = os.environ.get('EMERGENT_LLM_KEY', '')
+
+
+class URLAnalysisRequest(BaseModel):
+    url: str
+    analysis_query: str = ""
+
+
+class TextAnalysisRequest(BaseModel):
+    text: str
+    analysis_query: str = ""
+
+
+# ============================================================
+# Fetch current security context for AI prompts
+# ============================================================
+
+async def _get_security_context() -> str:
+    """Build a snapshot of the current security environment from recent intelligence."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+
+    # Recent high-priority items
+    recent_items = await intelligence_col.find(
+        {"processed": True, "severity": {"$in": ["critical", "high"]}, "published_at": {"$gte": cutoff}},
+        {"_id": 0, "title": 1, "state": 1, "severity": 1, "tags": 1, "ai_summary": 1}
+    ).sort("priority_score", -1).limit(15).to_list(15)
+
+    # Active patterns
+    recent_patterns = await patterns_col.find(
+        {"detected_at": {"$gte": cutoff}},
+        {"_id": 0, "pattern_type": 1, "description": 1, "severity": 1, "states": 1}
+    ).sort("detected_at", -1).limit(10).to_list(10)
+
+    # Build context string
+    ctx = "=== CURRENT NER SECURITY ENVIRONMENT (Last 7 Days) ===\n\n"
+    ctx += "--- HIGH PRIORITY DEVELOPMENTS ---\n"
+    for i, item in enumerate(recent_items, 1):
+        ctx += f"{i}. [{item.get('state','')}|{item.get('severity','').upper()}] {item.get('title','')}\n"
+        if item.get('ai_summary'):
+            ctx += f"   Summary: {item['ai_summary'][:150]}\n"
+        tags = item.get('tags', [])
+        if tags:
+            ctx += f"   Tags: {', '.join(tags[:5])}\n"
+
+    ctx += "\n--- DETECTED PATTERNS ---\n"
+    for p in recent_patterns:
+        ctx += f"- [{p.get('severity','').upper()}] {p.get('pattern_type','')}: {p.get('description','')[:120]}\n"
+        states = p.get('states', [])
+        if states:
+            ctx += f"  Affected: {', '.join(states)}\n"
+
+    return ctx
+
+
+CONTEXTUAL_ANALYSIS_PROMPT = """You are a SENIOR MILITARY INTELLIGENCE ANALYST at India's Northeast Regional Command.
+
+You have been provided:
+1. A document/article/report submitted for analysis
+2. The CURRENT SECURITY ENVIRONMENT — a snapshot of the latest 7 days of intelligence from the region
+
+Your task: Provide a COMPREHENSIVE CONTEXTUAL INTELLIGENCE ASSESSMENT of the submitted document.
+
+Structure your response STRICTLY as JSON:
+{
+  "executive_summary": "3-4 sentence overview of what this document reports and why it matters",
+  "threat_classification": {
+    "severity": "CRITICAL / HIGH / MEDIUM / LOW",
+    "threat_category": "One of: INSURGENCY, BORDER SECURITY, DRUG TRAFFICKING, ARMS SMUGGLING, ETHNIC CONFLICT, POLITICAL INSTABILITY, CROSS-BORDER INFILTRATION, TERRORISM, CIVIL UNREST, NATURAL DISASTER, OTHER",
+    "confidence": "HIGH / MEDIUM / LOW"
+  },
+  "pattern_analysis": {
+    "matches_existing_pattern": true/false,
+    "pattern_description": "How this fits or diverges from detected patterns in the region. Be specific.",
+    "escalation_indicator": "ESCALATING / STABLE / DE-ESCALATING / NEW_THREAT"
+  },
+  "relevance_assessment": {
+    "relevance_score": 1-10,
+    "primary_region": "State or country most affected",
+    "secondary_regions": ["other affected areas"],
+    "relevance_explanation": "How this connects to the current NER security scenario"
+  },
+  "key_entities": {
+    "actors": ["Named groups, forces, individuals"],
+    "locations": ["Specific places mentioned"],
+    "events": ["Key events described"]
+  },
+  "recommended_actions": [
+    {"priority": "IMMEDIATE/HIGH/MEDIUM/LOW", "action": "Specific actionable recommendation"},
+    ...
+  ],
+  "intelligence_gaps": ["What information is missing that would improve assessment"],
+  "cross_references": "Which of the current security developments (from the context provided) are most related to this document and how"
+}
+
+RULES:
+- Be specific, not generic. Reference actual locations, actors, events.
+- recommended_actions must be ACTIONABLE — not vague suggestions.
+- If the document is NOT relevant to NER security, say so clearly but still provide the classification.
+- Use the current security context to make connections the raw document alone would not reveal."""
+
+
+# ============================================================
+# Endpoints
+# ============================================================
 
 @router.get("/uploaded-documents")
 async def get_uploaded_documents():
@@ -25,7 +132,6 @@ async def upload_document(file: UploadFile = File(...), background_tasks: Backgr
         "application/vnd.ms-excel": "xls",
         "text/plain": "txt"
     }
-
     content_type = file.content_type
     if content_type not in allowed_types:
         raise HTTPException(status_code=400, detail="File type not supported. Allowed: PDF, Word, Excel, TXT")
@@ -43,13 +149,13 @@ async def upload_document(file: UploadFile = File(...), background_tasks: Backgr
         elif file_type in ["docx", "doc"]:
             from docx import Document
             doc = Document(io.BytesIO(file_content))
-            extracted_text = "\n".join([para.text for para in doc.paragraphs])
+            extracted_text = "\n".join([p.text for p in doc.paragraphs])
         elif file_type in ["xlsx", "xls"]:
             from openpyxl import load_workbook
             wb = load_workbook(io.BytesIO(file_content))
             for sheet in wb:
                 for row in sheet.iter_rows(values_only=True):
-                    extracted_text += " | ".join([str(cell) for cell in row if cell]) + "\n"
+                    extracted_text += " | ".join([str(c) for c in row if c]) + "\n"
         elif file_type == "txt":
             extracted_text = file_content.decode('utf-8', errors='ignore')
     except Exception as e:
@@ -60,25 +166,68 @@ async def upload_document(file: UploadFile = File(...), background_tasks: Backgr
         "id": str(uuid.uuid4()),
         "filename": file.filename,
         "file_type": file_type,
+        "source_type": "file",
         "uploaded_at": datetime.now(timezone.utc).isoformat(),
-        "content_summary": extracted_text[:500] + "..." if len(extracted_text) > 500 else extracted_text,
-        "extracted_text": extracted_text[:10000],
-        "ai_analysis": "",
-        "region": "",
-        "processed": False
+        "extracted_text": extracted_text[:15000],
+        "analysis": None,
+        "processed": False,
     }
-
     await uploads_col.insert_one(doc_record)
 
     if background_tasks:
-        background_tasks.add_task(analyze_uploaded_document, doc_record["id"])
+        background_tasks.add_task(_run_contextual_analysis, doc_record["id"])
 
-    return {
-        "message": "Document uploaded successfully",
-        "document_id": doc_record["id"],
-        "filename": file.filename,
-        "extracted_chars": len(extracted_text)
+    return {"message": "Document uploaded — analysis starting", "document_id": doc_record["id"], "filename": file.filename}
+
+
+@router.post("/analyze-url")
+async def analyze_url(data: URLAnalysisRequest, background_tasks: BackgroundTasks = None):
+    """Fetch a URL and run contextual intelligence analysis."""
+    url = data.url.strip()
+    if not url.startswith("http"):
+        raise HTTPException(status_code=400, detail="Invalid URL")
+
+    # Scrape the URL
+    try:
+        import httpx
+        from bs4 import BeautifulSoup
+        async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
+            resp = await client.get(url, headers={"User-Agent": "Mozilla/5.0"})
+            resp.raise_for_status()
+        soup = BeautifulSoup(resp.text, "html.parser")
+        for tag in soup(["script", "style", "nav", "footer", "header"]):
+            tag.decompose()
+        text = soup.get_text(separator="\n", strip=True)
+        title = soup.title.string if soup.title else url
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to fetch URL: {str(e)}")
+
+    doc_record = {
+        "id": str(uuid.uuid4()),
+        "filename": title[:200] if title else url[:200],
+        "file_type": "url",
+        "source_type": "url",
+        "source_url": url,
+        "uploaded_at": datetime.now(timezone.utc).isoformat(),
+        "extracted_text": text[:15000],
+        "analysis_query": data.analysis_query,
+        "analysis": None,
+        "processed": False,
     }
+    await uploads_col.insert_one(doc_record)
+
+    if background_tasks:
+        background_tasks.add_task(_run_contextual_analysis, doc_record["id"])
+
+    return {"message": "URL fetched — analysis starting", "document_id": doc_record["id"], "filename": doc_record["filename"]}
+
+
+@router.get("/uploaded-documents/{doc_id}")
+async def get_document_detail(doc_id: str):
+    doc = await uploads_col.find_one({"id": doc_id}, {"_id": 0})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    return doc
 
 
 @router.delete("/uploaded-documents/{doc_id}")
@@ -86,75 +235,65 @@ async def delete_uploaded_document(doc_id: str):
     result = await uploads_col.delete_one({"id": doc_id})
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Document not found")
-    return {"message": "Document deleted successfully"}
+    return {"message": "Document deleted"}
 
 
-async def analyze_uploaded_document(doc_id: str):
-    """Analyze an uploaded document using AI."""
+# ============================================================
+# Contextual AI Analysis
+# ============================================================
+
+async def _run_contextual_analysis(doc_id: str):
+    """Run comprehensive contextual intelligence analysis on a document."""
     doc = await uploads_col.find_one({"id": doc_id}, {"_id": 0})
     if not doc:
-        logger.error(f"Document {doc_id} not found")
         return
 
-    extracted_text = doc.get("extracted_text", "")
-    if not extracted_text:
-        logger.warning(f"No text extracted from document {doc_id}")
+    text = doc.get("extracted_text", "")
+    if not text or len(text) < 20:
+        await uploads_col.update_one({"id": doc_id}, {"$set": {"processed": True, "analysis": {"error": "No extractable text found"}}})
         return
 
     try:
         from emergentintegrations.llm.chat import LlmChat, UserMessage
-        import json
 
-        EMERGENT_LLM_KEY = os.environ.get('EMERGENT_LLM_KEY', '')
+        security_context = await _get_security_context()
+        extra_query = doc.get("analysis_query", "")
 
-        analysis_prompt = """You are a military intelligence analyst. Analyze this document and provide:
-1. A concise summary (3-4 lines)
-2. Key intelligence points relevant to India's North Eastern Region, Bangladesh, or Myanmar
-3. Any security implications
-4. Recommended attention level (Immediate Action Required, Priority Monitoring, Active Monitoring, Monitor)
-5. Primary region affected (if identifiable): Assam, Meghalaya, Mizoram, Manipur, Arunachal Pradesh, Tripura, Bangladesh, Myanmar, or National/International
-
-Respond in JSON format:
-{
-  "summary": "...",
-  "key_points": ["...", "..."],
-  "security_implications": "...",
-  "attention_level": "...",
-  "region": "..."
-}"""
+        user_prompt = f"=== DOCUMENT/ARTICLE SUBMITTED FOR ANALYSIS ===\n\n{text[:6000]}\n\n"
+        user_prompt += f"=== SECURITY CONTEXT ===\n{security_context}\n\n"
+        if extra_query:
+            user_prompt += f"=== SPECIFIC ANALYSIS REQUEST ===\n{extra_query}\n\n"
+        user_prompt += "Provide your COMPREHENSIVE CONTEXTUAL INTELLIGENCE ASSESSMENT as JSON."
 
         chat = LlmChat(
             api_key=EMERGENT_LLM_KEY,
-            session_id=f"doc-{doc_id}",
-            system_message=analysis_prompt
+            session_id=f"doc-analysis-{doc_id}",
+            system_message=CONTEXTUAL_ANALYSIS_PROMPT
         ).with_model("anthropic", "claude-haiku-4-5-20251001")
 
-        user_message = UserMessage(text=f"Analyze this document:\n\n{extracted_text[:4000]}")
-        response = await chat.send_message(user_message)
-
+        response = await chat.send_message(UserMessage(text=user_prompt))
         response_text = str(response)
 
-        json_start = response_text.find('{')
-        json_end = response_text.rfind('}') + 1
-        if json_start >= 0 and json_end > json_start:
-            analysis = json.loads(response_text[json_start:json_end])
+        # Parse JSON from response
+        json_match = re.search(r'\{[\s\S]*\}', response_text)
+        if json_match:
+            analysis = json.loads(json_match.group())
         else:
-            analysis = {"summary": response_text[:500], "region": ""}
+            analysis = {"executive_summary": response_text[:500], "error": "Could not parse structured response"}
 
         await uploads_col.update_one(
             {"id": doc_id},
             {"$set": {
-                "ai_analysis": analysis.get("summary", "") + "\n\nKey Points:\n" + "\n".join(analysis.get("key_points", [])),
-                "region": analysis.get("region", ""),
-                "processed": True
+                "analysis": analysis,
+                "processed": True,
+                "region": analysis.get("relevance_assessment", {}).get("primary_region", ""),
             }}
         )
-
-        logger.info(f"Successfully analyzed document {doc_id}")
+        logger.info(f"Contextual analysis complete for {doc_id}: {analysis.get('threat_classification', {}).get('severity', '?')}")
 
     except Exception as e:
-        logger.error(f"Error analyzing document {doc_id}: {e}")
+        logger.error(f"Analysis failed for {doc_id}: {e}")
         await uploads_col.update_one(
             {"id": doc_id},
-            {"$set": {"ai_analysis": f"Analysis failed: {str(e)}", "processed": True}}
+            {"$set": {"processed": True, "analysis": {"error": str(e)}}}
         )
