@@ -861,11 +861,20 @@ async def generate_brief_for_date(date: str):
     logger.info(f"Brief: {len(ner_items)} NER items, {len(diverse_ner_items)} after dedup from {len(seen_sources)} sources")
 
     # 3. GET NATIONAL NEWS
+    # Dynamically get all national source names from rss_fetcher
+    from rss_fetcher import RSS_SOURCES
+    national_source_names = [s["name"] for s in RSS_SOURCES if s.get("category") == "national"]
+    # Also include government sources
+    govt_source_names = [s["name"] for s in RSS_SOURCES if s.get("category") == "government"]
+    all_national_sources = national_source_names + govt_source_names
+
     national_query = {
         "processed": True,
+        "is_relevant": True,
         "published_at": {"$gte": cutoff_utc},
-        "source": {"$in": ["The Hindu - National", "NDTV India News", "News18 India", "Times of India", "PIB Press Releases", "PIB Defence", "MHA India"]},
-        "state": {"$nin": NER_STATES + ["Bangladesh", "Myanmar", "Multiple"]}
+        "source": {"$in": all_national_sources},
+        "state": {"$nin": NER_STATES + ["Bangladesh", "Myanmar", "Multiple"]},
+        "severity": {"$in": ["critical", "high", "medium"]},
     }
     if previous_item_ids:
         national_query["id"] = {"$nin": list(previous_item_ids)}
@@ -873,12 +882,39 @@ async def generate_brief_for_date(date: str):
         national_query, {"_id": 0}
     ).sort([("priority_score", -1), ("published_at", -1)]).limit(30).to_list(30)
 
-    military_national = [
-        item for item in national_items
-        if item.get("priority_score", 0) >= 25 or
-           item.get("severity") in ["critical", "high", "medium"] or
-           any(tag in str(item.get("tags", [])).lower() for tag in ["military", "security", "cross-border", "insurgency", "foreign", "infrastructure", "defence", "border"])
+    # Strict filter: only security/defense/strategic relevant national news
+    NATIONAL_EXCLUDE_KEYWORDS = [
+        'cricket', 'football', 'sports', 'match', 'tournament', 'celebrity', 'entertainment',
+        'movie', 'film', 'music', 'concert', 'festival', 'recipe', 'fashion', 'lifestyle',
+        'wedding', 'divorce', 'animal', 'zoo', 'weather forecast', 'horoscope', 'lottery',
+        'quiz', 'game show', 'reality show', 'bollywood', 'tollywood', 'ipl', 'champions league',
+        'chelsea', 'goalkeeper', 'striker', 'midfielder', 'coach', 'player', 'oscar', 'grammy',
+        'tequila', 'cruise ship', 'volcano', 'mars', 'neolithic', 'dinosaur', 'pulp fiction',
+        'murder-suicide', 'colorado river', 'phd scholar', 'assassinated', 'candace owens',
     ]
+
+    def is_relevant_national(item):
+        title = (item.get("title", "") or "").lower()
+        summary = (item.get("ai_summary", "") or "").lower()
+        content = title + " " + summary
+        # Reject noise
+        for kw in NATIONAL_EXCLUDE_KEYWORDS:
+            if kw in content:
+                return False
+        # Must have meaningful priority or security tags
+        if item.get("priority_score", 0) >= 40:
+            return True
+        tags = item.get("tags", [])
+        security_tags = ["Military", "Border", "Insurgency", "Cross-border", "Arms", "Drug",
+                         "Security", "Foreign", "Defence", "Infrastructure", "Political",
+                         "Cyber", "Strategic", "Immigration"]
+        for tag in tags:
+            for st in security_tags:
+                if st.lower() in tag.lower():
+                    return True
+        return False
+
+    military_national = [item for item in national_items if is_relevant_national(item)]
 
     logger.info(f"Brief: {len(national_items)} national items, {len(military_national)} military-relevant")
 
