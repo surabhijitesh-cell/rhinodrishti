@@ -326,17 +326,17 @@ def generate_brief_pdf(brief: dict, date: str, total: int, critical: int, high: 
     class BriefPDF(FPDF):
         def header(self):
             self.set_fill_color(30, 35, 25)
-            self.rect(0, 0, 210, 35, 'F')
-            self.set_font('Helvetica', 'B', 20)
+            self.rect(0, 0, 210, 30, 'F')
+            self.set_font('Helvetica', 'B', 18)
             self.set_text_color(180, 220, 80)
-            self.set_y(6)
-            self.cell(0, 10, 'RHINO DRISHTI', align='C', new_x="LMARGIN", new_y="NEXT")
-            self.set_font('Helvetica', '', 9)
-            self.set_text_color(160, 170, 150)
-            self.cell(0, 5, 'NER INTELLIGENCE PLATFORM  |  DAILY INTELLIGENCE BRIEF', align='C', new_x="LMARGIN", new_y="NEXT")
+            self.set_y(5)
+            self.cell(0, 8, 'RHINO DRISHTI', align='C', new_x="LMARGIN", new_y="NEXT")
             self.set_font('Helvetica', '', 8)
-            self.cell(0, 5, f'Classification: RESTRICTED  |  Date: {date}', align='C', new_x="LMARGIN", new_y="NEXT")
-            self.ln(6)
+            self.set_text_color(160, 170, 150)
+            self.cell(0, 4, 'NER INTELLIGENCE PLATFORM  |  DAILY INTELLIGENCE BRIEF', align='C', new_x="LMARGIN", new_y="NEXT")
+            self.set_font('Helvetica', '', 7)
+            self.cell(0, 4, f'Classification: RESTRICTED  |  Date: {date}', align='C', new_x="LMARGIN", new_y="NEXT")
+            self.set_y(34)
 
         def footer(self):
             self.set_y(-15)
