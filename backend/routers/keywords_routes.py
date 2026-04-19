@@ -73,3 +73,44 @@ async def refresh_keywords(background_tasks: BackgroundTasks):
 
     background_tasks.add_task(_refresh)
     return {"message": "Keyword refresh started with AI expansion"}
+
+
+@router.post("/keywords/add")
+async def add_keyword_manually(body: dict):
+    keyword = (body.get("keyword") or "").strip()
+    if not keyword or len(keyword) < 2:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail="Keyword must be at least 2 characters")
+
+    kw_type = body.get("type", "primary")
+    score = body.get("score", 60)
+    if not isinstance(score, int) or score < 1 or score > 100:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail="Score must be integer 1-100")
+
+    valid_types = ["primary", "entity", "geo", "cross_border", "emerging", "expanded"]
+    if kw_type not in valid_types:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail=f"Type must be one of {valid_types}")
+
+    # Check if keyword already exists
+    existing = await db.keyword_store.find_one(
+        {"keyword": {"$regex": f"^{keyword}$", "$options": "i"}},
+        {"_id": 0}
+    )
+    if existing:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=409, detail=f"Keyword '{keyword}' already exists")
+
+    from datetime import datetime, timezone
+    doc = {
+        "keyword": keyword,
+        "category": kw_type,
+        "score": score,
+        "source": "manual",
+        "added_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.keyword_store.insert_one(doc)
+
+    logger.info(f"Manual keyword added: '{keyword}' type={kw_type} score={score}")
+    return {"message": f"Keyword '{keyword}' added", "keyword": keyword, "type": kw_type, "score": score}

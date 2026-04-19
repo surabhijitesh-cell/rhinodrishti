@@ -1,9 +1,11 @@
 import { useState, useEffect, useCallback } from "react";
 import axios from "axios";
-import { Key, RefreshCw, Filter, ArrowUpDown, Search } from "lucide-react";
+import { Key, RefreshCw, Filter, ArrowUpDown, Search, Plus, Loader2 } from "lucide-react";
 import { Button } from "../components/ui/button";
 import { Badge } from "../components/ui/badge";
 import { Input } from "../components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
+import { toast } from "sonner";
 
 const TYPE_STYLES = {
   primary: { bg: "bg-red-900/30 text-red-300 border-red-800/40", label: "Primary Threat" },
@@ -21,6 +23,7 @@ const SOURCE_LABELS = {
   ai_expansion: "AI Expansion",
   adaptive: "Adaptive Learning",
   stored: "Stored",
+  manual: "Manually Added",
 };
 
 export default function KeywordEngine({ api }) {
@@ -30,6 +33,9 @@ export default function KeywordEngine({ api }) {
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState("all");
   const [sortBy, setSortBy] = useState("score");
+  const [addType, setAddType] = useState("primary");
+  const [addScore, setAddScore] = useState("60");
+  const [adding, setAdding] = useState(false);
 
   const fetchKeywords = useCallback(async () => {
     try {
@@ -52,6 +58,26 @@ export default function KeywordEngine({ api }) {
         if (attempts >= 10) { clearInterval(poll); setRefreshing(false); }
       }, 3000);
     } catch { setRefreshing(false); }
+  };
+
+  const handleAddKeyword = async () => {
+    const trimmed = search.trim();
+    if (!trimmed || trimmed.length < 2) return;
+    setAdding(true);
+    try {
+      const res = await axios.post(`${api}/keywords/add`, {
+        keyword: trimmed,
+        type: addType,
+        score: parseInt(addScore, 10),
+      });
+      toast.success(res.data.message || `Keyword "${trimmed}" added`);
+      setSearch("");
+      await fetchKeywords();
+    } catch (e) {
+      const msg = e.response?.data?.detail || "Failed to add keyword";
+      toast.error(msg);
+    }
+    setAdding(false);
   };
 
   const filtered = keywords
@@ -190,7 +216,54 @@ export default function KeywordEngine({ api }) {
             );
           })}
         </div>
-        {filtered.length === 0 && (
+        {filtered.length === 0 && search.trim().length >= 2 && (
+          <div className="border border-dashed border-primary/30 bg-primary/5 p-4 mt-2" data-testid="add-keyword-prompt">
+            <p className="text-xs text-muted-foreground font-mono mb-3">
+              No keyword found for "<span className="text-primary font-semibold">{search.trim()}</span>". Add it manually?
+            </p>
+            <div className="flex flex-wrap items-end gap-3">
+              <div>
+                <p className="text-[9px] uppercase tracking-wider text-muted-foreground font-mono mb-1">Type</p>
+                <Select value={addType} onValueChange={setAddType}>
+                  <SelectTrigger className="w-[160px] h-8 rounded-none text-xs font-mono" data-testid="add-keyword-type">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className="rounded-none">
+                    <SelectItem value="primary" className="text-xs">Primary Threat</SelectItem>
+                    <SelectItem value="entity" className="text-xs">Entity/Actor</SelectItem>
+                    <SelectItem value="geo" className="text-xs">Geographic</SelectItem>
+                    <SelectItem value="cross_border" className="text-xs">Cross-Border</SelectItem>
+                    <SelectItem value="emerging" className="text-xs">Emerging Signal</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <p className="text-[9px] uppercase tracking-wider text-muted-foreground font-mono mb-1">Score</p>
+                <Select value={addScore} onValueChange={setAddScore}>
+                  <SelectTrigger className="w-[110px] h-8 rounded-none text-xs font-mono" data-testid="add-keyword-score">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className="rounded-none">
+                    <SelectItem value="90" className="text-xs">90 (Critical)</SelectItem>
+                    <SelectItem value="75" className="text-xs">75 (High)</SelectItem>
+                    <SelectItem value="60" className="text-xs">60 (Medium)</SelectItem>
+                    <SelectItem value="40" className="text-xs">40 (Low)</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <Button
+                onClick={handleAddKeyword}
+                disabled={adding}
+                className="h-8 rounded-none text-xs font-mono uppercase tracking-wider"
+                data-testid="add-keyword-btn"
+              >
+                {adding ? <Loader2 size={12} className="mr-1 animate-spin" /> : <Plus size={12} className="mr-1" />}
+                Add Keyword
+              </Button>
+            </div>
+          </div>
+        )}
+        {filtered.length === 0 && search.trim().length < 2 && (
           <p className="text-xs text-muted-foreground font-mono text-center py-6">No keywords match your filters.</p>
         )}
       </div>
