@@ -18,7 +18,7 @@
 10. [Alerts](#10-alerts)
 11. [Keyword Engine](#11-keyword-engine)
 12. [Training & Feedback](#12-training--feedback)
-13. [Intelligence Analysis (Upload & URL)](#13-intelligence-analysis-upload--url)
+13. [Manual Intelligence Uploads](#13-manual-intelligence-uploads)
 14. [User Management](#14-user-management)
 15. [Settings](#15-settings)
 16. [How the AI Pipeline Works](#16-how-the-ai-pipeline-works)
@@ -51,7 +51,7 @@ The platform uses Role-Based Access Control (RBAC) with three roles:
 | Download/Export PDFs | Yes | Yes | Yes |
 | Submit Feedback Ratings | Yes | Yes | No |
 | Generate Briefs, Train AI | Yes | Yes | No |
-| Upload Documents/URLs | Yes | Yes | No |
+| Upload/Analyze/Add to Feed | Yes | Yes | No |
 | Run Keyword Refresh | Yes | Yes | No |
 | User Management | Yes | No | No |
 | Settings | Yes | No | No |
@@ -99,7 +99,7 @@ The sidebar contains all pages (visibility depends on your role):
 - **Alerts** — Critical and high-severity items requiring attention
 - **Keyword Engine** — AI-powered keyword management for detection
 - **Training & Feedback** — Rate articles, upload training data, monitor AI learning
-- **Upload Documents** — Upload intelligence materials or paste URLs for contextual AI threat assessment
+- **Manual Int Uploads** — Analyze articles (AI threat assessment), upload documents, or add URLs directly to the intelligence feed with custom parameters
 - **User Management** — Create/manage users and reset passwords (Admin only)
 - **Settings** — Configure retention, feedback limits, and AI bias settings (Admin only)
 - **User Handbook** — This guide
@@ -375,6 +375,17 @@ Click **AI Refresh Keywords** to trigger Claude AI to:
 2. Generate emerging signal keywords (new threat patterns)
 3. Expand top keywords into synonyms and related phrases
 
+### Manual Keyword Addition
+If you search for a keyword and it doesn't exist in the system:
+1. Type the keyword in the search bar (minimum 2 characters)
+2. When no results are found, an **"Add it manually?"** prompt appears
+3. Select the **Type** (Primary Threat, Entity/Actor, Geographic, Cross-Border, Emerging Signal)
+4. Select the **Score** (90 = Critical, 75 = High, 60 = Medium, 40 = Low)
+5. Click **+ Add Keyword**
+6. The keyword is immediately added and appears in the grid with source labeled "Manually Added"
+
+Duplicate keywords are rejected — the system performs case-insensitive matching to prevent adding keywords that already exist.
+
 ### How Keywords Drive Detection
 During each RSS fetch cycle, the system uses these keywords for weighted matching against article titles and content. High-scoring keywords give articles higher priority, ensuring important intelligence is not missed.
 
@@ -515,38 +526,89 @@ The influence level and feedback window are configurable in **Settings > Feedbac
 
 ---
 
-## 13. Intelligence Analysis (Upload & URL)
+## 13. Manual Intelligence Uploads
 
-Upload offline intelligence materials or paste article URLs for comprehensive AI-powered contextual threat assessment against the current NER security environment.
+Upload offline intelligence materials, analyze article URLs with AI, or add news directly to the intelligence feed with custom parameters.
 
-### Two Input Methods
+### Three Workflows
 
-**Upload File:**
-1. Click **Upload Documents** in the sidebar
+This page (sidebar: **Manual Int Uploads**) supports three distinct workflows:
+
+1. **Upload File** — Upload a PDF, Word, Excel, or TXT file for AI contextual threat analysis
+2. **Analyze URL** — Paste an article URL for AI-powered contextual assessment against the current NER security environment
+3. **Add to Feed** — Add a URL directly to the Intelligence Feed with user-defined severity, priority, threat category, region, and summary — bypassing AI analysis entirely
+
+### Workflow 1: Upload File
+
+1. Click **Manual Int Uploads** in the sidebar
 2. Select the **Upload File** tab
 3. Drag and drop a file, or click **Select File**
 4. Supported formats: PDF (.pdf), Word (.docx), Excel (.xlsx), Text (.txt)
 5. The system extracts text and begins contextual analysis automatically
 
-**Analyze URL:**
+### Workflow 2: Analyze URL
+
 1. Select the **Analyze URL** tab
 2. Paste the article/report URL
 3. Optionally enter a **Specific Analysis Query** (e.g., "Assess implications for Manipur border security")
-4. Click **Analyze** — the system fetches the article, extracts content, and runs analysis
+4. Click **Analyze** — the system fetches the article, extracts content, and runs AI analysis
+5. After analysis completes, you can optionally click **Add to Feed** on the analysis card to push it to the Intelligence Feed (see below)
 
-### What the Analysis Produces
+### Workflow 3: Add to Feed (Direct)
 
-Each uploaded document/URL receives a comprehensive **Contextual Intelligence Assessment** containing:
+Use this when you want to immediately add an article to the Intelligence Feed without waiting for AI analysis.
+
+1. Select the **Analyze URL** tab
+2. Paste the article URL
+3. Click the **Add to Feed** button (green, next to the Analyze button)
+4. An inline form expands with the following fields:
+
+| Field | Description | Default |
+|-------|-------------|---------|
+| **Title** | Article headline — leave blank to auto-scrape from the URL | Auto-detected |
+| **Severity** | CRITICAL / HIGH / MEDIUM / LOW | Medium |
+| **Priority Score** | 0-100 numeric score for feed ranking | 50 |
+| **Threat Category** | One of 18 categories: Military Movement, Insurgency/Militancy, Drug Trafficking, Arms Smuggling, Border Incursion, Ethnic/Tribal Tension, Political Instability, Cyber Threat, Infrastructure/Strategic, Cross-border Crime, Ceasefire Violation, Counter-terrorism Ops, Diplomatic Tension, Immigration/Refugees, Environmental Security, Economic Security, Intelligence Activity, Unclassified | Unclassified |
+| **Region / State** | Assam, Manipur, Meghalaya, Mizoram, Tripura, Nagaland, Arunachal Pradesh, Sikkim, Bangladesh, Myanmar, India, Multiple, Unknown | Unknown |
+| **Summary** | Brief intelligence summary for the feed card | Optional |
+| **Cross-Border** | Checkbox — mark if the article involves cross-border activity | Unchecked |
+
+5. Click **+ Add to Feed** to submit
+6. The article appears immediately in the Intelligence Feed and Dashboard with source labeled as "Manual Upload"
+
+**Note:** The system performs best-effort URL scraping. If the website blocks scraping (403/paywall), the article is still added using the title and summary you provided. If scraping fails and no title is provided, you'll be prompted to enter one.
+
+### Add to Feed After Analysis
+
+If you first **Analyze** a URL and then decide to add it to the feed:
+
+1. Expand the analysis card in **Analysis History**
+2. Click the green **Add to Feed** button on the card header
+3. A modal opens pre-filled with the AI's classification:
+   - Title from the scraped article
+   - Severity from AI threat classification
+   - Priority score derived from relevance score (relevance × 10)
+   - Threat category from AI classification
+   - Region from AI relevance assessment
+   - Summary from AI executive summary
+4. Review and adjust any fields as needed
+5. Click **Add to Feed** to confirm
+
+This "analyze first, then decide" workflow lets you use the AI's assessment to inform your manual parameters before pushing to the feed.
+
+### What the AI Analysis Produces
+
+Each analyzed document/URL receives a comprehensive **Contextual Intelligence Assessment** containing:
 
 | Section | Description |
 |---------|-------------|
 | **Executive Summary** | 3-4 sentence overview of the document and its significance |
-| **Threat Classification** | Severity (CRITICAL/HIGH/MEDIUM/LOW), threat category (Insurgency, Border Security, Drug Trafficking, etc.), and confidence level |
-| **Pattern Analysis** | Whether the document matches any emerging patterns detected by the platform, with escalation indicator (ESCALATING/STABLE/DE-ESCALATING/NEW_THREAT) |
-| **Relevance Assessment** | Score (1-10) indicating how relevant the document is to current NER security, with primary and secondary affected regions |
+| **Threat Classification** | Severity (CRITICAL/HIGH/MEDIUM/LOW), threat category, and confidence level |
+| **Pattern Analysis** | Whether the document matches any emerging patterns, with escalation indicator (ESCALATING/STABLE/DE-ESCALATING/NEW_THREAT) |
+| **Relevance Assessment** | Score (1-10) indicating relevance to current NER security, with primary and secondary affected regions |
 | **Key Entities** | Named actors, locations, and events extracted from the document |
 | **Recommended Actions** | Prioritized actionable recommendations (IMMEDIATE/HIGH/MEDIUM/LOW) |
-| **Cross-References** | How the document connects to the platform's existing intelligence |
+| **Cross-References** | How the document connects to the platform's existing intelligence (may include primary, secondary, tertiary connections and strategic context) |
 | **Intelligence Gaps** | What additional information would improve the assessment |
 
 ### How It Works Internally
@@ -558,11 +620,16 @@ Each analysis appears as a card in the **Analysis History** showing:
 - **Threat category badge**
 - **Region** with map pin
 - **Escalation indicator**
+- **Add to Feed** button (green, for URL-type analyses)
 - Click to **expand** for full assessment details
 
+### Duplicate Detection
+When adding a URL to the feed, the system checks for duplicate URLs. If the same URL already exists in the Intelligence Feed, you'll receive a "This URL already exists" error to prevent duplicates.
+
 ### Use Cases
+- Paste a breaking news URL → **Add to Feed** immediately with your own severity assessment
+- Paste a complex article → **Analyze** first to get AI assessment → review → **Add to Feed** with AI-informed parameters
 - Upload field reports from ground units for threat classification
-- Paste a breaking news URL for immediate contextual assessment
 - Analyze intercepted communications transcripts against known patterns
 - Process seized document scans for relevance to ongoing operations
 - Assess foreign intelligence reports for NER implications
@@ -796,5 +863,5 @@ The AI operates as a Senior Military Intelligence Analyst and performs:
 
 ---
 
-*Rhino Drishti v8.0 — Elite OSINT Intelligence Platform with Feedback-Driven AI*
+*Rhino Drishti v9.0 — Elite OSINT Intelligence Platform with Feedback-Driven AI*
 *Handbook updated: April 2026*
