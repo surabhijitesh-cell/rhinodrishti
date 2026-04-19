@@ -174,7 +174,7 @@ function AnalysisCard({ doc, onDelete, onAddToFeed, api }) {
                   return (
                     <Badge key={`a-${i}`}
                       className={`rounded-none text-[9px] px-1.5 py-0 border cursor-pointer transition-all ${
-                        sel ? "bg-primary/30 text-primary border-primary ring-1 ring-primary" : "bg-red-500/10 text-red-400 border-red-500/20 hover:border-red-400"
+                        sel ? "bg-red-500/25 text-red-300 border-red-400 ring-1 ring-red-400/50" : "bg-red-500/10 text-red-400 border-red-500/20 hover:bg-red-500/15 hover:border-red-500/40"
                       }`}
                       onClick={() => { const s = new Set(selectedKw); s.has(`entity|${a}`) ? s.delete(`entity|${a}`) : s.add(`entity|${a}`); setSelectedKw(s); }}
                       data-testid={`kw-actor-${i}`}
@@ -186,7 +186,7 @@ function AnalysisCard({ doc, onDelete, onAddToFeed, api }) {
                   return (
                     <Badge key={`l-${i}`}
                       className={`rounded-none text-[9px] px-1.5 py-0 border cursor-pointer transition-all ${
-                        sel ? "bg-primary/30 text-primary border-primary ring-1 ring-primary" : "bg-blue-500/10 text-blue-400 border-blue-500/20 hover:border-blue-400"
+                        sel ? "bg-blue-500/25 text-blue-300 border-blue-400 ring-1 ring-blue-400/50" : "bg-blue-500/10 text-blue-400 border-blue-500/20 hover:bg-blue-500/15 hover:border-blue-500/40"
                       }`}
                       onClick={() => { const s = new Set(selectedKw); s.has(`geo|${l}`) ? s.delete(`geo|${l}`) : s.add(`geo|${l}`); setSelectedKw(s); }}
                       data-testid={`kw-loc-${i}`}
@@ -198,7 +198,7 @@ function AnalysisCard({ doc, onDelete, onAddToFeed, api }) {
                   return (
                     <Badge key={`e-${i}`}
                       className={`rounded-none text-[9px] px-1.5 py-0 border cursor-pointer transition-all ${
-                        sel ? "bg-primary/30 text-primary border-primary ring-1 ring-primary" : "bg-amber-500/10 text-amber-400 border-amber-500/20 hover:border-amber-400"
+                        sel ? "bg-amber-500/25 text-amber-300 border-amber-400 ring-1 ring-amber-400/50" : "bg-amber-500/10 text-amber-400 border-amber-500/20 hover:bg-amber-500/15 hover:border-amber-500/40"
                       }`}
                       onClick={() => { const s = new Set(selectedKw); s.has(`primary|${e}`) ? s.delete(`primary|${e}`) : s.add(`primary|${e}`); setSelectedKw(s); }}
                       data-testid={`kw-event-${i}`}
