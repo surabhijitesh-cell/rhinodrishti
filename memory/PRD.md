@@ -1,67 +1,34 @@
 # Rhino Drishti — Product Requirements Document
 
 ## Original Problem Statement
-Build a military-grade OSINT application ("Rhino Drishti") for India's North Eastern Region (NER). The system requires:
-- Zero-noise intelligence filtering
-- Automated Daily Intelligence Brief (PDF) customized for NER
-- Cross-Border module (Bangladesh/Myanmar)
-- Multi-article fusion engine to deduplicate news
-- Intelligence Analysis tool for contextual URL/Document evaluation
-- Full JWT-based Role-Based Access Control (RBAC) system
-- Feedback-driven AI classification improvement with configurable settings
+Military-grade OSINT application for India's NER. Zero-noise intelligence, Daily Brief PDF, Cross-Border module, fusion engine, Intelligence Analysis, RBAC, feedback-driven AI classification.
 
 ## Architecture
-- **Frontend**: React (port 3000) with Shadcn/UI components
-- **Backend**: FastAPI (port 8001) with MongoDB Atlas
-- **AI**: Claude Haiku 4.5 via Emergent LLM Key
-- **Auth**: JWT (PyJWT + passlib/bcrypt)
+React frontend + FastAPI backend + MongoDB Atlas + Claude Haiku 4.5 (Emergent LLM Key)
 
 ## What's Been Implemented
+- RSS ingestion (72 sources), AI classification (10-step + feedback bias), fusion/dedup, vector search, knowledge graph
+- Daily Intelligence Brief PDF, Cross-Border Watch, Intelligence Analysis tool
+- JWT Auth with RBAC (admin/analyst/viewer), User Management
+- Feedback Bias system: configurable window (rolling 30d/all-time), influence (light/moderate/high), Bias Impact Report
+- Dashboard priority filter/sort, expanded national RSS (12 new sources)
+- **Manual Int Uploads**: Renamed from "Upload Documents". Users can Analyze URLs (AI) OR Add directly to feed with custom severity, priority, threat category, region, summary. Inline quick-add form + post-analysis modal. Best-effort URL scraping.
+- Manual keyword addition in Keyword Engine
+- Settings page: side-by-side layout, viewer blocked, bias config + impact report
+- User Handbook v8.0
 
-### Core Features (Complete)
-- RSS ingestion from 72 sources (19 national, NER regional, cross-border, international, government)
-- Claude Haiku 4.5 AI classification with 10-step intelligence pipeline + dynamic feedback bias injection
-- Multi-article fusion & deduplication engine
-- Vector search (semantic search), Knowledge graph & pattern detection
-- Daily Intelligence Brief PDF generator
-- Cross-Border Watch module (Bangladesh/Myanmar)
-- Intelligence Analysis tool (contextual URL/PDF evaluation)
-- Training & Feedback pipeline with effectiveness scoring
-- JWT Authentication with RBAC (admin/analyst/viewer)
-- WebSocket real-time intelligence feed
-- Dashboard priority filter/sort controls
-
-### Feedback Bias System (Complete)
-- **feedback_bias.py** engine: rolling window or all-time feedback aggregation
-- **Configurable settings** via Settings page:
-  - Feedback Window: Rolling 30 Days / All Time
-  - Influence Level: Light (~10-15%) / Moderate (~20-25%) / High (~35-40%)
-- **Bias Impact Report**: Shows before/after score comparison for all rated items
-- Active bias profile visible on Training & Feedback page
-
-### Settings Page (Complete)
-- Side-by-side card layout (2-column grid)
-- Row 1: Retention Window + Pipeline Status
-- Row 2: Bias Configuration + Training Controls
-- Row 3: Full-width Bias Impact Report with items table
-- Viewer role blocked (redirect to dashboard)
-
-## Key API Endpoints
-- `POST /api/auth/login` — Accepts username OR email
+## Key Endpoints
+- `POST /api/auth/login`, `POST /api/add-to-feed`, `POST /api/analyze-url`
 - `GET /api/intelligence?sort_by=priority_score&min_priority=80`
-- `GET /api/feedback/bias-profile` — Active feedback bias profile
-- `GET /api/feedback/bias-impact` — Bias Impact Report (before/after scores)
-- `GET/PUT /api/settings/bias` — Window & influence configuration
-- `POST /api/documents/analyze-url` — Contextual intelligence analysis
+- `GET /api/feedback/bias-profile`, `GET /api/feedback/bias-impact`
+- `GET/PUT /api/settings/bias`, `POST /api/keywords/add`
 
-## Auth & Credentials
-- Default admin: `admin` / `Admin@2026!`
+## Auth
+- Admin: `admin` / `Admin@2026!` (auto-seeded)
 - Test viewer: `testviewer` / `Viewer@2026!`
-- Roles: admin (full), analyst (no user mgmt/settings), viewer (read-only)
 
-## Pending / Backlog
-- P0 (Deferred): Complete Viewer Role Restrictions Sweep across all feature pages
-- P2 (Future): Twitter/X monitoring integration (paused)
+## Pending/Backlog
+- P0 (Deferred): Viewer Role Restrictions Sweep
+- P2 (Paused): Twitter/X monitoring
 
-## Testing Status
-- Iterations 24-32 all passed 100%. No known regressions.
+## Testing: Iterations 24-33 all passed 100%
