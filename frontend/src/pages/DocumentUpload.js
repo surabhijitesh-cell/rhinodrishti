@@ -32,8 +32,10 @@ const NER_STATES = [
   "Arunachal Pradesh", "Sikkim", "Bangladesh", "Myanmar", "India", "Multiple", "Unknown",
 ];
 
-function AnalysisCard({ doc, onDelete, onAddToFeed }) {
+function AnalysisCard({ doc, onDelete, onAddToFeed, api }) {
   const [expanded, setExpanded] = useState(false);
+  const [selectedKw, setSelectedKw] = useState(new Set());
+  const [addingKw, setAddingKw] = useState(false);
   const a = doc.analysis || {};
   const tc = a.threat_classification || {};
   const pa = a.pattern_analysis || {};
@@ -160,16 +162,86 @@ function AnalysisCard({ doc, onDelete, onAddToFeed }) {
               <p className="text-sm">{pa.pattern_description}</p>
             </div>
           )}
-          {(ke.actors?.length > 0 || ke.locations?.length > 0) && (
+          {(ke.actors?.length > 0 || ke.locations?.length > 0 || ke.events?.length > 0) && (
             <div className="p-3 bg-muted/20 border border-border">
               <h4 className="text-[10px] uppercase tracking-widest text-muted-foreground font-mono mb-2 flex items-center gap-1">
                 <Users size={12} /> Key Entities
+                <span className="text-muted-foreground/50 ml-1">(click to select for keyword bank)</span>
               </h4>
               <div className="flex flex-wrap gap-1.5">
-                {ke.actors?.map((a, i) => <Badge key={`a-${i}`} className="rounded-none text-[9px] px-1.5 py-0 bg-red-500/10 text-red-400 border border-red-500/20">{a}</Badge>)}
-                {ke.locations?.map((l, i) => <Badge key={`l-${i}`} className="rounded-none text-[9px] px-1.5 py-0 bg-blue-500/10 text-blue-400 border border-blue-500/20">{l}</Badge>)}
-                {ke.events?.map((e, i) => <Badge key={`e-${i}`} className="rounded-none text-[9px] px-1.5 py-0 bg-amber-500/10 text-amber-400 border border-amber-500/20">{e}</Badge>)}
+                {ke.actors?.map((a, i) => {
+                  const sel = selectedKw.has(`entity|${a}`);
+                  return (
+                    <Badge key={`a-${i}`}
+                      className={`rounded-none text-[9px] px-1.5 py-0 border cursor-pointer transition-all ${
+                        sel ? "bg-primary/30 text-primary border-primary ring-1 ring-primary" : "bg-red-500/10 text-red-400 border-red-500/20 hover:border-red-400"
+                      }`}
+                      onClick={() => { const s = new Set(selectedKw); s.has(`entity|${a}`) ? s.delete(`entity|${a}`) : s.add(`entity|${a}`); setSelectedKw(s); }}
+                      data-testid={`kw-actor-${i}`}
+                    >{sel && <CheckCircle size={9} className="mr-0.5" />}{typeof a === "string" ? a : JSON.stringify(a)}</Badge>
+                  );
+                })}
+                {ke.locations?.map((l, i) => {
+                  const sel = selectedKw.has(`geo|${l}`);
+                  return (
+                    <Badge key={`l-${i}`}
+                      className={`rounded-none text-[9px] px-1.5 py-0 border cursor-pointer transition-all ${
+                        sel ? "bg-primary/30 text-primary border-primary ring-1 ring-primary" : "bg-blue-500/10 text-blue-400 border-blue-500/20 hover:border-blue-400"
+                      }`}
+                      onClick={() => { const s = new Set(selectedKw); s.has(`geo|${l}`) ? s.delete(`geo|${l}`) : s.add(`geo|${l}`); setSelectedKw(s); }}
+                      data-testid={`kw-loc-${i}`}
+                    >{sel && <CheckCircle size={9} className="mr-0.5" />}{typeof l === "string" ? l : JSON.stringify(l)}</Badge>
+                  );
+                })}
+                {ke.events?.map((e, i) => {
+                  const sel = selectedKw.has(`primary|${e}`);
+                  return (
+                    <Badge key={`e-${i}`}
+                      className={`rounded-none text-[9px] px-1.5 py-0 border cursor-pointer transition-all ${
+                        sel ? "bg-primary/30 text-primary border-primary ring-1 ring-primary" : "bg-amber-500/10 text-amber-400 border-amber-500/20 hover:border-amber-400"
+                      }`}
+                      onClick={() => { const s = new Set(selectedKw); s.has(`primary|${e}`) ? s.delete(`primary|${e}`) : s.add(`primary|${e}`); setSelectedKw(s); }}
+                      data-testid={`kw-event-${i}`}
+                    >{sel && <CheckCircle size={9} className="mr-0.5" />}{typeof e === "string" ? e : JSON.stringify(e)}</Badge>
+                  );
+                })}
               </div>
+              {selectedKw.size > 0 && (
+                <div className="mt-3 pt-2 border-t border-border flex items-center gap-2" data-testid="kw-add-bar">
+                  <span className="text-[10px] font-mono text-muted-foreground">{selectedKw.size} selected</span>
+                  <Button
+                    size="sm"
+                    className="h-7 rounded-none text-[10px] uppercase tracking-wider"
+                    disabled={addingKw}
+                    onClick={async () => {
+                      setAddingKw(true);
+                      let added = 0, skipped = 0;
+                      for (const entry of selectedKw) {
+                        const [type, keyword] = entry.split("|");
+                        const clean = keyword.replace(/\s*\(.*?\)\s*/g, "").trim();
+                        if (clean.length < 2) { skipped++; continue; }
+                        try {
+                          await axios.post(`${api}/keywords/add`, { keyword: clean, type, score: 70 });
+                          added++;
+                        } catch { skipped++; }
+                      }
+                      if (added > 0) toast.success(`${added} keyword${added > 1 ? "s" : ""} added to keyword bank`);
+                      if (skipped > 0) toast.info(`${skipped} skipped (duplicates or too short)`);
+                      setSelectedKw(new Set());
+                      setAddingKw(false);
+                    }}
+                    data-testid="add-selected-kw-btn"
+                  >
+                    {addingKw ? <Loader2 size={11} className="mr-1 animate-spin" /> : <Plus size={11} className="mr-1" />}
+                    Add to Keyword Bank
+                  </Button>
+                  <button
+                    className="text-[10px] text-muted-foreground font-mono hover:text-foreground"
+                    onClick={() => setSelectedKw(new Set())}
+                    data-testid="clear-kw-selection"
+                  >Clear</button>
+                </div>
+              )}
             </div>
           )}
           {actions.length > 0 && (
@@ -684,6 +756,7 @@ export default function DocumentUpload({ api }) {
               doc={doc}
               onDelete={handleDelete}
               onAddToFeed={(d) => setFeedModal(d)}
+              api={api}
             />
           ))
         )}
