@@ -192,14 +192,22 @@ function AnalysisCard({ doc, onDelete, onAddToFeed }) {
           {a.cross_references && (
             <div>
               <h4 className="text-[10px] uppercase tracking-widest text-muted-foreground font-mono mb-1">Cross-References to Current Intelligence</h4>
-              <p className="text-sm text-muted-foreground">{a.cross_references}</p>
+              {typeof a.cross_references === "string" ? (
+                <p className="text-sm text-muted-foreground">{a.cross_references}</p>
+              ) : (
+                <div className="space-y-1 text-sm text-muted-foreground">
+                  {Object.entries(a.cross_references).map(([key, val]) => (
+                    <div key={key}><span className="text-foreground font-mono text-xs">{key.replace(/_/g, " ")}:</span> {typeof val === "string" ? val : JSON.stringify(val)}</div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
           {a.intelligence_gaps?.length > 0 && (
             <div>
               <h4 className="text-[10px] uppercase tracking-widest text-muted-foreground font-mono mb-1">Intelligence Gaps</h4>
               <ul className="list-disc list-inside text-sm text-muted-foreground space-y-0.5">
-                {a.intelligence_gaps.map((g, i) => <li key={i}>{g}</li>)}
+                {a.intelligence_gaps.map((g, i) => <li key={i}>{typeof g === "string" ? g : JSON.stringify(g)}</li>)}
               </ul>
             </div>
           )}
