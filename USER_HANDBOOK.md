@@ -623,6 +623,27 @@ Each analysis appears as a card in the **Analysis History** showing:
 - **Add to Feed** button (green, for URL-type analyses)
 - Click to **expand** for full assessment details
 
+### Adding Keywords from Analysis Results
+
+When you expand an analysis card, the **Key Entities** section displays extracted actors (red), locations (blue), and events (amber) as clickable badges.
+
+**How to add keywords:**
+1. Expand any completed analysis card
+2. In the **Key Entities** section, click any badge to select it — it highlights with a ring in its color
+3. Click multiple badges to select several at once
+4. A bar appears at the bottom showing **"3 selected → + ADD TO KEYWORD BANK"**
+5. Click **+ Add to Keyword Bank** to add all selected keywords
+6. A toast confirms how many were added and how many were skipped (duplicates)
+
+**How keywords are processed:**
+- Parenthetical descriptions are automatically stripped (e.g., "Assam Rifles (paramilitary force)" becomes "Assam Rifles")
+- **Actors** are added as type `entity` (blue in Keyword Engine)
+- **Locations** are added as type `geo` (yellow in Keyword Engine)
+- **Events** are added as type `primary` (red in Keyword Engine)
+- All are added with score 70 (High)
+- Duplicate keywords are silently skipped
+- Keywords shorter than 2 characters are ignored
+
 ### Duplicate Detection
 When adding a URL to the feed, the system checks for duplicate URLs. If the same URL already exists in the Intelligence Feed, you'll receive a "This URL already exists" error to prevent duplicates.
 
@@ -863,5 +884,5 @@ The AI operates as a Senior Military Intelligence Analyst and performs:
 
 ---
 
-*Rhino Drishti v9.0 — Elite OSINT Intelligence Platform with Feedback-Driven AI*
-*Handbook updated: April 2026*
+*Rhino Drishti v9.1 — Elite OSINT Intelligence Platform with Feedback-Driven AI*
+*Handbook updated: 20 April 2026*
