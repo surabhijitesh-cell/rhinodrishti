@@ -23,7 +23,7 @@ const ALL_NAV_ITEMS = [
   { path: "/alerts", label: "Alerts", icon: Bell, roles: ["admin", "analyst", "viewer"] },
   { path: "/keywords", label: "Keyword Engine", icon: Key, roles: ["admin", "analyst", "viewer"] },
   { path: "/training", label: "Training & Feedback", icon: Brain, roles: ["admin", "analyst", "viewer"] },
-  { path: "/upload", label: "Upload Documents", icon: Upload, roles: ["admin", "analyst", "viewer"] },
+  { path: "/upload", label: "Manual Int Uploads", icon: Upload, roles: ["admin", "analyst", "viewer"] },
   { path: "/user-management", label: "User Management", icon: Users, roles: ["admin"] },
   { path: "/settings", label: "Settings", icon: Settings, roles: ["admin"] },
   { path: "/handbook", label: "User Handbook", icon: BookOpen, roles: ["admin", "analyst", "viewer"] },

@@ -1,0 +1,78 @@
+{
+  "summary": "Iteration 33: Manual Intelligence Uploads - Add to Feed Feature. All tests passed (14/14 backend, all frontend UI verified). New POST /api/add-to-feed endpoint works correctly with duplicate detection (409), user-provided titles, severity validation, and priority score clamping. Sidebar renamed to 'Manual Int Uploads', page title shows 'Manual Intelligence Uploads'. URL tab has both 'Analyze' and 'Add to Feed' buttons. Quick add form expands inline with all fields (Title, Severity, Priority, Threat, Region, Summary, Cross-Border). AddToFeedModal opens from analyzed URL cards with pre-filled AI analysis data. Added items appear in Intelligence Feed and Dashboard.",
+
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+
+  "passed_tests": [
+    "POST /api/add-to-feed with user-provided title returns 200",
+    "POST /api/add-to-feed with duplicate URL returns 409",
+    "POST /api/add-to-feed with invalid URL returns 400",
+    "POST /api/add-to-feed invalid severity defaults to 'medium'",
+    "POST /api/add-to-feed priority_score clamped to 0-100",
+    "Added items appear in GET /api/intelligence with source='Manual Upload'",
+    "Added items have all required fields (id, title, severity, source_url, etc.)",
+    "POST /api/analyze-url returns document_id",
+    "POST /api/analyze-url with invalid URL returns 400",
+    "GET /api/uploaded-documents returns list",
+    "GET /api/keywords returns keywords (regression)",
+    "GET /api/settings/bias returns bias_window and bias_influence (regression)",
+    "GET /api/settings/retention returns settings (regression)",
+    "POST /api/auth/login with admin credentials works",
+    "Frontend: Sidebar shows 'Manual Int Uploads' label",
+    "Frontend: Page title shows 'Manual Intelligence Uploads'",
+    "Frontend: URL tab has 'Analyze' and 'Add to Feed' buttons",
+    "Frontend: Quick add form expands with Title, Severity, Priority, Threat, Region, Summary, Cross-Border fields",
+    "Frontend: AddToFeedModal opens from analyzed URL cards",
+    "Frontend: Modal pre-fills with AI analysis data (title, severity, summary)",
+    "Frontend: Added items appear in Intelligence Feed with correct tags",
+    "Frontend: Added items appear in Dashboard Latest Intelligence section",
+    "Frontend: Keyword Engine page loads correctly (regression)",
+    "Frontend: Settings page with Bias Config loads correctly (regression)"
+  ],
+
+  "test_report_links": [
+    "/app/backend/tests/test_add_to_feed_v33.py",
+    "/app/test_reports/pytest/pytest_results_v33.xml"
+  ],
+
+  "action_items": [],
+
+  "critical_code_review_comments": [
+    "documents.py: Lines 245-327 AddToFeedRequest model and /add-to-feed endpoint correctly implemented with duplicate detection, best-effort scraping, and user-provided title fallback",
+    "documents.py: Line 265 checks for duplicate URL before adding",
+    "documents.py: Lines 283-286 handles scraping failure gracefully - still adds if user provided title",
+    "documents.py: Lines 289-293 validates severity and clamps priority_score",
+    "DocumentUpload.js: Lines 367-489 QuickAddToFeed component with inline form",
+    "DocumentUpload.js: Lines 230-364 AddToFeedModal component with pre-filled AI analysis data",
+    "DocumentUpload.js: Lines 95-104 AnalysisCard shows 'Add to Feed' button for URL-type processed documents",
+    "Layout.js: Line 26 sidebar label changed to 'Manual Int Uploads'"
+  ],
+
+  "updated_files": [
+    "/app/backend/tests/test_add_to_feed_v33.py"
+  ],
+
+  "success_rate": {
+    "backend": "100% (14/14 tests passed)",
+    "frontend": "100% (all UI elements verified, forms working, modal working)"
+  },
+
+  "test_credentials": "Admin: username=admin, password=Admin@2026!",
+
+  "seed_data_creation": "Created 7 TEST_ prefixed items during testing (can be cleaned up)",
+
+  "retest_needed": false,
+
+  "should_main_agent_self_test": false,
+
+  "context_for_next_testing_agent": "Iteration 33 verified: (1) POST /api/add-to-feed endpoint adds URLs directly to intelligence feed with user-defined parameters, (2) Duplicate URL detection returns 409, (3) Best-effort scraping - if scraping fails but user provided title, item is still added, (4) Sidebar renamed to 'Manual Int Uploads' (data-testid='nav-manual-int-uploads'), (5) URL tab has 'Analyze' button and 'Add to Feed' button, (6) QuickAddToFeed inline form expands with all fields, (7) AddToFeedModal opens from analyzed URL cards with pre-filled AI data, (8) Added items appear in Intelligence Feed and Dashboard with source='Manual Upload'. Test file: /app/backend/tests/test_add_to_feed_v33.py"
+}

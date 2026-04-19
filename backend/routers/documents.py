@@ -239,6 +239,95 @@ async def delete_uploaded_document(doc_id: str):
 
 
 # ============================================================
+# Add URL to Intelligence Feed
+# ============================================================
+
+class AddToFeedRequest(BaseModel):
+    url: str
+    title: str = ""
+    severity: str = "medium"
+    priority_score: int = 50
+    threat_category: str = ""
+    state: str = ""
+    ai_summary: str = ""
+    is_cross_border: bool = False
+    tags: list = []
+
+
+@router.post("/add-to-feed")
+async def add_url_to_feed(data: AddToFeedRequest):
+    """Scrape a URL and add it directly to the intelligence feed with user-defined parameters."""
+    url = data.url.strip()
+    if not url.startswith("http"):
+        raise HTTPException(status_code=400, detail="Invalid URL")
+
+    # Check for duplicate URL
+    existing = await intelligence_col.find_one({"source_url": url}, {"_id": 0, "id": 1})
+    if existing:
+        raise HTTPException(status_code=409, detail="This URL already exists in the intelligence feed")
+
+    # Scrape the URL for content (best-effort — still add even if scraping fails)
+    raw_content = ""
+    scraped_title = ""
+    try:
+        import httpx
+        from bs4 import BeautifulSoup
+        async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
+            resp = await client.get(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"})
+            resp.raise_for_status()
+        soup = BeautifulSoup(resp.text, "html.parser")
+        for tag in soup(["script", "style", "nav", "footer", "header"]):
+            tag.decompose()
+        raw_content = soup.get_text(separator="\n", strip=True)[:5000]
+        scraped_title = soup.title.string.strip() if soup.title and soup.title.string else ""
+    except Exception as e:
+        logger.warning(f"URL scrape failed for {url}: {e} — adding with user-provided data")
+        if not data.title.strip():
+            raise HTTPException(status_code=400, detail=f"Could not fetch URL and no title provided. Error: {str(e)}")
+
+    title = data.title.strip() or scraped_title or url[:200]
+    severity = data.severity.lower() if data.severity else "medium"
+    if severity not in ("critical", "high", "medium", "low"):
+        severity = "medium"
+
+    priority_score = max(0, min(100, data.priority_score))
+
+    item = {
+        "id": str(uuid.uuid4()),
+        "title": title,
+        "source": "Manual Upload",
+        "source_url": url,
+        "published_at": datetime.now(timezone.utc).isoformat(),
+        "fetched_at": datetime.now(timezone.utc).isoformat(),
+        "raw_content": raw_content,
+        "severity": severity,
+        "priority_score": priority_score,
+        "threat_category": data.threat_category or "Unclassified",
+        "state": data.state or "Unknown",
+        "ai_summary": data.ai_summary or title,
+        "is_cross_border": data.is_cross_border,
+        "tags": data.tags or [],
+        "countries_involved": [],
+        "processed": True,
+        "is_relevant": True,
+        "why_it_matters": data.ai_summary or "",
+        "attention_level": "Priority Monitoring" if priority_score >= 60 else "Standard Monitoring",
+        "potential_impact": "",
+    }
+
+    await intelligence_col.insert_one(item)
+    logger.info(f"Manual feed item added: '{title[:60]}' severity={severity} priority={priority_score}")
+
+    return {
+        "message": "Article added to intelligence feed",
+        "item_id": item["id"],
+        "title": title,
+        "severity": severity,
+        "priority_score": priority_score,
+    }
+
+
+# ============================================================
 # Contextual AI Analysis
 # ============================================================
 

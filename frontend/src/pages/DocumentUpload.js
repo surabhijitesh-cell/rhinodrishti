@@ -2,11 +2,14 @@ import { useState, useEffect, useCallback } from "react";
 import axios from "axios";
 import {
   Upload, Link2, FileText, Trash2, RefreshCw, CheckCircle, AlertTriangle,
-  Clock, Shield, Target, MapPin, Users, TrendingUp, ChevronDown, ChevronUp, Search
+  Clock, Shield, Target, MapPin, Users, TrendingUp, ChevronDown, ChevronUp,
+  Search, Plus, Rss, Loader2
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Button } from "../components/ui/button";
 import { Badge } from "../components/ui/badge";
+import { Input } from "../components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
 import { toast } from "sonner";
 
 const SEV_STYLES = {
@@ -16,7 +19,20 @@ const SEV_STYLES = {
   LOW: "bg-green-500/20 text-green-400 border-green-500/30",
 };
 
-function AnalysisCard({ doc, onDelete, onRefresh }) {
+const THREAT_CATEGORIES = [
+  "Military Movement", "Insurgency/Militancy", "Drug Trafficking", "Arms Smuggling",
+  "Border Incursion", "Ethnic/Tribal Tension", "Political Instability", "Cyber Threat",
+  "Infrastructure/Strategic", "Cross-border Crime", "Ceasefire Violation",
+  "Counter-terrorism Ops", "Diplomatic Tension", "Immigration/Refugees",
+  "Environmental Security", "Economic Security", "Intelligence Activity", "Unclassified",
+];
+
+const NER_STATES = [
+  "Assam", "Manipur", "Meghalaya", "Mizoram", "Tripura", "Nagaland",
+  "Arunachal Pradesh", "Sikkim", "Bangladesh", "Myanmar", "India", "Multiple", "Unknown",
+];
+
+function AnalysisCard({ doc, onDelete, onAddToFeed }) {
   const [expanded, setExpanded] = useState(false);
   const a = doc.analysis || {};
   const tc = a.threat_classification || {};
@@ -76,6 +92,17 @@ function AnalysisCard({ doc, onDelete, onRefresh }) {
                 <span className="text-[10px] font-mono">Analyzing...</span>
               </div>
             )}
+            {doc.processed && doc.source_type === "url" && !a?.error && (
+              <Button
+                variant="outline" size="sm"
+                className="h-7 text-[10px] rounded-none border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/10 mr-1"
+                onClick={(e) => { e.stopPropagation(); onAddToFeed(doc); }}
+                data-testid={`add-to-feed-${doc.id}`}
+                title="Add to Intelligence Feed"
+              >
+                <Rss size={11} className="mr-1" /> Add to Feed
+              </Button>
+            )}
             <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-red-400" onClick={(e) => { e.stopPropagation(); onDelete(doc.id); }}
               title="Delete" data-testid={`delete-doc-${doc.id}`}>
               <Trash2 size={13} />
@@ -87,15 +114,12 @@ function AnalysisCard({ doc, onDelete, onRefresh }) {
 
       {expanded && doc.processed && a && !a.error && (
         <CardContent className="p-4 space-y-4" data-testid={`analysis-detail-${doc.id}`}>
-          {/* Executive Summary */}
           {a.executive_summary && (
             <div>
               <h4 className="text-[10px] uppercase tracking-widest text-muted-foreground font-mono mb-1">Executive Summary</h4>
               <p className="text-sm leading-relaxed">{a.executive_summary}</p>
             </div>
           )}
-
-          {/* Threat Classification + Relevance side by side */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <div className="p-3 bg-muted/20 border border-border">
               <h4 className="text-[10px] uppercase tracking-widest text-muted-foreground font-mono mb-2 flex items-center gap-1">
@@ -123,8 +147,6 @@ function AnalysisCard({ doc, onDelete, onRefresh }) {
               {ra.relevance_explanation && <p className="text-xs text-muted-foreground mt-2">{ra.relevance_explanation}</p>}
             </div>
           </div>
-
-          {/* Pattern Analysis */}
           {pa.pattern_description && (
             <div className="p-3 bg-muted/20 border border-border">
               <h4 className="text-[10px] uppercase tracking-widest text-muted-foreground font-mono mb-1 flex items-center gap-1">
@@ -138,8 +160,6 @@ function AnalysisCard({ doc, onDelete, onRefresh }) {
               <p className="text-sm">{pa.pattern_description}</p>
             </div>
           )}
-
-          {/* Key Entities */}
           {(ke.actors?.length > 0 || ke.locations?.length > 0) && (
             <div className="p-3 bg-muted/20 border border-border">
               <h4 className="text-[10px] uppercase tracking-widest text-muted-foreground font-mono mb-2 flex items-center gap-1">
@@ -152,8 +172,6 @@ function AnalysisCard({ doc, onDelete, onRefresh }) {
               </div>
             </div>
           )}
-
-          {/* Recommended Actions */}
           {actions.length > 0 && (
             <div>
               <h4 className="text-[10px] uppercase tracking-widest text-muted-foreground font-mono mb-2">Recommended Actions</h4>
@@ -171,16 +189,12 @@ function AnalysisCard({ doc, onDelete, onRefresh }) {
               </div>
             </div>
           )}
-
-          {/* Cross References */}
           {a.cross_references && (
             <div>
               <h4 className="text-[10px] uppercase tracking-widest text-muted-foreground font-mono mb-1">Cross-References to Current Intelligence</h4>
               <p className="text-sm text-muted-foreground">{a.cross_references}</p>
             </div>
           )}
-
-          {/* Intelligence Gaps */}
           {a.intelligence_gaps?.length > 0 && (
             <div>
               <h4 className="text-[10px] uppercase tracking-widest text-muted-foreground font-mono mb-1">Intelligence Gaps</h4>
@@ -213,13 +227,277 @@ function AnalysisCard({ doc, onDelete, onRefresh }) {
 }
 
 
+function AddToFeedModal({ doc, api, onClose, onSuccess }) {
+  const a = doc?.analysis || {};
+  const tc = a.threat_classification || {};
+  const ra = a.relevance_assessment || {};
+
+  const [title, setTitle] = useState(doc?.filename || "");
+  const [severity, setSeverity] = useState((tc.severity || "MEDIUM").toLowerCase());
+  const [priorityScore, setPriorityScore] = useState(
+    ra.relevance_score ? Math.min(100, ra.relevance_score * 10) : 50
+  );
+  const [threatCategory, setThreatCategory] = useState(tc.threat_category || "Unclassified");
+  const [region, setRegion] = useState(ra.primary_region || "Unknown");
+  const [summary, setSummary] = useState(a.executive_summary || "");
+  const [crossBorder, setCrossBorder] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+
+  const handleSubmit = async () => {
+    setSubmitting(true);
+    try {
+      const res = await axios.post(`${api}/add-to-feed`, {
+        url: doc.source_url,
+        title: title.trim(),
+        severity,
+        priority_score: priorityScore,
+        threat_category: threatCategory,
+        state: region,
+        ai_summary: summary.trim(),
+        is_cross_border: crossBorder,
+        tags: [],
+      });
+      toast.success(res.data.message || "Added to intelligence feed");
+      onSuccess();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Failed to add to feed");
+    }
+    setSubmitting(false);
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={onClose} data-testid="add-feed-modal">
+      <Card className="border border-primary/30 rounded-none bg-card w-full max-w-lg max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+        <CardHeader className="py-3 px-4 border-b border-border bg-primary/5">
+          <CardTitle className="text-sm uppercase tracking-wider font-['Barlow_Condensed'] font-semibold flex items-center gap-2">
+            <Rss size={16} className="text-primary" />
+            Add to Intelligence Feed
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="p-4 space-y-4">
+          <div>
+            <label className="text-[10px] uppercase tracking-widest text-muted-foreground font-mono block mb-1">Title</label>
+            <Input value={title} onChange={(e) => setTitle(e.target.value)} className="rounded-none text-sm" data-testid="feed-title" />
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-[10px] uppercase tracking-widest text-muted-foreground font-mono block mb-1">Severity</label>
+              <Select value={severity} onValueChange={setSeverity}>
+                <SelectTrigger className="rounded-none" data-testid="feed-severity">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent className="rounded-none">
+                  <SelectItem value="critical" className="text-xs">Critical</SelectItem>
+                  <SelectItem value="high" className="text-xs">High</SelectItem>
+                  <SelectItem value="medium" className="text-xs">Medium</SelectItem>
+                  <SelectItem value="low" className="text-xs">Low</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <label className="text-[10px] uppercase tracking-widest text-muted-foreground font-mono block mb-1">Priority Score (0-100)</label>
+              <Input type="number" min="0" max="100" value={priorityScore}
+                onChange={(e) => setPriorityScore(Math.min(100, Math.max(0, parseInt(e.target.value) || 0)))}
+                className="rounded-none text-sm font-mono" data-testid="feed-priority" />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-[10px] uppercase tracking-widest text-muted-foreground font-mono block mb-1">Threat Category</label>
+              <Select value={threatCategory} onValueChange={setThreatCategory}>
+                <SelectTrigger className="rounded-none" data-testid="feed-threat">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent className="rounded-none max-h-48">
+                  {THREAT_CATEGORIES.map((cat) => (
+                    <SelectItem key={cat} value={cat} className="text-xs">{cat}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <label className="text-[10px] uppercase tracking-widest text-muted-foreground font-mono block mb-1">Region / State</label>
+              <Select value={region} onValueChange={setRegion}>
+                <SelectTrigger className="rounded-none" data-testid="feed-region">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent className="rounded-none max-h-48">
+                  {NER_STATES.map((st) => (
+                    <SelectItem key={st} value={st} className="text-xs">{st}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          <div>
+            <label className="text-[10px] uppercase tracking-widest text-muted-foreground font-mono block mb-1">Intelligence Summary</label>
+            <textarea
+              value={summary} onChange={(e) => setSummary(e.target.value)}
+              className="w-full bg-background border border-border px-3 py-2 text-sm font-mono focus:outline-none focus:border-primary resize-none h-20"
+              placeholder="Brief intelligence summary..."
+              data-testid="feed-summary"
+            />
+          </div>
+
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input type="checkbox" checked={crossBorder} onChange={(e) => setCrossBorder(e.target.checked)}
+              className="w-4 h-4 accent-primary" data-testid="feed-cross-border" />
+            <span className="text-xs font-mono uppercase tracking-wider text-muted-foreground">Cross-Border Item</span>
+          </label>
+
+          <div className="flex gap-2 pt-2">
+            <Button onClick={handleSubmit} disabled={submitting || !title.trim()} className="flex-1 rounded-none uppercase text-xs font-bold tracking-wider" data-testid="confirm-add-feed-btn">
+              {submitting ? <Loader2 size={14} className="mr-2 animate-spin" /> : <Plus size={14} className="mr-2" />}
+              Add to Feed
+            </Button>
+            <Button variant="outline" onClick={onClose} className="rounded-none uppercase text-xs tracking-wider" data-testid="cancel-add-feed-btn">
+              Cancel
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+
+function QuickAddToFeed({ api, urlInput, setUrlInput }) {
+  const [showForm, setShowForm] = useState(false);
+  const [title, setTitle] = useState("");
+  const [severity, setSeverity] = useState("medium");
+  const [priorityScore, setPriorityScore] = useState(50);
+  const [threatCategory, setThreatCategory] = useState("Unclassified");
+  const [region, setRegion] = useState("Unknown");
+  const [summary, setSummary] = useState("");
+  const [crossBorder, setCrossBorder] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (!urlInput.trim()) return;
+    setSubmitting(true);
+    try {
+      const res = await axios.post(`${api}/add-to-feed`, {
+        url: urlInput.trim(),
+        title: title.trim(),
+        severity,
+        priority_score: priorityScore,
+        threat_category: threatCategory,
+        state: region,
+        ai_summary: summary.trim(),
+        is_cross_border: crossBorder,
+        tags: [],
+      });
+      toast.success(res.data.message || "Added to intelligence feed");
+      setUrlInput("");
+      setShowForm(false);
+      setTitle(""); setSummary("");
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Failed to add to feed");
+    }
+    setSubmitting(false);
+  };
+
+  if (!showForm) {
+    return (
+      <Button
+        type="button"
+        variant="outline"
+        onClick={() => setShowForm(true)}
+        disabled={!urlInput.trim()}
+        className="rounded-none uppercase text-xs tracking-wider border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/10"
+        data-testid="quick-add-feed-btn"
+      >
+        <Rss size={12} className="mr-2" />Add to Feed
+      </Button>
+    );
+  }
+
+  return (
+    <div className="border border-emerald-500/20 bg-emerald-500/5 p-4 space-y-3 mt-3" data-testid="quick-add-form">
+      <p className="text-[10px] uppercase tracking-widest text-emerald-400 font-mono font-semibold">
+        Add Directly to Intelligence Feed
+      </p>
+      <div>
+        <label className="text-[10px] uppercase tracking-widest text-muted-foreground font-mono block mb-1">Title (optional — auto-scraped if blank)</label>
+        <Input value={title} onChange={(e) => setTitle(e.target.value)} className="rounded-none text-sm" placeholder="Article title..." data-testid="quick-title" />
+      </div>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+        <div>
+          <label className="text-[9px] uppercase tracking-wider text-muted-foreground font-mono block mb-0.5">Severity</label>
+          <Select value={severity} onValueChange={setSeverity}>
+            <SelectTrigger className="rounded-none h-8 text-xs" data-testid="quick-severity"><SelectValue /></SelectTrigger>
+            <SelectContent className="rounded-none">
+              <SelectItem value="critical" className="text-xs">Critical</SelectItem>
+              <SelectItem value="high" className="text-xs">High</SelectItem>
+              <SelectItem value="medium" className="text-xs">Medium</SelectItem>
+              <SelectItem value="low" className="text-xs">Low</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div>
+          <label className="text-[9px] uppercase tracking-wider text-muted-foreground font-mono block mb-0.5">Priority (0-100)</label>
+          <Input type="number" min="0" max="100" value={priorityScore}
+            onChange={(e) => setPriorityScore(Math.min(100, Math.max(0, parseInt(e.target.value) || 0)))}
+            className="rounded-none h-8 text-xs font-mono" data-testid="quick-priority" />
+        </div>
+        <div>
+          <label className="text-[9px] uppercase tracking-wider text-muted-foreground font-mono block mb-0.5">Threat</label>
+          <Select value={threatCategory} onValueChange={setThreatCategory}>
+            <SelectTrigger className="rounded-none h-8 text-xs" data-testid="quick-threat"><SelectValue /></SelectTrigger>
+            <SelectContent className="rounded-none max-h-48">
+              {THREAT_CATEGORIES.map((cat) => (
+                <SelectItem key={cat} value={cat} className="text-xs">{cat}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div>
+          <label className="text-[9px] uppercase tracking-wider text-muted-foreground font-mono block mb-0.5">Region</label>
+          <Select value={region} onValueChange={setRegion}>
+            <SelectTrigger className="rounded-none h-8 text-xs" data-testid="quick-region"><SelectValue /></SelectTrigger>
+            <SelectContent className="rounded-none max-h-48">
+              {NER_STATES.map((st) => (
+                <SelectItem key={st} value={st} className="text-xs">{st}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+      <div>
+        <label className="text-[9px] uppercase tracking-wider text-muted-foreground font-mono block mb-0.5">Summary (optional)</label>
+        <textarea value={summary} onChange={(e) => setSummary(e.target.value)}
+          className="w-full bg-background border border-border px-3 py-2 text-xs font-mono focus:outline-none focus:border-primary resize-none h-16"
+          placeholder="Brief intelligence summary..." data-testid="quick-summary" />
+      </div>
+      <div className="flex items-center gap-4">
+        <label className="flex items-center gap-2 cursor-pointer">
+          <input type="checkbox" checked={crossBorder} onChange={(e) => setCrossBorder(e.target.checked)} className="w-3.5 h-3.5 accent-primary" />
+          <span className="text-[10px] font-mono uppercase text-muted-foreground">Cross-Border</span>
+        </label>
+        <div className="flex-1" />
+        <Button type="button" variant="outline" onClick={() => setShowForm(false)} className="rounded-none text-xs h-8" data-testid="cancel-quick-add">Cancel</Button>
+        <Button type="button" onClick={handleSubmit} disabled={submitting || !urlInput.trim()} className="rounded-none text-xs h-8 uppercase tracking-wider" data-testid="submit-quick-add">
+          {submitting ? <Loader2 size={12} className="mr-1 animate-spin" /> : <Plus size={12} className="mr-1" />}
+          Add to Feed
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+
 export default function DocumentUpload({ api }) {
   const [documents, setDocuments] = useState([]);
-  const [tab, setTab] = useState("file"); // file | url
+  const [tab, setTab] = useState("file");
   const [uploading, setUploading] = useState(false);
   const [urlInput, setUrlInput] = useState("");
   const [queryInput, setQueryInput] = useState("");
   const [dragActive, setDragActive] = useState(false);
+  const [feedModal, setFeedModal] = useState(null);
 
   const fetchDocuments = useCallback(async () => {
     try {
@@ -232,7 +510,6 @@ export default function DocumentUpload({ api }) {
 
   useEffect(() => { fetchDocuments(); }, [fetchDocuments]);
 
-  // Auto-refresh for pending analyses
   useEffect(() => {
     const hasPending = documents.some(d => !d.processed);
     if (!hasPending) return;
@@ -285,10 +562,10 @@ export default function DocumentUpload({ api }) {
     <div className="space-y-6" data-testid="document-analysis-page">
       <div>
         <h1 className="text-3xl md:text-4xl font-bold uppercase tracking-tight font-['Barlow_Condensed']">
-          Intelligence Analysis
+          Manual Intelligence Uploads
         </h1>
         <p className="text-xs font-mono uppercase tracking-[0.15em] text-muted-foreground mt-1">
-          Upload a document or paste a URL for contextual threat assessment against current NER security environment
+          Analyze articles or add them directly to the intelligence feed with custom parameters
         </p>
       </div>
 
@@ -341,31 +618,36 @@ export default function DocumentUpload({ api }) {
               </label>
             </div>
           ) : (
-            <form onSubmit={handleURL} className="space-y-3">
-              <div>
-                <label className="text-[10px] uppercase tracking-widest text-muted-foreground font-mono block mb-1">Article / Report URL</label>
-                <input
-                  type="url" value={urlInput} onChange={(e) => setUrlInput(e.target.value)}
-                  placeholder="https://example.com/article..."
-                  className="w-full bg-background border border-border px-3 py-2.5 text-sm font-mono focus:outline-none focus:border-primary transition-colors"
-                  required data-testid="url-input"
-                />
-              </div>
-              <div>
-                <label className="text-[10px] uppercase tracking-widest text-muted-foreground font-mono block mb-1">
-                  Specific Analysis Query <span className="text-muted-foreground/50">(optional)</span>
-                </label>
-                <textarea
-                  value={queryInput} onChange={(e) => setQueryInput(e.target.value)}
-                  placeholder="e.g., Assess the implications of this development for Manipur border security..."
-                  className="w-full bg-background border border-border px-3 py-2.5 text-sm font-mono focus:outline-none focus:border-primary transition-colors resize-none h-20"
-                  data-testid="query-input"
-                />
-              </div>
-              <Button type="submit" disabled={uploading} className="rounded-none uppercase text-xs tracking-wider" data-testid="analyze-url-btn">
-                {uploading ? <><RefreshCw size={12} className="mr-2 animate-spin" />Analyzing...</> : <><Search size={12} className="mr-2" />Analyze</>}
-              </Button>
-            </form>
+            <div className="space-y-3">
+              <form onSubmit={handleURL} className="space-y-3">
+                <div>
+                  <label className="text-[10px] uppercase tracking-widest text-muted-foreground font-mono block mb-1">Article / Report URL</label>
+                  <input
+                    type="url" value={urlInput} onChange={(e) => setUrlInput(e.target.value)}
+                    placeholder="https://example.com/article..."
+                    className="w-full bg-background border border-border px-3 py-2.5 text-sm font-mono focus:outline-none focus:border-primary transition-colors"
+                    required data-testid="url-input"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] uppercase tracking-widest text-muted-foreground font-mono block mb-1">
+                    Specific Analysis Query <span className="text-muted-foreground/50">(optional — for AI analysis only)</span>
+                  </label>
+                  <textarea
+                    value={queryInput} onChange={(e) => setQueryInput(e.target.value)}
+                    placeholder="e.g., Assess the implications of this development for Manipur border security..."
+                    className="w-full bg-background border border-border px-3 py-2.5 text-sm font-mono focus:outline-none focus:border-primary transition-colors resize-none h-20"
+                    data-testid="query-input"
+                  />
+                </div>
+                <div className="flex gap-2">
+                  <Button type="submit" disabled={uploading} className="rounded-none uppercase text-xs tracking-wider" data-testid="analyze-url-btn">
+                    {uploading ? <><RefreshCw size={12} className="mr-2 animate-spin" />Analyzing...</> : <><Search size={12} className="mr-2" />Analyze</>}
+                  </Button>
+                  <QuickAddToFeed api={api} urlInput={urlInput} setUrlInput={setUrlInput} />
+                </div>
+              </form>
+            </div>
           )}
         </CardContent>
       </Card>
@@ -383,10 +665,25 @@ export default function DocumentUpload({ api }) {
           </div>
         ) : (
           documents.map((doc) => (
-            <AnalysisCard key={doc.id} doc={doc} onDelete={handleDelete} onRefresh={fetchDocuments} />
+            <AnalysisCard
+              key={doc.id}
+              doc={doc}
+              onDelete={handleDelete}
+              onAddToFeed={(d) => setFeedModal(d)}
+            />
           ))
         )}
       </div>
+
+      {/* Add to Feed Modal (after analysis) */}
+      {feedModal && (
+        <AddToFeedModal
+          doc={feedModal}
+          api={api}
+          onClose={() => setFeedModal(null)}
+          onSuccess={() => { setFeedModal(null); fetchDocuments(); }}
+        />
+      )}
     </div>
   );
 }
