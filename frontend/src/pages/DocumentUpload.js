@@ -619,10 +619,16 @@ export default function DocumentUpload({ api }) {
               <label className="cursor-pointer">
                 <input type="file" className="hidden" accept=".pdf,.doc,.docx,.xls,.xlsx,.txt"
                   onChange={(e) => { if (e.target.files[0]) handleFile(e.target.files[0]); }}
-                  disabled={uploading} data-testid="file-input" />
-                <Button as="span" disabled={uploading} className="rounded-none uppercase text-xs tracking-wider" data-testid="select-file-btn">
+                  disabled={uploading} data-testid="file-input" id="file-upload-input" />
+                <span
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => document.getElementById('file-upload-input')?.click()}
+                  className="inline-flex items-center justify-center gap-2 whitespace-nowrap font-medium transition-all bg-primary text-primary-foreground shadow-xs hover:bg-primary/90 h-9 px-4 py-2 rounded-none uppercase text-xs tracking-wider cursor-pointer"
+                  data-testid="select-file-btn"
+                >
                   {uploading ? <><RefreshCw size={12} className="mr-2 animate-spin" />Uploading...</> : "Select File"}
-                </Button>
+                </span>
               </label>
             </div>
           ) : (
