@@ -111,6 +111,16 @@ export default function IntelligenceFeed({ api, crossBorderOnly = false, alertsO
     fetchFeedback();
   }, [items, api]);
 
+  const handleDeleteItem = async (itemId) => {
+    try {
+      await axios.delete(`${api}/intelligence/${itemId}`);
+      setItems((prev) => prev.filter((i) => i.id !== itemId));
+      setTotal((prev) => Math.max(0, prev - 1));
+    } catch (e) {
+      console.error("Delete failed:", e);
+    }
+  };
+
   const updateFilter = (key, value) => {
     setFilters((prev) => ({ ...prev, [key]: value }));
     setPage(1);
@@ -320,7 +330,7 @@ export default function IntelligenceFeed({ api, crossBorderOnly = false, alertsO
                 <Badge className="absolute top-2 right-2 z-10 rounded-none bg-primary/20 text-primary border-primary/30 text-[9px] px-1">
                   {(item.similarity_score * 100).toFixed(0)}% match
                 </Badge>
-                <IntelligenceCard item={item} api={api} />
+                <IntelligenceCard item={item} api={api} onDelete={handleDeleteItem} />
               </div>
             ))}
           </div>
@@ -329,7 +339,7 @@ export default function IntelligenceFeed({ api, crossBorderOnly = false, alertsO
         <>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4" data-testid="intelligence-items-grid">
             {items.map((item) => (
-              <IntelligenceCard key={item.id} item={item} api={api} feedbackData={feedbackMap[item.id]} />
+              <IntelligenceCard key={item.id} item={item} api={api} feedbackData={feedbackMap[item.id]} onDelete={handleDeleteItem} />
             ))}
           </div>
 

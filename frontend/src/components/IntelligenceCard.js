@@ -2,7 +2,7 @@ import { useState } from "react";
 import {
   Target, MapPin, Users, Package, Shield, AlertTriangle,
   Wifi, Building, Clock, ExternalLink, ChevronDown, ChevronUp,
-  Flag, TrendingUp, Radar, Layers
+  Flag, TrendingUp, Radar, Layers, Trash2
 } from "lucide-react";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
@@ -64,9 +64,10 @@ function formatTime(isoStr) {
   }
 }
 
-export default function IntelligenceCard({ item, compact = false, api, feedbackData }) {
+export default function IntelligenceCard({ item, compact = false, api, feedbackData, onDelete }) {
   const [expanded, setExpanded] = useState(false);
   const [sourcesExpanded, setSourcesExpanded] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const ThreatIcon = THREAT_ICONS[item.threat_category] || THREAT_ICONS[item.tags?.[0]] || AlertTriangle;
   const severityClass = SEVERITY_CLASSES[item.severity] || "severity-low";
   const borderClass = CARD_BORDER_CLASSES[item.severity] || "intel-card-low";
@@ -132,6 +133,23 @@ export default function IntelligenceCard({ item, compact = false, api, feedbackD
                item.threat_trajectory === "NEW_THREAT" ? "NEW" :
                item.threat_trajectory === "STABLE" ? "STABLE" : ""}
             </Badge>
+          )}
+          {onDelete && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                if (window.confirm("Delete this intelligence item? This cannot be undone.")) {
+                  setDeleting(true);
+                  onDelete(item.id);
+                }
+              }}
+              disabled={deleting}
+              className="p-1 text-muted-foreground/40 hover:text-red-400 transition-colors mt-0.5"
+              title="Delete item"
+              data-testid={`delete-intel-${item.id}`}
+            >
+              <Trash2 size={12} />
+            </button>
           )}
         </div>
       </div>

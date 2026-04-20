@@ -422,6 +422,15 @@ export default function Dashboard({ stats: propStats, api }) {
 
   const PIE_COLORS = ["#ef4444", "#f59e0b", "#eab308", "#a3e635", "#3b82f6", "#8b5cf6", "#06b6d4", "#6366f1"];
 
+  const handleDeleteItem = async (itemId) => {
+    try {
+      await axios.delete(`${api}/intelligence/${itemId}`);
+      setRecentItems((prev) => prev.filter((i) => i.id !== itemId));
+    } catch (e) {
+      console.error("Delete failed:", e);
+    }
+  };
+
   return (
     <div className="space-y-6" data-testid="dashboard-page">
       {/* Header */}
@@ -731,7 +740,7 @@ export default function Dashboard({ stats: propStats, api }) {
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4" data-testid="recent-intelligence-grid">
           {recentItems.map((item) => (
-            <IntelligenceCard key={item.id} item={item} compact />
+            <IntelligenceCard key={item.id} item={item} compact api={api} onDelete={handleDeleteItem} />
           ))}
           {recentItems.length === 0 && (
             <p className="text-sm text-muted-foreground col-span-full text-center py-8">

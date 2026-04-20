@@ -163,6 +163,16 @@ async def get_intelligence_item(item_id: str):
     return item
 
 
+@router.delete("/intelligence/{item_id}")
+async def delete_intelligence_item(item_id: str):
+    result = await intelligence_col.delete_one({"id": item_id})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Item not found")
+    invalidate_stats_cache()
+    logger.info(f"Intelligence item deleted: {item_id}")
+    return {"message": "Item deleted", "id": item_id}
+
+
 @router.get("/alerts")
 async def get_alerts():
     items = await intelligence_col.find(

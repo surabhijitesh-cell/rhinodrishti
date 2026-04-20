@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import {
   Globe, ShieldAlert, AlertTriangle, TrendingUp, TrendingDown,
   Eye, Loader2, ChevronDown, ChevronUp, ExternalLink, Filter,
-  Handshake, Swords, Landmark, BarChart3
+  Handshake, Swords, Landmark, BarChart3, Trash2
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Badge } from "../components/ui/badge";
@@ -32,7 +32,7 @@ const CATEGORY_COLORS = {
   other: "text-muted-foreground border-border",
 };
 
-function SignalItem({ item, index }) {
+function SignalItem({ item, index, onDelete }) {
   const [expanded, setExpanded] = useState(false);
 
   return (
@@ -76,8 +76,23 @@ function SignalItem({ item, index }) {
             <span className="text-[9px] font-mono text-muted-foreground/60 ml-auto">{item.source}</span>
           </div>
         </div>
-        {expanded ? <ChevronUp size={12} className="text-muted-foreground shrink-0 mt-1" /> :
-                    <ChevronDown size={12} className="text-muted-foreground shrink-0 mt-1" />}
+        <div className="flex items-center gap-1 shrink-0 mt-1">
+          {onDelete && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                if (window.confirm("Delete this intelligence item?")) onDelete(item.id);
+              }}
+              className="p-1 text-muted-foreground/30 hover:text-red-400 transition-colors"
+              title="Delete"
+              data-testid={`delete-signal-${item.id}`}
+            >
+              <Trash2 size={11} />
+            </button>
+          )}
+          {expanded ? <ChevronUp size={12} className="text-muted-foreground" /> :
+                      <ChevronDown size={12} className="text-muted-foreground" />}
+        </div>
       </div>
 
       {expanded && (
@@ -121,7 +136,7 @@ function SignalItem({ item, index }) {
   );
 }
 
-function CategoryGroup({ group, startIndex }) {
+function CategoryGroup({ group, startIndex, onDelete }) {
   const CatIcon = CATEGORY_ICONS[group.category] || Globe;
   const color = CATEGORY_COLORS[group.category] || CATEGORY_COLORS.other;
   let idx = startIndex;
@@ -137,13 +152,13 @@ function CategoryGroup({ group, startIndex }) {
       </div>
       {group.items.map((item) => {
         idx++;
-        return <SignalItem key={item.id} item={item} index={idx} />;
+        return <SignalItem key={item.id} item={item} index={idx} onDelete={onDelete} />;
       })}
     </div>
   );
 }
 
-function CountrySection({ title, flag, data, isLoading }) {
+function CountrySection({ title, flag, data, isLoading, onDelete }) {
   const items = data?.items || [];
   const grouped = data?.grouped || [];
   const posture = data?.posture || "stable";
@@ -178,13 +193,13 @@ function CountrySection({ title, flag, data, isLoading }) {
             {grouped.map((group) => {
               const startIdx = runningIndex;
               runningIndex += group.items.length;
-              return <CategoryGroup key={group.category} group={group} startIndex={startIdx} />;
+              return <CategoryGroup key={group.category} group={group} startIndex={startIdx} onDelete={onDelete} />;
             })}
           </div>
         ) : items.length > 0 ? (
           <div className="max-h-[700px] overflow-y-auto">
             {items.map((item, i) => (
-              <SignalItem key={item.id} item={item} index={i + 1} />
+              <SignalItem key={item.id} item={item} index={i + 1} onDelete={onDelete} />
             ))}
           </div>
         ) : (
@@ -220,6 +235,32 @@ export default function CrossBorderWatch({ api }) {
   }, [api, signalFilter]);
 
   const today = new Date().toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }).toUpperCase();
+
+  const handleDeleteItem = async (itemId) => {
+    try {
+      await axios.delete(`${api}/intelligence/${itemId}`);
+      // Remove from local state
+      setData((prev) => {
+        if (!prev) return prev;
+        const removeItem = (section) => {
+          if (!section) return section;
+          const filteredItems = (section.items || []).filter((i) => i.id !== itemId);
+          const filteredGrouped = (section.grouped || []).map((g) => ({
+            ...g,
+            items: g.items.filter((i) => i.id !== itemId),
+          })).filter((g) => g.items.length > 0);
+          return { ...section, items: filteredItems, grouped: filteredGrouped };
+        };
+        return {
+          ...prev,
+          bangladesh: removeItem(prev.bangladesh),
+          myanmar: removeItem(prev.myanmar),
+        };
+      });
+    } catch (e) {
+      console.error("Delete failed:", e);
+    }
+  };
 
   return (
     <div className="space-y-5" data-testid="cross-border-watch">
@@ -303,12 +344,14 @@ export default function CrossBorderWatch({ api }) {
           flag="&#x1F1E7;&#x1F1E9;"
           data={data?.bangladesh}
           isLoading={loading}
+          onDelete={handleDeleteItem}
         />
         <CountrySection
           title="Myanmar"
           flag="&#x1F1F2;&#x1F1F2;"
           data={data?.myanmar}
           isLoading={loading}
+          onDelete={handleDeleteItem}
         />
       </div>
     </div>
