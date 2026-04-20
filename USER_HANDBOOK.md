@@ -143,6 +143,8 @@ The bottom section shows the 6 most recent intelligence items. Two controls let 
 
 Click **View Full Feed** to open the complete Intelligence Feed.
 
+Each item card also includes a **delete button** (trash icon) — click to permanently remove an item after confirmation.
+
 ### Trend Charts
 7-day severity distribution showing whether threat levels are increasing or decreasing.
 
@@ -177,6 +179,7 @@ Each intelligence item shows:
 - **Actors**: Named organizations/groups involved
 - **Source**: Original news source with link
 - **Fused Sources Badge** (if applicable): Shows "X sources" when multiple outlets cover the same story. Click to expand and see all covering sources with links.
+- **Delete** (trash icon): Small trash icon in the top-right corner of each card. Click to permanently delete the item after confirmation. The item is removed from the feed, dashboard, and all views immediately.
 
 ### Feed Quality Filter
 The Intelligence Feed automatically excludes:
@@ -226,6 +229,9 @@ The Cross-Border view enforces strict quality standards:
 
 ### Feedback Integration
 Analyst feedback ratings on cross-border items are factored into the display scores. Items with high analyst ratings are prioritized within their section.
+
+### Deleting Items
+Each signal item in both the Bangladesh and Myanmar sections has a small **trash icon** on the right side. Click it to permanently delete that intelligence item after confirmation. The item is removed from the Cross-Border view and all other pages immediately.
 
 ---
 
@@ -884,5 +890,5 @@ The AI operates as a Senior Military Intelligence Analyst and performs:
 
 ---
 
-*Rhino Drishti v9.1 — Elite OSINT Intelligence Platform with Feedback-Driven AI*
+*Rhino Drishti v9.2 — Elite OSINT Intelligence Platform with Feedback-Driven AI*
 *Handbook updated: 20 April 2026*
