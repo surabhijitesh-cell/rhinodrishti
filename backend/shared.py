@@ -221,7 +221,13 @@ def has_non_latin_chars(text: str) -> bool:
            (0x0B80 <= code <= 0x0BFF) or \
            (0x0C00 <= code <= 0x0C7F) or \
            (0x0C80 <= code <= 0x0CFF) or \
-           (0x0D00 <= code <= 0x0D7F):
+           (0x0D00 <= code <= 0x0D7F) or \
+           (0x1000 <= code <= 0x109F) or \
+           (0x0E00 <= code <= 0x0E7F) or \
+           (0x4E00 <= code <= 0x9FFF) or \
+           (0x0600 <= code <= 0x06FF) or \
+           (0x3040 <= code <= 0x30FF) or \
+           (0xAC00 <= code <= 0xD7AF):
             return True
     return False
 
