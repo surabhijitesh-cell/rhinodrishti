@@ -99,7 +99,7 @@ function App() {
           </UpdateNotificationProvider>
         </AuthProvider>
       </BrowserRouter>
-      <Toaster />
+      <Toaster position="top-center" />
     </ThemeProvider>
   );
 }

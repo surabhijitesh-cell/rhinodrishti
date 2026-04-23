@@ -17,6 +17,7 @@ export default function UpdatesPage({ api }) {
   const isAdmin = user?.role === "admin";
   const [updates, setUpdates] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [previewing, setPreviewing] = useState(null);
 
   const fetchUpdates = useCallback(async () => {
     try {
@@ -27,6 +28,32 @@ export default function UpdatesPage({ api }) {
     }
     setLoading(false);
   }, [api]);
+
+  useEffect(() => { fetchUpdates(); }, [fetchUpdates]);
+
+  const handlePreview = async (version) => {
+    setPreviewing(version);
+    try {
+      const res = await axios.post(`${api}/admin/trigger-update-preview`, { version });
+      const p = res.data;
+      if (p.priority === "major") {
+        toast(p.message, {
+          description: `v${p.version} (Preview)`,
+          icon: <Bell size={16} className="text-primary" />,
+          className: "border-l-4 border-l-primary",
+          duration: 5000,
+        });
+      } else {
+        toast(p.message, {
+          description: `v${p.version} (Preview)`,
+          duration: 5000,
+        });
+      }
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Preview failed");
+    }
+    setPreviewing(null);
+  };
 
   useEffect(() => { fetchUpdates(); }, [fetchUpdates]);
 
@@ -99,6 +126,16 @@ export default function UpdatesPage({ api }) {
                         {u.priority === "major" ? u.message : "Performance improvements and bug fixes"}
                       </p>
                     </div>
+                    <Button
+                      variant="ghost" size="sm"
+                      className="shrink-0 h-7 text-[10px] text-muted-foreground hover:text-primary uppercase tracking-wider font-mono"
+                      onClick={() => handlePreview(u.version)}
+                      disabled={previewing === u.version}
+                      data-testid={`preview-btn-${u.version}`}
+                    >
+                      {previewing === u.version ? <Loader2 size={11} className="mr-1 animate-spin" /> : <Eye size={11} className="mr-1" />}
+                      Preview
+                    </Button>
                   </div>
                 </div>
               ))}

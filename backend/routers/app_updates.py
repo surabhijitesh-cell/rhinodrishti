@@ -165,7 +165,7 @@ async def get_update_logs(user: dict = Depends(require_admin_role)):
 
 
 @router.post("/admin/trigger-update-preview")
-async def preview_update(body: dict, user: dict = Depends(require_admin_role)):
+async def preview_update(body: dict, user: dict = Depends(get_current_user)):
     """Preview what a specific update would look like as a notification."""
     version = (body.get("version") or "").strip()
     if not version:
