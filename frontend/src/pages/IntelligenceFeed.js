@@ -97,7 +97,8 @@ export default function IntelligenceFeed({ api, crossBorderOnly = false, alertsO
 
   // Scroll to top when page changes
   useEffect(() => {
-    window.scrollTo({ top: 0, behavior: "smooth" });
+    const main = document.querySelector('[data-testid="main-content"]');
+    if (main) main.scrollTo({ top: 0, behavior: "smooth" });
   }, [page]);
 
   // Batch-fetch feedback data for displayed items
