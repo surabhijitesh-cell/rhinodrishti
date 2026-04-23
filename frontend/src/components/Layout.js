@@ -6,7 +6,7 @@ import {
   Shield, LayoutDashboard, Newspaper, FileText, TrendingUp,
   Globe, Bell, ChevronLeft, ChevronRight, Sun, Moon, Search,
   Activity, Menu, X, Upload, GitBranch, Settings, Network, Key, BookOpen, Brain,
-  LogOut, Users
+  LogOut, Users, Megaphone
 } from "lucide-react";
 import { Input } from "../components/ui/input";
 import { Button } from "../components/ui/button";
@@ -26,6 +26,7 @@ const ALL_NAV_ITEMS = [
   { path: "/upload", label: "Manual Int Uploads", icon: Upload, roles: ["admin", "analyst", "viewer"] },
   { path: "/user-management", label: "User Management", icon: Users, roles: ["admin"] },
   { path: "/settings", label: "Settings", icon: Settings, roles: ["admin"] },
+  { path: "/updates", label: "Platform Updates", icon: Megaphone, roles: ["admin", "analyst", "viewer"] },
   { path: "/handbook", label: "User Handbook", icon: BookOpen, roles: ["admin", "analyst", "viewer"] },
 ];
 

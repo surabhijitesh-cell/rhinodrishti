@@ -4,6 +4,7 @@ import { BrowserRouter, Routes, Route, useNavigate } from "react-router-dom";
 import axios from "axios";
 import { ThemeProvider } from "./components/ThemeProvider";
 import { AuthProvider, useAuth } from "./contexts/AuthContext";
+import { UpdateNotificationProvider } from "./contexts/UpdateContext";
 import ProtectedRoute from "./components/ProtectedRoute";
 import Layout from "./components/Layout";
 import Login from "./pages/Login";
@@ -20,6 +21,7 @@ import Handbook from "./pages/Handbook";
 import TrainingSummary from "./pages/TrainingSummary";
 import CrossBorderWatch from "./pages/CrossBorderWatch";
 import UserManagement from "./pages/UserManagement";
+import UpdatesPage from "./pages/UpdatesPage";
 import { Toaster } from "./components/ui/sonner";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
@@ -77,6 +79,7 @@ function AppRoutes() {
                 <Route path="/upload" element={<DocumentUpload api={API} />} />
                 <Route path="/handbook" element={<Handbook api={API} />} />
                 <Route path="/user-management" element={<UserManagement api={API} />} />
+                <Route path="/updates" element={<UpdatesPage api={API} />} />
               </Routes>
             </Layout>
           </ProtectedRoute>
@@ -91,7 +94,9 @@ function App() {
     <ThemeProvider>
       <BrowserRouter>
         <AuthProvider api={API}>
-          <AppRoutes />
+          <UpdateNotificationProvider api={API}>
+            <AppRoutes />
+          </UpdateNotificationProvider>
         </AuthProvider>
       </BrowserRouter>
       <Toaster />
