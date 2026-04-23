@@ -104,6 +104,29 @@ RSS_SOURCES = [
     {"name": "Firstpost", "url": "https://www.firstpost.com/rss/india.xml", "category": "national", "language": "en", "region": "India", "priority": "standard"},
     {"name": "The Indian Express - India", "url": "https://indianexpress.com/section/india/feed/", "category": "national", "language": "en", "region": "India", "priority": "standard"},
     {"name": "The Tribune India", "url": "https://www.tribuneindia.com/rss/feed?catId=2", "category": "national", "language": "en", "region": "India", "priority": "standard"},
+
+    # ---- GOVERNMENT: PIB NE REGIONAL OFFICES ----
+    {"name": "PIB Imphal", "url": "https://pib.gov.in/RssMain.aspx?ModId=6&Lang=1&Regid=12", "category": "government", "language": "en", "region": "Manipur", "priority": "elite"},
+    {"name": "PIB Kohima", "url": "https://pib.gov.in/RssMain.aspx?ModId=6&Lang=1&Regid=16", "category": "government", "language": "en", "region": "Nagaland", "priority": "elite"},
+    {"name": "PIB Agartala", "url": "https://pib.gov.in/RssMain.aspx?ModId=6&Lang=1&Regid=32", "category": "government", "language": "en", "region": "Tripura", "priority": "elite"},
+    {"name": "PIB Itanagar", "url": "https://pib.gov.in/RssMain.aspx?ModId=6&Lang=1&Regid=18", "category": "government", "language": "en", "region": "Arunachal Pradesh", "priority": "elite"},
+    {"name": "PIB Shillong", "url": "https://pib.gov.in/RssMain.aspx?ModId=6&Lang=1&Regid=17", "category": "government", "language": "en", "region": "Meghalaya", "priority": "elite"},
+    {"name": "PIB Aizawl", "url": "https://pib.gov.in/RssMain.aspx?ModId=6&Lang=1&Regid=13", "category": "government", "language": "en", "region": "Mizoram", "priority": "elite"},
+    {"name": "PIB Gangtok", "url": "https://pib.gov.in/RssMain.aspx?ModId=6&Lang=1&Regid=14", "category": "government", "language": "en", "region": "Sikkim", "priority": "standard"},
+    {"name": "PIB Delhi National", "url": "https://pib.gov.in/RssMain.aspx?ModId=6&Lang=1&Regid=1", "category": "government", "language": "en", "region": "India", "priority": "elite"},
+    {"name": "PIB Media Invitations", "url": "https://pib.gov.in/RssMain.aspx?ModId=10&Lang=1&Regid=1", "category": "government", "language": "en", "region": "India", "priority": "standard"},
+
+    # ---- GOVERNMENT: KEY MINISTRIES & AGENCIES ----
+    {"name": "MEA Press Releases", "url": "https://mea.gov.in/rss/press-releases.xml", "category": "government", "language": "en", "region": "India", "priority": "elite"},
+    {"name": "NIA RSS", "url": "https://nia.gov.in/rss-feed.htm", "category": "government", "language": "en", "region": "India", "priority": "elite"},
+    {"name": "Ministry of DoNER", "url": "https://doner.gov.in/rss-feed", "category": "government", "language": "en", "region": "India", "priority": "standard"},
+    {"name": "NDMA Alerts", "url": "https://ndma.gov.in/rss.xml", "category": "government", "language": "en", "region": "India", "priority": "standard"},
+    {"name": "Open Gov Data India", "url": "https://data.gov.in/feed", "category": "government", "language": "en", "region": "India", "priority": "standard"},
+
+    # ---- GOVERNMENT: NE STATE DIPR ----
+    {"name": "Manipur DIPR", "url": "https://manipur.gov.in/rss-feed/", "category": "government", "language": "en", "region": "Manipur", "priority": "elite"},
+    {"name": "Assam CM Office", "url": "https://cm.assam.gov.in/rss-feed/", "category": "government", "language": "en", "region": "Assam", "priority": "elite"},
+    {"name": "Nagaland DIPR", "url": "https://dipr.nagaland.gov.in/feed/", "category": "government", "language": "en", "region": "Nagaland", "priority": "standard"},
 ]
 
 def get_sources_by_priority(priority: str) -> list:
