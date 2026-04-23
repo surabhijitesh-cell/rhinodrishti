@@ -95,6 +95,11 @@ export default function IntelligenceFeed({ api, crossBorderOnly = false, alertsO
     fetchItems();
   }, [fetchItems]);
 
+  // Scroll to top when page changes
+  useEffect(() => {
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }, [page]);
+
   // Batch-fetch feedback data for displayed items
   useEffect(() => {
     const fetchFeedback = async () => {

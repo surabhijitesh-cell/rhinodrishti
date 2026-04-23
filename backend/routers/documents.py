@@ -292,6 +292,22 @@ async def add_url_to_feed(data: AddToFeedRequest):
 
     priority_score = max(0, min(100, data.priority_score))
 
+    # Translate non-English title and content
+    from shared import has_non_latin_chars, translate_to_english
+    summary = data.ai_summary or title
+    if has_non_latin_chars(title):
+        translated_title = await translate_to_english(title)
+        if translated_title and translated_title != title:
+            title = translated_title
+    if has_non_latin_chars(summary):
+        translated_summary = await translate_to_english(summary)
+        if translated_summary and translated_summary != summary:
+            summary = translated_summary
+    if raw_content and has_non_latin_chars(raw_content[:500]):
+        translated_content = await translate_to_english(raw_content[:3000])
+        if translated_content:
+            raw_content = translated_content
+
     item = {
         "id": str(uuid.uuid4()),
         "title": title,
@@ -304,13 +320,13 @@ async def add_url_to_feed(data: AddToFeedRequest):
         "priority_score": priority_score,
         "threat_category": data.threat_category or "Unclassified",
         "state": data.state or "Unknown",
-        "ai_summary": data.ai_summary or title,
+        "ai_summary": summary,
         "is_cross_border": data.is_cross_border,
         "tags": data.tags or [],
         "countries_involved": [],
         "processed": True,
         "is_relevant": True,
-        "why_it_matters": data.ai_summary or "",
+        "why_it_matters": summary,
         "attention_level": "Priority Monitoring" if priority_score >= 60 else "Standard Monitoring",
         "potential_impact": "",
     }
