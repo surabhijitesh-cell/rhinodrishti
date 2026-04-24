@@ -1,0 +1,92 @@
+{
+  "summary": "Iteration 35: PDF Reports Feature - All tests passed (24/24 backend, all frontend UI verified). New endpoints: GET /api/reports/filtered-feed (export filtered intelligence as PDF), GET /api/reports/regional-threat (regional threat summary PDF), GET /api/reports/cross-border-sitrep (cross-border SITREP PDF for Bangladesh/Myanmar), GET /api/reports/custom (custom filtered report PDF). All endpoints require authentication (401 without token), return application/pdf content type. Reports page accessible from sidebar with 3 collapsible report cards. Intelligence Feed page has new Export PDF button.",
+
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+
+  "passed_tests": [
+    "GET /api/reports/filtered-feed without token returns 401",
+    "GET /api/reports/regional-threat without token returns 401",
+    "GET /api/reports/cross-border-sitrep without token returns 401",
+    "GET /api/reports/custom without token returns 401",
+    "GET /api/reports/filtered-feed with severity=high returns 200 PDF",
+    "GET /api/reports/filtered-feed with state=Manipur returns 200 PDF",
+    "GET /api/reports/filtered-feed with multiple filters returns 200 PDF",
+    "GET /api/reports/filtered-feed with no filters returns 200 PDF",
+    "GET /api/reports/regional-threat?region=Manipur returns 200 PDF",
+    "GET /api/reports/regional-threat?region=Assam returns 200 PDF",
+    "GET /api/reports/regional-threat without region returns 422",
+    "GET /api/reports/regional-threat with date range returns 200 PDF",
+    "GET /api/reports/cross-border-sitrep?country=Myanmar returns 200 PDF",
+    "GET /api/reports/cross-border-sitrep?country=Bangladesh returns 200 PDF",
+    "GET /api/reports/cross-border-sitrep?country=Invalid returns 400",
+    "GET /api/reports/cross-border-sitrep without country returns 422",
+    "GET /api/reports/custom with title and threat_type returns 200 PDF",
+    "GET /api/reports/custom with all filters returns 200 PDF",
+    "GET /api/reports/custom with default title returns 200 PDF",
+    "GET /api/reports/custom with source filter returns 200 PDF",
+    "GET /api/reports/custom with is_cross_border=true returns 200 PDF",
+    "GET /api/intelligence pagination still works",
+    "GET /api/intelligence filters still work",
+    "DELETE /api/intelligence/{id} endpoint exists",
+    "Frontend: Reports nav item visible in sidebar",
+    "Frontend: Reports page loads with data-testid='reports-page'",
+    "Frontend: Regional Threat Summary card with region selector and date inputs",
+    "Frontend: Cross-Border SITREP card with country selector (Bangladesh/Myanmar)",
+    "Frontend: Custom Filtered Report card with full filter set",
+    "Frontend: Intelligence Feed has Export PDF button (data-testid='generate-pdf-btn')",
+    "Frontend: Intelligence Feed pagination works",
+    "Frontend: Intelligence Feed filter panel works"
+  ],
+
+  "test_report_links": [
+    "/app/backend/tests/test_reports_v35.py",
+    "/app/test_reports/pytest/pytest_results_v35.xml"
+  ],
+
+  "action_items": [],
+
+  "critical_code_review_comments": [
+    "reports.py: Lines 17-21 _clean() function properly handles encoding for PDF generation (latin-1 encoding)",
+    "reports.py: Lines 23-129 ReportPDF class extends FPDF with proper header/footer and styled sections",
+    "reports.py: Lines 131-161 _build_query() correctly builds MongoDB query with all filter options",
+    "reports.py: Lines 199-258 filtered_feed_pdf endpoint reuses same query params as /api/intelligence",
+    "reports.py: Lines 264-329 regional_threat_report always returns PDF (shows NO DATA section if empty)",
+    "reports.py: Lines 335-427 cross_border_sitrep validates country (Bangladesh/Myanmar only), groups by category",
+    "reports.py: Lines 433-532 custom_report supports all filters including source regex search",
+    "ReportsPage.jsx: Lines 38-55 ReportCard component with collapsible expand/collapse behavior",
+    "ReportsPage.jsx: Lines 58-106 RegionalThreatReport with region selector and date inputs",
+    "ReportsPage.jsx: Lines 110-159 CrossBorderSitrep with country selector (Bangladesh/Myanmar)",
+    "ReportsPage.jsx: Lines 163-278 CustomReport with full filter set including cross-border checkbox",
+    "IntelligenceFeed.js: Lines 133-156 handleGeneratePdf sends current filters to /api/reports/filtered-feed",
+    "IntelligenceFeed.js: Lines 263-273 Export PDF button with data-testid='generate-pdf-btn'",
+    "Layout.js: Line 27 Reports nav item added with FileText icon, visible for all roles"
+  ],
+
+  "updated_files": [
+    "/app/backend/tests/test_reports_v35.py"
+  ],
+
+  "success_rate": {
+    "backend": "100% (24/24 tests passed)",
+    "frontend": "100% (all UI elements verified, report cards expand correctly, Export PDF button works)"
+  },
+
+  "test_credentials": "Admin: username=admin, password=Admin@2026!",
+
+  "seed_data_creation": "No new seed data created - used existing intelligence items",
+
+  "retest_needed": false,
+
+  "should_main_agent_self_test": false,
+
+  "context_for_next_testing_agent": "Iteration 35 verified PDF Reports feature: (1) 4 new report endpoints in /api/reports/ - filtered-feed, regional-threat, cross-border-sitrep, custom, (2) All endpoints require authentication and return application/pdf content type, (3) regional-threat and cross-border-sitrep always return PDF even with no data (shows NO DATA section), (4) filtered-feed and custom return 404 if no matching items, (5) cross-border-sitrep validates country must be Bangladesh or Myanmar (400 for invalid), (6) Reports page accessible from sidebar with 3 collapsible cards, (7) Intelligence Feed has Export PDF button that sends current filters to filtered-feed endpoint. Test file: /app/backend/tests/test_reports_v35.py"
+}

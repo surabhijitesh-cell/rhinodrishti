@@ -30,6 +30,7 @@ from routers.training import router as training_router
 from routers.cross_border import router as cross_border_router
 from routers.auth import router as auth_router
 from routers.app_updates import router as app_updates_router
+from routers.reports import router as reports_router
 
 # Import scheduler functions
 from routers.pipeline import (
@@ -60,6 +61,7 @@ app.include_router(training_router, prefix="/api")
 app.include_router(cross_border_router, prefix="/api")
 app.include_router(auth_router, prefix="/api")
 app.include_router(app_updates_router, prefix="/api")
+app.include_router(reports_router, prefix="/api")
 
 
 # ============================================================

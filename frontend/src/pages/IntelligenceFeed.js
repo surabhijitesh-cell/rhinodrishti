@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
-  Search, Filter, X, ChevronLeft, ChevronRight, SlidersHorizontal, ArrowUpDown, Sparkles, Star
+  Search, Filter, X, ChevronLeft, ChevronRight, SlidersHorizontal, ArrowUpDown, Sparkles, Star,
+  FileDown, Loader2
 } from "lucide-react";
 import { Input } from "../components/ui/input";
 import { Button } from "../components/ui/button";
@@ -11,6 +12,7 @@ import {
 } from "../components/ui/select";
 import IntelligenceCard from "../components/IntelligenceCard";
 import axios from "axios";
+import { toast } from "sonner";
 
 const STATES = [
   "Assam", "Meghalaya", "Mizoram", "Manipur", "Arunachal Pradesh", "Tripura",
@@ -38,6 +40,7 @@ export default function IntelligenceFeed({ api, crossBorderOnly = false, alertsO
   const [semanticResults, setSemanticResults] = useState([]);
   const [semanticLoading, setSemanticLoading] = useState(false);
   const [feedbackMap, setFeedbackMap] = useState({});
+  const [generatingPdf, setGeneratingPdf] = useState(false);
 
   const [filters, setFilters] = useState({
     state: searchParams.get("state") || "",
@@ -125,6 +128,31 @@ export default function IntelligenceFeed({ api, crossBorderOnly = false, alertsO
     } catch (e) {
       console.error("Delete failed:", e);
     }
+  };
+
+  const handleGeneratePdf = async () => {
+    setGeneratingPdf(true);
+    try {
+      const params = new URLSearchParams();
+      if (filters.state) params.set("state", filters.state);
+      if (filters.threat_type) params.set("threat_type", filters.threat_type);
+      if (filters.severity) params.set("severity", filters.severity);
+      if (filters.search) params.set("search", filters.search);
+      if (filters.min_priority) params.set("min_priority", filters.min_priority);
+      if (filters.sort_by) params.set("sort_by", filters.sort_by);
+      const res = await axios.get(`${api}/reports/filtered-feed?${params.toString()}`, { responseType: "blob" });
+      const url = window.URL.createObjectURL(new Blob([res.data], { type: "application/pdf" }));
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `Rhino_Drishti_Filtered_Brief.pdf`;
+      a.click();
+      window.URL.revokeObjectURL(url);
+      toast.success("PDF generated and downloaded");
+    } catch (e) {
+      const msg = e.response?.status === 404 ? "No items match the current filters" : "PDF generation failed";
+      toast.error(msg);
+    }
+    setGeneratingPdf(false);
   };
 
   const updateFilter = (key, value) => {
@@ -231,6 +259,17 @@ export default function IntelligenceFeed({ api, crossBorderOnly = false, alertsO
           {activeFilterCount > 0 && (
             <Badge className="ml-1.5 severity-high rounded-none text-[10px] px-1">{activeFilterCount}</Badge>
           )}
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          className="rounded-none uppercase text-xs tracking-wider border-primary/30 text-primary hover:bg-primary/10"
+          onClick={handleGeneratePdf}
+          disabled={generatingPdf}
+          data-testid="generate-pdf-btn"
+        >
+          {generatingPdf ? <Loader2 size={14} className="mr-1.5 animate-spin" /> : <FileDown size={14} className="mr-1.5" />}
+          {generatingPdf ? "Generating..." : "Export PDF"}
         </Button>
         <span className="text-xs font-mono text-muted-foreground" data-testid="result-count">
           {semanticMode && semanticResults.length > 0 ? `${semanticResults.length} similar` : `${total} results`}

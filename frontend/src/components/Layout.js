@@ -24,6 +24,7 @@ const ALL_NAV_ITEMS = [
   { path: "/keywords", label: "Keyword Engine", icon: Key, roles: ["admin", "analyst", "viewer"] },
   { path: "/training", label: "Training & Feedback", icon: Brain, roles: ["admin", "analyst", "viewer"] },
   { path: "/upload", label: "Manual Int Uploads", icon: Upload, roles: ["admin", "analyst", "viewer"] },
+  { path: "/reports", label: "Reports", icon: FileText, roles: ["admin", "analyst", "viewer"] },
   { path: "/user-management", label: "User Management", icon: Users, roles: ["admin"] },
   { path: "/settings", label: "Settings", icon: Settings, roles: ["admin"] },
   { path: "/updates", label: "Platform Updates", icon: Megaphone, roles: ["admin", "analyst", "viewer"] },

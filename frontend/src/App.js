@@ -22,6 +22,7 @@ import TrainingSummary from "./pages/TrainingSummary";
 import CrossBorderWatch from "./pages/CrossBorderWatch";
 import UserManagement from "./pages/UserManagement";
 import UpdatesPage from "./pages/UpdatesPage";
+import ReportsPage from "./pages/ReportsPage";
 import { Toaster } from "./components/ui/sonner";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
@@ -80,6 +81,7 @@ function AppRoutes() {
                 <Route path="/handbook" element={<Handbook api={API} />} />
                 <Route path="/user-management" element={<UserManagement api={API} />} />
                 <Route path="/updates" element={<UpdatesPage api={API} />} />
+                <Route path="/reports" element={<ReportsPage api={API} />} />
               </Routes>
             </Layout>
           </ProtectedRoute>
