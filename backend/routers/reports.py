@@ -13,6 +13,30 @@ router = APIRouter()
 NER_STATES = ["Assam", "Manipur", "Meghalaya", "Mizoram", "Tripura",
               "Nagaland", "Arunachal Pradesh", "Sikkim"]
 
+IST_OFFSET = timedelta(hours=5, minutes=30)
+
+
+def _now_ist():
+    return datetime.now(timezone.utc) + IST_OFFSET
+
+
+def _to_ddmmyyyy_ist(iso_str):
+    """Convert ISO date string to ddmmyyyy in IST."""
+    if not iso_str:
+        return _now_ist().strftime("%d%m%Y")
+    try:
+        dt = datetime.fromisoformat(iso_str.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        ist_dt = dt + IST_OFFSET
+        return ist_dt.strftime("%d%m%Y")
+    except Exception:
+        # Fallback: parse YYYY-MM-DD
+        parts = iso_str[:10].split("-")
+        if len(parts) == 3:
+            return f"{parts[2]}{parts[1]}{parts[0]}"
+        return _now_ist().strftime("%d%m%Y")
+
 
 def _clean(text, max_len=500):
     if not text:
@@ -253,10 +277,9 @@ async def filtered_feed_pdf(
         pdf.news_item(i, item)
 
     content = _generate_pdf(pdf)
-    date_part = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M')
-    from_part = date_from[:10].replace("-", "") if date_from else ""
-    to_part = date_to[:10].replace("-", "") if date_to else date_part[:8]
-    date_range = f"_{from_part}_to_{to_part}" if from_part else f"_{date_part}"
+    from_str = _to_ddmmyyyy_ist(date_from) if date_from else ""
+    to_str = _to_ddmmyyyy_ist(date_to) if date_to else _now_ist().strftime("%d%m%Y")
+    date_range = f"_{from_str}_to_{to_str}" if from_str else f"_{to_str}"
     fn = f"Rhino_Drishti_Filtered{date_range}.pdf"
     return Response(content=content, media_type="application/pdf",
                     headers={"Content-Disposition": f"attachment; filename={fn}"})
@@ -328,7 +351,7 @@ async def regional_threat_report(
         pdf.multi_cell(0, 5, f"No intelligence items found for {region} in the selected period.")
 
     content = _generate_pdf(pdf)
-    fn = f"Rhino_Drishti_{region.replace(' ', '_')}_Threat_{period_from.replace('-', '')}_{period_to.replace('-', '')}.pdf"
+    fn = f"Rhino_Drishti_{region.replace(' ', '_')}_Threat_{_to_ddmmyyyy_ist(date_from)}_{_to_ddmmyyyy_ist(date_to)}.pdf"
     return Response(content=content, media_type="application/pdf",
                     headers={"Content-Disposition": f"attachment; filename={fn}"})
 
@@ -426,7 +449,7 @@ async def cross_border_sitrep(
         pdf.multi_cell(0, 5, f"No cross-border intelligence found for {country} in the selected period.")
 
     content = _generate_pdf(pdf)
-    fn = f"Rhino_Drishti_{country}_SITREP_{period_from.replace('-', '')}_{period_to.replace('-', '')}.pdf"
+    fn = f"Rhino_Drishti_{country}_SITREP_{_to_ddmmyyyy_ist(date_from)}_{_to_ddmmyyyy_ist(date_to)}.pdf"
     return Response(content=content, media_type="application/pdf",
                     headers={"Content-Disposition": f"attachment; filename={fn}"})
 
@@ -531,9 +554,9 @@ async def custom_report(
 
     content = _generate_pdf(pdf)
     safe_title = title.replace(' ', '_')[:30]
-    from_part = date_from[:10].replace("-", "") if date_from else ""
-    to_part = date_to[:10].replace("-", "") if date_to else datetime.now(timezone.utc).strftime('%Y%m%d')
-    date_range = f"_{from_part}_to_{to_part}" if from_part else f"_{to_part}"
+    from_str = _to_ddmmyyyy_ist(date_from) if date_from else ""
+    to_str = _to_ddmmyyyy_ist(date_to) if date_to else _now_ist().strftime("%d%m%Y")
+    date_range = f"_{from_str}_to_{to_str}" if from_str else f"_{to_str}"
     fn = f"Rhino_Drishti_{safe_title}{date_range}.pdf"
     return Response(content=content, media_type="application/pdf",
                     headers={"Content-Disposition": f"attachment; filename={fn}"})
