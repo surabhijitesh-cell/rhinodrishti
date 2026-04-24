@@ -19,10 +19,12 @@
 11. [Keyword Engine](#11-keyword-engine)
 12. [Training & Feedback](#12-training--feedback)
 13. [Manual Intelligence Uploads](#13-manual-intelligence-uploads)
-14. [User Management](#14-user-management)
-15. [Settings](#15-settings)
-16. [How the AI Pipeline Works](#16-how-the-ai-pipeline-works)
-17. [Glossary](#17-glossary)
+14. [Reports & PDF Generation](#14-reports--pdf-generation)
+15. [Platform Updates & Notifications](#15-platform-updates--notifications)
+16. [User Management](#16-user-management)
+17. [Settings](#17-settings)
+18. [How the AI Pipeline Works](#18-how-the-ai-pipeline-works)
+19. [Glossary](#19-glossary)
 
 ---
 
@@ -203,6 +205,22 @@ At the top of the Intelligence Feed, a guide banner explains: "Rate each article
 ### Sorting
 - By publication date (newest first)
 - By priority score (highest first)
+
+### Export PDF
+Click the green **Export PDF** button in the feed header to generate a PDF brief of your currently filtered results:
+- The PDF includes a summary section (total items, severity breakdown, filters applied) followed by all matching intelligence items in priority order
+- Each item shows title, severity, priority score, source, threat category, AI summary, and source URL
+- The downloaded filename includes the date in ddmmyyyy format aligned to IST (e.g., `Rhino_Drishti_Filtered_25042026.pdf`)
+- If date filters are applied, both dates appear in the filename (e.g., `Rhino_Drishti_Filtered_01042026_to_24042026.pdf`)
+- The PDF format matches the Daily Brief style for consistency
+
+### Pagination
+- Results are paginated (20 items per page)
+- Use **Previous / Next** buttons at the bottom
+- The page automatically scrolls to the top when navigating to a new page
+
+### Deleting Items
+Each item card has a small **trash icon** (top-right). Click to permanently delete after confirmation. The item is removed from all views immediately.
 
 ---
 
@@ -528,7 +546,7 @@ This card shows whether analyst feedback is actively influencing the AI classifi
 4. New articles are scored with these analyst-driven adjustments factored in
 5. The bias recalculates every 5 minutes (cache TTL)
 
-The influence level and feedback window are configurable in **Settings > Feedback Bias Configuration** (see Section 15).
+The influence level and feedback window are configurable in **Settings > Feedback Bias Configuration** (see Section 17).
 
 ---
 
@@ -664,7 +682,104 @@ When adding a URL to the feed, the system checks for duplicate URLs. If the same
 
 ---
 
-## 14. User Management
+## 14. Reports & PDF Generation
+
+Generate downloadable PDF reports from archived intelligence data. Access via **Reports** in the sidebar (available to all roles).
+
+### Report Types
+
+**1. Regional Threat Summary**
+Generate a threat assessment for a specific NER state:
+- Select a **Region** (Assam, Manipur, Meghalaya, Mizoram, Tripura, Nagaland, Arunachal Pradesh, Sikkim)
+- Optionally set a **date range**
+- Click **Generate Regional Threat Report**
+- PDF includes: Executive summary with severity breakdown, threat category distribution, items grouped by Critical/High/Medium priority
+
+**2. Cross-Border SITREP (Situation Report)**
+Generate a border situation report for Bangladesh or Myanmar:
+- Select **Country** (Bangladesh or Myanmar)
+- Optionally set a **date range**
+- Click **Generate Cross-Border SITREP**
+- PDF includes: Situation overview with cross-border signal count, threat distribution, items grouped by category (Diplomatic, Defence, Internal Politics, Economics)
+
+**3. Custom Filtered Report**
+Build a fully customized report with any combination of filters:
+
+| Filter | Options |
+|--------|---------|
+| Report Title | Free text (appears in PDF header and filename) |
+| Region | Any NER state + Bangladesh, Myanmar, India |
+| Threat Category | 14 threat types |
+| Severity | Critical / High / Medium |
+| Search Keywords | Free text search across titles and summaries |
+| Source Name | Filter by news source (e.g., "NDTV", "NE Now") |
+| Min Priority | 80+ (Critical), 60+ (High), 40+ (Medium) |
+| Date Range | From/To date selectors |
+| Cross-Border Only | Checkbox to show only cross-border items |
+
+PDF includes: Executive summary, regional distribution, threat category distribution, all items grouped by severity.
+
+### PDF Filename Convention
+All report filenames use **ddmmyyyy** format aligned to **IST (Indian Standard Time)**:
+- `Rhino_Drishti_Manipur_Threat_01042026_24042026.pdf`
+- `Rhino_Drishti_Myanmar_SITREP_15042026_24042026.pdf`
+- `Rhino_Drishti_Custom_Report_01042026_to_20042026.pdf`
+- `Rhino_Drishti_Filtered_25042026.pdf` (no date range → current IST date)
+
+### Quick Export from Intelligence Feed
+The **Export PDF** button on the Intelligence Feed page (see Section 4) provides a quick way to export your currently filtered view without navigating to the Reports page.
+
+---
+
+## 15. Platform Updates & Notifications
+
+Stay informed about new features and platform changes.
+
+### How Update Notifications Work
+
+When you log in, the system checks if any updates have been published since your last visit. Notifications appear as **toast messages** at the top-center of the screen.
+
+**Notification behaviour:**
+
+| Scenario | What Happens |
+|----------|-------------|
+| 1-3 major updates | All shown as sequential toasts (oldest → newest) |
+| 4+ major updates (long gap) | Latest 3 shown as toasts → "More Updates Available" modal with link to full history |
+| Only minor updates | One generic toast: "Performance improvements and bug fixes" |
+| Mixed major + minor | Minor updates are ignored; only major updates shown |
+| No new updates | No notification |
+
+Each toast appears for **5 seconds** before the next one in the queue. Toasts do not stack — they display one at a time.
+
+### "More Updates Available" Modal
+If you've missed more than 3 major updates, a modal appears after the toast sequence:
+- **"View All Updates"** — opens the Platform Updates page with full history
+- **"Dismiss"** — closes the modal
+
+### Platform Updates Page
+Access via **Platform Updates** in the sidebar (available to all roles).
+
+Shows a **timeline of all updates** with:
+- Version number and **MAJOR/MINOR** badge
+- Full update message
+- Date/time and author
+- **Preview** button — click to see exactly what the toast notification would look like for any update
+
+### Admin Controls (Admin only)
+Expand the **"Admin — Manage Updates"** panel to:
+
+**Create Update:**
+1. Enter **Version** (e.g., "9.8")
+2. Select **Priority**: Major (shown as individual toast with actual message) or Minor (shown as generic "bug fixes" toast)
+3. Enter **Message** describing the update
+4. Click **Publish Update**
+
+**Preview:**
+Enter any version number and click **Preview** to see the toast notification without affecting any user's notification state.
+
+---
+
+## 16. User Management
 
 *Admin only — not visible to Analyst or Viewer roles.*
 
@@ -711,7 +826,7 @@ Click the **Trash** icon to permanently delete a user. You cannot delete your ow
 
 ---
 
-## 15. Settings
+## 17. Settings
 
 *Admin only — not visible to Analyst or Viewer roles. Viewers are redirected to the Dashboard if they navigate to /settings directly.*
 
@@ -783,11 +898,11 @@ Each row shows a rated article with:
 
 ---
 
-## 16. How the AI Pipeline Works
+## 18. How the AI Pipeline Works
 
 ### Data Flow
 ```
-RSS Sources (72) + Elite Web Scraping
+RSS Sources (89) + Elite Web Scraping + Manual Uploads
         |
         v
     Deduplication (URL + title similarity)
@@ -799,7 +914,9 @@ RSS Sources (72) + Elite Web Scraping
     Dynamic Keyword Matching (weighted relevance scoring)
         |
         v
-    Language Detection & Translation (Bengali/Assamese/Hindi -> English)
+    Language Detection & Translation
+    (Bengali, Assamese, Hindi, Burmese/Myanmar, Thai,
+     Chinese, Arabic, Japanese, Korean -> English)
         |
         v
     Level 1 Sifter (pre-filter for border instability, militant activity)
@@ -822,6 +939,38 @@ RSS Sources (72) + Elite Web Scraping
         v
     Pattern Detection (sliding-window cluster analysis)
 ```
+
+### RSS Source Breakdown (89 Sources)
+
+| Category | Count | Examples |
+|----------|-------|---------|
+| **Regional (NER)** | 12 | NE Now, Assam Tribune, EastMojo, Sentinel, North East Live |
+| **National** | 19 | NDTV, Hindu, India Today, HT, The Wire, Scroll, Print, Quint, Firstpost |
+| **Bangladesh** | 19 | Prothom Alo, Daily Star, Dhaka Tribune, BD News |
+| **Myanmar** | 14 | Myanmar Now, Irrawaddy, Mizzima, DVB, Frontier Myanmar |
+| **International** | 5 | BBC, Al Jazeera, Reuters |
+| **Government** | 20 | PIB (all 8 NER states + Delhi), MEA, NIA, MHA, DoNER, NDMA, State DIPRs |
+
+**Government feeds include:**
+- PIB offices for all 8 NER states (Guwahati, Imphal, Kohima, Agartala, Itanagar, Shillong, Aizawl, Gangtok)
+- PIB Delhi National (MHA, PMO, Defence policy)
+- MEA Press Releases (Bangladesh/Myanmar diplomacy)
+- NIA RSS (terror/insurgency case tracking)
+- Ministry of DoNER (NE development)
+- NDMA (disaster alerts)
+- Manipur DIPR, Assam CM Office, Nagaland DIPR
+
+### Auto-Translation
+
+The platform automatically detects and translates non-English content before it enters the intelligence feed. This applies to both RSS-ingested articles and manually uploaded URLs.
+
+**Supported scripts:**
+- Indian: Bengali, Hindi, Assamese, Gujarati, Tamil, Telugu, Kannada, Malayalam, Odia, Punjabi
+- Southeast Asian: Burmese/Myanmar, Thai
+- East Asian: Chinese (CJK), Japanese, Korean
+- Middle Eastern: Arabic
+
+When a non-English article is detected (via Unicode script analysis), the title, summary, and content are translated to English using the AI translation pipeline before classification and display. The original language content is never shown in the feed.
 
 ### AI Classification (10-Step Military Intelligence Prompt)
 The AI operates as a Senior Military Intelligence Analyst and performs:
@@ -852,22 +1001,30 @@ The AI operates as a Senior Military Intelligence Analyst and performs:
 
 ---
 
-## 17. Glossary
+## 19. Glossary
 
 | Term | Definition |
 |------|-----------|
 | **ACK** | Acknowledge — mark an alert as reviewed |
 | **Activity Log** | Session-level record of training runs and feedback sessions with AI-generated impact summaries |
+| **Auto-Translation** | Automatic detection and translation of non-English content (Bengali, Burmese, Hindi, Thai, Chinese, Arabic, etc.) to English before display |
 | **Bias Impact Report** | Analytics view showing how analyst feedback changes article priority scores — before vs after comparison |
 | **Bias Window** | Time range of analyst feedback used by the bias engine — Rolling 30 Days or All Time |
+| **Cross-Border SITREP** | Situation Report focused on Bangladesh or Myanmar border intelligence, grouped by Diplomatic/Defence/Politics/Economics |
+| **Custom Report** | User-configured PDF report with any combination of region, threat, severity, source, date range, and keyword filters |
 | **Delta** | The point difference between an article's original AI score and its feedback-adjusted score. Positive = boosted, negative = reduced |
+| **Export PDF** | Button on Intelligence Feed that generates a PDF brief of currently filtered items |
 | **Feedback Bias** | Dynamic analyst-driven adjustment injected into the AI classification prompt, causing the AI to upweight or downweight certain regions and threat categories |
 | **Influence Level** | Controls how strongly feedback overrides AI judgment — Light (~10-15%), Moderate (~20-25%), High (~35-40%) |
 | **JWT** | JSON Web Token — authentication token used for session management |
+| **Major Update** | Platform update shown as an individual toast notification with its actual message |
+| **Minor Update** | Platform update shown as a generic "Performance improvements and bug fixes" toast |
 | **RBAC** | Role-Based Access Control — restricts features based on user role |
+| **Regional Threat Summary** | PDF report covering a specific NER state with severity breakdown and categorized intelligence items |
 | **Cluster / Fusion** | Group of similar articles from multiple sources merged into a single intelligence item |
 | **Cross-border** | Activity involving more than one country |
 | **Device Fingerprint** | Unique identifier generated per browser/device to prevent duplicate ratings |
+| **DIPR** | Department of Information and Public Relations — state government press release office |
 | **Effectiveness Score** | Percentage (0-100) measuring alignment between AI classifications and analyst feedback ratings |
 | **Escalation Risk** | Likelihood that a pattern of events will intensify |
 | **Feedback Session** | Aggregated log entry created after an analyst submits 5+ ratings, with AI-generated impact summary |
@@ -876,6 +1033,7 @@ The AI operates as a Senior Military Intelligence Analyst and performs:
 | **Knowledge Graph** | Network of relationships between actors and locations |
 | **NER** | North Eastern Region of India (Assam, Manipur, Meghalaya, Mizoram, Tripura, Nagaland, Arunachal Pradesh, Sikkim) |
 | **Pattern** | Cluster of 3+ intelligence items sharing the same region, threat type, or actor |
+| **PIB** | Press Information Bureau — Government of India's official communication agency with regional offices in all NER states |
 | **Priority Score** | AI-assigned importance score from 0-100, adjusted by feedback bias |
 | **Relevance Tag** | Optional 1-6 score an analyst assigns to a URL when adding it to the training queue |
 | **Semantic Search** | AI-powered search using vector embeddings that finds related concepts |
@@ -883,6 +1041,7 @@ The AI operates as a Senior Military Intelligence Analyst and performs:
 | **Sifter** | Level 1 pre-filter that screens articles for border/militant relevance |
 | **Special Flags** | AI-detected indicators: PLA_PAKISTAN_PRESENCE, COORDINATED_NARRATIVE, INFRASTRUCTURE_DUAL_USE |
 | **Threat Trajectory** | Direction of a threat: ESCALATING, STABLE, DE-ESCALATING, NEW_THREAT |
+| **Toast Notification** | Brief popup message that appears at the top-center of the screen for platform updates and system feedback |
 | **Training Pipeline** | Process of scraping, analyzing, and learning from analyst-submitted URLs and documents |
 | **Training Session** | Log entry created when "Train Rhino Drishti" is clicked, capturing volume breakdown and AI impact |
 | **Upweight / Downweight** | Bias adjustments applied to article scores — upweight boosts priority, downweight reduces it |
@@ -890,5 +1049,5 @@ The AI operates as a Senior Military Intelligence Analyst and performs:
 
 ---
 
-*Rhino Drishti v9.2 — Elite OSINT Intelligence Platform with Feedback-Driven AI*
-*Handbook updated: 20 April 2026*
+*Rhino Drishti v10.0 — Elite OSINT Intelligence Platform with Feedback-Driven AI, Reports & Auto-Translation*
+*Handbook updated: 24 April 2026*
