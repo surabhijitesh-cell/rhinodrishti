@@ -253,7 +253,11 @@ async def filtered_feed_pdf(
         pdf.news_item(i, item)
 
     content = _generate_pdf(pdf)
-    fn = f"Rhino_Drishti_Filtered_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M')}.pdf"
+    date_part = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M')
+    from_part = date_from[:10].replace("-", "") if date_from else ""
+    to_part = date_to[:10].replace("-", "") if date_to else date_part[:8]
+    date_range = f"_{from_part}_to_{to_part}" if from_part else f"_{date_part}"
+    fn = f"Rhino_Drishti_Filtered{date_range}.pdf"
     return Response(content=content, media_type="application/pdf",
                     headers={"Content-Disposition": f"attachment; filename={fn}"})
 
@@ -324,7 +328,7 @@ async def regional_threat_report(
         pdf.multi_cell(0, 5, f"No intelligence items found for {region} in the selected period.")
 
     content = _generate_pdf(pdf)
-    fn = f"Rhino_Drishti_{region.replace(' ', '_')}_Threat_{datetime.now(timezone.utc).strftime('%Y%m%d')}.pdf"
+    fn = f"Rhino_Drishti_{region.replace(' ', '_')}_Threat_{period_from.replace('-', '')}_{period_to.replace('-', '')}.pdf"
     return Response(content=content, media_type="application/pdf",
                     headers={"Content-Disposition": f"attachment; filename={fn}"})
 
@@ -422,7 +426,7 @@ async def cross_border_sitrep(
         pdf.multi_cell(0, 5, f"No cross-border intelligence found for {country} in the selected period.")
 
     content = _generate_pdf(pdf)
-    fn = f"Rhino_Drishti_{country}_SITREP_{datetime.now(timezone.utc).strftime('%Y%m%d')}.pdf"
+    fn = f"Rhino_Drishti_{country}_SITREP_{period_from.replace('-', '')}_{period_to.replace('-', '')}.pdf"
     return Response(content=content, media_type="application/pdf",
                     headers={"Content-Disposition": f"attachment; filename={fn}"})
 
@@ -527,6 +531,9 @@ async def custom_report(
 
     content = _generate_pdf(pdf)
     safe_title = title.replace(' ', '_')[:30]
-    fn = f"Rhino_Drishti_{safe_title}_{datetime.now(timezone.utc).strftime('%Y%m%d')}.pdf"
+    from_part = date_from[:10].replace("-", "") if date_from else ""
+    to_part = date_to[:10].replace("-", "") if date_to else datetime.now(timezone.utc).strftime('%Y%m%d')
+    date_range = f"_{from_part}_to_{to_part}" if from_part else f"_{to_part}"
+    fn = f"Rhino_Drishti_{safe_title}{date_range}.pdf"
     return Response(content=content, media_type="application/pdf",
                     headers={"Content-Disposition": f"attachment; filename={fn}"})

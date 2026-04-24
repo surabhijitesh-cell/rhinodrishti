@@ -91,11 +91,11 @@ function RegionalThreatReport({ api }) {
         </div>
         <div>
           <label className="text-[9px] uppercase tracking-wider text-muted-foreground font-mono block mb-1">From Date</label>
-          <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="rounded-none text-xs" data-testid="regional-from" />
+          <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="rounded-none text-xs [&::-webkit-calendar-picker-indicator]:invert [&::-webkit-calendar-picker-indicator]:opacity-50" data-testid="regional-from" />
         </div>
         <div>
           <label className="text-[9px] uppercase tracking-wider text-muted-foreground font-mono block mb-1">To Date</label>
-          <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="rounded-none text-xs" data-testid="regional-to" />
+          <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="rounded-none text-xs [&::-webkit-calendar-picker-indicator]:invert [&::-webkit-calendar-picker-indicator]:opacity-50" data-testid="regional-to" />
         </div>
       </div>
       <Button onClick={generate} disabled={loading || !region} className="rounded-none uppercase text-xs font-bold tracking-wider" data-testid="regional-generate">
@@ -144,11 +144,11 @@ function CrossBorderSitrep({ api }) {
         </div>
         <div>
           <label className="text-[9px] uppercase tracking-wider text-muted-foreground font-mono block mb-1">From Date</label>
-          <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="rounded-none text-xs" data-testid="sitrep-from" />
+          <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="rounded-none text-xs [&::-webkit-calendar-picker-indicator]:invert [&::-webkit-calendar-picker-indicator]:opacity-50" data-testid="sitrep-from" />
         </div>
         <div>
           <label className="text-[9px] uppercase tracking-wider text-muted-foreground font-mono block mb-1">To Date</label>
-          <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="rounded-none text-xs" data-testid="sitrep-to" />
+          <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="rounded-none text-xs [&::-webkit-calendar-picker-indicator]:invert [&::-webkit-calendar-picker-indicator]:opacity-50" data-testid="sitrep-to" />
         </div>
       </div>
       <Button onClick={generate} disabled={loading || !country} className="rounded-none uppercase text-xs font-bold tracking-wider" data-testid="sitrep-generate">
@@ -257,11 +257,11 @@ function CustomReport({ api }) {
         </div>
         <div>
           <label className="text-[9px] uppercase tracking-wider text-muted-foreground font-mono block mb-1">From Date</label>
-          <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="rounded-none text-xs" data-testid="custom-from" />
+          <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="rounded-none text-xs [&::-webkit-calendar-picker-indicator]:invert [&::-webkit-calendar-picker-indicator]:opacity-50" data-testid="custom-from" />
         </div>
         <div>
           <label className="text-[9px] uppercase tracking-wider text-muted-foreground font-mono block mb-1">To Date</label>
-          <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="rounded-none text-xs" data-testid="custom-to" />
+          <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="rounded-none text-xs [&::-webkit-calendar-picker-indicator]:invert [&::-webkit-calendar-picker-indicator]:opacity-50" data-testid="custom-to" />
         </div>
       </div>
       <div className="flex items-center gap-4">
