@@ -1,10 +1,95 @@
 """Settings endpoints."""
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
+from pydantic import BaseModel
 from datetime import datetime, timezone
-from shared import db, invalidate_stats_cache
+from shared import db, invalidate_stats_cache, logger
 from feedback_bias import invalidate_bias_cache
+from utils.auth import require_admin_role
 
 router = APIRouter()
+
+VALID_CATEGORIES = ["regional", "national", "bangladesh", "myanmar", "international", "government"]
+VALID_PRIORITIES = ["grassroots", "standard", "elite"]
+
+
+# ============================================================
+# RSS Feed Management (Admin only)
+# ============================================================
+
+class AddFeedRequest(BaseModel):
+    name: str
+    url: str
+    category: str = "national"
+    language: str = "en"
+    region: str = "India"
+    priority: str = "standard"
+
+
+@router.get("/settings/rss-feeds")
+async def get_rss_feeds(user: dict = Depends(require_admin_role)):
+    """Return all RSS sources — hardcoded + custom user-added feeds."""
+    from rss_fetcher import RSS_SOURCES
+
+    # Get custom feeds from DB
+    custom_feeds = await db.custom_rss_feeds.find({}, {"_id": 0}).sort("added_at", -1).to_list(200)
+
+    return {
+        "builtin_count": len(RSS_SOURCES),
+        "custom_count": len(custom_feeds),
+        "total": len(RSS_SOURCES) + len(custom_feeds),
+        "custom_feeds": custom_feeds,
+    }
+
+
+@router.post("/settings/rss-feeds")
+async def add_custom_feed(body: AddFeedRequest, user: dict = Depends(require_admin_role)):
+    """Add a new custom RSS feed."""
+    name = body.name.strip()
+    url = body.url.strip()
+
+    if not name or len(name) < 2:
+        raise HTTPException(status_code=400, detail="Feed name is required (min 2 chars)")
+    if not url or not url.startswith("http"):
+        raise HTTPException(status_code=400, detail="Valid RSS feed URL is required")
+    if body.category not in VALID_CATEGORIES:
+        raise HTTPException(status_code=400, detail=f"Category must be one of: {VALID_CATEGORIES}")
+    if body.priority not in VALID_PRIORITIES:
+        raise HTTPException(status_code=400, detail=f"Priority must be one of: {VALID_PRIORITIES}")
+
+    # Check for duplicate URL across builtin + custom
+    from rss_fetcher import RSS_SOURCES
+    builtin_urls = {s["url"] for s in RSS_SOURCES}
+    if url in builtin_urls:
+        raise HTTPException(status_code=409, detail="This URL already exists in the built-in feed list")
+
+    existing = await db.custom_rss_feeds.find_one({"url": url}, {"_id": 0})
+    if existing:
+        raise HTTPException(status_code=409, detail="This URL already exists in custom feeds")
+
+    doc = {
+        "name": name,
+        "url": url,
+        "category": body.category,
+        "language": body.language.strip() or "en",
+        "region": body.region.strip() or "India",
+        "priority": body.priority,
+        "added_at": datetime.now(timezone.utc).isoformat(),
+        "added_by": user.get("username", "admin"),
+        "active": True,
+    }
+    await db.custom_rss_feeds.insert_one(doc)
+    logger.info(f"Custom RSS feed added: '{name}' ({url}) by {user.get('username')}")
+    return {"message": f"Feed '{name}' added", "feed": {k: v for k, v in doc.items() if k != "_id"}}
+
+
+@router.delete("/settings/rss-feeds")
+async def delete_custom_feed(url: str, user: dict = Depends(require_admin_role)):
+    """Remove a custom RSS feed."""
+    result = await db.custom_rss_feeds.delete_one({"url": url})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Feed not found")
+    logger.info(f"Custom RSS feed deleted: {url} by {user.get('username')}")
+    return {"message": "Feed removed"}
 
 
 @router.get("/settings/retention")

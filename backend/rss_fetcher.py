@@ -130,8 +130,33 @@ RSS_SOURCES = [
 ]
 
 def get_sources_by_priority(priority: str) -> list:
-    """Get RSS sources filtered by priority tier."""
-    return [s for s in RSS_SOURCES if s.get("priority") == priority]
+    """Get RSS sources filtered by priority tier, including custom DB feeds."""
+    import asyncio
+    all_sources = list(RSS_SOURCES)
+    try:
+        from shared import db
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            # We're inside an async context — use the sync helper
+            return [s for s in all_sources if s.get("priority") == priority]
+        else:
+            custom = loop.run_until_complete(db.custom_rss_feeds.find({"active": True}, {"_id": 0}).to_list(200))
+            all_sources.extend(custom)
+    except Exception:
+        pass
+    return [s for s in all_sources if s.get("priority") == priority]
+
+
+async def get_all_sources_async() -> list:
+    """Get all RSS sources including custom feeds from DB."""
+    from shared import db
+    all_sources = list(RSS_SOURCES)
+    try:
+        custom = await db.custom_rss_feeds.find({"active": True}, {"_id": 0}).to_list(200)
+        all_sources.extend(custom)
+    except Exception:
+        pass
+    return all_sources
 
 
 # ============================================================
@@ -296,7 +321,10 @@ async def fetch_all_feeds(progress_callback=None, sources=None, dynamic_keyword_
     If dynamic_keyword_weights is provided, uses them for relevance matching."""
     loop = asyncio.get_event_loop()
     all_articles = []
-    active_sources = sources or RSS_SOURCES
+    if sources:
+        active_sources = sources
+    else:
+        active_sources = await get_all_sources_async()
 
     source_summary = {}
     for i, source in enumerate(active_sources):

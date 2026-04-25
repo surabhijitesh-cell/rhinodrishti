@@ -1,12 +1,13 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Navigate } from "react-router-dom";
 import {
   Settings as SettingsIcon, Clock, Save, RefreshCw, ShieldCheck, Zap,
-  TrendingUp, TrendingDown, Minus, BarChart3, Loader2
+  TrendingUp, TrendingDown, Minus, BarChart3, Loader2, Rss, Plus, Trash2, Globe
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Button } from "../components/ui/button";
 import { Badge } from "../components/ui/badge";
+import { Input } from "../components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
 import { toast } from "sonner";
 import axios from "axios";
@@ -85,6 +86,9 @@ function SettingsContent({ api }) {
           Configure intelligence platform parameters
         </p>
       </div>
+
+      {/* RSS Feed Management — Full width */}
+      <RssFeedManager api={api} />
 
       {/* Row 1: Retention + Pipeline side by side */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -537,6 +541,208 @@ function BiasImpactReport({ api }) {
                 ))}
               </tbody>
             </table>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+
+const CATEGORIES = [
+  { value: "regional", label: "Regional (NER)" },
+  { value: "national", label: "National (India)" },
+  { value: "bangladesh", label: "Bangladesh" },
+  { value: "myanmar", label: "Myanmar" },
+  { value: "international", label: "International" },
+  { value: "government", label: "Government" },
+];
+const PRIORITIES = [
+  { value: "grassroots", label: "Grassroots (every 60 min)" },
+  { value: "standard", label: "Standard (every 30 min)" },
+  { value: "elite", label: "Elite (every 12 hours)" },
+];
+const REGIONS = [
+  "NER", "Assam", "Manipur", "Meghalaya", "Mizoram", "Tripura",
+  "Nagaland", "Arunachal Pradesh", "Sikkim", "India",
+  "Bangladesh", "Myanmar", "International",
+];
+
+function RssFeedManager({ api }) {
+  const [feeds, setFeeds] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [showForm, setShowForm] = useState(false);
+  const [name, setName] = useState("");
+  const [url, setUrl] = useState("");
+  const [category, setCategory] = useState("national");
+  const [language, setLanguage] = useState("en");
+  const [region, setRegion] = useState("India");
+  const [priority, setPriority] = useState("standard");
+  const [adding, setAdding] = useState(false);
+  const [deleting, setDeleting] = useState(null);
+
+  const fetchFeeds = useCallback(async () => {
+    try {
+      const res = await axios.get(`${api}/settings/rss-feeds`);
+      setFeeds(res.data);
+    } catch (e) {
+      console.error("Failed to fetch feeds:", e);
+    }
+    setLoading(false);
+  }, [api]);
+
+  useEffect(() => { fetchFeeds(); }, [fetchFeeds]);
+
+  const handleAdd = async (e) => {
+    e.preventDefault();
+    if (!name.trim() || !url.trim()) return;
+    setAdding(true);
+    try {
+      const res = await axios.post(`${api}/settings/rss-feeds`, {
+        name: name.trim(), url: url.trim(), category, language: language.trim(), region, priority,
+      });
+      toast.success(res.data.message || "Feed added");
+      setName(""); setUrl(""); setShowForm(false);
+      fetchFeeds();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Failed to add feed");
+    }
+    setAdding(false);
+  };
+
+  const handleDelete = async (feedUrl) => {
+    setDeleting(feedUrl);
+    try {
+      await axios.delete(`${api}/settings/rss-feeds?url=${encodeURIComponent(feedUrl)}`);
+      toast.success("Feed removed");
+      fetchFeeds();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Failed to remove feed");
+    }
+    setDeleting(null);
+  };
+
+  return (
+    <Card className="border border-border rounded-none bg-card border-l-4 border-l-emerald-500" data-testid="rss-feed-manager">
+      <CardHeader className="py-3 px-4 border-b border-border">
+        <CardTitle className="text-sm uppercase tracking-wider font-['Barlow_Condensed'] font-semibold flex items-center gap-2">
+          <Rss size={16} className="text-emerald-400" />
+          RSS Feed Management
+          {feeds && (
+            <Badge className="rounded-none text-[9px] px-1.5 py-0 bg-emerald-500/15 text-emerald-400 border-emerald-500/30 ml-2">
+              {feeds.total} Sources ({feeds.builtin_count} built-in + {feeds.custom_count} custom)
+            </Badge>
+          )}
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="p-4 space-y-4">
+        <p className="text-xs text-muted-foreground">
+          Add custom RSS feeds to expand intelligence coverage. Custom feeds are included in the regular scanning schedule alongside the {feeds?.builtin_count || 89} built-in sources.
+        </p>
+
+        {/* Add Feed Form */}
+        {!showForm ? (
+          <Button
+            variant="outline" size="sm"
+            className="rounded-none text-xs uppercase tracking-wider border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/10"
+            onClick={() => setShowForm(true)}
+            data-testid="show-add-feed-form"
+          >
+            <Plus size={12} className="mr-1.5" /> Add New RSS Feed
+          </Button>
+        ) : (
+          <form onSubmit={handleAdd} className="border border-emerald-500/20 bg-emerald-500/5 p-4 space-y-3" data-testid="add-feed-form">
+            <p className="text-[10px] uppercase tracking-widest text-emerald-400 font-mono font-semibold">New RSS Feed</p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div>
+                <label className="text-[9px] uppercase tracking-wider text-muted-foreground font-mono block mb-1">Feed Name *</label>
+                <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Defense News India" className="rounded-none text-sm" data-testid="feed-name-input" />
+              </div>
+              <div>
+                <label className="text-[9px] uppercase tracking-wider text-muted-foreground font-mono block mb-1">RSS URL *</label>
+                <Input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://example.com/rss/feed" className="rounded-none text-sm font-mono" data-testid="feed-url-input" />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <div>
+                <label className="text-[9px] uppercase tracking-wider text-muted-foreground font-mono block mb-1">Category</label>
+                <Select value={category} onValueChange={setCategory}>
+                  <SelectTrigger className="rounded-none text-xs" data-testid="feed-category-select"><SelectValue /></SelectTrigger>
+                  <SelectContent className="rounded-none">
+                    {CATEGORIES.map((c) => <SelectItem key={c.value} value={c.value} className="text-xs">{c.label}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <label className="text-[9px] uppercase tracking-wider text-muted-foreground font-mono block mb-1">Region</label>
+                <Select value={region} onValueChange={setRegion}>
+                  <SelectTrigger className="rounded-none text-xs" data-testid="feed-region-select"><SelectValue /></SelectTrigger>
+                  <SelectContent className="rounded-none max-h-48">
+                    {REGIONS.map((r) => <SelectItem key={r} value={r} className="text-xs">{r}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <label className="text-[9px] uppercase tracking-wider text-muted-foreground font-mono block mb-1">Scan Priority</label>
+                <Select value={priority} onValueChange={setPriority}>
+                  <SelectTrigger className="rounded-none text-xs" data-testid="feed-priority-select"><SelectValue /></SelectTrigger>
+                  <SelectContent className="rounded-none">
+                    {PRIORITIES.map((p) => <SelectItem key={p.value} value={p.value} className="text-xs">{p.label}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <label className="text-[9px] uppercase tracking-wider text-muted-foreground font-mono block mb-1">Language</label>
+                <Input value={language} onChange={(e) => setLanguage(e.target.value)} placeholder="en" className="rounded-none text-xs" data-testid="feed-language-input" />
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <Button type="submit" disabled={adding || !name.trim() || !url.trim()} className="rounded-none text-xs uppercase tracking-wider" data-testid="submit-feed-btn">
+                {adding ? <Loader2 size={12} className="mr-1.5 animate-spin" /> : <Plus size={12} className="mr-1.5" />}
+                Add Feed
+              </Button>
+              <Button type="button" variant="outline" onClick={() => setShowForm(false)} className="rounded-none text-xs">Cancel</Button>
+            </div>
+          </form>
+        )}
+
+        {/* Custom Feeds List */}
+        {feeds?.custom_feeds?.length > 0 && (
+          <div>
+            <p className="text-[10px] uppercase tracking-widest text-muted-foreground font-mono font-semibold mb-2">
+              Custom Feeds ({feeds.custom_feeds.length})
+            </p>
+            <div className="divide-y divide-border border border-border">
+              {feeds.custom_feeds.map((f) => (
+                <div key={f.url} className="p-3 flex items-center gap-3 hover:bg-muted/5" data-testid={`custom-feed-${f.name}`}>
+                  <Globe size={14} className="text-muted-foreground shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium truncate">{f.name}</p>
+                    <div className="flex items-center gap-2 flex-wrap mt-0.5">
+                      <Badge className="rounded-none text-[8px] px-1.5 py-0 bg-emerald-500/10 text-emerald-400 border-emerald-500/20">{f.category}</Badge>
+                      <Badge className="rounded-none text-[8px] px-1.5 py-0 bg-muted text-muted-foreground border-border">{f.region}</Badge>
+                      <Badge className="rounded-none text-[8px] px-1.5 py-0 bg-muted text-muted-foreground border-border">{f.priority}</Badge>
+                      <span className="text-[9px] font-mono text-muted-foreground/50 truncate">{f.url}</span>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => handleDelete(f.url)}
+                    disabled={deleting === f.url}
+                    className="p-1.5 text-muted-foreground/40 hover:text-red-400 transition-colors shrink-0"
+                    title="Remove feed"
+                    data-testid={`delete-feed-${f.name}`}
+                  >
+                    {deleting === f.url ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {loading && (
+          <div className="flex items-center justify-center py-4">
+            <Loader2 size={16} className="animate-spin text-muted-foreground" />
           </div>
         )}
       </CardContent>
