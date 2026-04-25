@@ -31,6 +31,22 @@ const ALL_NAV_ITEMS = [
   { path: "/handbook", label: "User Handbook", icon: BookOpen, roles: ["admin", "analyst", "viewer"] },
 ];
 
+const NEW_BADGE_PATHS = ["/reports", "/updates"];
+const NEW_BADGE_DISMISS_COUNT = 3;
+
+function useNewBadge(path) {
+  const key = `new_badge_${path}`;
+  const [count, setCount] = useState(() => {
+    try { return parseInt(localStorage.getItem(key) || "0", 10); } catch { return 0; }
+  });
+  const dismiss = () => {
+    const next = count + 1;
+    setCount(next);
+    localStorage.setItem(key, String(next));
+  };
+  return { show: count < NEW_BADGE_DISMISS_COUNT, dismiss };
+}
+
 export default function Layout({ children, alertCount = 0, onSearch }) {
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -42,6 +58,10 @@ export default function Layout({ children, alertCount = 0, onSearch }) {
   const userRole = user?.role || "viewer";
   const navItems = ALL_NAV_ITEMS.filter((item) => item.roles.includes(userRole));
 
+  const reportsBadge = useNewBadge("/reports");
+  const updatesBadge = useNewBadge("/updates");
+  const badgeMap = { "/reports": reportsBadge, "/updates": updatesBadge };
+
   const handleSearch = (e) => {
     e.preventDefault();
     if (onSearch) onSearch(searchVal);
@@ -52,17 +72,26 @@ export default function Layout({ children, alertCount = 0, onSearch }) {
       {navItems.map((item) => {
         const Icon = item.icon;
         const isActive = location.pathname === item.path;
+        const badge = badgeMap[item.path];
         return (
           <Link
             key={item.path}
             to={item.path}
             data-testid={`nav-${item.label.toLowerCase().replace(/\s+/g, '-')}`}
-            onClick={() => setMobileOpen(false)}
+            onClick={() => { setMobileOpen(false); if (badge) badge.dismiss(); }}
             className={`sidebar-nav-item ${isActive ? "active" : "text-muted-foreground"}`}
           >
             <Icon size={18} />
             {!collapsed && <span>{item.label}</span>}
-            {item.path === "/alerts" && alertCount > 0 && !collapsed && (
+            {badge?.show && !collapsed && (
+              <span className="ml-auto text-[9px] font-bold uppercase tracking-wider text-emerald-400 animate-pulse" data-testid={`new-badge-${item.path.slice(1)}`}>
+                New
+              </span>
+            )}
+            {badge?.show && collapsed && (
+              <span className="absolute top-0 right-0 w-2 h-2 bg-emerald-400 rounded-full animate-pulse" />
+            )}
+            {item.path === "/alerts" && alertCount > 0 && !collapsed && !badge?.show && (
               <Badge className="ml-auto severity-critical text-[10px] rounded-none px-1.5" data-testid="alert-count-badge">
                 {alertCount}
               </Badge>

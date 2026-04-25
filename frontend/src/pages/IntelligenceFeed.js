@@ -41,6 +41,10 @@ export default function IntelligenceFeed({ api, crossBorderOnly = false, alertsO
   const [semanticLoading, setSemanticLoading] = useState(false);
   const [feedbackMap, setFeedbackMap] = useState({});
   const [generatingPdf, setGeneratingPdf] = useState(false);
+  const [pdfClickCount, setPdfClickCount] = useState(() => {
+    try { return parseInt(localStorage.getItem("new_badge_export_pdf") || "0", 10); } catch { return 0; }
+  });
+  const showPdfBadge = pdfClickCount < 3;
 
   const [filters, setFilters] = useState({
     state: searchParams.get("state") || "",
@@ -263,13 +267,23 @@ export default function IntelligenceFeed({ api, crossBorderOnly = false, alertsO
         <Button
           variant="outline"
           size="sm"
-          className="rounded-none uppercase text-xs tracking-wider border-primary/30 text-primary hover:bg-primary/10"
-          onClick={handleGeneratePdf}
+          className="rounded-none uppercase text-xs tracking-wider border-primary/30 text-primary hover:bg-primary/10 relative"
+          onClick={() => {
+            const next = pdfClickCount + 1;
+            setPdfClickCount(next);
+            localStorage.setItem("new_badge_export_pdf", String(next));
+            handleGeneratePdf();
+          }}
           disabled={generatingPdf}
           data-testid="generate-pdf-btn"
         >
           {generatingPdf ? <Loader2 size={14} className="mr-1.5 animate-spin" /> : <FileDown size={14} className="mr-1.5" />}
           {generatingPdf ? "Generating..." : "Export PDF"}
+          {showPdfBadge && (
+            <span className="absolute -top-2 -right-2 text-[8px] font-bold uppercase tracking-wider text-emerald-400 animate-pulse bg-card px-1 border border-emerald-500/30" data-testid="new-badge-export-pdf">
+              New
+            </span>
+          )}
         </Button>
         <span className="text-xs font-mono text-muted-foreground" data-testid="result-count">
           {semanticMode && semanticResults.length > 0 ? `${semanticResults.length} similar` : `${total} results`}
