@@ -647,9 +647,8 @@ async def _check_feedback_session(device_id: str):
 
         # Generate AI impact summary
         from routers.training import _generate_feedback_impact_summary
-        emergent_key = os.environ.get("EMERGENT_LLM_KEY", "")
         impact_summary = await _generate_feedback_impact_summary(
-            emergent_key, len(unlogged), distribution, high_features, low_features
+            "", len(unlogged), distribution, high_features, low_features
         )
 
         # Build volume string

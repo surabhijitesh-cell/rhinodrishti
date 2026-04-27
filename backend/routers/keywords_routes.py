@@ -14,9 +14,8 @@ async def get_keywords(
     limit: int = Query(100, ge=1, le=300),
 ):
     from keyword_engine import generate_keywords
-    EMERGENT_KEY = os.environ.get("EMERGENT_LLM_KEY", "")
 
-    keywords = await generate_keywords(db, emergent_key=EMERGENT_KEY, use_ai=False)
+    keywords = await generate_keywords(db, use_ai=False)
 
     stored = await db.keyword_store.find(
         {"score": {"$gte": min_score}},
@@ -61,13 +60,12 @@ async def get_keywords(
 @router.post("/keywords/refresh")
 async def refresh_keywords(background_tasks: BackgroundTasks):
     from keyword_engine import generate_keywords, store_keywords_to_db, _keyword_cache
-    EMERGENT_KEY = os.environ.get("EMERGENT_LLM_KEY", "")
 
     _keyword_cache["generated_at"] = None
     _keyword_cache["keywords"] = []
 
     async def _refresh():
-        keywords = await generate_keywords(db, emergent_key=EMERGENT_KEY, use_ai=True)
+        keywords = await generate_keywords(db, use_ai=True)
         await store_keywords_to_db(db, keywords)
         logger.info(f"Keyword refresh complete: {len(keywords)} keywords stored")
 

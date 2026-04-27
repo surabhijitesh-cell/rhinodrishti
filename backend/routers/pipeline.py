@@ -133,8 +133,7 @@ async def fetch_and_process_news(source_filter: str = None):
         dynamic_kw_weights = None
         try:
             from keyword_engine import generate_keywords, get_dynamic_keywords_for_matching
-            EMERGENT_KEY = os.environ.get("EMERGENT_LLM_KEY", "")
-            keywords = await generate_keywords(db, emergent_key=EMERGENT_KEY, use_ai=False)
+            keywords = await generate_keywords(db, use_ai=False)
             dynamic_kw_weights = get_dynamic_keywords_for_matching(keywords)
             logger.info(f"Loaded {len(dynamic_kw_weights)} dynamic keywords for RSS filtering")
         except Exception as e:
@@ -200,7 +199,6 @@ async def fetch_and_process_news(source_filter: str = None):
 
         # Intelligence filter
         from intelligence_filter import hard_filter, detect_language, run_filter_pipeline
-        EMERGENT_LLM_KEY = os.environ.get('EMERGENT_LLM_KEY', '')
 
         filtered_articles = []
         filter_rejected = 0
@@ -215,9 +213,9 @@ async def fetch_and_process_news(source_filter: str = None):
             lang = detect_language(f"{article.get('title', '')} {article.get('raw_content', '')[:200]}")
             article["detected_language"] = lang
 
-            if lang != "en" and EMERGENT_LLM_KEY:
+            if lang != "en":
                 try:
-                    filter_result = await run_filter_pipeline(article, EMERGENT_LLM_KEY)
+                    filter_result = await run_filter_pipeline(article)
                     if filter_result.get("translated_title"):
                         article["original_title"] = article["title"]
                         article["title"] = filter_result["translated_title"]

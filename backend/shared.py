@@ -236,15 +236,15 @@ async def translate_to_english(text: str) -> str:
     if not text or not has_non_latin_chars(text):
         return text
     try:
-        from emergentintegrations.llm.chat import LlmChat, UserMessage
-        EMERGENT_LLM_KEY = os.environ.get('EMERGENT_LLM_KEY', '')
-        chat = LlmChat(
-            api_key=EMERGENT_LLM_KEY,
-            session_id=f"translate-{hash(text[:50])}",
-            system_message="You are a translator. Translate the following text to English. Return ONLY the English translation, nothing else."
-        ).with_model("anthropic", "claude-haiku-4-5-20251001")
-        response = await chat.send_message(UserMessage(text=text[:1000]))
-        return str(response).strip()
+        from llm_client import get_client, MODEL
+        client = get_client()
+        response = await client.messages.create(
+            model=MODEL,
+            max_tokens=512,
+            system="You are a translator. Translate the following text to English. Return ONLY the English translation, nothing else.",
+            messages=[{"role": "user", "content": text[:1000]}],
+        )
+        return response.content[0].text.strip()
     except Exception as e:
         logger.error(f"Translation failed: {e}")
         return text.encode('ascii', 'ignore').decode('ascii') or "[Non-English content]"

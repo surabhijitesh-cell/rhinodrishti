@@ -8,10 +8,9 @@ import re
 import uuid
 import json
 from shared import db, uploads_col, intelligence_col, patterns_col, logger
+from llm_client import get_client, MODEL
 
 router = APIRouter()
-
-EMERGENT_LLM_KEY = os.environ.get('EMERGENT_LLM_KEY', '')
 
 
 class URLAnalysisRequest(BaseModel):
@@ -359,8 +358,6 @@ async def _run_contextual_analysis(doc_id: str):
         return
 
     try:
-        from emergentintegrations.llm.chat import LlmChat, UserMessage
-
         security_context = await _get_security_context()
         extra_query = doc.get("analysis_query", "")
 
@@ -370,14 +367,20 @@ async def _run_contextual_analysis(doc_id: str):
             user_prompt += f"=== SPECIFIC ANALYSIS REQUEST ===\n{extra_query}\n\n"
         user_prompt += "Provide your COMPREHENSIVE CONTEXTUAL INTELLIGENCE ASSESSMENT as JSON."
 
-        chat = LlmChat(
-            api_key=EMERGENT_LLM_KEY,
-            session_id=f"doc-analysis-{doc_id}",
-            system_message=CONTEXTUAL_ANALYSIS_PROMPT
-        ).with_model("anthropic", "claude-haiku-4-5-20251001")
-
-        response = await chat.send_message(UserMessage(text=user_prompt))
-        response_text = str(response)
+        client = get_client()
+        response = await client.messages.create(
+            model=MODEL,
+            max_tokens=2048,
+            system=[
+                {
+                    "type": "text",
+                    "text": CONTEXTUAL_ANALYSIS_PROMPT,
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ],
+            messages=[{"role": "user", "content": user_prompt}],
+        )
+        response_text = response.content[0].text
 
         # Parse JSON from response
         json_match = re.search(r'\{[\s\S]*\}', response_text)

@@ -9,7 +9,7 @@ load_dotenv(ROOT_DIR / '.env')
 
 logger = logging.getLogger(__name__)
 
-EMERGENT_LLM_KEY = os.environ.get('EMERGENT_LLM_KEY', '')
+from llm_client import get_client, MODEL
 
 CLASSIFICATION_PROMPT = """You are a SENIOR MILITARY INTELLIGENCE ANALYST specializing in:
 
@@ -280,26 +280,30 @@ async def classify_and_analyze_article(article: dict) -> dict:
     article_text = f"Title: {title}\nContent: {content[:2000]}"
 
     try:
-        from emergentintegrations.llm.chat import LlmChat, UserMessage
         from feedback_bias import get_feedback_bias_context
 
-        # Build dynamic prompt with feedback bias
+        # Build dynamic system blocks — static prompt is cached, bias context is not
         bias_context = await get_feedback_bias_context()
-        system_prompt = CLASSIFICATION_PROMPT
+        system_blocks = [
+            {
+                "type": "text",
+                "text": CLASSIFICATION_PROMPT,
+                "cache_control": {"type": "ephemeral"},  # cached — saves ~80% on repeat calls
+            }
+        ]
         if bias_context:
-            system_prompt = CLASSIFICATION_PROMPT + "\n" + bias_context
+            system_blocks.append({"type": "text", "text": bias_context})
 
-        chat = LlmChat(
-            api_key=EMERGENT_LLM_KEY,
-            session_id=f"classify-{article.get('id', 'unknown')}",
-            system_message=system_prompt
-        ).with_model("anthropic", "claude-haiku-4-5-20251001")
-
-        user_message = UserMessage(text=f"Analyze this article:\n\n{article_text}")
-        response = await chat.send_message(user_message)
+        client = get_client()
+        response = await client.messages.create(
+            model=MODEL,
+            max_tokens=1024,
+            system=system_blocks,
+            messages=[{"role": "user", "content": f"Analyze this article:\n\n{article_text}"}],
+        )
 
         # Parse JSON from response
-        response_text = str(response)
+        response_text = response.content[0].text
         # Try to extract JSON from the response
         json_start = response_text.find('{')
         json_end = response_text.rfind('}') + 1
@@ -413,20 +417,26 @@ async def generate_daily_brief_ai(items: list, date: str) -> dict:
     ])
 
     try:
-        from emergentintegrations.llm.chat import LlmChat, UserMessage
-
-        chat = LlmChat(
-            api_key=EMERGENT_LLM_KEY,
-            session_id=f"brief-{date}",
-            system_message=BRIEF_PROMPT
-        ).with_model("anthropic", "claude-haiku-4-5-20251001")
-
-        user_message = UserMessage(
-            text=f"Generate a Daily Intelligence Brief for {date} based on these intelligence items:\n\n{items_summary}"
+        client = get_client()
+        response = await client.messages.create(
+            model=MODEL,
+            max_tokens=1500,
+            system=[
+                {
+                    "type": "text",
+                    "text": BRIEF_PROMPT,
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ],
+            messages=[
+                {
+                    "role": "user",
+                    "content": f"Generate a Daily Intelligence Brief for {date} based on these intelligence items:\n\n{items_summary}",
+                }
+            ],
         )
-        response = await chat.send_message(user_message)
 
-        response_text = str(response)
+        response_text = response.content[0].text
         json_start = response_text.find('{')
         json_end = response_text.rfind('}') + 1
         if json_start >= 0 and json_end > json_start:

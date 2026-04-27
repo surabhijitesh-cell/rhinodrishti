@@ -7,6 +7,7 @@ import uuid
 import os
 import io
 from shared import db, training_col, intelligence_col, activity_log_col, feedback_col, logger
+from llm_client import get_client, MODEL
 
 router = APIRouter()
 
@@ -333,8 +334,6 @@ async def _run_training_pipeline():
     _training_status["errors"] = 0
     _training_status["current_title"] = ""
 
-    EMERGENT_KEY = os.environ.get("EMERGENT_LLM_KEY", "")
-
     for idx, item in enumerate(items):
         _training_status["current"] = idx + 1
         _training_status["current_title"] = (item.get("title") or item.get("url") or "Unknown")[:60]
@@ -361,7 +360,7 @@ async def _run_training_pipeline():
                 continue
 
             # Step 2: AI analysis
-            analysis = await _analyze_training_item(text, EMERGENT_KEY)
+            analysis = await _analyze_training_item(text)
 
             # Update title if we got one from AI
             updates = {
@@ -475,30 +474,30 @@ async def _scrape_url(url: str) -> str:
         return ""
 
 
-async def _analyze_training_item(text: str, emergent_key: str) -> dict:
+async def _analyze_training_item(text: str, emergent_key: str = "") -> dict:
+    """emergent_key kept for backward compatibility but is no longer used."""
     import json
     try:
-        from emergentintegrations.llm.chat import LlmChat, UserMessage
-
-        prompt = """You are a military intelligence analyst. Analyze this content and extract:
-1. A short headline/title (max 80 chars)
-2. Primary region affected (Assam, Meghalaya, Mizoram, Manipur, Arunachal Pradesh, Tripura, Bangladesh, Myanmar, National, International)
-3. Threat category (Insurgency, Cross-border, Military Movement, Arms/Drug Trafficking, Ethnic Tension, Political, Infrastructure, Border Security, Foreign Influence, Other)
-4. Key actors/organizations mentioned
-5. Important keywords for intelligence monitoring
-6. Why this is relevant to NER security
-
-Respond ONLY in JSON:
-{"title":"...","region":"...","threat_category":"...","actors":["..."],"keywords":["..."],"relevance":"..."}"""
-
-        chat = LlmChat(
-            api_key=emergent_key,
-            session_id=f"train-{uuid.uuid4()}",
-            system_message=prompt
-        ).with_model("anthropic", "claude-haiku-4-5-20251001")
-
-        response = await chat.send_message(UserMessage(text=f"Analyze:\n\n{text[:4000]}"))
-        resp_text = str(response)
+        client = get_client()
+        response = await client.messages.create(
+            model=MODEL,
+            max_tokens=512,
+            system=(
+                "You are a military intelligence analyst. Analyze this content and extract:\n"
+                "1. A short headline/title (max 80 chars)\n"
+                "2. Primary region affected (Assam, Meghalaya, Mizoram, Manipur, Arunachal Pradesh, "
+                "Tripura, Bangladesh, Myanmar, National, International)\n"
+                "3. Threat category (Insurgency, Cross-border, Military Movement, Arms/Drug Trafficking, "
+                "Ethnic Tension, Political, Infrastructure, Border Security, Foreign Influence, Other)\n"
+                "4. Key actors/organizations mentioned\n"
+                "5. Important keywords for intelligence monitoring\n"
+                "6. Why this is relevant to NER security\n\n"
+                'Respond ONLY in JSON:\n'
+                '{"title":"...","region":"...","threat_category":"...","actors":["..."],"keywords":["..."],"relevance":"..."}'
+            ),
+            messages=[{"role": "user", "content": f"Analyze:\n\n{text[:4000]}"}],
+        )
+        resp_text = response.content[0].text
 
         start = resp_text.find("{")
         end = resp_text.rfind("}") + 1
@@ -518,35 +517,32 @@ async def _generate_training_impact_summary(
     emergent_key: str, total: int, processed: int,
     regions: dict, actors: dict, threats: dict, keywords: dict
 ) -> str:
-    """Generate a concise AI impact summary for a training session."""
-    if not emergent_key or not regions:
-        # Fallback to data-driven summary
+    """Generate a concise AI impact summary for a training session.
+    emergent_key kept for backward compatibility but is no longer used."""
+    if not regions:
         return _build_training_summary_fallback(total, processed, regions, actors, threats)
 
+    data = (
+        f"Training session processed {processed}/{total} items.\n"
+        f"Regions: {dict(sorted(regions.items(), key=lambda x: -x[1])[:5])}\n"
+        f"Threat categories: {dict(sorted(threats.items(), key=lambda x: -x[1])[:5])}\n"
+        f"Actors: {dict(sorted(actors.items(), key=lambda x: -x[1])[:5])}\n"
+        f"Keywords: {dict(sorted(keywords.items(), key=lambda x: -x[1])[:8])}"
+    )
     try:
-        from emergentintegrations.llm.chat import LlmChat, UserMessage
-
-        data = (
-            f"Training session processed {processed}/{total} items.\n"
-            f"Regions: {dict(sorted(regions.items(), key=lambda x: -x[1])[:5])}\n"
-            f"Threat categories: {dict(sorted(threats.items(), key=lambda x: -x[1])[:5])}\n"
-            f"Actors: {dict(sorted(actors.items(), key=lambda x: -x[1])[:5])}\n"
-            f"Keywords: {dict(sorted(keywords.items(), key=lambda x: -x[1])[:8])}"
-        )
-
-        chat = LlmChat(
-            api_key=emergent_key,
-            session_id=f"impact-{uuid.uuid4()}",
-            system_message=(
+        client = get_client()
+        response = await client.messages.create(
+            model=MODEL,
+            max_tokens=200,
+            system=(
                 "You are a military intelligence analyst. Generate a concise 1-2 sentence impact summary "
                 "for a training session. Focus on: what detection capabilities improved, which regions/actors/"
                 "threat categories were strengthened, and any emerging patterns. Be specific and operational. "
                 "Do NOT use bullet points. Respond with ONLY the summary text, nothing else."
-            )
-        ).with_model("anthropic", "claude-haiku-4-5-20251001")
-
-        response = await chat.send_message(UserMessage(text=data))
-        return str(response).strip()[:500]
+            ),
+            messages=[{"role": "user", "content": data}],
+        )
+        return response.content[0].text.strip()[:500]
     except Exception as e:
         logger.error(f"AI impact summary generation failed: {e}")
         return _build_training_summary_fallback(total, processed, regions, actors, threats)
@@ -573,33 +569,28 @@ async def _generate_feedback_impact_summary(
     emergent_key: str, total_rated: int, distribution: dict,
     high_rated_features: dict, low_rated_features: dict
 ) -> str:
-    """Generate a concise AI impact summary for a feedback session."""
-    if not emergent_key:
-        return _build_feedback_summary_fallback(total_rated, distribution, high_rated_features, low_rated_features)
-
+    """Generate a concise AI impact summary for a feedback session.
+    emergent_key kept for backward compatibility but is no longer used."""
+    data = (
+        f"Feedback session: {total_rated} articles rated.\n"
+        f"Rating distribution: {distribution}\n"
+        f"High-rated content features (4-6): {high_rated_features}\n"
+        f"Low-rated content features (1-2): {low_rated_features}"
+    )
     try:
-        from emergentintegrations.llm.chat import LlmChat, UserMessage
-
-        data = (
-            f"Feedback session: {total_rated} articles rated.\n"
-            f"Rating distribution: {distribution}\n"
-            f"High-rated content features (4-6): {high_rated_features}\n"
-            f"Low-rated content features (1-2): {low_rated_features}"
-        )
-
-        chat = LlmChat(
-            api_key=emergent_key,
-            session_id=f"fb-impact-{uuid.uuid4()}",
-            system_message=(
+        client = get_client()
+        response = await client.messages.create(
+            model=MODEL,
+            max_tokens=200,
+            system=(
                 "You are a military intelligence analyst. Generate a concise 1-2 sentence impact summary "
                 "for analyst feedback activity. Focus on: what content types were upweighted (highly rated), "
                 "what was suppressed (low rated), and any consensus patterns. Be specific and operational. "
                 "Do NOT use bullet points. Respond with ONLY the summary text, nothing else."
-            )
-        ).with_model("anthropic", "claude-haiku-4-5-20251001")
-
-        response = await chat.send_message(UserMessage(text=data))
-        return str(response).strip()[:500]
+            ),
+            messages=[{"role": "user", "content": data}],
+        )
+        return response.content[0].text.strip()[:500]
     except Exception as e:
         logger.error(f"Feedback impact summary generation failed: {e}")
         return _build_feedback_summary_fallback(total_rated, distribution, high_rated_features, low_rated_features)

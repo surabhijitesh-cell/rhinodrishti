@@ -19,6 +19,8 @@ import re
 from datetime import datetime, timezone, timedelta
 from collections import defaultdict, Counter
 
+from llm_client import get_client, MODEL
+
 logger = logging.getLogger(__name__)
 
 # ============================================================
@@ -299,9 +301,9 @@ def _generate_cross_border_keywords(historical: dict) -> list:
     return keywords
 
 
-async def _generate_emerging_keywords(historical: dict, emergent_key: str) -> list:
+async def _generate_emerging_keywords(historical: dict, emergent_key: str = "") -> list:
     """Use Claude to generate emerging signal keywords from recent high-priority patterns."""
-    if not emergent_key or not historical.get("high_priority_texts"):
+    if not historical.get("high_priority_texts"):
         return []
     
     # Build context from high-priority items
@@ -337,19 +339,15 @@ Return ONLY a JSON array of strings. No explanation.
 Example: ["coordinated ethnic mobilization", "infrastructure dual-use concern", "cross-border supply chain disruption"]"""
 
     try:
-        from emergentintegrations.llm.chat import LlmChat, UserMessage
-        
-        chat = LlmChat(
-            api_key=emergent_key,
-            session_id=f"keywords-{datetime.now(timezone.utc).strftime('%Y%m%d%H')}",
-            system_message="You are a military intelligence keyword generator. Output ONLY valid JSON arrays."
-        ).with_model("anthropic", "claude-haiku-4-5-20251001")
-        
-        response = await chat.send_message(UserMessage(text=prompt))
-        response_text = str(response)
-        
-        # Parse JSON array
         import json
+        client = get_client()
+        response = await client.messages.create(
+            model=MODEL,
+            max_tokens=512,
+            system="You are a military intelligence keyword generator. Output ONLY valid JSON arrays.",
+            messages=[{"role": "user", "content": prompt}],
+        )
+        response_text = response.content[0].text
         arr_start = response_text.find('[')
         arr_end = response_text.rfind(']') + 1
         if arr_start >= 0 and arr_end > arr_start:
@@ -376,10 +374,8 @@ Example: ["coordinated ethnic mobilization", "infrastructure dual-use concern", 
         return []
 
 
-async def _expand_keywords_with_ai(base_keywords: list, emergent_key: str) -> list:
+async def _expand_keywords_with_ai(base_keywords: list, emergent_key: str = "") -> list:
     """Use AI to expand high-score keywords into synonyms and related phrases."""
-    if not emergent_key:
-        return []
     
     # Pick top-scoring keywords for expansion
     top_kws = sorted(base_keywords, key=lambda k: k["score"], reverse=True)[:15]
@@ -393,17 +389,15 @@ Return ONLY a JSON object mapping each keyword to its expansions array.
 Example: {{"border infiltration": ["unauthorized border crossing", "cross-border intrusion", "illegal entry attempt"]}}"""
 
     try:
-        from emergentintegrations.llm.chat import LlmChat, UserMessage
         import json
-        
-        chat = LlmChat(
-            api_key=emergent_key,
-            session_id=f"kwexpand-{datetime.now(timezone.utc).strftime('%Y%m%d%H')}",
-            system_message="You are a military intelligence thesaurus. Output ONLY valid JSON."
-        ).with_model("anthropic", "claude-haiku-4-5-20251001")
-        
-        response = await chat.send_message(UserMessage(text=prompt))
-        response_text = str(response)
+        client = get_client()
+        response = await client.messages.create(
+            model=MODEL,
+            max_tokens=1024,
+            system="You are a military intelligence thesaurus. Output ONLY valid JSON.",
+            messages=[{"role": "user", "content": prompt}],
+        )
+        response_text = response.content[0].text
         
         json_start = response_text.find('{')
         json_end = response_text.rfind('}') + 1
@@ -451,7 +445,7 @@ def _deduplicate_and_rank(all_keywords: list) -> list:
     return ranked[:MAX_KEYWORDS]
 
 
-async def generate_keywords(db, emergent_key: str = "", use_ai: bool = True) -> list:
+async def generate_keywords(db, emergent_key: str = "", use_ai: bool = True) -> list:  # emergent_key kept for compat, unused
     """
     Main entry point: generate the full multi-layered keyword set.
     
@@ -477,11 +471,11 @@ async def generate_keywords(db, emergent_key: str = "", use_ai: bool = True) -> 
     all_keywords.extend(_generate_cross_border_keywords(historical))
     
     # Step 3: AI-powered generation (emerging signals + expansion)
-    if use_ai and emergent_key:
-        emerging = await _generate_emerging_keywords(historical, emergent_key)
+    if use_ai:
+        emerging = await _generate_emerging_keywords(historical)
         all_keywords.extend(emerging)
-        
-        expanded = await _expand_keywords_with_ai(all_keywords, emergent_key)
+
+        expanded = await _expand_keywords_with_ai(all_keywords)
         all_keywords.extend(expanded)
     
     # Step 4: Deduplicate and rank

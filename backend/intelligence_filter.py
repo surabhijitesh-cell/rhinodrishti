@@ -2,6 +2,8 @@ import re
 import logging
 from datetime import datetime, timezone
 
+from llm_client import get_client, MODEL
+
 logger = logging.getLogger(__name__)
 
 # ============================================================
@@ -169,40 +171,52 @@ def detect_language(text: str) -> str:
     return "en"
 
 
-async def translate_to_english(text: str, source_lang: str, emergent_key: str) -> tuple:
+async def translate_to_english(text: str, source_lang: str, emergent_key: str = "") -> tuple:
     """
     Translate non-English text to English using Claude.
     Returns: (translated_text, confidence_score 0-100)
+    Note: emergent_key parameter kept for backward compatibility but is no longer used.
     """
     if source_lang == "en" or not text or len(text.strip()) < 10:
         return text, 100
 
     lang_names = {"bn": "Bengali", "hi": "Hindi", "as": "Assamese"}
     lang_name = lang_names.get(source_lang, "Unknown")
+    system_prompt = (
+        f"You are a precise translator. Translate the following {lang_name} text to English. "
+        f"Preserve all proper nouns, place names, organization names, and military terms. "
+        f"Return ONLY the translation, nothing else. If text is already English, return as-is."
+    )
 
     try:
-        from emergentintegrations.llm.chat import LlmChat, UserMessage
-
-        chat = LlmChat(
-            api_key=emergent_key,
-            session_id=f"translate-{hash(text[:50])}",
-            system_message=f"You are a precise translator. Translate the following {lang_name} text to English. "
-                          f"Preserve all proper nouns, place names, organization names, and military terms. "
-                          f"Return ONLY the translation, nothing else. If text is already English, return as-is."
-        ).with_model("anthropic", "claude-haiku-4-5-20251001")
-
-        response = await chat.send_message(UserMessage(text=text[:3000]))
-        translated = str(response).strip()
+        client = get_client()
+        response = await client.messages.create(
+            model=MODEL,
+            max_tokens=1024,
+            system=system_prompt,
+            messages=[{"role": "user", "content": text[:3000]}],
+        )
+        translated = response.content[0].text.strip()
 
         english_ratio = len(re.findall(r'[a-zA-Z]', translated)) / max(len(translated), 1)
         confidence = min(100, int(english_ratio * 120))
 
         if confidence < 50:
             logger.warning(f"Low translation confidence ({confidence}), retrying...")
-            response2 = await chat.send_message(UserMessage(
-                text=f"Please translate this {lang_name} text to clear English. Output ONLY the English translation:\n\n{text[:2000]}"
-            ))
-            translated = str(response2).strip()
+            response2 = await client.messages.create(
+                model=MODEL,
+                max_tokens=1024,
+                system=system_prompt,
+                messages=[
+                    {"role": "user", "content": text[:3000]},
+                    {"role": "assistant", "content": translated},
+                    {
+                        "role": "user",
+                        "content": f"Please translate this {lang_name} text to clear English. Output ONLY the English translation:\n\n{text[:2000]}",
+                    },
+                ],
+            )
+            translated = response2.content[0].text.strip()
             english_ratio = len(re.findall(r'[a-zA-Z]', translated)) / max(len(translated), 1)
             confidence = min(100, int(english_ratio * 120))
 
@@ -217,7 +231,7 @@ async def translate_to_english(text: str, source_lang: str, emergent_key: str) -
 # FULL FILTER PIPELINE
 # ============================================================
 
-async def run_filter_pipeline(article: dict, emergent_key: str) -> dict:
+async def run_filter_pipeline(article: dict, emergent_key: str = "") -> dict:
     """
     Run the complete 2-stage filter pipeline on an article.
     
