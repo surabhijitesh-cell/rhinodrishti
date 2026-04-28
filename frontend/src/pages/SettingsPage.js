@@ -4,6 +4,8 @@ import {
   Settings as SettingsIcon, Clock, Save, RefreshCw, ShieldCheck, Zap,
   TrendingUp, TrendingDown, Minus, BarChart3, Loader2, Rss, Plus, Trash2, Globe,
   Youtube, Facebook, MessageCircle, Twitter, Activity, ExternalLink, Radio,
+  Database, HardDrive, Wifi, WifiOff, Download, CheckCircle2, AlertTriangle,
+  Server, ArrowRight, Copy,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Button } from "../components/ui/button";
@@ -88,6 +90,9 @@ function SettingsContent({ api }) {
         </p>
       </div>
 
+      {/* Local Database Setup — Full width, top priority */}
+      <LocalDatabaseCard api={api} />
+
       {/* RSS Feed Management — Full width */}
       <RssFeedManager api={api} />
 
@@ -144,6 +149,258 @@ function SettingsContent({ api }) {
       {/* Row 4: Full-width Bias Impact Report */}
       <BiasImpactReport api={api} />
     </div>
+  );
+}
+
+
+// ─── Local Database Card ──────────────────────────────────────────────────────
+
+const STEPS = [
+  { n: 1, title: "Download Installer",      desc: "Click the button below to get the PowerShell wizard" },
+  { n: 2, title: "Run as Administrator",    desc: 'Right-click setup-wizard.ps1 → "Run with PowerShell" (Admin)' },
+  { n: 3, title: "Follow the wizard",       desc: "Installs MongoDB 7.0 + Tailscale VPN automatically (~20 min)" },
+  { n: 4, title: "Create Tailscale key",    desc: "Free at tailscale.com/admin/settings/keys (reusable + ephemeral)" },
+  { n: 5, title: "Update Render settings",  desc: "Paste MONGO_URL + TAILSCALE_AUTH_KEY + new Start Command" },
+  { n: 6, title: "Redeploy on Render",      desc: "Click Manual Deploy — your backend now connects to local DB" },
+];
+
+const RENDER_START_CMD =
+  `curl -fsSL https://tailscale.com/install.sh | sh && tailscale up --authkey=$TAILSCALE_AUTH_KEY --hostname=render-rhinodrishti-api --ephemeral && sleep 6 && uvicorn server:app --host 0.0.0.0 --port $PORT`;
+
+function CopyButton({ text, label = "Copy" }) {
+  const [copied, setCopied] = useState(false);
+  const handleCopy = () => {
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  };
+  return (
+    <button
+      onClick={handleCopy}
+      className="inline-flex items-center gap-1 text-[9px] font-mono uppercase tracking-wider px-2 py-0.5 border border-border hover:border-primary hover:text-primary transition-colors"
+    >
+      {copied ? <CheckCircle2 size={10} className="text-emerald-400" /> : <Copy size={10} />}
+      {copied ? "Copied!" : label}
+    </button>
+  );
+}
+
+function LocalDatabaseCard({ api }) {
+  const [status, setStatus]     = useState(null);
+  const [loading, setLoading]   = useState(true);
+  const [showSteps, setShowSteps] = useState(false);
+
+  const fetchStatus = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await axios.get(`${api}/settings/local-db-status`);
+      setStatus(res.data);
+    } catch (e) {
+      console.error("local-db-status failed", e);
+    }
+    setLoading(false);
+  }, [api]);
+
+  useEffect(() => { fetchStatus(); }, [fetchStatus]);
+
+  const isLocal = status?.mode !== "atlas";
+
+  const downloadScript = () => {
+    window.open(
+      "https://raw.githubusercontent.com/surabhijitesh-cell/rhinodrishti/feature/social-media-integration/local-setup/setup-wizard.ps1",
+      "_blank"
+    );
+  };
+
+  return (
+    <Card className={`border border-border rounded-none bg-card border-l-4 ${isLocal ? "border-l-emerald-500" : "border-l-amber-500"}`}>
+      <CardHeader className="py-3 px-4 border-b border-border flex flex-row items-center justify-between">
+        <CardTitle className="text-sm uppercase tracking-wider font-['Barlow_Condensed'] font-semibold flex items-center gap-2">
+          <HardDrive size={16} className={isLocal ? "text-emerald-400" : "text-amber-400"} />
+          Database Storage
+          <Badge className={`rounded-none text-[9px] px-1.5 py-0 ml-1 ${
+            isLocal
+              ? "bg-emerald-500/20 text-emerald-400 border-emerald-500/30"
+              : "bg-amber-500/20 text-amber-400 border-amber-500/30"
+          }`}>
+            {loading ? "checking..." : isLocal ? "LOCAL DISK" : "ATLAS CLOUD"}
+          </Badge>
+        </CardTitle>
+        <Button variant="outline" size="sm" className="rounded-none text-[10px] h-6 px-2 uppercase" onClick={fetchStatus}>
+          <RefreshCw size={11} className="mr-1" /> Refresh
+        </Button>
+      </CardHeader>
+
+      <CardContent className="p-4 space-y-4">
+
+        {/* Architecture diagram */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          {/* Current status */}
+          <div className="space-y-3">
+            <p className="text-[10px] uppercase tracking-widest font-mono font-semibold text-muted-foreground">Current Mode</p>
+
+            {loading ? (
+              <div className="flex items-center gap-2"><Loader2 size={14} className="animate-spin text-muted-foreground" /><span className="text-xs text-muted-foreground">Checking...</span></div>
+            ) : (
+              <div className={`p-3 border ${isLocal ? "border-emerald-500/30 bg-emerald-500/5" : "border-amber-500/30 bg-amber-500/5"}`}>
+                <div className="flex items-center gap-2 mb-2">
+                  {isLocal
+                    ? <Wifi size={14} className="text-emerald-400" />
+                    : <WifiOff size={14} className="text-amber-400" />}
+                  <span className={`text-xs font-bold font-['Barlow_Condensed'] uppercase ${isLocal ? "text-emerald-400" : "text-amber-400"}`}>
+                    {isLocal ? "Local MongoDB via Tailscale VPN" : "MongoDB Atlas (Cloud)"}
+                  </span>
+                </div>
+                <p className="text-[10px] font-mono text-muted-foreground truncate">{status?.mongo_url_hint}</p>
+                {status?.data_size_mb != null && (
+                  <div className="mt-2 grid grid-cols-3 gap-2">
+                    <div>
+                      <p className="text-[8px] uppercase font-mono text-muted-foreground">Data Size</p>
+                      <p className="text-sm font-bold font-['Barlow_Condensed']">{status.data_size_mb} MB</p>
+                    </div>
+                    <div>
+                      <p className="text-[8px] uppercase font-mono text-muted-foreground">On Disk</p>
+                      <p className="text-sm font-bold font-['Barlow_Condensed']">{status.storage_mb} MB</p>
+                    </div>
+                    <div>
+                      <p className="text-[8px] uppercase font-mono text-muted-foreground">Collections</p>
+                      <p className="text-sm font-bold font-['Barlow_Condensed']">{status.collections}</p>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Migration log */}
+            {status?.migration_log?.length > 0 && (
+              <div>
+                <p className="text-[9px] uppercase tracking-widest font-mono font-semibold text-muted-foreground mb-1">Migration History</p>
+                {status.migration_log.map((entry, i) => (
+                  <div key={i} className="flex items-center gap-2 text-[10px] font-mono text-muted-foreground py-0.5 border-b border-border/50">
+                    <CheckCircle2 size={10} className="text-emerald-400 shrink-0" />
+                    <span>{new Date(entry.migrated_at).toLocaleDateString()}</span>
+                    <span>·</span>
+                    <span>{entry.docs_copied?.toLocaleString()} docs</span>
+                    <span>·</span>
+                    <span>{entry.duration_s}s</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Architecture diagram */}
+          <div className="space-y-3">
+            <p className="text-[10px] uppercase tracking-widest font-mono font-semibold text-muted-foreground">Architecture</p>
+            <div className="p-3 border border-border bg-muted/5 font-mono text-[10px] text-muted-foreground space-y-1 leading-5">
+              <div className="flex items-center gap-2">
+                <Globe size={10} className="text-blue-400 shrink-0" />
+                <span className="text-blue-400">Remote Users</span>
+              </div>
+              <div className="pl-4 text-muted-foreground/50">│ HTTPS</div>
+              <div className="flex items-center gap-2">
+                <Server size={10} className="text-violet-400 shrink-0" />
+                <span className="text-violet-400">Vercel</span>
+                <span className="text-muted-foreground/40">(React frontend)</span>
+              </div>
+              <div className="pl-4 text-muted-foreground/50">│ API calls</div>
+              <div className="flex items-center gap-2">
+                <Server size={10} className="text-cyan-400 shrink-0" />
+                <span className="text-cyan-400">Render</span>
+                <span className="text-muted-foreground/40">(FastAPI backend)</span>
+              </div>
+              <div className="pl-4 text-muted-foreground/50">│ Tailscale WireGuard VPN</div>
+              <div className="flex items-center gap-2">
+                <HardDrive size={10} className="text-emerald-400 shrink-0" />
+                <span className="text-emerald-400">Windows 11 PC</span>
+                <span className="text-muted-foreground/40">(your collection centre)</span>
+              </div>
+              <div className="pl-6 text-muted-foreground/50">├── Tailscale daemon</div>
+              <div className="pl-6 text-emerald-400">└── MongoDB 7.0 (1TB local disk)</div>
+            </div>
+            <p className="text-[10px] text-muted-foreground">
+              Tailscale creates an encrypted WireGuard tunnel — no port forwarding, no static IP needed.
+              Data never leaves your PC. Remote users see the same app via Vercel + Render.
+            </p>
+          </div>
+        </div>
+
+        {/* Setup button + steps */}
+        {!isLocal && (
+          <div className="border border-amber-500/20 bg-amber-500/5 p-4 space-y-3">
+            <div className="flex items-start gap-3">
+              <AlertTriangle size={16} className="text-amber-400 shrink-0 mt-0.5" />
+              <div>
+                <p className="text-xs font-semibold text-amber-400">Currently using MongoDB Atlas (cloud)</p>
+                <p className="text-[10px] text-muted-foreground mt-0.5">
+                  Run the installer wizard on your Windows 11 collection centre PC to shift storage to local disk.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex gap-2 flex-wrap">
+              <Button
+                onClick={downloadScript}
+                className="rounded-none text-xs uppercase tracking-wider bg-amber-500 hover:bg-amber-600 text-black font-bold"
+              >
+                <Download size={13} className="mr-1.5" />
+                Download Setup Wizard (.ps1)
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => setShowSteps(s => !s)}
+                className="rounded-none text-xs uppercase tracking-wider"
+              >
+                {showSteps ? "Hide Steps" : "View Setup Steps"}
+              </Button>
+            </div>
+
+            {showSteps && (
+              <div className="space-y-2 pt-1">
+                {STEPS.map(step => (
+                  <div key={step.n} className="flex items-start gap-3">
+                    <div className="w-5 h-5 rounded-full bg-amber-500/20 border border-amber-500/40 flex items-center justify-center shrink-0 mt-0.5">
+                      <span className="text-[9px] font-bold text-amber-400">{step.n}</span>
+                    </div>
+                    <div>
+                      <p className="text-[11px] font-semibold">{step.title}</p>
+                      <p className="text-[10px] text-muted-foreground">{step.desc}</p>
+                    </div>
+                  </div>
+                ))}
+
+                {/* Render start command */}
+                <div className="mt-3 pt-3 border-t border-border">
+                  <p className="text-[9px] uppercase tracking-widest font-mono font-semibold text-muted-foreground mb-1">
+                    Render Start Command (from Step 5)
+                  </p>
+                  <div className="flex items-start gap-2">
+                    <code className="text-[9px] font-mono bg-muted/20 border border-border p-2 flex-1 break-all leading-4">
+                      {RENDER_START_CMD}
+                    </code>
+                    <CopyButton text={RENDER_START_CMD} label="Copy" />
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {isLocal && (
+          <div className="border border-emerald-500/20 bg-emerald-500/5 p-3 flex items-center gap-3">
+            <CheckCircle2 size={16} className="text-emerald-400 shrink-0" />
+            <div>
+              <p className="text-xs font-semibold text-emerald-400">Local database active</p>
+              <p className="text-[10px] text-muted-foreground">
+                Your intelligence data is stored on local disk and routed via Tailscale VPN. Keep this PC powered on.
+              </p>
+            </div>
+          </div>
+        )}
+
+      </CardContent>
+    </Card>
   );
 }
 

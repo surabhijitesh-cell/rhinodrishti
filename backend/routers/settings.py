@@ -185,3 +185,50 @@ async def set_bias_settings(body: dict):
         "bias_window": window,
         "bias_influence": influence,
     }
+
+
+# ============================================================
+# Local Database Setup — status + migration log
+# ============================================================
+
+@router.get("/settings/local-db-status")
+async def get_local_db_status():
+    """
+    Returns whether the backend is connected to a local (Tailscale) MongoDB
+    or still using MongoDB Atlas, plus any migration log entries.
+    """
+    import os
+    mongo_url = os.environ.get("MONGO_URL", "")
+    tailscale_key = os.environ.get("TAILSCALE_AUTH_KEY", "")
+
+    # Detect mode from MONGO_URL
+    if "mongodb+srv://" in mongo_url or "atlas" in mongo_url.lower():
+        mode = "atlas"
+    elif tailscale_key:
+        mode = "local_tailscale"
+    else:
+        mode = "local_direct"
+
+    # Migration log (written by migrate_atlas_to_local.py)
+    log_entries = await db["_migration_log"].find(
+        {}, {"_id": 0}
+    ).sort("migrated_at", -1).limit(5).to_list(5)
+
+    # DB stats
+    try:
+        stats = await db.command("dbStats")
+        data_size_mb = round(stats.get("dataSize", 0) / 1024 / 1024, 1)
+        storage_mb   = round(stats.get("storageSize", 0) / 1024 / 1024, 1)
+        collections  = stats.get("collections", 0)
+    except Exception:
+        data_size_mb = storage_mb = collections = None
+
+    return {
+        "mode":            mode,           # "atlas" | "local_tailscale" | "local_direct"
+        "mongo_url_hint":  mongo_url[:30] + "..." if mongo_url else "",
+        "tailscale_ready": bool(tailscale_key),
+        "data_size_mb":    data_size_mb,
+        "storage_mb":      storage_mb,
+        "collections":     collections,
+        "migration_log":   log_entries,
+    }
