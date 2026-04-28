@@ -239,16 +239,24 @@ function SourceScanners({ api }) {
     return () => clearInterval(id);
   }, [refreshSocial]);
 
-  // ── trigger fetch + immediate refresh after backend processes ──
+  // ── trigger fetch + persistent polling until last_fetched updates ──
+  // Backend now returns immediately (BackgroundTasks) so we poll at
+  // 10s, 20s, 35s, 55s, 80s, 110s, 150s after the click to catch
+  // slow sources (Telegram can take 60-90s, Firecrawl up to 3 min).
   const trigger = async (key, endpoint) => {
     setTriggering(t => ({ ...t, [key]: true }));
     try { await axios.post(`${api}${endpoint}`); } catch {}
-    // Refresh at 8s and 20s after trigger to catch last_fetched updates
-    setTimeout(() => refreshSocial(), 8000);
-    setTimeout(() => {
-      setTriggering(t => ({ ...t, [key]: false }));
-      refreshSocial();
-    }, 20000);
+
+    const pollDelays = [10000, 20000, 35000, 55000, 80000, 110000, 150000];
+    pollDelays.forEach((delay, i) => {
+      setTimeout(() => {
+        refreshSocial();
+        // Clear the FETCHING badge after the last poll
+        if (i === pollDelays.length - 1) {
+          setTriggering(t => ({ ...t, [key]: false }));
+        }
+      }, delay);
+    });
   };
 
   // ── derived ──

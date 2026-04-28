@@ -17,7 +17,7 @@ import uuid
 import asyncio
 from datetime import datetime, timezone
 from typing import Optional
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, BackgroundTasks, HTTPException
 from pydantic import BaseModel
 from shared import db, logger
 
@@ -454,25 +454,33 @@ async def fetch_telegram_channel_now(item_id: str):
 # ─────────────────────────────────────────────────────────────────────────────
 
 @router.post("/social/fetch-all")
-async def fetch_all_social_now():
-    from twitter_fetcher import fetch_twitter_accounts, fetch_twitter_searches
-    from youtube_fetcher import fetch_youtube_channels, fetch_youtube_searches
-    from facebook_fetcher import fetch_facebook_pages
-    from telegram_fetcher import fetch_telegram_channels
+async def fetch_all_social_now(background_tasks: BackgroundTasks):
+    """
+    Trigger all social/web fetchers in the background and return immediately.
+    Each fetcher runs in parallel so slow sources (Telegram, Firecrawl) don't
+    block faster ones, and Render's 30-second HTTP timeout is never hit.
+    """
+    async def _run_all():
+        from twitter_fetcher import fetch_twitter_accounts, fetch_twitter_searches
+        from youtube_fetcher import fetch_youtube_channels, fetch_youtube_searches
+        from facebook_fetcher import fetch_facebook_pages
+        from telegram_fetcher import fetch_telegram_channels
 
-    results = {}
-    for name, coro in [
-        ("twitter_accounts",  fetch_twitter_accounts(db)),
-        ("twitter_searches",  fetch_twitter_searches(db)),
-        ("youtube_channels",  fetch_youtube_channels(db)),
-        ("youtube_searches",  fetch_youtube_searches(db)),
-        ("facebook_pages",    fetch_facebook_pages(db)),
-        ("telegram_channels", fetch_telegram_channels(db)),
-    ]:
-        try:
-            results[name] = await coro
-        except Exception as e:
-            results[name] = f"error: {e}"
-            logger.error(f"fetch-all: {name} failed: {e}")
+        tasks = {
+            "twitter_accounts": fetch_twitter_accounts(db),
+            "twitter_searches": fetch_twitter_searches(db),
+            "youtube_channels": fetch_youtube_channels(db),
+            "youtube_searches": fetch_youtube_searches(db),
+            "facebook_pages":   fetch_facebook_pages(db),
+            "telegram_channels": fetch_telegram_channels(db),
+        }
 
-    return {"results": results}
+        results = await asyncio.gather(*tasks.values(), return_exceptions=True)
+        for name, result in zip(tasks.keys(), results):
+            if isinstance(result, Exception):
+                logger.error(f"fetch-all [{name}] failed: {result}")
+            else:
+                logger.info(f"fetch-all [{name}] ok: {result}")
+
+    background_tasks.add_task(_run_all)
+    return {"status": "fetch started", "message": "All social sources fetching in background"}
