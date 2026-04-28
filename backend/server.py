@@ -32,6 +32,7 @@ from routers.auth import router as auth_router
 from routers.app_updates import router as app_updates_router
 from routers.reports import router as reports_router
 from routers.web_sources import router as web_sources_router
+from routers.social_media import router as social_media_router
 
 # Import scheduler functions
 from routers.pipeline import (
@@ -42,6 +43,10 @@ from routers.pipeline import (
 from routers.briefs import generate_scheduled_daily_brief
 from fusion_engine import run_batch_fusion
 from firecrawl_fetcher import fetch_web_sources, run_keyword_searches, seed_firecrawl_defaults
+from twitter_fetcher import fetch_twitter_accounts, fetch_twitter_searches, seed_twitter_defaults
+from youtube_fetcher import fetch_youtube_channels, fetch_youtube_searches, seed_youtube_defaults
+from facebook_fetcher import fetch_facebook_pages, seed_facebook_defaults
+from telegram_fetcher import fetch_telegram_channels, seed_telegram_defaults
 
 
 app = FastAPI(title="Rhino Drishti API")
@@ -65,6 +70,7 @@ app.include_router(auth_router, prefix="/api")
 app.include_router(app_updates_router, prefix="/api")
 app.include_router(reports_router, prefix="/api")
 app.include_router(web_sources_router, prefix="/api")
+app.include_router(social_media_router, prefix="/api")
 
 
 # ============================================================
@@ -129,6 +135,10 @@ async def startup():
 
     await initialize_sources()
     await seed_firecrawl_defaults(db)
+    await seed_twitter_defaults(db)
+    await seed_youtube_defaults(db)
+    await seed_facebook_defaults(db)
+    await seed_telegram_defaults(db)
     item_count = await intelligence_col.count_documents({})
     if item_count == 0:
         logger.info("Empty database - triggering initial fetch...")
@@ -181,8 +191,44 @@ async def startup():
         scheduler.add_job(_fetch_web_sources,    'interval', hours=3,   id='firecrawl_web_sources')
         scheduler.add_job(_run_keyword_searches, 'interval', hours=6,   id='firecrawl_searches')
 
+        # Social media jobs
+        async def _fetch_twitter():
+            try:
+                a = await fetch_twitter_accounts(db)
+                s = await fetch_twitter_searches(db)
+                logger.info(f"Twitter: {a} account tweets, {s} search tweets")
+            except Exception as e:
+                logger.warning(f"Twitter job failed: {e}")
+
+        async def _fetch_youtube():
+            try:
+                c = await fetch_youtube_channels(db)
+                s = await fetch_youtube_searches(db)
+                logger.info(f"YouTube: {c} channel videos, {s} search videos")
+            except Exception as e:
+                logger.warning(f"YouTube job failed: {e}")
+
+        async def _fetch_facebook():
+            try:
+                n = await fetch_facebook_pages(db)
+                logger.info(f"Facebook: {n} new posts")
+            except Exception as e:
+                logger.warning(f"Facebook job failed: {e}")
+
+        async def _fetch_telegram():
+            try:
+                n = await fetch_telegram_channels(db)
+                logger.info(f"Telegram: {n} new messages")
+            except Exception as e:
+                logger.warning(f"Telegram job failed: {e}")
+
+        scheduler.add_job(_fetch_twitter,  'interval', hours=2,  id='twitter_fetch')
+        scheduler.add_job(_fetch_youtube,  'interval', hours=4,  id='youtube_fetch')
+        scheduler.add_job(_fetch_facebook, 'interval', hours=4,  id='facebook_fetch')
+        scheduler.add_job(_fetch_telegram, 'interval', hours=1,  id='telegram_fetch')
+
         scheduler.start()
-        logger.info("Scheduler: grassroots/60min, standard/30min, established/12hr, retry/15min, brief/0600 IST, embeddings/6hr, fusion/30min, firecrawl-web/3hr, firecrawl-search/6hr")
+        logger.info("Scheduler: grassroots/60min, standard/30min, established/12hr, retry/15min, brief/0600 IST, embeddings/6hr, fusion/30min, firecrawl-web/3hr, firecrawl-search/6hr, twitter/2hr, youtube/4hr, facebook/4hr, telegram/1hr")
     except Exception as e:
         logger.warning(f"Scheduler setup failed: {e}")
 
