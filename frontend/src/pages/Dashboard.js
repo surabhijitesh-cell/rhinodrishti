@@ -347,7 +347,7 @@ function SourceScanners({ api }) {
             disabled={triggering["all"]}
           >
             {triggering["all"] ? <Loader2 size={9} className="animate-spin mr-1" /> : <RefreshCw size={9} className="mr-1" />}
-            {triggering["all"] ? "FETCHING…" : "ALL ×5"}
+            {triggering["all"] ? "FETCHING…" : "SCAN SOCIAL MEDIA"}
           </Button>
           {open ? <ChevronUp size={13} className="text-muted-foreground" /> : <ChevronDown size={13} className="text-muted-foreground" />}
         </div>
