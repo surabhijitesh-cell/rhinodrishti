@@ -19,6 +19,7 @@ import asyncio
 import logging
 import os
 from datetime import datetime, timezone
+from typing import Optional
 import httpx
 
 logger = logging.getLogger(__name__)
@@ -219,5 +220,3 @@ async def seed_facebook_defaults(db) -> None:
         logger.info(f"Seeded {len(docs)} default Facebook pages")
 
 
-# fix missing Optional import
-from typing import Optional
