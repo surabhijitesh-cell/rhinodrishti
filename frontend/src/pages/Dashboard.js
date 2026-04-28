@@ -451,7 +451,7 @@ function SourceScanners({ api }) {
                 borderAccent="border-slate-500/30" barColor="bg-slate-400"
                 isConfigured={true} isActive={triggering["twitter"] || triggering["all"]} activeLabel="FETCHING"
                 progress={100}
-                stat1={twConfigured ? `${twAccounts.length} acct · ${twData.searches.filter(s=>s.active).length} srch` : `Nitter · ${twAccounts.length} acct`}
+                stat1={twConfigured ? `${twAccounts.length} acct · ${twData.searches.filter(s=>s.active).length} srch` : `${twAccounts.length} acct`}
                 stat2={twConfigured ? "API" : "Nitter"}
                 lastFetched={latest(twData.searches, "last_run")}
                 onTrigger={() => trigger("twitter", "/social/fetch-all")}
