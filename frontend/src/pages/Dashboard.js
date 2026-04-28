@@ -5,7 +5,8 @@ import {
   ChevronRight, RefreshCw, Target, ArrowUp,
   Rss, Eye, EyeOff, Clock, CheckCircle2, Loader2,
   Filter, Languages, BellRing, GitBranch, Check, Wifi, WifiOff,
-  ArrowUpDown
+  ArrowUpDown, Youtube, Facebook, Send, Twitter, ChevronDown, ChevronUp,
+  Play, Zap, Radio
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Badge } from "../components/ui/badge";
@@ -50,145 +51,431 @@ function StatBox({ label, value, icon: Icon, color, sub, testId, onClick }) {
   );
 }
 
-function ScanProgressBar({ api }) {
-  const [scanStatus, setScanStatus] = useState(null);
-  const [visible, setVisible] = useState(true);
-  const pollRef = useRef(null);
+// ─── helpers ────────────────────────────────────────────────────────────────
+function formatIST(isoStr) {
+  if (!isoStr) return null;
+  try {
+    const d = new Date(isoStr);
+    return d.toLocaleString("en-IN", {
+      timeZone: "Asia/Kolkata", day: "2-digit", month: "short",
+      hour: "2-digit", minute: "2-digit", hour12: true,
+    });
+  } catch { return null; }
+}
 
-  useEffect(() => {
-    const fetchStatus = async () => {
-      try {
-        const res = await axios.get(`${api}/scan-status`);
-        setScanStatus(res.data);
-      } catch (e) { /* silent */ }
-    };
-    fetchStatus();
-    pollRef.current = setInterval(fetchStatus, 3000);
-    return () => clearInterval(pollRef.current);
-  }, [api]);
+function timeAgo(isoStr) {
+  if (!isoStr) return "never";
+  const diff = Math.floor((Date.now() - new Date(isoStr)) / 1000);
+  if (diff < 60) return `${diff}s ago`;
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+  return `${Math.floor(diff / 86400)}d ago`;
+}
 
-  const formatIST = (isoStr) => {
-    if (!isoStr) return "N/A";
-    try {
-      const d = new Date(isoStr);
-      return d.toLocaleString("en-IN", { timeZone: "Asia/Kolkata", day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: true });
-    } catch { return "N/A"; }
-  };
+// ─── individual scanner panel ────────────────────────────────────────────────
+function ScannerPanel({
+  label, icon: Icon, accentColor, barColor, bgAccent, borderAccent,
+  isConfigured, configNote, isActive, activeLabel,
+  progress, progressLabel, statsChips,
+  lastFetched, onTrigger, triggering, children, testId,
+}) {
+  const [expanded, setExpanded] = useState(false);
 
-  if (!scanStatus) return null;
-
-  const isScanning = scanStatus.is_scanning;
-  const progress = scanStatus.progress || 0;
-  const lastResult = scanStatus.last_scan_result;
+  const statusBadge = isActive
+    ? <Badge className={`rounded-none text-[9px] px-1.5 py-0 border ${bgAccent} ${accentColor} ${borderAccent} animate-pulse`}>{activeLabel || "ACTIVE"}</Badge>
+    : isConfigured
+      ? <Badge className="rounded-none text-[9px] px-1.5 py-0 bg-muted/30 text-muted-foreground border-border">IDLE</Badge>
+      : <Badge className="rounded-none text-[9px] px-1.5 py-0 bg-orange-500/10 text-orange-400 border-orange-500/30">NOT CONFIGURED</Badge>;
 
   return (
-    <Card className="border border-border rounded-none bg-card overflow-hidden" data-testid="scan-progress-card">
-      <div className="flex items-center justify-between px-4 py-2 border-b border-border">
-        <div className="flex items-center gap-2">
-          <Rss size={14} className={isScanning ? "text-primary animate-pulse" : "text-muted-foreground"} />
-          <span className="text-xs uppercase tracking-wider font-['Barlow_Condensed'] font-semibold">
-            RSS Scanner
-          </span>
-          {isScanning && (
-            <Badge className="rounded-none text-[9px] px-1.5 py-0 bg-primary/20 text-primary border-primary/30 animate-pulse">
-              SCANNING
-            </Badge>
-          )}
-          {!isScanning && lastResult && !lastResult.error && (
-            <Badge className="rounded-none text-[9px] px-1.5 py-0 bg-green-500/20 text-green-400 border-green-500/30">
-              IDLE
-            </Badge>
-          )}
+    <Card className={`rounded-none border bg-card overflow-hidden transition-all duration-200 ${isActive ? borderAccent : "border-border"}`} data-testid={testId}>
+      {/* Header row */}
+      <div
+        className="flex items-center gap-2.5 px-4 py-2.5 border-b border-border cursor-pointer select-none hover:bg-muted/10 transition-colors"
+        onClick={() => setExpanded(v => !v)}
+      >
+        <div className={`p-1.5 rounded-sm ${bgAccent}`}>
+          <Icon size={13} className={accentColor} />
         </div>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-6 w-6 p-0"
-          onClick={() => setVisible(!visible)}
-          data-testid="toggle-scan-progress"
-        >
-          {visible ? <EyeOff size={12} /> : <Eye size={12} />}
-        </Button>
+        <span className={`text-xs uppercase tracking-wider font-['Barlow_Condensed'] font-bold ${isConfigured ? "text-foreground" : "text-muted-foreground"}`}>
+          {label}
+        </span>
+        {statusBadge}
+        <div className="ml-auto flex items-center gap-2">
+          {lastFetched && (
+            <span className="text-[10px] font-mono text-muted-foreground hidden sm:block">
+              {timeAgo(lastFetched)}
+            </span>
+          )}
+          {isConfigured && onTrigger && (
+            <Button
+              variant="ghost" size="sm"
+              className={`h-6 px-2 text-[10px] rounded-none font-mono ${accentColor} hover:${bgAccent} border ${borderAccent} opacity-70 hover:opacity-100`}
+              onClick={e => { e.stopPropagation(); onTrigger(); }}
+              disabled={triggering}
+            >
+              {triggering ? <Loader2 size={10} className="animate-spin" /> : <Zap size={10} />}
+            </Button>
+          )}
+          {expanded ? <ChevronUp size={12} className="text-muted-foreground" /> : <ChevronDown size={12} className="text-muted-foreground" />}
+        </div>
       </div>
 
-      {visible && (
-        <CardContent className="p-4 space-y-3">
-          {/* Progress bar */}
-          <div className="space-y-1.5">
-            <div className="flex items-center justify-between text-xs font-mono text-muted-foreground">
-              <span>{isScanning ? `Scanning... ${progress}%` : "Last scan complete"}</span>
-              <span>{scanStatus.sources_scanned || 0}/{scanStatus.total_sources || 0} feeds</span>
-            </div>
-            <div className="w-full h-2 bg-muted/30 overflow-hidden">
-              <div
-                className={`h-full transition-all duration-500 ${isScanning ? "bg-primary animate-pulse" : "bg-green-500"}`}
-                style={{ width: `${isScanning ? progress : 100}%` }}
-              />
-            </div>
-          </div>
-
-          {/* Live source name during scan */}
-          {isScanning && scanStatus.current_source && (
-            <div className="flex items-center gap-2 text-xs" data-testid="current-scan-source">
-              <Loader2 size={12} className="animate-spin text-primary" />
-              <span className="text-muted-foreground">Scanning:</span>
-              <span className="font-medium text-foreground truncate">{scanStatus.current_source}</span>
-            </div>
-          )}
-
-          {/* Scan log - last few sources */}
-          {isScanning && scanStatus.scan_log && scanStatus.scan_log.length > 0 && (
-            <div className="max-h-20 overflow-y-auto space-y-0.5" data-testid="scan-log">
-              {scanStatus.scan_log.slice(-5).map((source, i) => (
-                <div key={i} className="flex items-center gap-1.5 text-[10px] font-mono text-muted-foreground">
-                  <CheckCircle2 size={9} className="text-green-500 shrink-0" />
-                  <span className="truncate">{source}</span>
-                </div>
+      {/* Progress bar — always visible */}
+      <div className="px-4 pt-2 pb-0">
+        <div className="flex items-center justify-between text-[10px] font-mono text-muted-foreground mb-1">
+          <span>{progressLabel}</span>
+          {statsChips && (
+            <div className="flex items-center gap-2">
+              {statsChips.map((chip, i) => (
+                <span key={i} className={chip.color || "text-muted-foreground"}>
+                  {chip.label}: <span className="font-bold">{chip.value}</span>
+                </span>
               ))}
             </div>
           )}
+        </div>
+        <div className="w-full h-1.5 bg-muted/20 overflow-hidden mb-2.5">
+          <div
+            className={`h-full transition-all duration-700 ${barColor} ${isActive ? "animate-pulse" : ""}`}
+            style={{ width: `${isConfigured ? progress : 0}%` }}
+          />
+        </div>
+      </div>
 
-          {/* Last scan info + results */}
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs border-t border-border pt-2">
-            <div className="flex items-center gap-1.5" data-testid="last-scan-time">
-              <Clock size={11} className="text-muted-foreground" />
-              <span className="text-muted-foreground">Last scan:</span>
-              <span className="font-mono font-medium">{scanStatus.last_scan_at ? formatIST(scanStatus.last_scan_at) : "No scans yet"}</span>
+      {/* Expanded detail */}
+      {expanded && (
+        <CardContent className="px-4 pb-3 pt-0 space-y-2 border-t border-border/50 bg-muted/5">
+          {!isConfigured && configNote && (
+            <p className="text-[10px] text-orange-400/80 font-mono pt-2">{configNote}</p>
+          )}
+          {children}
+          {lastFetched && (
+            <div className="flex items-center gap-1.5 text-[10px] font-mono text-muted-foreground pt-1 border-t border-border/30">
+              <Clock size={9} />
+              <span>Last: {formatIST(lastFetched) || timeAgo(lastFetched)}</span>
             </div>
-            {lastResult && !lastResult.error && (
-              <>
-                <div className="flex items-center gap-1">
-                  <span className="text-muted-foreground">Feeds:</span>
-                  <span className="font-mono font-bold">{lastResult.feeds_scanned}</span>
-                </div>
-                <div className="flex items-center gap-1">
-                  <span className="text-muted-foreground">Articles:</span>
-                  <span className="font-mono font-bold">{lastResult.total_articles}</span>
-                </div>
-                <div className="flex items-center gap-1">
-                  <span className="text-muted-foreground">New:</span>
-                  <span className="font-mono font-bold text-primary">{lastResult.new_relevant}</span>
-                </div>
-                {lastResult.filtered_out > 0 && (
-                  <div className="flex items-center gap-1" data-testid="scan-filtered-stat">
-                    <Filter size={10} className="text-muted-foreground" />
-                    <span className="text-muted-foreground">Filtered:</span>
-                    <span className="font-mono font-bold text-orange-400">{lastResult.filtered_out}</span>
-                  </div>
-                )}
-                {lastResult.translated > 0 && (
-                  <div className="flex items-center gap-1" data-testid="scan-translated-stat">
-                    <Languages size={10} className="text-muted-foreground" />
-                    <span className="text-muted-foreground">Translated:</span>
-                    <span className="font-mono font-bold text-blue-400">{lastResult.translated}</span>
-                  </div>
-                )}
-              </>
-            )}
-          </div>
+          )}
         </CardContent>
       )}
     </Card>
+  );
+}
+
+// ─── main component ──────────────────────────────────────────────────────────
+function SourceScanners({ api }) {
+  const [rss, setRss] = useState(null);
+  const [socialStatus, setSocialStatus] = useState(null);
+  const [ytData, setYtData] = useState({ channels: [], searches: [] });
+  const [fbData, setFbData] = useState({ pages: [] });
+  const [tgData, setTgData] = useState({ channels: [] });
+  const [twData, setTwData] = useState({ accounts: [], searches: [] });
+  const [triggering, setTriggering] = useState({});
+
+  // Poll RSS status fast when scanning, slow otherwise
+  useEffect(() => {
+    const fetchRss = async () => {
+      try { const r = await axios.get(`${api}/scan-status`); setRss(r.data); } catch { /* silent */ }
+    };
+    fetchRss();
+    const id = setInterval(fetchRss, 4000);
+    return () => clearInterval(id);
+  }, [api]);
+
+  // Poll social data every 60s
+  useEffect(() => {
+    const fetchAll = async () => {
+      try {
+        const [status, yt, ytS, fb, tg, twA, twS] = await Promise.allSettled([
+          axios.get(`${api}/social/status`),
+          axios.get(`${api}/social/youtube/channels`),
+          axios.get(`${api}/social/youtube/searches`),
+          axios.get(`${api}/social/facebook/pages`),
+          axios.get(`${api}/social/telegram/channels`),
+          axios.get(`${api}/social/twitter/accounts`),
+          axios.get(`${api}/social/twitter/searches`),
+        ]);
+        if (status.status === "fulfilled") setSocialStatus(status.value.data);
+        setYtData({
+          channels: yt.status === "fulfilled" ? yt.value.data.channels || [] : [],
+          searches: ytS.status === "fulfilled" ? ytS.value.data.searches || [] : [],
+        });
+        setFbData({ pages: fb.status === "fulfilled" ? fb.value.data.pages || [] : [] });
+        setTgData({ channels: tg.status === "fulfilled" ? tg.value.data.channels || [] : [] });
+        setTwData({
+          accounts: twA.status === "fulfilled" ? twA.value.data.accounts || [] : [],
+          searches: twS.status === "fulfilled" ? twS.value.data.searches || [] : [],
+        });
+      } catch { /* silent */ }
+    };
+    fetchAll();
+    const id = setInterval(fetchAll, 60000);
+    return () => clearInterval(id);
+  }, [api]);
+
+  const trigger = async (platform, endpoint) => {
+    setTriggering(t => ({ ...t, [platform]: true }));
+    try { await axios.post(`${api}${endpoint}`); } catch { /* silent */ }
+    setTimeout(() => setTriggering(t => ({ ...t, [platform]: false })), 5000);
+  };
+
+  // ── derived ──
+  const rssScanning  = rss?.is_scanning || false;
+  const rssProgress  = rssScanning ? (rss?.progress || 0) : 100;
+  const lastResult   = rss?.last_scan_result;
+
+  const ytActive = socialStatus?.youtube?.configured;
+  const ytChannels = ytData.channels.filter(c => c.active);
+  const ytLastFetched = ytChannels.reduce((latest, c) => {
+    if (!c.last_fetched) return latest;
+    return !latest || new Date(c.last_fetched) > new Date(latest) ? c.last_fetched : latest;
+  }, null);
+
+  const fbActive = socialStatus?.facebook?.configured;
+  const fbPages  = fbData.pages.filter(p => p.active);
+  const fbLastFetched = fbPages.reduce((latest, p) => {
+    if (!p.last_fetched) return latest;
+    return !latest || new Date(p.last_fetched) > new Date(latest) ? p.last_fetched : latest;
+  }, null);
+
+  const tgActive = socialStatus?.telegram?.configured;
+  const tgChannels = tgData.channels.filter(c => c.active);
+  const tgLastFetched = tgChannels.reduce((latest, c) => {
+    if (!c.last_fetched) return latest;
+    return !latest || new Date(c.last_fetched) > new Date(latest) ? c.last_fetched : latest;
+  }, null);
+
+  const twConfigured = socialStatus?.twitter?.configured;
+  const twAccounts = twData.accounts.filter(a => a.active);
+  const twSearches = twData.searches.filter(s => s.active);
+  const twLastRun = twData.searches.reduce((latest, s) => {
+    if (!s.last_run) return latest;
+    return !latest || new Date(s.last_run) > new Date(latest) ? s.last_run : latest;
+  }, null);
+
+  return (
+    <div className="space-y-2">
+      {/* Section header */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Radio size={13} className="text-primary" />
+          <span className="text-xs uppercase tracking-widest font-['Barlow_Condensed'] font-bold text-muted-foreground">
+            Intelligence Source Monitors
+          </span>
+        </div>
+        <Button
+          variant="ghost" size="sm"
+          className="h-6 px-2 text-[10px] rounded-none font-mono text-muted-foreground border border-border hover:text-foreground"
+          onClick={() => trigger("all", "/social/fetch-all")}
+          disabled={triggering["all"]}
+        >
+          {triggering["all"] ? <Loader2 size={9} className="animate-spin mr-1" /> : <RefreshCw size={9} className="mr-1" />}
+          FETCH ALL
+        </Button>
+      </div>
+
+      {/* ── RSS ── */}
+      <ScannerPanel
+        label="RSS Feeds"
+        icon={Rss}
+        accentColor="text-green-400"
+        bgAccent="bg-green-500/10"
+        borderAccent="border-green-500/30"
+        barColor="bg-green-500"
+        isConfigured={true}
+        isActive={rssScanning}
+        activeLabel="SCANNING"
+        progress={rssProgress}
+        progressLabel={rssScanning ? `Scanning… ${rss?.progress || 0}%` : "Last scan complete"}
+        statsChips={[
+          { label: "Feeds", value: rss?.total_sources || "—" },
+          ...(lastResult ? [
+            { label: "Articles", value: lastResult.total_articles },
+            { label: "New", value: lastResult.new_relevant, color: "text-green-400" },
+          ] : []),
+        ]}
+        lastFetched={rss?.last_scan_at}
+        onTrigger={() => trigger("rss", "/fetch-news")}
+        triggering={triggering["rss"]}
+        testId="scanner-rss"
+      >
+        {rssScanning && rss?.current_source && (
+          <div className="flex items-center gap-1.5 text-[10px] font-mono pt-2">
+            <Loader2 size={9} className="animate-spin text-green-400" />
+            <span className="text-muted-foreground">Scanning:</span>
+            <span className="text-foreground truncate">{rss.current_source}</span>
+          </div>
+        )}
+        {rssScanning && rss?.scan_log?.length > 0 && (
+          <div className="max-h-16 overflow-y-auto space-y-0.5">
+            {rss.scan_log.slice(-4).map((s, i) => (
+              <div key={i} className="flex items-center gap-1.5 text-[10px] font-mono text-muted-foreground">
+                <CheckCircle2 size={8} className="text-green-500 shrink-0" />
+                <span className="truncate">{s}</span>
+              </div>
+            ))}
+          </div>
+        )}
+        {lastResult && !lastResult.error && (
+          <div className="flex flex-wrap gap-x-4 gap-y-1 text-[10px] font-mono pt-2">
+            {lastResult.filtered_out > 0 && (
+              <span className="text-orange-400"><Filter size={8} className="inline mr-0.5" />Filtered: <b>{lastResult.filtered_out}</b></span>
+            )}
+            {lastResult.translated > 0 && (
+              <span className="text-blue-400"><Languages size={8} className="inline mr-0.5" />Translated: <b>{lastResult.translated}</b></span>
+            )}
+          </div>
+        )}
+      </ScannerPanel>
+
+      {/* ── YouTube ── */}
+      <ScannerPanel
+        label="YouTube"
+        icon={Youtube}
+        accentColor="text-red-400"
+        bgAccent="bg-red-500/10"
+        borderAccent="border-red-500/30"
+        barColor="bg-red-500"
+        isConfigured={!!ytActive}
+        configNote="Set YOUTUBE_API_KEY in Render env → Google Cloud Console → YouTube Data API v3"
+        isActive={triggering["youtube"]}
+        activeLabel="FETCHING"
+        progress={ytActive ? 100 : 0}
+        progressLabel={ytActive ? `${ytChannels.length} channels · ${ytData.searches.length} searches active` : "API key not configured"}
+        statsChips={ytActive ? [
+          { label: "Channels", value: ytChannels.length },
+          { label: "Searches", value: ytData.searches.filter(s => s.active).length },
+        ] : []}
+        lastFetched={ytLastFetched}
+        onTrigger={ytActive ? () => trigger("youtube", "/social/fetch-all") : null}
+        triggering={triggering["youtube"] || triggering["all"]}
+        testId="scanner-youtube"
+      >
+        {ytChannels.slice(0, 5).map((ch, i) => (
+          <div key={i} className="flex items-center gap-2 text-[10px] font-mono text-muted-foreground">
+            <Play size={8} className="text-red-400 shrink-0" />
+            <span className="truncate flex-1">{ch.name}</span>
+            {ch.last_fetched && <span className="shrink-0">{timeAgo(ch.last_fetched)}</span>}
+          </div>
+        ))}
+        {ytChannels.length > 5 && (
+          <p className="text-[10px] font-mono text-muted-foreground">+{ytChannels.length - 5} more channels</p>
+        )}
+      </ScannerPanel>
+
+      {/* ── Facebook ── */}
+      <ScannerPanel
+        label="Facebook"
+        icon={Facebook}
+        accentColor="text-blue-400"
+        bgAccent="bg-blue-500/10"
+        borderAccent="border-blue-500/30"
+        barColor="bg-blue-500"
+        isConfigured={!!fbActive}
+        configNote="Set FACEBOOK_APP_ID + FACEBOOK_APP_SECRET in Render env → developers.facebook.com"
+        isActive={triggering["facebook"]}
+        activeLabel="FETCHING"
+        progress={fbActive ? 100 : 0}
+        progressLabel={fbActive ? `${fbPages.length} pages monitored` : "App credentials not configured"}
+        statsChips={fbActive ? [{ label: "Pages", value: fbPages.length }] : []}
+        lastFetched={fbLastFetched}
+        onTrigger={fbActive ? () => trigger("facebook", "/social/fetch-all") : null}
+        triggering={triggering["facebook"] || triggering["all"]}
+        testId="scanner-facebook"
+      >
+        {fbPages.slice(0, 5).map((p, i) => (
+          <div key={i} className="flex items-center gap-2 text-[10px] font-mono text-muted-foreground">
+            <Facebook size={8} className="text-blue-400 shrink-0" />
+            <span className="truncate flex-1">{p.name}</span>
+            {p.last_fetched && <span className="shrink-0">{timeAgo(p.last_fetched)}</span>}
+          </div>
+        ))}
+        {fbPages.length > 5 && (
+          <p className="text-[10px] font-mono text-muted-foreground">+{fbPages.length - 5} more pages</p>
+        )}
+      </ScannerPanel>
+
+      {/* ── Telegram ── */}
+      <ScannerPanel
+        label="Telegram"
+        icon={Send}
+        accentColor="text-sky-400"
+        bgAccent="bg-sky-500/10"
+        borderAccent="border-sky-500/30"
+        barColor="bg-sky-500"
+        isConfigured={!!tgActive}
+        configNote="Run python backend/telegram_setup.py to generate TELEGRAM_SESSION_STRING, then add to Render env"
+        isActive={triggering["telegram"]}
+        activeLabel="FETCHING"
+        progress={tgActive ? 100 : 0}
+        progressLabel={tgActive ? `${tgChannels.length} channels monitored` : "Session not configured"}
+        statsChips={tgActive ? [{ label: "Channels", value: tgChannels.length }] : []}
+        lastFetched={tgLastFetched}
+        onTrigger={tgActive ? () => trigger("telegram", "/social/fetch-all") : null}
+        triggering={triggering["telegram"] || triggering["all"]}
+        testId="scanner-telegram"
+      >
+        {tgChannels.slice(0, 5).map((ch, i) => (
+          <div key={i} className="flex items-center gap-2 text-[10px] font-mono text-muted-foreground">
+            <Send size={8} className="text-sky-400 shrink-0" />
+            <span className="truncate flex-1">@{ch.username}</span>
+            {ch.last_fetched && <span className="shrink-0">{timeAgo(ch.last_fetched)}</span>}
+          </div>
+        ))}
+        {tgChannels.length > 5 && (
+          <p className="text-[10px] font-mono text-muted-foreground">+{tgChannels.length - 5} more channels</p>
+        )}
+      </ScannerPanel>
+
+      {/* ── Twitter / X ── */}
+      <ScannerPanel
+        label="X / Twitter"
+        icon={Twitter}
+        accentColor="text-slate-300"
+        bgAccent="bg-slate-500/10"
+        borderAccent="border-slate-500/30"
+        barColor="bg-slate-400"
+        isConfigured={true}
+        configNote=""
+        isActive={triggering["twitter"]}
+        activeLabel="FETCHING"
+        progress={100}
+        progressLabel={
+          twConfigured
+            ? `Official API · ${twAccounts.length} accounts · ${twSearches.length} searches`
+            : `Nitter fallback · ${twAccounts.length} accounts monitored`
+        }
+        statsChips={[
+          { label: "Accounts", value: twAccounts.length },
+          ...(twConfigured ? [{ label: "Searches", value: twSearches.length }] : []),
+        ]}
+        lastFetched={twLastRun}
+        onTrigger={() => trigger("twitter", "/social/fetch-all")}
+        triggering={triggering["twitter"] || triggering["all"]}
+        testId="scanner-twitter"
+      >
+        <div className="flex items-center gap-1.5 pt-1">
+          <Badge className={`rounded-none text-[9px] px-1.5 py-0 border ${twConfigured ? "bg-slate-500/20 text-slate-300 border-slate-500/30" : "bg-orange-500/10 text-orange-400 border-orange-500/30"}`}>
+            {twConfigured ? "OFFICIAL API" : "NITTER MODE"}
+          </Badge>
+          {!twConfigured && (
+            <span className="text-[10px] font-mono text-muted-foreground">
+              Set TWITTER_BEARER_TOKEN for keyword search
+            </span>
+          )}
+        </div>
+        {twAccounts.slice(0, 5).map((a, i) => (
+          <div key={i} className="flex items-center gap-2 text-[10px] font-mono text-muted-foreground">
+            <Twitter size={8} className="text-slate-400 shrink-0" />
+            <span className="truncate flex-1">@{a.handle}</span>
+            <span className="text-muted-foreground/60">{a.category}</span>
+          </div>
+        ))}
+        {twAccounts.length > 5 && (
+          <p className="text-[10px] font-mono text-muted-foreground">+{twAccounts.length - 5} more accounts</p>
+        )}
+      </ScannerPanel>
+    </div>
   );
 }
 
@@ -514,8 +801,8 @@ export default function Dashboard({ stats: propStats, api }) {
         />
       </div>
 
-      {/* RSS Scan Progress Bar */}
-      <ScanProgressBar api={api} />
+      {/* Source Scanners */}
+      <SourceScanners api={api} />
 
       {/* Unacknowledged Critical Alerts - Sticky Panel */}
       <UnacknowledgedAlerts api={api} />
