@@ -83,6 +83,81 @@ async def get_dashboard_stats():
     return result
 
 
+@router.get("/intelligence/source-stats")
+async def get_source_stats():
+    """Per-source-type effectiveness breakdown for the Settings page."""
+    now = datetime.now(timezone.utc)
+    settings = await db.app_settings.find_one({"key": "retention_days"}, {"_id": 0})
+    retention_days = settings.get("value", 30) if settings else 30
+    cutoff = (now - timedelta(days=retention_days)).isoformat()
+
+    NON_RSS = ["youtube", "facebook", "telegram", "twitter", "firecrawl"]
+
+    # Aggregate per source_type
+    pipeline = [
+        {"$match": {"source_type": {"$in": NON_RSS}, "published_at": {"$gte": cutoff}}},
+        {"$group": {
+            "_id": "$source_type",
+            "total":     {"$sum": 1},
+            "processed": {"$sum": {"$cond": ["$processed", 1, 0]}},
+            "critical":  {"$sum": {"$cond": [{"$eq": ["$severity", "critical"]}, 1, 0]}},
+            "high":      {"$sum": {"$cond": [{"$eq": ["$severity", "high"]},    1, 0]}},
+            "medium":    {"$sum": {"$cond": [{"$eq": ["$severity", "medium"]},  1, 0]}},
+            "low":       {"$sum": {"$cond": [{"$eq": ["$severity", "low"]},     1, 0]}},
+            "latest_at": {"$max": "$published_at"},
+        }},
+        {"$sort": {"total": -1}},
+    ]
+
+    sources = []
+    async for doc in intelligence_col.aggregate(pipeline):
+        st = doc["_id"]
+        # fetch the latest item for a preview
+        latest = await intelligence_col.find_one(
+            {"source_type": st, "published_at": {"$gte": cutoff}},
+            {"_id": 0, "title": 1, "source_url": 1, "severity": 1, "source": 1},
+            sort=[("published_at", -1)],
+        )
+        sources.append({
+            "source_type": st,
+            "total":       doc["total"],
+            "processed":   doc["processed"],
+            "severity": {
+                "critical": doc["critical"],
+                "high":     doc["high"],
+                "medium":   doc["medium"],
+                "low":      doc["low"],
+            },
+            "latest_at":    doc.get("latest_at"),
+            "latest_title": latest.get("title") if latest else None,
+            "latest_url":   latest.get("source_url") if latest else None,
+            "latest_severity": latest.get("severity") if latest else None,
+        })
+
+    # Ensure all 5 sources appear even if no data yet
+    found_types = {s["source_type"] for s in sources}
+    for st in NON_RSS:
+        if st not in found_types:
+            sources.append({
+                "source_type": st, "total": 0, "processed": 0,
+                "severity": {"critical": 0, "high": 0, "medium": 0, "low": 0},
+                "latest_at": None, "latest_title": None, "latest_url": None, "latest_severity": None,
+            })
+
+    # Sort in display order
+    order = {s: i for i, s in enumerate(NON_RSS)}
+    sources.sort(key=lambda x: order.get(x["source_type"], 99))
+
+    # Recent catches — last 10 processed items across all non-RSS sources
+    recent = await intelligence_col.find(
+        {"source_type": {"$in": NON_RSS}, "processed": True, "published_at": {"$gte": cutoff}},
+        {"_id": 0, "title": 1, "source_type": 1, "source": 1, "severity": 1,
+         "published_at": 1, "source_url": 1, "threat_category": 1},
+    ).sort("published_at", -1).limit(10).to_list(10)
+
+    return {"sources": sources, "recent_catches": recent, "retention_days": retention_days}
+
+
 @router.get("/intelligence")
 async def get_intelligence(
     state: Optional[str] = None,

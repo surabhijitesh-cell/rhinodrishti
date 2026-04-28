@@ -2,7 +2,8 @@ import { useState, useEffect, useCallback } from "react";
 import { Navigate } from "react-router-dom";
 import {
   Settings as SettingsIcon, Clock, Save, RefreshCw, ShieldCheck, Zap,
-  TrendingUp, TrendingDown, Minus, BarChart3, Loader2, Rss, Plus, Trash2, Globe
+  TrendingUp, TrendingDown, Minus, BarChart3, Loader2, Rss, Plus, Trash2, Globe,
+  Youtube, Facebook, MessageCircle, Twitter, Activity, ExternalLink, Radio,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Button } from "../components/ui/button";
@@ -137,7 +138,10 @@ function SettingsContent({ api }) {
         <FeedbackSettings api={api} />
       </div>
 
-      {/* Row 3: Full-width Bias Impact Report */}
+      {/* Row 3: Source Effectiveness */}
+      <SourceEffectivenessCard api={api} />
+
+      {/* Row 4: Full-width Bias Impact Report */}
       <BiasImpactReport api={api} />
     </div>
   );
@@ -379,6 +383,256 @@ function BiasSettings({ api }) {
             <Badge variant="outline" className={`rounded-none text-[9px] px-1.5 py-0 ${currentInfluence.color}`}>{currentInfluence.pct}</Badge>
           </div>
         </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+
+// ─── Source Effectiveness Card ────────────────────────────────────────────────
+
+const SOURCE_META = {
+  youtube:   { label: "YouTube",   Icon: Youtube,       accent: "text-red-400",     border: "border-l-red-500",     bg: "bg-red-500/10",   dot: "bg-red-400"   },
+  facebook:  { label: "Facebook",  Icon: Facebook,      accent: "text-blue-400",    border: "border-l-blue-500",    bg: "bg-blue-500/10",  dot: "bg-blue-400"  },
+  telegram:  { label: "Telegram",  Icon: Radio,         accent: "text-sky-400",     border: "border-l-sky-500",     bg: "bg-sky-500/10",   dot: "bg-sky-400"   },
+  twitter:   { label: "X/Twitter", Icon: Twitter,       accent: "text-slate-300",   border: "border-l-slate-400",   bg: "bg-slate-500/10", dot: "bg-slate-300" },
+  firecrawl: { label: "Firecrawl", Icon: Activity,      accent: "text-orange-400",  border: "border-l-orange-500",  bg: "bg-orange-500/10",dot: "bg-orange-400"},
+};
+
+const SEV_COLOR = {
+  critical: "bg-red-500",
+  high:     "bg-orange-500",
+  medium:   "bg-yellow-500",
+  low:      "bg-emerald-500",
+};
+
+function timeAgoShort(iso) {
+  if (!iso) return "—";
+  const diff = Math.floor((Date.now() - new Date(iso)) / 1000);
+  if (diff < 60)   return `${diff}s ago`;
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+  return `${Math.floor(diff / 86400)}d ago`;
+}
+
+function SevBar({ severity }) {
+  const total = (severity.critical + severity.high + severity.medium + severity.low) || 1;
+  const segs = ["critical", "high", "medium", "low"];
+  return (
+    <div className="flex h-1.5 w-full rounded-full overflow-hidden gap-px">
+      {segs.map(s => severity[s] > 0 && (
+        <div
+          key={s}
+          title={`${s}: ${severity[s]}`}
+          className={`${SEV_COLOR[s]} transition-all`}
+          style={{ width: `${(severity[s] / total) * 100}%` }}
+        />
+      ))}
+      {total === 1 && <div className="bg-muted/30 flex-1 rounded-full" />}
+    </div>
+  );
+}
+
+function SourceEffectivenessCard({ api }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [expanded, setExpanded] = useState(null); // source_type of expanded row
+
+  const fetchData = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await axios.get(`${api}/intelligence/source-stats`);
+      setData(res.data);
+    } catch (e) {
+      console.error("source-stats fetch failed", e);
+    }
+    setLoading(false);
+  }, [api]);
+
+  useEffect(() => { fetchData(); }, [fetchData]);
+
+  if (loading) return (
+    <Card className="border border-border rounded-none bg-card">
+      <CardHeader className="py-3 px-4 border-b border-border">
+        <CardTitle className="text-sm uppercase tracking-wider font-['Barlow_Condensed'] font-semibold flex items-center gap-2">
+          <BarChart3 size={16} className="text-violet-400" /> Source Effectiveness
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="p-8 flex items-center justify-center">
+        <Loader2 size={20} className="animate-spin text-muted-foreground" />
+      </CardContent>
+    </Card>
+  );
+
+  const { sources = [], recent_catches = [], retention_days = 30 } = data || {};
+  const totalNonRss = sources.reduce((s, x) => s + x.total, 0);
+
+  return (
+    <Card className="border border-border rounded-none bg-card border-l-4 border-l-violet-500">
+      <CardHeader className="py-3 px-4 border-b border-border flex flex-row items-center justify-between">
+        <CardTitle className="text-sm uppercase tracking-wider font-['Barlow_Condensed'] font-semibold flex items-center gap-2">
+          <BarChart3 size={16} className="text-violet-400" />
+          Source Effectiveness
+          <Badge className="rounded-none text-[9px] px-1.5 py-0 bg-violet-500/20 text-violet-400 border-violet-500/30 ml-1">
+            {totalNonRss} items · last {retention_days}d
+          </Badge>
+        </CardTitle>
+        <Button variant="outline" size="sm" className="rounded-none text-[10px] h-6 px-2 uppercase" onClick={fetchData}>
+          <RefreshCw size={11} className="mr-1" /> Refresh
+        </Button>
+      </CardHeader>
+
+      <CardContent className="p-4 space-y-4">
+        <p className="text-xs text-muted-foreground">
+          Intelligence items collected from non-RSS sources in the last {retention_days} days.
+          Click a row to preview the latest catch from that source.
+        </p>
+
+        {/* Per-source rows */}
+        <div className="divide-y divide-border border border-border">
+          {sources.map(src => {
+            const meta = SOURCE_META[src.source_type] || { label: src.source_type, Icon: Globe, accent: "text-muted-foreground", border: "", bg: "bg-muted/10", dot: "bg-muted-foreground" };
+            const { Icon } = meta;
+            const pctProcessed = src.total > 0 ? Math.round((src.processed / src.total) * 100) : 0;
+            const isOpen = expanded === src.source_type;
+            const highValue = src.severity.critical + src.severity.high;
+
+            return (
+              <div key={src.source_type}>
+                <button
+                  onClick={() => setExpanded(isOpen ? null : src.source_type)}
+                  className={`w-full text-left p-3 hover:bg-muted/5 transition-colors flex items-center gap-3 ${isOpen ? "bg-muted/5" : ""}`}
+                >
+                  {/* Icon + label */}
+                  <div className={`w-7 h-7 rounded flex items-center justify-center shrink-0 ${meta.bg}`}>
+                    <Icon size={14} className={meta.accent} />
+                  </div>
+                  <div className="w-24 shrink-0">
+                    <p className={`text-xs font-bold font-['Barlow_Condensed'] uppercase tracking-wide ${meta.accent}`}>{meta.label}</p>
+                    <p className="text-[9px] font-mono text-muted-foreground">{timeAgoShort(src.latest_at)}</p>
+                  </div>
+
+                  {/* Total count */}
+                  <div className="w-16 shrink-0 text-center">
+                    <p className="text-lg font-bold font-['Barlow_Condensed']">{src.total}</p>
+                    <p className="text-[8px] uppercase font-mono text-muted-foreground">items</p>
+                  </div>
+
+                  {/* Severity bar + counts */}
+                  <div className="flex-1 min-w-0 space-y-1">
+                    <SevBar severity={src.severity} />
+                    <div className="flex gap-2 text-[8px] font-mono">
+                      {src.severity.critical > 0 && <span className="text-red-400">{src.severity.critical} crit</span>}
+                      {src.severity.high > 0     && <span className="text-orange-400">{src.severity.high} high</span>}
+                      {src.severity.medium > 0   && <span className="text-yellow-400">{src.severity.medium} med</span>}
+                      {src.severity.low > 0      && <span className="text-emerald-400">{src.severity.low} low</span>}
+                      {src.total === 0 && <span className="text-muted-foreground">no data yet</span>}
+                    </div>
+                  </div>
+
+                  {/* AI processed rate */}
+                  <div className="w-20 shrink-0 text-right">
+                    <p className={`text-sm font-bold font-['Barlow_Condensed'] ${pctProcessed >= 80 ? "text-emerald-400" : pctProcessed >= 50 ? "text-amber-400" : "text-red-400"}`}>
+                      {pctProcessed}%
+                    </p>
+                    <p className="text-[8px] font-mono text-muted-foreground">AI processed</p>
+                  </div>
+
+                  {/* High-value badge */}
+                  <div className="w-16 shrink-0 text-center">
+                    {highValue > 0 ? (
+                      <Badge className="rounded-none text-[8px] px-1 py-0 bg-red-500/15 text-red-400 border-red-500/30">
+                        {highValue} ⚠
+                      </Badge>
+                    ) : (
+                      <span className="text-[9px] font-mono text-muted-foreground/40">—</span>
+                    )}
+                  </div>
+
+                  {/* Expand caret */}
+                  <span className="text-muted-foreground/50 text-xs">{isOpen ? "▲" : "▼"}</span>
+                </button>
+
+                {/* Expanded: latest catch preview */}
+                {isOpen && (
+                  <div className={`px-4 pb-3 pt-1 ${meta.bg} border-t border-border`}>
+                    {src.latest_title ? (
+                      <div className="space-y-1">
+                        <p className="text-[9px] uppercase tracking-widest font-mono text-muted-foreground font-semibold">Latest Catch</p>
+                        <div className="flex items-start gap-2">
+                          <div className={`w-1.5 h-1.5 rounded-full mt-1.5 shrink-0 ${SEV_COLOR[src.latest_severity] || "bg-muted"}`} />
+                          <div className="flex-1 min-w-0">
+                            <p className="text-xs font-medium leading-tight line-clamp-2">{src.latest_title}</p>
+                          </div>
+                          {src.latest_url && (
+                            <a href={src.latest_url} target="_blank" rel="noreferrer"
+                               className="text-muted-foreground/50 hover:text-primary transition-colors shrink-0 mt-0.5"
+                               onClick={e => e.stopPropagation()}>
+                              <ExternalLink size={11} />
+                            </a>
+                          )}
+                        </div>
+                        <p className="text-[9px] font-mono text-muted-foreground pl-3.5">
+                          {src.latest_severity?.toUpperCase()} · {timeAgoShort(src.latest_at)}
+                        </p>
+                      </div>
+                    ) : (
+                      <p className="text-[10px] text-muted-foreground font-mono py-1">No items collected yet — fetch will populate this source.</p>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Recent catches across all non-RSS sources */}
+        {recent_catches.length > 0 && (
+          <div>
+            <p className="text-[10px] uppercase tracking-widest font-mono font-semibold text-muted-foreground mb-2">
+              Recent Catches — All Sources
+            </p>
+            <div className="divide-y divide-border border border-border">
+              {recent_catches.map((item, i) => {
+                const m = SOURCE_META[item.source_type] || { label: item.source_type, dot: "bg-muted-foreground", accent: "text-muted-foreground" };
+                return (
+                  <div key={i} className="p-2.5 flex items-start gap-2.5 hover:bg-muted/5">
+                    <div className={`w-1.5 h-1.5 rounded-full mt-1.5 shrink-0 ${SEV_COLOR[item.severity] || "bg-muted"}`} />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-medium truncate">{item.title}</p>
+                      <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                        <span className={`text-[8px] uppercase font-mono font-bold ${m.accent}`}>{m.label}</span>
+                        {item.source && <span className="text-[8px] font-mono text-muted-foreground truncate max-w-[120px]">{item.source}</span>}
+                        {item.threat_category && <span className="text-[8px] font-mono text-muted-foreground/60">{item.threat_category}</span>}
+                      </div>
+                    </div>
+                    <div className="shrink-0 text-right">
+                      <Badge className={`rounded-none text-[7px] px-1 py-0 ${
+                        item.severity === "critical" ? "bg-red-500/15 text-red-400 border-red-500/30" :
+                        item.severity === "high"     ? "bg-orange-500/15 text-orange-400 border-orange-500/30" :
+                        item.severity === "medium"   ? "bg-yellow-500/15 text-yellow-400 border-yellow-500/30" :
+                        "bg-emerald-500/15 text-emerald-400 border-emerald-500/30"
+                      }`}>{item.severity}</Badge>
+                      <p className="text-[8px] font-mono text-muted-foreground mt-0.5">{timeAgoShort(item.published_at)}</p>
+                    </div>
+                    {item.source_url && (
+                      <a href={item.source_url} target="_blank" rel="noreferrer"
+                         className="text-muted-foreground/40 hover:text-primary transition-colors shrink-0 mt-1">
+                        <ExternalLink size={10} />
+                      </a>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {totalNonRss === 0 && !loading && (
+          <div className="text-center py-6 text-muted-foreground text-sm">
+            No intelligence yet from non-RSS sources. Trigger a fetch from the Dashboard scanners to populate.
+          </div>
+        )}
       </CardContent>
     </Card>
   );
