@@ -182,7 +182,7 @@ export default function TrainingSummary({ api }) {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl md:text-4xl font-bold uppercase tracking-tight font-['Barlow_Condensed']" data-testid="training-title">
+          <h1 className="text-3xl md:text-4xl font-bold uppercase tracking-tight font-['Barlow_Condensed']" data-testid="training-title" data-tour="training-title">
             Training & Feedback
           </h1>
           <p className="text-xs font-mono uppercase tracking-[0.15em] text-muted-foreground mt-1">

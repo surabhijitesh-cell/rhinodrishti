@@ -58,7 +58,7 @@ export default function Patterns({ api }) {
     <div className="space-y-6" data-testid="patterns-page">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl md:text-4xl font-bold uppercase tracking-tight font-['Barlow_Condensed']" data-testid="patterns-title">
+          <h1 className="text-3xl md:text-4xl font-bold uppercase tracking-tight font-['Barlow_Condensed']" data-testid="patterns-title" data-tour="patterns-title">
             Pattern Detection Engine
           </h1>
           <p className="text-xs font-mono uppercase tracking-[0.15em] text-muted-foreground mt-1">

@@ -60,7 +60,7 @@ export default function WeeklyTrends({ api }) {
     <div className="space-y-6" data-testid="weekly-trends-page">
       {/* Header */}
       <div>
-        <h1 className="text-3xl md:text-4xl font-bold uppercase tracking-tight font-['Barlow_Condensed']" data-testid="trends-title">
+        <h1 className="text-3xl md:text-4xl font-bold uppercase tracking-tight font-['Barlow_Condensed']" data-testid="trends-title" data-tour="trends-title">
           Weekly Trend Analysis
         </h1>
         <p className="text-xs font-mono uppercase tracking-[0.15em] text-muted-foreground mt-1">

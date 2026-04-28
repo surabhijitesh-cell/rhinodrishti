@@ -215,7 +215,7 @@ export default function DailyBrief({ api }) {
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-4">
         <div>
-          <h1 className="text-3xl md:text-4xl font-bold uppercase tracking-tight font-['Barlow_Condensed']" data-testid="brief-title">
+          <h1 className="text-3xl md:text-4xl font-bold uppercase tracking-tight font-['Barlow_Condensed']" data-testid="brief-title" data-tour="brief-title">
             Daily Intelligence Brief
           </h1>
           <div className="flex items-center gap-2 mt-1">

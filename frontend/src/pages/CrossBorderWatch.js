@@ -267,7 +267,7 @@ export default function CrossBorderWatch({ api }) {
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h1 className="text-2xl font-bold uppercase tracking-wider font-['Barlow_Condensed']" data-testid="cb-title">
+          <h1 className="text-2xl font-bold uppercase tracking-wider font-['Barlow_Condensed']" data-testid="cb-title" data-tour="cross-border-title">
             Cross-Border Watch
           </h1>
           <p className="text-xs text-muted-foreground font-mono uppercase tracking-wider mt-0.5">

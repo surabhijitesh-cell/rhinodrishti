@@ -6,11 +6,13 @@ import {
   Shield, LayoutDashboard, Newspaper, FileText, TrendingUp,
   Globe, Bell, ChevronLeft, ChevronRight, Sun, Moon, Search,
   Activity, Menu, X, Upload, GitBranch, Settings, Network, Key, BookOpen, Brain,
-  LogOut, Users, Megaphone
+  LogOut, Users, Megaphone, HelpCircle, RotateCcw
 } from "lucide-react";
 import { Input } from "../components/ui/input";
 import { Button } from "../components/ui/button";
 import { Badge } from "../components/ui/badge";
+import Tip from "./Tip";
+import { useTour } from "../contexts/TourContext";
 
 const ALL_NAV_ITEMS = [
   { path: "/", label: "Dashboard", icon: LayoutDashboard, roles: ["admin", "analyst", "viewer"] },
@@ -54,6 +56,7 @@ export default function Layout({ children, alertCount = 0, onSearch }) {
   const { theme, toggleTheme } = useTheme();
   const location = useLocation();
   const { user, logout } = useAuth();
+  const { startTour, resetAllTours } = useTour();
 
   const userRole = user?.role || "viewer";
   const navItems = ALL_NAV_ITEMS.filter((item) => item.roles.includes(userRole));
@@ -68,14 +71,14 @@ export default function Layout({ children, alertCount = 0, onSearch }) {
   };
 
   const SidebarContent = () => (
-    <nav className="flex flex-col gap-0 mt-2 px-2" data-testid="sidebar-nav">
+    <nav className="flex flex-col gap-0 mt-2 px-2" data-testid="sidebar-nav" data-tour="sidebar-nav">
       {navItems.map((item) => {
         const Icon = item.icon;
         const isActive = location.pathname === item.path;
         const badge = badgeMap[item.path];
         return (
+          <Tip key={item.path} text={item.label} side="right" disabled={!collapsed}>
           <Link
-            key={item.path}
             to={item.path}
             data-testid={`nav-${item.label.toLowerCase().replace(/\s+/g, '-')}`}
             onClick={() => { setMobileOpen(false); if (badge) badge.dismiss(); }}
@@ -97,6 +100,7 @@ export default function Layout({ children, alertCount = 0, onSearch }) {
               </Badge>
             )}
           </Link>
+          </Tip>
         );
       })}
     </nav>
@@ -194,26 +198,58 @@ export default function Layout({ children, alertCount = 0, onSearch }) {
           </form>
 
           <div className="flex items-center gap-2">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={toggleTheme}
-              data-testid="theme-toggle"
-              className="text-muted-foreground hover:text-foreground"
-            >
-              {theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}
-            </Button>
-
-            <Link to="/alerts">
-              <Button variant="ghost" size="sm" className="relative" data-testid="alerts-bell">
-                <Bell size={18} />
-                {alertCount > 0 && (
-                  <span className="absolute -top-0.5 -right-0.5 w-4 h-4 bg-red-500 text-white text-[10px] rounded-full flex items-center justify-center">
-                    {alertCount > 9 ? "9+" : alertCount}
-                  </span>
-                )}
+            <Tip text="Toggle dark / light theme" side="bottom">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={toggleTheme}
+                data-testid="theme-toggle"
+                className="text-muted-foreground hover:text-foreground"
+              >
+                {theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}
               </Button>
-            </Link>
+            </Tip>
+
+            <Tip text={alertCount > 0 ? `${alertCount} unacknowledged critical/high alerts` : "No active alerts"} side="bottom">
+              <Link to="/alerts">
+                <Button variant="ghost" size="sm" className="relative" data-testid="alerts-bell">
+                  <Bell size={18} />
+                  {alertCount > 0 && (
+                    <span className="absolute -top-0.5 -right-0.5 w-4 h-4 bg-red-500 text-white text-[10px] rounded-full flex items-center justify-center">
+                      {alertCount > 9 ? "9+" : alertCount}
+                    </span>
+                  )}
+                </Button>
+              </Link>
+            </Tip>
+
+            {/* Tour button — visible to all users */}
+            <Tip text="Start guided walkthrough for this page" side="bottom">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={startTour}
+                className="text-muted-foreground hover:text-primary"
+                data-testid="tour-btn"
+              >
+                <HelpCircle size={16} />
+              </Button>
+            </Tip>
+
+            {/* Reset all tours — admin only */}
+            {user?.role === "admin" && (
+              <Tip text="Reset all page tours (re-enables auto-walkthrough on every page)" side="bottom">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => { resetAllTours(); startTour(); }}
+                  className="text-muted-foreground hover:text-amber-400"
+                  data-testid="reset-tour-btn"
+                >
+                  <RotateCcw size={14} />
+                </Button>
+              </Tip>
+            )}
 
             {/* User info + Logout */}
             {user && (
@@ -222,16 +258,17 @@ export default function Layout({ children, alertCount = 0, onSearch }) {
                   <p className="text-xs font-mono leading-tight" data-testid="user-display-name">{user.name || user.username}</p>
                   <p className="text-[9px] uppercase tracking-widest text-muted-foreground">{user.role}</p>
                 </div>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={logout}
-                  className="text-muted-foreground hover:text-red-400"
-                  title="Logout"
-                  data-testid="logout-btn"
-                >
-                  <LogOut size={16} />
-                </Button>
+                <Tip text="Log out of Rhino Drishti" side="bottom">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={logout}
+                    className="text-muted-foreground hover:text-red-400"
+                    data-testid="logout-btn"
+                  >
+                    <LogOut size={16} />
+                  </Button>
+                </Tip>
               </div>
             )}
           </div>

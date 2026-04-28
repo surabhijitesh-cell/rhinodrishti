@@ -8,6 +8,7 @@ import {
   ArrowUpDown, Youtube, Facebook, Send, Twitter, ChevronDown, ChevronUp,
   Play, Zap, Radio, Globe
 } from "lucide-react";
+import Tip from "../components/Tip";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
@@ -716,7 +717,7 @@ export default function Dashboard({ stats: propStats, api }) {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl md:text-4xl font-bold uppercase tracking-tight font-['Barlow_Condensed']" data-testid="dashboard-title">
+          <h1 className="text-3xl md:text-4xl font-bold uppercase tracking-tight font-['Barlow_Condensed']" data-testid="dashboard-title" data-tour="dashboard-title">
             Intelligence Overview
           </h1>
           <p className="text-xs font-mono uppercase tracking-[0.15em] text-muted-foreground mt-1">
@@ -724,78 +725,67 @@ export default function Dashboard({ stats: propStats, api }) {
           </p>
         </div>
         <div className="flex items-center gap-3">
-          <div className="flex items-center gap-1.5 text-[10px] font-mono" data-testid="ws-status">
-            {wsConnected ? (
-              <>
-                <Wifi size={12} className="text-green-400" />
-                <span className="text-green-400 uppercase">Live</span>
-              </>
-            ) : (
-              <>
-                <WifiOff size={12} className="text-muted-foreground" />
-                <span className="text-muted-foreground uppercase">Offline</span>
-              </>
-            )}
-          </div>
-          <Button
-            onClick={handleFetchNews}
-            disabled={loading}
-            className="uppercase text-xs font-bold tracking-wider rounded-none"
-            data-testid="fetch-news-btn"
-          >
-            <RefreshCw size={14} className={`mr-2 ${loading ? "animate-spin" : ""}`} />
-            Fetch Intel
-          </Button>
+          <Tip text={wsConnected ? "WebSocket live — new intel items arrive instantly without a page refresh" : "WebSocket offline — data updates on manual refresh only"} side="bottom">
+            <div className="flex items-center gap-1.5 text-[10px] font-mono cursor-default" data-testid="ws-status">
+              {wsConnected ? (
+                <>
+                  <Wifi size={12} className="text-green-400" />
+                  <span className="text-green-400 uppercase">Live</span>
+                </>
+              ) : (
+                <>
+                  <WifiOff size={12} className="text-muted-foreground" />
+                  <span className="text-muted-foreground uppercase">Offline</span>
+                </>
+              )}
+            </div>
+          </Tip>
+          <Tip text="Trigger a full sweep of all 6 sources — RSS feeds + YouTube, Facebook, Telegram, X/Twitter and Firecrawl — simultaneously" side="bottom">
+            <Button
+              onClick={handleFetchNews}
+              disabled={loading}
+              className="uppercase text-xs font-bold tracking-wider rounded-none"
+              data-testid="fetch-news-btn"
+              data-tour="fetch-intel-btn"
+            >
+              <RefreshCw size={14} className={`mr-2 ${loading ? "animate-spin" : ""}`} />
+              Fetch Intel
+            </Button>
+          </Tip>
         </div>
       </div>
 
       {/* Stats Row */}
       <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-4">
-        <StatBox
-          label="Total Items"
-          value={stats?.total_items || 0}
-          icon={Activity}
-          color="bg-primary/10 text-primary"
-          sub={`${stats?.today_count || 0} today`}
-          testId="stat-total"
-          onClick={() => navigate("/feed")}
-        />
-        <StatBox
-          label="Critical"
-          value={stats?.critical_count || 0}
-          icon={AlertTriangle}
-          color="bg-red-500/10 text-red-400"
-          testId="stat-critical"
-          onClick={() => navigate("/feed?severity=critical")}
-        />
-        <StatBox
-          label="High"
-          value={stats?.high_count || 0}
-          icon={Target}
-          color="bg-amber-500/10 text-amber-400"
-          testId="stat-high"
-          onClick={() => navigate("/feed?severity=high")}
-        />
-        <StatBox
-          label="Medium"
-          value={stats?.medium_count || 0}
-          icon={Shield}
-          color="bg-yellow-500/10 text-yellow-400"
-          testId="stat-medium"
-          onClick={() => navigate("/feed?severity=medium")}
-        />
-        <StatBox
-          label="Low"
-          value={stats?.low_count || 0}
-          icon={ArrowUp}
-          color="bg-green-500/10 text-green-400"
-          testId="stat-low"
-          onClick={() => navigate("/feed?severity=low")}
-        />
+        <Tip text="Total AI-processed intelligence items in your retention window. Click to open the full Intelligence Feed." side="bottom">
+          <div data-tour="stat-total">
+            <StatBox label="Total Items" value={stats?.total_items || 0} icon={Activity} color="bg-primary/10 text-primary" sub={`${stats?.today_count || 0} today`} testId="stat-total" onClick={() => navigate("/feed")} />
+          </div>
+        </Tip>
+        <Tip text="CRITICAL items — immediate threats. Click to filter feed to critical only." side="bottom">
+          <div data-tour="stat-critical">
+            <StatBox label="Critical" value={stats?.critical_count || 0} icon={AlertTriangle} color="bg-red-500/10 text-red-400" testId="stat-critical" onClick={() => navigate("/feed?severity=critical")} />
+          </div>
+        </Tip>
+        <Tip text="HIGH severity items — significant events requiring priority review. Click to filter." side="bottom">
+          <div data-tour="stat-high">
+            <StatBox label="High" value={stats?.high_count || 0} icon={Target} color="bg-amber-500/10 text-amber-400" testId="stat-high" onClick={() => navigate("/feed?severity=high")} />
+          </div>
+        </Tip>
+        <Tip text="MEDIUM severity — notable but non-urgent items. Click to filter." side="bottom">
+          <div data-tour="stat-medium">
+            <StatBox label="Medium" value={stats?.medium_count || 0} icon={Shield} color="bg-yellow-500/10 text-yellow-400" testId="stat-medium" onClick={() => navigate("/feed?severity=medium")} />
+          </div>
+        </Tip>
+        <Tip text="LOW severity — informational items. Click to filter." side="bottom">
+          <div>
+            <StatBox label="Low" value={stats?.low_count || 0} icon={ArrowUp} color="bg-green-500/10 text-green-400" testId="stat-low" onClick={() => navigate("/feed?severity=low")} />
+          </div>
+        </Tip>
       </div>
 
       {/* Source Scanners */}
-      <SourceScanners api={api} />
+      <div data-tour="source-scanners"><SourceScanners api={api} /></div>
 
       {/* Unacknowledged Critical Alerts - Sticky Panel */}
       <UnacknowledgedAlerts api={api} />
@@ -838,7 +828,7 @@ export default function Dashboard({ stats: propStats, api }) {
       {/* Map + Recent Alerts */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
         {/* NER Map */}
-        <div className="lg:col-span-7">
+        <div className="lg:col-span-7" data-tour="ner-map">
           <NERMap
             stateStats={stateStatsMap}
             onStateClick={(state) => navigate(`/feed?state=${encodeURIComponent(state)}`)}
@@ -979,7 +969,7 @@ export default function Dashboard({ stats: propStats, api }) {
       <PatternInsights api={api} />
 
       {/* Recent Intelligence */}
-      <div>
+      <div data-tour="recent-intel">
         <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
           <h2 className="text-xl uppercase tracking-wide font-['Barlow_Condensed'] font-semibold">
             Latest Intelligence

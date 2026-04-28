@@ -200,7 +200,7 @@ export default function IntelligenceFeed({ api, crossBorderOnly = false, alertsO
     <div className="space-y-4" data-testid="intelligence-feed-page">
       {/* Header */}
       <div>
-        <h1 className="text-3xl md:text-4xl font-bold uppercase tracking-tight font-['Barlow_Condensed']" data-testid="feed-title">
+        <h1 className="text-3xl md:text-4xl font-bold uppercase tracking-tight font-['Barlow_Condensed']" data-testid="feed-title" data-tour="feed-title">
           {pageTitle}
         </h1>
         <p className="text-xs font-mono uppercase tracking-[0.15em] text-muted-foreground mt-1">{pageDesc}</p>

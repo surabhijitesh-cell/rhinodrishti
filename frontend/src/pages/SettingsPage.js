@@ -82,7 +82,7 @@ function SettingsContent({ api }) {
   return (
     <div className="space-y-6" data-testid="settings-page">
       <div>
-        <h1 className="text-3xl md:text-4xl font-bold uppercase tracking-tight font-['Barlow_Condensed']" data-testid="settings-title">
+        <h1 className="text-3xl md:text-4xl font-bold uppercase tracking-tight font-['Barlow_Condensed']" data-testid="settings-title" data-tour="settings-title">
           Platform Settings
         </h1>
         <p className="text-xs font-mono uppercase tracking-[0.15em] text-muted-foreground mt-1">
@@ -99,7 +99,7 @@ function SettingsContent({ api }) {
       {/* Row 1: Retention + Pipeline side by side */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {/* News Retention Window */}
-        <Card className="border border-border rounded-none bg-card" data-testid="retention-card">
+        <Card className="border border-border rounded-none bg-card" data-testid="retention-card" data-tour="retention-card">
           <CardHeader className="py-3 px-4 border-b border-border">
             <CardTitle className="text-sm uppercase tracking-wider font-['Barlow_Condensed'] font-semibold flex items-center gap-2">
               <Clock size={16} className="text-primary" />
@@ -214,7 +214,7 @@ function LocalDatabaseCard({ api }) {
   };
 
   return (
-    <Card className={`border border-border rounded-none bg-card border-l-4 ${isLocal ? "border-l-emerald-500" : "border-l-amber-500"}`}>
+    <Card className={`border border-border rounded-none bg-card border-l-4 ${isLocal ? "border-l-emerald-500" : "border-l-amber-500"}`} data-tour="local-db-card">
       <CardHeader className="py-3 px-4 border-b border-border flex flex-row items-center justify-between">
         <CardTitle className="text-sm uppercase tracking-wider font-['Barlow_Condensed'] font-semibold flex items-center gap-2">
           <HardDrive size={16} className={isLocal ? "text-emerald-400" : "text-amber-400"} />
@@ -584,7 +584,7 @@ function BiasSettings({ api }) {
   const currentWindow = WINDOW_LABELS[biasWindow] || WINDOW_LABELS.rolling_30;
 
   return (
-    <Card className="border border-border rounded-none bg-card border-l-4 border-l-primary" data-testid="bias-settings-card">
+    <Card className="border border-border rounded-none bg-card border-l-4 border-l-primary" data-testid="bias-settings-card" data-tour="bias-card">
       <CardHeader className="py-3 px-4 border-b border-border">
         <CardTitle className="text-sm uppercase tracking-wider font-['Barlow_Condensed'] font-semibold flex items-center gap-2">
           <Zap size={16} className="text-primary" />
@@ -725,7 +725,7 @@ function SourceEffectivenessCard({ api }) {
   const totalNonRss = sources.reduce((s, x) => s + x.total, 0);
 
   return (
-    <Card className="border border-border rounded-none bg-card border-l-4 border-l-violet-500">
+    <Card className="border border-border rounded-none bg-card border-l-4 border-l-violet-500" data-tour="source-effectiveness">
       <CardHeader className="py-3 px-4 border-b border-border flex flex-row items-center justify-between">
         <CardTitle className="text-sm uppercase tracking-wider font-['Barlow_Condensed'] font-semibold flex items-center gap-2">
           <BarChart3 size={16} className="text-violet-400" />
@@ -1134,7 +1134,7 @@ function RssFeedManager({ api }) {
   };
 
   return (
-    <Card className="border border-border rounded-none bg-card border-l-4 border-l-emerald-500" data-testid="rss-feed-manager">
+    <Card className="border border-border rounded-none bg-card border-l-4 border-l-emerald-500" data-testid="rss-feed-manager" data-tour="rss-manager">
       <CardHeader className="py-3 px-4 border-b border-border">
         <CardTitle className="text-sm uppercase tracking-wider font-['Barlow_Condensed'] font-semibold flex items-center gap-2">
           <Rss size={16} className="text-emerald-400" />
