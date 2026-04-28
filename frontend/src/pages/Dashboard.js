@@ -178,7 +178,7 @@ function SourceDetailPanel({ platform, accentColor, borderAccent, bgAccent, icon
 
 // ─── collapsible source scanners ─────────────────────────────────────────────
 function SourceScanners({ api }) {
-  const [open, setOpen]               = useState(false);
+  const [open, setOpen]               = useState(true);   // expanded by default
   const [selected, setSelected]       = useState(null);   // which card is drilled into
   const [rss, setRss]                 = useState(null);
   const [rssSources, setRssSources]   = useState([]);
@@ -342,11 +342,12 @@ function SourceScanners({ api }) {
           <Button
             variant="ghost" size="sm"
             className="h-6 px-2 text-[9px] rounded-none font-mono text-muted-foreground border border-border hover:text-foreground"
+            title="Fetch all social & web sources (excludes RSS)"
             onClick={e => { e.stopPropagation(); trigger("all", "/social/fetch-all"); }}
             disabled={triggering["all"]}
           >
             {triggering["all"] ? <Loader2 size={9} className="animate-spin mr-1" /> : <RefreshCw size={9} className="mr-1" />}
-            ALL
+            {triggering["all"] ? "FETCHING…" : "ALL ×5"}
           </Button>
           {open ? <ChevronUp size={13} className="text-muted-foreground" /> : <ChevronDown size={13} className="text-muted-foreground" />}
         </div>
@@ -356,7 +357,7 @@ function SourceScanners({ api }) {
       {open && (
         <>
           <div className="border-t border-border p-3">
-            <p className="text-[9px] font-mono text-muted-foreground/50 mb-2 uppercase tracking-wider">Click a card to view its sources</p>
+            <p className="text-[9px] font-mono text-muted-foreground/50 mb-2 uppercase tracking-wider">Click a card to view its sources · Click header to collapse panel</p>
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2">
 
               <ScannerCard
@@ -653,7 +654,11 @@ export default function Dashboard({ stats: propStats, api }) {
   const handleFetchNews = async () => {
     setLoading(true);
     try {
-      await axios.post(`${api}/fetch-news`);
+      // Trigger all 6 sources: RSS + the 5 social/web sources in parallel
+      await Promise.allSettled([
+        axios.post(`${api}/fetch-news`),
+        axios.post(`${api}/social/fetch-all`),
+      ]);
     } catch (e) {
       console.error("Fetch failed:", e);
     }
