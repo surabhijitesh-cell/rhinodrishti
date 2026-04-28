@@ -347,7 +347,7 @@ const JOYRIDE_STYLES = {
 
 export default function AppTour() {
   const location  = useLocation();
-  const { running, stepIndex, setStepIndex, stopTour, markSeen } = useTour();
+  const { running, stepIndex, setStepIndex, stopTour, markSeen, joyKey } = useTour();
 
   const steps = PAGE_STEPS[location.pathname] || [];
 
@@ -368,6 +368,7 @@ export default function AppTour() {
 
   return (
     <Joyride
+      key={joyKey}
       steps={steps}
       run={running}
       stepIndex={stepIndex}
