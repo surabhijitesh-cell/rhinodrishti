@@ -15,22 +15,70 @@ import Tip from "./Tip";
 import { useTour } from "../contexts/TourContext";
 
 const ALL_NAV_ITEMS = [
-  { path: "/", label: "Dashboard", icon: LayoutDashboard, roles: ["admin", "analyst", "viewer"] },
-  { path: "/feed", label: "Intelligence Feed", icon: Newspaper, roles: ["admin", "analyst", "viewer"] },
-  { path: "/cross-border", label: "Cross-Border", icon: Globe, roles: ["admin", "analyst", "viewer"] },
-  { path: "/daily-brief", label: "Daily Brief", icon: FileText, roles: ["admin", "analyst", "viewer"] },
-  { path: "/weekly-trends", label: "Weekly Trends", icon: TrendingUp, roles: ["admin", "analyst", "viewer"] },
-  { path: "/patterns", label: "Patterns", icon: GitBranch, roles: ["admin", "analyst", "viewer"] },
-  { path: "/knowledge-graph", label: "Knowledge Graph", icon: Network, roles: ["admin", "analyst", "viewer"] },
-  { path: "/alerts", label: "Alerts", icon: Bell, roles: ["admin", "analyst", "viewer"] },
-  { path: "/keywords", label: "Keyword Engine", icon: Key, roles: ["admin", "analyst", "viewer"] },
-  { path: "/training", label: "Training & Feedback", icon: Brain, roles: ["admin", "analyst", "viewer"] },
-  { path: "/upload", label: "Manual Int Uploads", icon: Upload, roles: ["admin", "analyst", "viewer"] },
-  { path: "/reports", label: "Reports", icon: FileText, roles: ["admin", "analyst", "viewer"] },
-  { path: "/user-management", label: "User Management", icon: Users, roles: ["admin"] },
-  { path: "/settings", label: "Settings", icon: Settings, roles: ["admin"] },
-  { path: "/updates", label: "Platform Updates", icon: Megaphone, roles: ["admin", "analyst", "viewer"] },
-  { path: "/handbook", label: "User Handbook", icon: BookOpen, roles: ["admin", "analyst", "viewer"] },
+  {
+    path: "/", label: "Dashboard", icon: LayoutDashboard, roles: ["admin", "analyst", "viewer"],
+    tooltip: "Command centre — live intelligence stats, source scanner panel, NER map and latest items.",
+  },
+  {
+    path: "/feed", label: "Intelligence Feed", icon: Newspaper, roles: ["admin", "analyst", "viewer"],
+    tooltip: "Full searchable, filterable list of all AI-classified intelligence items. Rate, sort and export.",
+  },
+  {
+    path: "/cross-border", label: "Cross-Border", icon: Globe, roles: ["admin", "analyst", "viewer"],
+    tooltip: "Bangladesh & Myanmar intelligence grouped by Diplomatic, Defence, Internal Politics and Economics.",
+  },
+  {
+    path: "/daily-brief", label: "Daily Brief", icon: FileText, roles: ["admin", "analyst", "viewer"],
+    tooltip: "AI-generated daily intelligence summary compiled at 06:00 IST. Exportable as PDF.",
+  },
+  {
+    path: "/weekly-trends", label: "Weekly Trends", icon: TrendingUp, roles: ["admin", "analyst", "viewer"],
+    tooltip: "7-day severity trend charts, threat category breakdown and state-wise activity analysis.",
+  },
+  {
+    path: "/patterns", label: "Patterns", icon: GitBranch, roles: ["admin", "analyst", "viewer"],
+    tooltip: "Automatically detected recurring threat clusters with escalation risk levels (CRITICAL → LOW).",
+  },
+  {
+    path: "/knowledge-graph", label: "Knowledge Graph", icon: Network, roles: ["admin", "analyst", "viewer"],
+    tooltip: "Actor-location relationship network extracted from the entire intelligence corpus.",
+  },
+  {
+    path: "/alerts", label: "Alerts", icon: Bell, roles: ["admin", "analyst", "viewer"],
+    tooltip: "CRITICAL and HIGH severity items only. ACK button marks each alert as reviewed.",
+  },
+  {
+    path: "/keywords", label: "Keyword Engine", icon: Key, roles: ["admin", "analyst", "viewer"],
+    tooltip: "AI-managed keyword bank driving intelligence detection. Add keywords manually or via AI refresh.",
+  },
+  {
+    path: "/training", label: "Training & Feedback", icon: Brain, roles: ["admin", "analyst", "viewer"],
+    tooltip: "Rate articles 1-6 to shape AI priorities. Upload URLs/documents to the training pipeline.",
+  },
+  {
+    path: "/upload", label: "Manual Int Uploads", icon: Upload, roles: ["admin", "analyst", "viewer"],
+    tooltip: "Upload PDFs/DOCX, analyze article URLs with AI, or add items directly to the intelligence feed.",
+  },
+  {
+    path: "/reports", label: "Reports", icon: FileText, roles: ["admin", "analyst", "viewer"],
+    tooltip: "Generate and download PDF reports — Regional Threat Summary, Cross-Border SITREP or Custom.",
+  },
+  {
+    path: "/user-management", label: "User Management", icon: Users, roles: ["admin"],
+    tooltip: "Admin only — create, deactivate and reset passwords for Analyst and Viewer accounts.",
+  },
+  {
+    path: "/settings", label: "Settings", icon: Settings, roles: ["admin"],
+    tooltip: "Admin only — configure retention window, feedback bias, RSS feeds and local database setup.",
+  },
+  {
+    path: "/updates", label: "Platform Updates", icon: Megaphone, roles: ["admin", "analyst", "viewer"],
+    tooltip: "Full version history and update notifications. Admins can publish new update announcements.",
+  },
+  {
+    path: "/handbook", label: "User Handbook", icon: BookOpen, roles: ["admin", "analyst", "viewer"],
+    tooltip: "Complete user guide covering every feature, role permission and AI pipeline detail.",
+  },
 ];
 
 const NEW_BADGE_PATHS = ["/reports", "/updates"];
@@ -77,7 +125,7 @@ export default function Layout({ children, alertCount = 0, onSearch }) {
         const isActive = location.pathname === item.path;
         const badge = badgeMap[item.path];
         return (
-          <Tip key={item.path} text={item.label} side="right" disabled={!collapsed}>
+          <Tip key={item.path} text={item.tooltip || item.label} side="right">
           <Link
             to={item.path}
             data-testid={`nav-${item.label.toLowerCase().replace(/\s+/g, '-')}`}

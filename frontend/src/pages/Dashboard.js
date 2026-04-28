@@ -78,7 +78,7 @@ function ScannerCard({
   label, icon: Icon, accentColor, bgAccent, borderAccent, barColor,
   isConfigured, isActive, activeLabel, progress, stat1, stat2,
   lastFetched, onTrigger, triggering, configNote, testId,
-  isSelected, onClick,
+  isSelected, onClick, tooltip,
 }) {
   const badge = isActive
     ? <Badge className={`rounded-none text-[8px] px-1 py-0 border ${bgAccent} ${accentColor} ${borderAccent} animate-pulse leading-3`}>{activeLabel || "ACTIVE"}</Badge>
@@ -99,9 +99,17 @@ function ScannerCard({
         <div className={`p-1 shrink-0 ${bgAccent}`}>
           <Icon size={11} className={isConfigured ? accentColor : "text-muted-foreground"} />
         </div>
-        <span className={`text-[10px] uppercase tracking-wider font-['Barlow_Condensed'] font-bold truncate flex-1 ${isConfigured ? "text-foreground" : "text-muted-foreground"}`}>
-          {label}
-        </span>
+        {tooltip ? (
+          <Tip text={tooltip} side="top">
+            <span className={`text-[10px] uppercase tracking-wider font-['Barlow_Condensed'] font-bold truncate flex-1 cursor-help ${isConfigured ? "text-foreground" : "text-muted-foreground"}`}>
+              {label}
+            </span>
+          </Tip>
+        ) : (
+          <span className={`text-[10px] uppercase tracking-wider font-['Barlow_Condensed'] font-bold truncate flex-1 ${isConfigured ? "text-foreground" : "text-muted-foreground"}`}>
+            {label}
+          </span>
+        )}
         {badge}
       </div>
 
@@ -375,6 +383,7 @@ function SourceScanners({ api }) {
                 isSelected={selected === "rss"}
                 onClick={() => handleCardClick("rss")}
                 testId="scanner-rss"
+                tooltip="RSS Feeds — 89 curated news sources: NER regional papers, national outlets, Bangladesh/Myanmar publications, and government PIB offices. Auto-fetched every 30-60 min."
               />
 
               <ScannerCard
@@ -391,6 +400,7 @@ function SourceScanners({ api }) {
                 isSelected={selected === "youtube"}
                 onClick={() => handleCardClick("youtube")}
                 testId="scanner-youtube"
+                tooltip={`YouTube — ${ytChannels.length} subscribed channels + ${ytData.searches.filter(s=>s.active).length} keyword searches. Requires YOUTUBE_API_KEY on Render. Fetches video metadata and transcripts.`}
               />
 
               <ScannerCard
@@ -407,6 +417,7 @@ function SourceScanners({ api }) {
                 isSelected={selected === "facebook"}
                 onClick={() => handleCardClick("facebook")}
                 testId="scanner-facebook"
+                tooltip={`Facebook — ${fbPages.length} monitored pages. Requires FACEBOOK_APP_ID + FACEBOOK_APP_SECRET on Render. Good for NER political party and activist pages.`}
               />
 
               <ScannerCard
@@ -423,6 +434,7 @@ function SourceScanners({ api }) {
                 isSelected={selected === "telegram"}
                 onClick={() => handleCardClick("telegram")}
                 testId="scanner-telegram"
+                tooltip={`Telegram — ${tgChannels.length} monitored channels via Telethon client. Session ID required (run telegram_setup.py). High-value for militant and political org communications.`}
               />
 
               <ScannerCard
@@ -439,6 +451,7 @@ function SourceScanners({ api }) {
                 isSelected={selected === "twitter"}
                 onClick={() => handleCardClick("twitter")}
                 testId="scanner-twitter"
+                tooltip={`X/Twitter — ${twAccounts.length} accounts + ${twData.searches.filter(s=>s.active).length} keyword searches. ${twConfigured ? "Using official API." : "Nitter fallback (no API key)."} Monitors political figures, security analysts and journalists.`}
               />
 
               <ScannerCard
@@ -455,6 +468,7 @@ function SourceScanners({ api }) {
                 isSelected={selected === "firecrawl"}
                 onClick={() => handleCardClick("firecrawl")}
                 testId="scanner-firecrawl"
+                tooltip={`Firecrawl — deep-crawls ${fcSources.length} configured websites + ${fcSearches.length} keyword web searches. Reaches sites with no RSS feed. Requires FIRECRAWL_API_KEY on Render.`}
               />
             </div>
           </div>
@@ -567,9 +581,11 @@ function PatternInsights({ api }) {
       <CardHeader className="py-3 px-4 border-b border-border">
         <div className="flex items-center gap-2">
           <GitBranch size={14} className="text-primary" />
-          <CardTitle className="text-sm uppercase tracking-wider font-['Barlow_Condensed'] font-semibold">
-            Detected Patterns ({patterns.length})
-          </CardTitle>
+          <Tip text="Automatically detected recurring threat clusters. Each pattern groups 3+ intelligence items sharing the same region, threat type or actor within a 7-day window." side="top">
+            <CardTitle className="text-sm uppercase tracking-wider font-['Barlow_Condensed'] font-semibold cursor-help">
+              Detected Patterns ({patterns.length})
+            </CardTitle>
+          </Tip>
         </div>
       </CardHeader>
       <CardContent className="p-3 space-y-2 max-h-64 overflow-y-auto">
@@ -840,9 +856,11 @@ export default function Dashboard({ stats: propStats, api }) {
           <Card className="border border-border rounded-none bg-card h-full">
             <CardHeader className="py-3 px-4 border-b border-border">
               <div className="flex items-center justify-between">
-                <CardTitle className="text-sm uppercase tracking-wider font-['Barlow_Condensed'] font-semibold">
-                  Recent Critical Alerts
-                </CardTitle>
+                <Tip text="Most recent CRITICAL and HIGH severity items. These require immediate analyst attention. Click View All to open the full Alerts page." side="top">
+                  <CardTitle className="text-sm uppercase tracking-wider font-['Barlow_Condensed'] font-semibold cursor-help">
+                    Recent Critical Alerts
+                  </CardTitle>
+                </Tip>
                 <Button
                   variant="ghost"
                   size="sm"
@@ -887,9 +905,11 @@ export default function Dashboard({ stats: propStats, api }) {
         {/* Threat Distribution */}
         <Card className="border border-border rounded-none bg-card">
           <CardHeader className="py-3 px-4 border-b border-border">
-            <CardTitle className="text-sm uppercase tracking-wider font-['Barlow_Condensed'] font-semibold">
-              Threat Distribution
-            </CardTitle>
+            <Tip text="Horizontal bar chart showing how intelligence items are distributed across threat categories (insurgency, drug trafficking, border incursion, etc.) within your retention window." side="top">
+              <CardTitle className="text-sm uppercase tracking-wider font-['Barlow_Condensed'] font-semibold cursor-help w-fit">
+                Threat Distribution
+              </CardTitle>
+            </Tip>
           </CardHeader>
           <CardContent className="p-4" data-testid="threat-distribution-chart">
             {threatData.length > 0 ? (
@@ -918,9 +938,11 @@ export default function Dashboard({ stats: propStats, api }) {
         {/* State Distribution Pie */}
         <Card className="border border-border rounded-none bg-card">
           <CardHeader className="py-3 px-4 border-b border-border">
-            <CardTitle className="text-sm uppercase tracking-wider font-['Barlow_Condensed'] font-semibold">
-              State-wise Distribution
-            </CardTitle>
+            <Tip text="Pie chart showing how intelligence items are distributed across NER states and border countries. Each slice represents one state or country. Larger slice = more intelligence activity." side="top">
+              <CardTitle className="text-sm uppercase tracking-wider font-['Barlow_Condensed'] font-semibold cursor-help w-fit">
+                State-wise Distribution
+              </CardTitle>
+            </Tip>
           </CardHeader>
           <CardContent className="p-4" data-testid="state-distribution-chart">
             {stats?.state_distribution && Object.keys(stats.state_distribution).length > 0 ? (
@@ -971,9 +993,11 @@ export default function Dashboard({ stats: propStats, api }) {
       {/* Recent Intelligence */}
       <div data-tour="recent-intel">
         <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
-          <h2 className="text-xl uppercase tracking-wide font-['Barlow_Condensed'] font-semibold">
-            Latest Intelligence
-          </h2>
+          <Tip text="Most recent AI-classified intelligence items. Use the Priority Filter to show only high-scoring items, or Sort By Priority to surface the most urgent items first." side="top">
+            <h2 className="text-xl uppercase tracking-wide font-['Barlow_Condensed'] font-semibold cursor-help">
+              Latest Intelligence
+            </h2>
+          </Tip>
           <div className="flex items-center gap-2 flex-wrap">
             <Select value={minPriority || "all"} onValueChange={(v) => setMinPriority(v === "all" ? "" : v)}>
               <SelectTrigger className="w-[150px] rounded-none text-[10px] uppercase h-7" data-testid="dashboard-priority-filter">

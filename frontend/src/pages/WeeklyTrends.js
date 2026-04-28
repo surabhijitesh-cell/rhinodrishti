@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { TrendingUp, BarChart3 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
+import Tip from "../components/Tip";
 import axios from "axios";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell,
@@ -71,10 +72,12 @@ export default function WeeklyTrends({ api }) {
       {/* Severity Trend Over Time */}
       <Card className="border border-border rounded-none bg-card">
         <CardHeader className="py-3 px-4 border-b border-border">
-          <CardTitle className="text-sm uppercase tracking-wider font-['Barlow_Condensed'] font-semibold flex items-center gap-2">
-            <TrendingUp size={16} className="text-primary" />
-            Severity Trend Over Time
-          </CardTitle>
+          <Tip text="Stacked area chart showing daily counts of Critical (red), High (orange), Medium (yellow) and Low (green) intelligence items over the past 7 days. Rising red/orange area indicates escalating threat environment." side="top">
+            <CardTitle className="text-sm uppercase tracking-wider font-['Barlow_Condensed'] font-semibold flex items-center gap-2 cursor-help w-fit">
+              <TrendingUp size={16} className="text-primary" />
+              Severity Trend Over Time
+            </CardTitle>
+          </Tip>
         </CardHeader>
         <CardContent className="p-4" data-testid="severity-trend-chart">
           {dailyData.length > 0 ? (
@@ -136,10 +139,12 @@ export default function WeeklyTrends({ api }) {
         {/* Category Analysis */}
         <Card className="border border-border rounded-none bg-card">
           <CardHeader className="py-3 px-4 border-b border-border">
-            <CardTitle className="text-sm uppercase tracking-wider font-['Barlow_Condensed'] font-semibold flex items-center gap-2">
-              <BarChart3 size={16} className="text-primary" />
-              Threat Category Analysis
-            </CardTitle>
+            <Tip text="Bar chart showing which threat categories generated the most intelligence items this week. Taller bars = more active threat type. Compare week-on-week to detect emerging threat patterns." side="top">
+              <CardTitle className="text-sm uppercase tracking-wider font-['Barlow_Condensed'] font-semibold flex items-center gap-2 cursor-help w-fit">
+                <BarChart3 size={16} className="text-primary" />
+                Threat Category Analysis
+              </CardTitle>
+            </Tip>
           </CardHeader>
           <CardContent className="p-4" data-testid="category-analysis-chart">
             {categoryData.length > 0 ? (
@@ -172,9 +177,11 @@ export default function WeeklyTrends({ api }) {
         {/* State Analysis */}
         <Card className="border border-border rounded-none bg-card">
           <CardHeader className="py-3 px-4 border-b border-border">
-            <CardTitle className="text-sm uppercase tracking-wider font-['Barlow_Condensed'] font-semibold">
-              State-wise Analysis
-            </CardTitle>
+            <Tip text="Activity breakdown by NER state and border country. Progress bars show relative item count. Red/orange counts indicate critical or high severity items from that state this week." side="top">
+              <CardTitle className="text-sm uppercase tracking-wider font-['Barlow_Condensed'] font-semibold cursor-help w-fit">
+                State-wise Analysis
+              </CardTitle>
+            </Tip>
           </CardHeader>
           <CardContent className="p-4" data-testid="state-analysis-chart">
             {stateData.length > 0 ? (
@@ -225,9 +232,11 @@ export default function WeeklyTrends({ api }) {
       {/* Total Trend */}
       <Card className="border border-border rounded-none bg-card">
         <CardHeader className="py-3 px-4 border-b border-border">
-          <CardTitle className="text-sm uppercase tracking-wider font-['Barlow_Condensed'] font-semibold">
-            Total Intelligence Volume
-          </CardTitle>
+          <Tip text="Line chart showing total daily intelligence item count (all severities combined). A spike indicates a surge in monitored events — cross-reference with the Severity chart to assess urgency." side="top">
+            <CardTitle className="text-sm uppercase tracking-wider font-['Barlow_Condensed'] font-semibold cursor-help w-fit">
+              Total Intelligence Volume
+            </CardTitle>
+          </Tip>
         </CardHeader>
         <CardContent className="p-4" data-testid="volume-trend-chart">
           {dailyData.length > 0 ? (

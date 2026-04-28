@@ -7,6 +7,7 @@ import {
 import { Input } from "../components/ui/input";
 import { Button } from "../components/ui/button";
 import { Badge } from "../components/ui/badge";
+import Tip from "../components/Tip";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue
 } from "../components/ui/select";
@@ -226,20 +227,22 @@ export default function IntelligenceFeed({ api, crossBorderOnly = false, alertsO
             data-testid="feed-search-input"
           />
         </div>
-        <Button
-          variant={semanticMode ? "default" : "outline"}
-          size="sm"
-          className={`rounded-none uppercase text-xs tracking-wider ${semanticMode ? "bg-primary" : ""}`}
-          onClick={() => {
-            setSemanticMode(!semanticMode);
-            setSemanticResults([]);
-            setSemanticQuery("");
-          }}
-          data-testid="semantic-search-toggle"
-        >
-          <Sparkles size={14} className="mr-1.5" />
-          {semanticMode ? "Semantic ON" : "Semantic"}
-        </Button>
+        <Tip text="Toggle AI semantic search — finds contextually related items even without exact keyword matches. E.g. 'border infiltration' also finds 'unauthorized entry' and 'cross-border movement'." side="bottom">
+          <Button
+            variant={semanticMode ? "default" : "outline"}
+            size="sm"
+            className={`rounded-none uppercase text-xs tracking-wider ${semanticMode ? "bg-primary" : ""}`}
+            onClick={() => {
+              setSemanticMode(!semanticMode);
+              setSemanticResults([]);
+              setSemanticQuery("");
+            }}
+            data-testid="semantic-search-toggle"
+          >
+            <Sparkles size={14} className="mr-1.5" />
+            {semanticMode ? "Semantic ON" : "Semantic"}
+          </Button>
+        </Tip>
         {semanticMode && (
           <Button
             size="sm"
@@ -251,32 +254,35 @@ export default function IntelligenceFeed({ api, crossBorderOnly = false, alertsO
             {semanticLoading ? "Searching..." : "Find Similar"}
           </Button>
         )}
-        <Button
-          variant={showFilters ? "default" : "outline"}
-          size="sm"
-          className="rounded-none uppercase text-xs tracking-wider"
-          onClick={() => setShowFilters(!showFilters)}
-          data-testid="toggle-filters-btn"
-        >
-          <SlidersHorizontal size={14} className="mr-1.5" />
-          Filters
-          {activeFilterCount > 0 && (
-            <Badge className="ml-1.5 severity-high rounded-none text-[10px] px-1">{activeFilterCount}</Badge>
-          )}
-        </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          className="rounded-none uppercase text-xs tracking-wider border-primary/30 text-primary hover:bg-primary/10 relative"
-          onClick={() => {
-            const next = pdfClickCount + 1;
-            setPdfClickCount(next);
-            localStorage.setItem("new_badge_export_pdf", String(next));
-            handleGeneratePdf();
-          }}
-          disabled={generatingPdf}
-          data-testid="generate-pdf-btn"
-        >
+        <Tip text="Toggle filter panel — narrow results by State, Threat Type, Severity and Minimum Priority. Active filters are shown as a count badge." side="bottom">
+          <Button
+            variant={showFilters ? "default" : "outline"}
+            size="sm"
+            className="rounded-none uppercase text-xs tracking-wider"
+            onClick={() => setShowFilters(!showFilters)}
+            data-testid="toggle-filters-btn"
+          >
+            <SlidersHorizontal size={14} className="mr-1.5" />
+            Filters
+            {activeFilterCount > 0 && (
+              <Badge className="ml-1.5 severity-high rounded-none text-[10px] px-1">{activeFilterCount}</Badge>
+            )}
+          </Button>
+        </Tip>
+        <Tip text="Export the current filtered view as a formatted PDF brief — includes severity breakdown and all matching items in priority order." side="bottom">
+          <Button
+            variant="outline"
+            size="sm"
+            className="rounded-none uppercase text-xs tracking-wider border-primary/30 text-primary hover:bg-primary/10 relative"
+            onClick={() => {
+              const next = pdfClickCount + 1;
+              setPdfClickCount(next);
+              localStorage.setItem("new_badge_export_pdf", String(next));
+              handleGeneratePdf();
+            }}
+            disabled={generatingPdf}
+            data-testid="generate-pdf-btn"
+          >
           {generatingPdf ? <Loader2 size={14} className="mr-1.5 animate-spin" /> : <FileDown size={14} className="mr-1.5" />}
           {generatingPdf ? "Generating..." : "Export PDF"}
           {showPdfBadge && (
@@ -284,7 +290,8 @@ export default function IntelligenceFeed({ api, crossBorderOnly = false, alertsO
               New
             </span>
           )}
-        </Button>
+          </Button>
+        </Tip>
         <span className="text-xs font-mono text-muted-foreground" data-testid="result-count">
           {semanticMode && semanticResults.length > 0 ? `${semanticResults.length} similar` : `${total} results`}
         </span>
