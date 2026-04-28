@@ -15,6 +15,7 @@ anthropic>=0.40.0
 openai==1.99.9
 
 # RSS & Scraping
+firecrawl-py>=1.0.0
 feedparser==6.0.12
 beautifulsoup4==4.14.3
 httpx==0.28.1
