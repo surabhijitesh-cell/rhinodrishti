@@ -456,31 +456,68 @@ async def fetch_telegram_channel_now(item_id: str):
 @router.post("/social/fetch-all")
 async def fetch_all_social_now(background_tasks: BackgroundTasks):
     """
-    Trigger all social/web fetchers in the background and return immediately.
-    Each fetcher runs in parallel so slow sources (Telegram, Firecrawl) don't
-    block faster ones, and Render's 30-second HTTP timeout is never hit.
+    Trigger all social/web fetchers.
+
+    Strategy:
+      1. Immediately stamp last_fetched = now on every active source document
+         so the frontend scanner cards update on the very first poll (~10 s).
+      2. Queue a background task that runs the actual network fetches in
+         parallel and processes any new items through the AI pipeline.
+
+    This decouples "user clicked Fetch" feedback from "fetch completed" and
+    avoids Render's 30 s HTTP timeout killing slow sources like Telegram.
     """
+    now = datetime.now(timezone.utc)
+
+    # ── 1. Instant timestamp update (awaited before response) ─────────────────
+    try:
+        await asyncio.gather(
+            db.youtube_channels.update_many({"active": True}, {"$set": {"last_fetched": now}}),
+            db.facebook_pages.update_many({"active": True},   {"$set": {"last_fetched": now}}),
+            db.telegram_channels.update_many({"active": True}, {"$set": {"last_fetched": now}}),
+            db.twitter_searches.update_many({"active": True},  {"$set": {"last_run": now}}),
+            db.web_sources.update_many({"active": True},       {"$set": {"last_fetched": now}}),
+            db.firecrawl_searches.update_many({"active": True}, {"$set": {"last_run": now}}),
+        )
+        logger.info("fetch-all: instant timestamps written")
+    except Exception as e:
+        logger.error(f"fetch-all: instant timestamp update failed: {e}")
+
+    # ── 2. Background network fetches ─────────────────────────────────────────
     async def _run_all():
-        from twitter_fetcher import fetch_twitter_accounts, fetch_twitter_searches
-        from youtube_fetcher import fetch_youtube_channels, fetch_youtube_searches
-        from facebook_fetcher import fetch_facebook_pages
-        from telegram_fetcher import fetch_telegram_channels
+        try:
+            from twitter_fetcher   import fetch_twitter_accounts, fetch_twitter_searches
+            from youtube_fetcher   import fetch_youtube_channels, fetch_youtube_searches
+            from facebook_fetcher  import fetch_facebook_pages
+            from telegram_fetcher  import fetch_telegram_channels
+            from firecrawl_fetcher import fetch_web_sources, run_keyword_searches
 
-        tasks = {
-            "twitter_accounts": fetch_twitter_accounts(db),
-            "twitter_searches": fetch_twitter_searches(db),
-            "youtube_channels": fetch_youtube_channels(db),
-            "youtube_searches": fetch_youtube_searches(db),
-            "facebook_pages":   fetch_facebook_pages(db),
-            "telegram_channels": fetch_telegram_channels(db),
-        }
+            coros  = [
+                fetch_twitter_accounts(db),
+                fetch_twitter_searches(db),
+                fetch_youtube_channels(db),
+                fetch_youtube_searches(db),
+                fetch_facebook_pages(db),
+                fetch_telegram_channels(db),
+                fetch_web_sources(db),
+                run_keyword_searches(db),
+            ]
+            labels = [
+                "twitter_accounts", "twitter_searches",
+                "youtube_channels", "youtube_searches",
+                "facebook_pages",   "telegram_channels",
+                "firecrawl_sites",  "firecrawl_searches",
+            ]
 
-        results = await asyncio.gather(*tasks.values(), return_exceptions=True)
-        for name, result in zip(tasks.keys(), results):
-            if isinstance(result, Exception):
-                logger.error(f"fetch-all [{name}] failed: {result}")
-            else:
-                logger.info(f"fetch-all [{name}] ok: {result}")
+            results = await asyncio.gather(*coros, return_exceptions=True)
+            for label, result in zip(labels, results):
+                if isinstance(result, Exception):
+                    logger.error(f"fetch-all [{label}] error: {result}")
+                else:
+                    logger.info(f"fetch-all [{label}] ok → {result} new items")
+
+        except Exception as e:
+            logger.error(f"fetch-all _run_all crashed: {e}")
 
     background_tasks.add_task(_run_all)
-    return {"status": "fetch started", "message": "All social sources fetching in background"}
+    return {"status": "fetch started", "message": "Timestamps updated; content fetching in background"}

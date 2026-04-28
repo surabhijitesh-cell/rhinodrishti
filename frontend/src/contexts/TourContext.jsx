@@ -45,11 +45,11 @@ export function TourProvider({ children }) {
   }, [location.pathname]);
 
   const startTour = useCallback(() => {
-    // Stop first so Joyride fully unmounts, then restart on next tick
-    setRunning(false);
+    // Increment key → Joyride fully remounts with clean internal state.
+    // Set run=true in the same batch so it starts immediately.
     setStepIndex(0);
-    setJoyKey(k => k + 1);   // new key → Joyride remounts fresh
-    setTimeout(() => setRunning(true), 50);
+    setJoyKey(k => k + 1);
+    setRunning(true);
   }, []);
 
   const stopTour = useCallback(() => {

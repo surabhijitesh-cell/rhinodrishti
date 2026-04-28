@@ -364,8 +364,12 @@ export default function AppTour() {
     }
   };
 
-  if (!running || steps.length === 0) return null;
+  // No steps defined for this page → nothing to show
+  if (steps.length === 0) return null;
 
+  // Always keep Joyride mounted so the key-change remount works reliably.
+  // run={running} controls visibility; key={joyKey} forces a full remount
+  // (clearing Joyride's internal "finished" state) every time startTour() fires.
   return (
     <Joyride
       key={joyKey}
