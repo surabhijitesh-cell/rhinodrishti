@@ -77,13 +77,8 @@ function ScannerCard({
   label, icon: Icon, accentColor, bgAccent, borderAccent, barColor,
   isConfigured, isActive, activeLabel, progress, stat1, stat2,
   lastFetched, onTrigger, triggering, configNote, testId,
+  isSelected, onClick,
 }) {
-  const dot = isActive
-    ? <span className={`w-1.5 h-1.5 rounded-full ${accentColor.replace("text-", "bg-")} animate-pulse inline-block`} />
-    : isConfigured
-      ? <span className="w-1.5 h-1.5 rounded-full bg-green-500/60 inline-block" />
-      : <span className="w-1.5 h-1.5 rounded-full bg-orange-500/50 inline-block" />;
-
   const badge = isActive
     ? <Badge className={`rounded-none text-[8px] px-1 py-0 border ${bgAccent} ${accentColor} ${borderAccent} animate-pulse leading-3`}>{activeLabel || "ACTIVE"}</Badge>
     : isConfigured
@@ -92,8 +87,11 @@ function ScannerCard({
 
   return (
     <div
-      className={`border rounded-none bg-card flex flex-col gap-2 p-3 transition-all duration-200 ${isActive ? borderAccent : "border-border"} ${!isConfigured ? "opacity-70" : ""}`}
+      className={`border rounded-none bg-card flex flex-col gap-2 p-3 transition-all duration-200 cursor-pointer
+        ${isSelected ? `${borderAccent} ${bgAccent}` : isActive ? borderAccent : "border-border hover:border-muted-foreground/30"}
+        ${!isConfigured ? "opacity-70" : ""}`}
       data-testid={testId}
+      onClick={onClick}
     >
       {/* row 1: icon + label + badge */}
       <div className="flex items-center gap-1.5 min-w-0">
@@ -114,36 +112,76 @@ function ScannerCard({
         />
       </div>
 
-      {/* row 3: stats */}
+      {/* row 3: stats + last fetch */}
       <div className="flex items-center justify-between gap-1 min-w-0">
-        <span className="text-[10px] font-mono text-muted-foreground truncate">{isConfigured ? stat1 : (configNote || "Not configured")}</span>
-        <span className="text-[10px] font-mono text-muted-foreground shrink-0">{lastFetched ? timeAgo(lastFetched) : stat2 || ""}</span>
+        <span className="text-[10px] font-mono text-muted-foreground truncate">
+          {isConfigured ? stat1 : (configNote || "Not configured")}
+        </span>
+        <span className={`text-[10px] font-mono shrink-0 ${lastFetched ? accentColor : "text-muted-foreground"}`}>
+          {lastFetched ? timeAgo(lastFetched) : stat2 || "—"}
+        </span>
       </div>
 
-      {/* row 4: trigger button */}
+      {/* row 4: trigger button — stops propagation so card click still works */}
       <Button
         variant="ghost" size="sm"
         className={`h-5 w-full text-[9px] rounded-none font-mono border tracking-wider ${
           isConfigured
-            ? `${borderAccent} ${accentColor} hover:${bgAccent} opacity-60 hover:opacity-100`
+            ? `${borderAccent} ${accentColor} opacity-60 hover:opacity-100`
             : "border-border text-muted-foreground opacity-40 cursor-not-allowed"
         }`}
-        onClick={onTrigger}
-        disabled={!isConfigured || triggering}
+        onClick={e => { e.stopPropagation(); onTrigger && onTrigger(); }}
+        disabled={!isConfigured || triggering || !onTrigger}
       >
-        {triggering
-          ? <Loader2 size={9} className="animate-spin mr-1" />
-          : <Zap size={9} className="mr-1" />}
+        {triggering ? <Loader2 size={9} className="animate-spin mr-1" /> : <Zap size={9} className="mr-1" />}
         {triggering ? "FETCHING…" : "FETCH"}
       </Button>
+
+      {/* selected indicator */}
+      {isSelected && (
+        <div className={`text-[9px] font-mono text-center ${accentColor} opacity-70`}>
+          ▲ viewing sources below
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── source detail panel (shown below grid when a card is selected) ──────────
+function SourceDetailPanel({ platform, accentColor, borderAccent, bgAccent, icon: Icon, items, emptyMsg }) {
+  if (!items || items.length === 0) {
+    return (
+      <div className={`border-t ${borderAccent} px-4 py-3 ${bgAccent}`}>
+        <p className="text-[10px] font-mono text-muted-foreground">{emptyMsg || "No sources configured."}</p>
+      </div>
+    );
+  }
+  return (
+    <div className={`border-t ${borderAccent} ${bgAccent} px-4 py-3`}>
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-1 max-h-48 overflow-y-auto">
+        {items.map((item, i) => (
+          <div key={i} className="flex items-center gap-2 min-w-0 py-0.5">
+            <Icon size={9} className={`${accentColor} shrink-0`} />
+            <span className="text-[10px] font-mono text-foreground truncate flex-1">{item.label}</span>
+            {item.sub && <span className="text-[10px] font-mono text-muted-foreground shrink-0">{item.sub}</span>}
+            {item.time && (
+              <span className={`text-[10px] font-mono shrink-0 ${item.time === "never" ? "text-muted-foreground/50" : accentColor}`}>
+                {item.time}
+              </span>
+            )}
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
 
 // ─── collapsible source scanners ─────────────────────────────────────────────
 function SourceScanners({ api }) {
-  const [open, setOpen]               = useState(false);   // collapsed by default
+  const [open, setOpen]               = useState(false);
+  const [selected, setSelected]       = useState(null);   // which card is drilled into
   const [rss, setRss]                 = useState(null);
+  const [rssSources, setRssSources]   = useState([]);
   const [socialStatus, setSocialStatus] = useState(null);
   const [ytData, setYtData]           = useState({ channels: [], searches: [] });
   const [fbData, setFbData]           = useState({ pages: [] });
@@ -152,80 +190,138 @@ function SourceScanners({ api }) {
   const [fcData, setFcData]           = useState({ sources: [], searches: [] });
   const [triggering, setTriggering]   = useState({});
 
+  // ── RSS status (fast poll) ──
   useEffect(() => {
-    const fetch = async () => {
+    const f = async () => {
       try { const r = await axios.get(`${api}/scan-status`); setRss(r.data); } catch {}
     };
-    fetch(); const id = setInterval(fetch, 4000); return () => clearInterval(id);
+    f(); const id = setInterval(f, 4000); return () => clearInterval(id);
+  }, [api]);
+
+  // ── extract social data fetcher so we can call it after triggers ──
+  const refreshSocial = useCallback(async () => {
+    try {
+      const results = await Promise.allSettled([
+        axios.get(`${api}/social/status`),
+        axios.get(`${api}/social/youtube/channels`),
+        axios.get(`${api}/social/youtube/searches`),
+        axios.get(`${api}/social/facebook/pages`),
+        axios.get(`${api}/social/telegram/channels`),
+        axios.get(`${api}/social/twitter/accounts`),
+        axios.get(`${api}/social/twitter/searches`),
+        axios.get(`${api}/web-sources`),
+        axios.get(`${api}/firecrawl-searches`),
+        axios.get(`${api}/sources`),
+      ]);
+      const [status, yt, ytS, fb, tg, twA, twS, ws, fs, rssS] = results;
+      if (status.status === "fulfilled") setSocialStatus(status.value.data);
+      setYtData({ channels: yt.value?.data?.channels || [], searches: ytS.value?.data?.searches || [] });
+      setFbData({ pages: fb.value?.data?.pages || [] });
+      setTgData({ channels: tg.value?.data?.channels || [] });
+      setTwData({ accounts: twA.value?.data?.accounts || [], searches: twS.value?.data?.searches || [] });
+      setFcData({ sources: ws.value?.data?.sources || [], searches: fs.value?.data?.searches || [] });
+      setRssSources(rssS.value?.data?.sources || []);
+    } catch {}
   }, [api]);
 
   useEffect(() => {
-    const fetchAll = async () => {
-      try {
-        const results = await Promise.allSettled([
-          axios.get(`${api}/social/status`),
-          axios.get(`${api}/social/youtube/channels`),
-          axios.get(`${api}/social/youtube/searches`),
-          axios.get(`${api}/social/facebook/pages`),
-          axios.get(`${api}/social/telegram/channels`),
-          axios.get(`${api}/social/twitter/accounts`),
-          axios.get(`${api}/social/twitter/searches`),
-          axios.get(`${api}/web-sources`),
-          axios.get(`${api}/firecrawl-searches`),
-        ]);
-        const [status, yt, ytS, fb, tg, twA, twS, ws, fs] = results;
-        if (status.status === "fulfilled") setSocialStatus(status.value.data);
-        setYtData({ channels: yt.value?.data?.channels || [], searches: ytS.value?.data?.searches || [] });
-        setFbData({ pages: fb.value?.data?.pages || [] });
-        setTgData({ channels: tg.value?.data?.channels || [] });
-        setTwData({ accounts: twA.value?.data?.accounts || [], searches: twS.value?.data?.searches || [] });
-        setFcData({ sources: ws.value?.data?.sources || [], searches: fs.value?.data?.searches || [] });
-      } catch {}
-    };
-    fetchAll(); const id = setInterval(fetchAll, 60000); return () => clearInterval(id);
-  }, [api]);
+    refreshSocial();
+    const id = setInterval(refreshSocial, 60000);
+    return () => clearInterval(id);
+  }, [refreshSocial]);
 
+  // ── trigger fetch + immediate refresh after backend processes ──
   const trigger = async (key, endpoint) => {
     setTriggering(t => ({ ...t, [key]: true }));
     try { await axios.post(`${api}${endpoint}`); } catch {}
-    setTimeout(() => setTriggering(t => ({ ...t, [key]: false })), 5000);
+    // Refresh at 8s and 20s after trigger to catch last_fetched updates
+    setTimeout(() => refreshSocial(), 8000);
+    setTimeout(() => {
+      setTriggering(t => ({ ...t, [key]: false }));
+      refreshSocial();
+    }, 20000);
   };
 
-  // ── derived values ──
-  const rssScanning   = rss?.is_scanning || false;
-  const lastResult    = rss?.last_scan_result;
-  const ytActive      = !!socialStatus?.youtube?.configured;
-  const fbActive      = !!socialStatus?.facebook?.configured;
-  const tgActive      = !!socialStatus?.telegram?.configured;
-  const twConfigured  = !!socialStatus?.twitter?.configured;
-  const fcConfigured  = !!socialStatus?.firecrawl?.configured || fcData.sources.length > 0;
+  // ── derived ──
+  const rssScanning  = rss?.is_scanning || false;
+  const lastResult   = rss?.last_scan_result;
+  const ytActive     = !!socialStatus?.youtube?.configured;
+  const fbActive     = !!socialStatus?.facebook?.configured;
+  const tgActive     = !!socialStatus?.telegram?.configured;
+  const twConfigured = !!socialStatus?.twitter?.configured;
+  const fcConfigured = !!socialStatus?.firecrawl?.configured || fcData.sources.length > 0;
 
-  const latestFetch = (arr, key) => arr.reduce((best, item) => {
+  const latest = (arr, key) => arr.reduce((best, item) => {
     if (!item[key]) return best;
     return !best || new Date(item[key]) > new Date(best) ? item[key] : best;
   }, null);
 
-  const ytChannels    = ytData.channels.filter(c => c.active);
-  const fbPages       = fbData.pages.filter(p => p.active);
-  const tgChannels    = tgData.channels.filter(c => c.active);
-  const twAccounts    = twData.accounts.filter(a => a.active);
-  const fcSources     = fcData.sources.filter(s => s.active);
+  const ytChannels = ytData.channels.filter(c => c.active);
+  const fbPages    = fbData.pages.filter(p => p.active);
+  const tgChannels = tgData.channels.filter(c => c.active);
+  const twAccounts = twData.accounts.filter(a => a.active);
+  const fcSources  = fcData.sources.filter(s => s.active);
+  const fcSearches = fcData.searches.filter(s => s.active);
 
-  // summary dots for collapsed bar
   const platforms = [
-    { key: "rss",      ok: true,         active: rssScanning },
-    { key: "yt",       ok: ytActive,     active: triggering["youtube"] },
-    { key: "fb",       ok: fbActive,     active: triggering["facebook"] },
-    { key: "tg",       ok: tgActive,     active: triggering["telegram"] },
-    { key: "tw",       ok: true,         active: triggering["twitter"] },
-    { key: "fc",       ok: fcConfigured, active: triggering["firecrawl"] },
+    { key: "rss", ok: true,         active: rssScanning },
+    { key: "yt",  ok: ytActive,     active: triggering["youtube"] },
+    { key: "fb",  ok: fbActive,     active: triggering["facebook"] },
+    { key: "tg",  ok: tgActive,     active: triggering["telegram"] },
+    { key: "tw",  ok: true,         active: triggering["twitter"] },
+    { key: "fc",  ok: fcConfigured, active: triggering["firecrawl"] },
   ];
   const configuredCount = platforms.filter(p => p.ok).length;
   const anyActive = platforms.some(p => p.active);
 
+  // ── source detail data per platform ──
+  const detailData = {
+    rss: {
+      icon: Rss, accentColor: "text-green-400", borderAccent: "border-green-500/20", bgAccent: "bg-green-500/5",
+      items: rssSources.map(s => ({ label: s.name || s.url, sub: s.category, time: timeAgo(s.last_fetched) })),
+      emptyMsg: "No RSS sources configured.",
+    },
+    youtube: {
+      icon: Youtube, accentColor: "text-red-400", borderAccent: "border-red-500/20", bgAccent: "bg-red-500/5",
+      items: [
+        ...ytChannels.map(c => ({ label: c.name, sub: "channel", time: timeAgo(c.last_fetched) })),
+        ...ytData.searches.filter(s=>s.active).map(s => ({ label: s.query, sub: "search", time: timeAgo(s.last_run) })),
+      ],
+      emptyMsg: "No YouTube channels configured. Add YOUTUBE_API_KEY to Render.",
+    },
+    facebook: {
+      icon: Facebook, accentColor: "text-blue-400", borderAccent: "border-blue-500/20", bgAccent: "bg-blue-500/5",
+      items: fbPages.map(p => ({ label: p.name, sub: p.category, time: timeAgo(p.last_fetched) })),
+      emptyMsg: "No Facebook pages configured. Add FACEBOOK_APP_ID + FACEBOOK_APP_SECRET.",
+    },
+    telegram: {
+      icon: Send, accentColor: "text-sky-400", borderAccent: "border-sky-500/20", bgAccent: "bg-sky-500/5",
+      items: tgChannels.map(c => ({ label: c.name, sub: `@${c.username}`, time: timeAgo(c.last_fetched) })),
+      emptyMsg: "No Telegram channels configured. Run telegram_setup.py to generate session.",
+    },
+    twitter: {
+      icon: Twitter, accentColor: "text-slate-300", borderAccent: "border-slate-500/20", bgAccent: "bg-slate-500/5",
+      items: [
+        ...twAccounts.map(a => ({ label: a.name || `@${a.handle}`, sub: a.category, time: "—" })),
+        ...twData.searches.filter(s=>s.active).map(s => ({ label: s.query, sub: "search", time: timeAgo(s.last_run) })),
+      ],
+      emptyMsg: "No Twitter accounts configured.",
+    },
+    firecrawl: {
+      icon: Globe, accentColor: "text-orange-400", borderAccent: "border-orange-500/20", bgAccent: "bg-orange-500/5",
+      items: [
+        ...fcSources.map(s => ({ label: s.name || s.url, sub: s.region, time: timeAgo(s.last_fetched) })),
+        ...fcSearches.map(s => ({ label: s.query, sub: "keyword", time: timeAgo(s.last_run) })),
+      ],
+      emptyMsg: "No Firecrawl sources configured. Add FIRECRAWL_API_KEY.",
+    },
+  };
+
+  const handleCardClick = (key) => setSelected(prev => prev === key ? null : key);
+
   return (
     <Card className="rounded-none border border-border bg-card overflow-hidden">
-      {/* ── collapsed header (always visible) ── */}
+      {/* ── header (always visible) ── */}
       <div
         className="flex items-center gap-3 px-4 py-2.5 cursor-pointer select-none hover:bg-muted/10 transition-colors"
         onClick={() => setOpen(v => !v)}
@@ -234,20 +330,14 @@ function SourceScanners({ api }) {
         <span className="text-[11px] uppercase tracking-widest font-['Barlow_Condensed'] font-bold text-muted-foreground">
           Intelligence Source Monitors
         </span>
-
-        {/* status dots */}
         <div className="flex items-center gap-1.5 ml-1">
           {platforms.map(p => (
-            <span key={p.key} className={`w-1.5 h-1.5 rounded-full ${
+            <span key={p.key} className={`w-1.5 h-1.5 rounded-full transition-colors ${
               p.active ? "bg-primary animate-pulse" : p.ok ? "bg-green-500/70" : "bg-orange-500/40"
             }`} />
           ))}
         </div>
-
-        <span className="text-[10px] font-mono text-muted-foreground ml-1 hidden sm:block">
-          {configuredCount}/6 active
-        </span>
-
+        <span className="text-[10px] font-mono text-muted-foreground ml-1 hidden sm:block">{configuredCount}/6 configured</span>
         <div className="ml-auto flex items-center gap-2">
           <Button
             variant="ghost" size="sm"
@@ -264,100 +354,114 @@ function SourceScanners({ api }) {
 
       {/* ── expanded grid ── */}
       {open && (
-        <div className="border-t border-border p-3">
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2">
+        <>
+          <div className="border-t border-border p-3">
+            <p className="text-[9px] font-mono text-muted-foreground/50 mb-2 uppercase tracking-wider">Click a card to view its sources</p>
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2">
 
-            {/* RSS */}
-            <ScannerCard
-              label="RSS Feeds" icon={Rss}
-              accentColor="text-green-400" bgAccent="bg-green-500/10"
-              borderAccent="border-green-500/30" barColor="bg-green-500"
-              isConfigured={true} isActive={rssScanning} activeLabel="SCANNING"
-              progress={rssScanning ? (rss?.progress || 0) : 100}
-              stat1={rssScanning ? `${rss?.sources_scanned || 0}/${rss?.total_sources || 0} feeds` : `${rss?.total_sources || "—"} feeds`}
-              stat2={lastResult ? `+${lastResult.new_relevant} new` : ""}
-              lastFetched={rss?.last_scan_at}
-              onTrigger={() => trigger("rss", "/fetch-news")}
-              triggering={triggering["rss"]}
-              testId="scanner-rss"
-            />
+              <ScannerCard
+                label="RSS Feeds" icon={Rss}
+                accentColor="text-green-400" bgAccent="bg-green-500/10"
+                borderAccent="border-green-500/30" barColor="bg-green-500"
+                isConfigured={true} isActive={rssScanning} activeLabel="SCANNING"
+                progress={rssScanning ? (rss?.progress || 0) : 100}
+                stat1={rssScanning ? `${rss?.sources_scanned || 0}/${rss?.total_sources || 0}` : `${rss?.total_sources || "—"} feeds`}
+                stat2={lastResult ? `+${lastResult.new_relevant} new` : ""}
+                lastFetched={rss?.last_scan_at}
+                onTrigger={() => trigger("rss", "/fetch-news")}
+                triggering={triggering["rss"]}
+                isSelected={selected === "rss"}
+                onClick={() => handleCardClick("rss")}
+                testId="scanner-rss"
+              />
 
-            {/* YouTube */}
-            <ScannerCard
-              label="YouTube" icon={Youtube}
-              accentColor="text-red-400" bgAccent="bg-red-500/10"
-              borderAccent="border-red-500/30" barColor="bg-red-500"
-              isConfigured={ytActive} isActive={triggering["youtube"] || triggering["all"]} activeLabel="FETCHING"
-              progress={ytActive ? 100 : 0}
-              stat1={ytActive ? `${ytChannels.length} ch · ${ytData.searches.filter(s=>s.active).length} searches` : ""}
-              lastFetched={latestFetch(ytChannels, "last_fetched")}
-              onTrigger={() => trigger("youtube", "/social/fetch-all")}
-              triggering={triggering["youtube"] || triggering["all"]}
-              configNote="Add YOUTUBE_API_KEY"
-              testId="scanner-youtube"
-            />
+              <ScannerCard
+                label="YouTube" icon={Youtube}
+                accentColor="text-red-400" bgAccent="bg-red-500/10"
+                borderAccent="border-red-500/30" barColor="bg-red-500"
+                isConfigured={ytActive} isActive={triggering["youtube"] || triggering["all"]} activeLabel="FETCHING"
+                progress={ytActive ? 100 : 0}
+                stat1={ytActive ? `${ytChannels.length} ch · ${ytData.searches.filter(s=>s.active).length} srch` : ""}
+                lastFetched={latest(ytChannels, "last_fetched")}
+                onTrigger={() => trigger("youtube", "/social/fetch-all")}
+                triggering={triggering["youtube"] || triggering["all"]}
+                configNote="Add YOUTUBE_API_KEY"
+                isSelected={selected === "youtube"}
+                onClick={() => handleCardClick("youtube")}
+                testId="scanner-youtube"
+              />
 
-            {/* Facebook */}
-            <ScannerCard
-              label="Facebook" icon={Facebook}
-              accentColor="text-blue-400" bgAccent="bg-blue-500/10"
-              borderAccent="border-blue-500/30" barColor="bg-blue-500"
-              isConfigured={fbActive} isActive={triggering["facebook"] || triggering["all"]} activeLabel="FETCHING"
-              progress={fbActive ? 100 : 0}
-              stat1={fbActive ? `${fbPages.length} pages` : ""}
-              lastFetched={latestFetch(fbPages, "last_fetched")}
-              onTrigger={() => trigger("facebook", "/social/fetch-all")}
-              triggering={triggering["facebook"] || triggering["all"]}
-              configNote="Add FB App credentials"
-              testId="scanner-facebook"
-            />
+              <ScannerCard
+                label="Facebook" icon={Facebook}
+                accentColor="text-blue-400" bgAccent="bg-blue-500/10"
+                borderAccent="border-blue-500/30" barColor="bg-blue-500"
+                isConfigured={fbActive} isActive={triggering["facebook"] || triggering["all"]} activeLabel="FETCHING"
+                progress={fbActive ? 100 : 0}
+                stat1={fbActive ? `${fbPages.length} pages` : ""}
+                lastFetched={latest(fbPages, "last_fetched")}
+                onTrigger={() => trigger("facebook", "/social/fetch-all")}
+                triggering={triggering["facebook"] || triggering["all"]}
+                configNote="Add FB credentials"
+                isSelected={selected === "facebook"}
+                onClick={() => handleCardClick("facebook")}
+                testId="scanner-facebook"
+              />
 
-            {/* Telegram */}
-            <ScannerCard
-              label="Telegram" icon={Send}
-              accentColor="text-sky-400" bgAccent="bg-sky-500/10"
-              borderAccent="border-sky-500/30" barColor="bg-sky-500"
-              isConfigured={tgActive} isActive={triggering["telegram"] || triggering["all"]} activeLabel="FETCHING"
-              progress={tgActive ? 100 : 0}
-              stat1={tgActive ? `${tgChannels.length} channels` : ""}
-              lastFetched={latestFetch(tgChannels, "last_fetched")}
-              onTrigger={() => trigger("telegram", "/social/fetch-all")}
-              triggering={triggering["telegram"] || triggering["all"]}
-              configNote="Run telegram_setup.py"
-              testId="scanner-telegram"
-            />
+              <ScannerCard
+                label="Telegram" icon={Send}
+                accentColor="text-sky-400" bgAccent="bg-sky-500/10"
+                borderAccent="border-sky-500/30" barColor="bg-sky-500"
+                isConfigured={tgActive} isActive={triggering["telegram"] || triggering["all"]} activeLabel="FETCHING"
+                progress={tgActive ? 100 : 0}
+                stat1={tgActive ? `${tgChannels.length} channels` : ""}
+                lastFetched={latest(tgChannels, "last_fetched")}
+                onTrigger={() => trigger("telegram", "/social/fetch-all")}
+                triggering={triggering["telegram"] || triggering["all"]}
+                configNote="Run telegram_setup.py"
+                isSelected={selected === "telegram"}
+                onClick={() => handleCardClick("telegram")}
+                testId="scanner-telegram"
+              />
 
-            {/* Twitter / X */}
-            <ScannerCard
-              label="X / Twitter" icon={Twitter}
-              accentColor="text-slate-300" bgAccent="bg-slate-500/10"
-              borderAccent="border-slate-500/30" barColor="bg-slate-400"
-              isConfigured={true} isActive={triggering["twitter"] || triggering["all"]} activeLabel="FETCHING"
-              progress={100}
-              stat1={twConfigured ? `${twAccounts.length} acct · ${twData.searches.filter(s=>s.active).length} srch` : `Nitter · ${twAccounts.length} accounts`}
-              stat2={twConfigured ? "Official API" : "Free mode"}
-              lastFetched={latestFetch(twData.searches, "last_run")}
-              onTrigger={() => trigger("twitter", "/social/fetch-all")}
-              triggering={triggering["twitter"] || triggering["all"]}
-              testId="scanner-twitter"
-            />
+              <ScannerCard
+                label="X / Twitter" icon={Twitter}
+                accentColor="text-slate-300" bgAccent="bg-slate-500/10"
+                borderAccent="border-slate-500/30" barColor="bg-slate-400"
+                isConfigured={true} isActive={triggering["twitter"] || triggering["all"]} activeLabel="FETCHING"
+                progress={100}
+                stat1={twConfigured ? `${twAccounts.length} acct · ${twData.searches.filter(s=>s.active).length} srch` : `Nitter · ${twAccounts.length} acct`}
+                stat2={twConfigured ? "API" : "Nitter"}
+                lastFetched={latest(twData.searches, "last_run")}
+                onTrigger={() => trigger("twitter", "/social/fetch-all")}
+                triggering={triggering["twitter"] || triggering["all"]}
+                isSelected={selected === "twitter"}
+                onClick={() => handleCardClick("twitter")}
+                testId="scanner-twitter"
+              />
 
-            {/* Firecrawl */}
-            <ScannerCard
-              label="Firecrawl" icon={Globe}
-              accentColor="text-orange-400" bgAccent="bg-orange-500/10"
-              borderAccent="border-orange-500/30" barColor="bg-orange-500"
-              isConfigured={fcConfigured} isActive={triggering["firecrawl"] || triggering["all"]} activeLabel="CRAWLING"
-              progress={fcConfigured ? 100 : 0}
-              stat1={fcConfigured ? `${fcSources.length} sites · ${fcData.searches.filter(s=>s.active).length} queries` : ""}
-              lastFetched={latestFetch(fcSources, "last_fetched")}
-              onTrigger={fcConfigured ? () => trigger("firecrawl", "/social/fetch-all") : null}
-              triggering={triggering["firecrawl"] || triggering["all"]}
-              configNote="Add FIRECRAWL_API_KEY"
-              testId="scanner-firecrawl"
-            />
+              <ScannerCard
+                label="Firecrawl" icon={Globe}
+                accentColor="text-orange-400" bgAccent="bg-orange-500/10"
+                borderAccent="border-orange-500/30" barColor="bg-orange-500"
+                isConfigured={fcConfigured} isActive={triggering["firecrawl"] || triggering["all"]} activeLabel="CRAWLING"
+                progress={fcConfigured ? 100 : 0}
+                stat1={fcConfigured ? `${fcSources.length} sites · ${fcSearches.length} queries` : ""}
+                lastFetched={latest(fcSources, "last_fetched")}
+                onTrigger={fcConfigured ? () => trigger("firecrawl", "/social/fetch-all") : null}
+                triggering={triggering["firecrawl"] || triggering["all"]}
+                configNote="Add FIRECRAWL_API_KEY"
+                isSelected={selected === "firecrawl"}
+                onClick={() => handleCardClick("firecrawl")}
+                testId="scanner-firecrawl"
+              />
+            </div>
           </div>
-        </div>
+
+          {/* ── source detail panel ── */}
+          {selected && detailData[selected] && (
+            <SourceDetailPanel {...detailData[selected]} platform={selected} />
+          )}
+        </>
       )}
     </Card>
   );
