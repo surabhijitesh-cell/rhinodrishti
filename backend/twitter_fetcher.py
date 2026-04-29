@@ -144,6 +144,117 @@ def search_tweets_official(query: str, max_results: int = 10) -> list:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# List-based fetch — works on free tier (1 call → many accounts)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def fetch_list_tweets_official(list_id: str, list_name: str,
+                               max_results: int = 50) -> list:
+    """
+    Fetch the latest tweets from a Twitter (X) List via X API v2.
+
+    Free-tier friendly — one request returns tweets from every account
+    in the list, eliminating per-account rate limit pain. Maintain the
+    list publicly on twitter.com and edit membership without touching
+    Rhino Drishti.
+    """
+    client = _make_tweepy_client()
+    if not client:
+        return []
+    try:
+        resp = client.get_list_tweets(
+            id=list_id,
+            max_results=min(max_results, 100),
+            tweet_fields=["created_at", "text", "author_id", "public_metrics"],
+            expansions=["author_id"],
+            user_fields=["username", "name"],
+        )
+        if not resp.data:
+            return []
+
+        # Build author_id → (username, name) map from expansions
+        users = {}
+        if resp.includes and "users" in resp.includes:
+            for u in resp.includes["users"]:
+                users[u.id] = {"username": u.username, "name": u.name}
+
+        results = []
+        for t in resp.data:
+            author = users.get(t.author_id, {})
+            handle = author.get("username", str(t.author_id))
+            name   = author.get("name", handle)
+            results.append({
+                "id":           str(uuid.uuid4()),
+                "handle":       f"@{handle}",
+                "account_name": name,
+                "tweet_text":   t.text,
+                "tweet_url":    f"https://x.com/{handle}/status/{t.id}",
+                "posted_at":    t.created_at.isoformat() if t.created_at else datetime.now(timezone.utc).isoformat(),
+                "fetched_at":   datetime.now(timezone.utc).isoformat(),
+                "category":     "list",
+                "list_id":      list_id,
+                "list_name":    list_name,
+                "source":       "x_official",
+                "is_relevant":  True,
+            })
+        logger.info(f"X List '{list_name}' ({list_id}): {len(results)} tweets fetched")
+        return results
+    except Exception as e:
+        logger.error(f"X List fetch error for {list_name} ({list_id}): {e}")
+        return []
+
+
+async def fetch_twitter_lists(db) -> int:
+    """Scheduled: fetch tweets from all active twitter_lists documents."""
+    from ai_pipeline import classify_and_analyze_article
+
+    if not _bearer_token():
+        return 0
+
+    lists = await db.twitter_lists.find({"active": True}).to_list(50)
+    if not lists:
+        return 0
+
+    saved = 0
+    for lst in lists:
+        list_id   = lst.get("list_id")
+        list_name = lst.get("name", list_id)
+        if not list_id:
+            continue
+
+        loop = asyncio.get_event_loop()
+        tweets = await loop.run_in_executor(
+            None, lambda lid=list_id, ln=list_name, n=lst.get("max_results", 50):
+                  fetch_list_tweets_official(lid, ln, n)
+        )
+
+        for tw in tweets:
+            existing = await db.twitter_feeds.find_one({"tweet_url": tw["tweet_url"]})
+            if existing:
+                continue
+            await db.twitter_feeds.insert_one(tw)
+
+            text = tw["tweet_text"]
+            if len(text) > 50:
+                item = _tweet_to_intel_item(tw)
+                try:
+                    analysis = await classify_and_analyze_article(text, f"X List: {list_name}")
+                    item.update(analysis)
+                except Exception as e:
+                    logger.error(f"AI analysis failed for list tweet: {e}")
+                    item["processed"] = False
+                await db.intelligence_items.insert_one(item)
+            saved += 1
+
+        await db.twitter_lists.update_one(
+            {"_id": lst["_id"]},
+            {"$set": {"last_fetched": datetime.now(timezone.utc)}}
+        )
+
+    logger.info(f"fetch_twitter_lists: {saved} new tweets from {len(lists)} lists")
+    return saved
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Unified fetch — official API ONLY (Nitter fallback removed; instances dead 2023+)
 # ─────────────────────────────────────────────────────────────────────────────
 

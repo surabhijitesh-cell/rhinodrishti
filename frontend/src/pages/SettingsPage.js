@@ -1375,11 +1375,14 @@ function TelegramTab({ api }) {
 function TwitterTab({ api }) {
   const ac = useSourceList(api, "/social/twitter/accounts", "accounts");
   const sr = useSourceList(api, "/social/twitter/searches", "searches");
+  const ls = useSourceList(api, "/social/twitter/lists", "lists");
   const [del, setDel] = useState(null);
   const [showAc, setShowAc] = useState(false);
   const [showSr, setShowSr] = useState(false);
+  const [showLs, setShowLs] = useState(false);
   const [acHandle, setAcHandle] = useState(""); const [acName, setAcName] = useState(""); const [acCat, setAcCat] = useState("general");
   const [srQ, setSrQ] = useState(""); const [srNum, setSrNum] = useState(10);
+  const [lsId, setLsId] = useState(""); const [lsName, setLsName] = useState(""); const [lsMax, setLsMax] = useState(50);
   const [adding, setAdding] = useState(false);
 
   const handleDel = async (path, refresh, id) => {
@@ -1404,9 +1407,44 @@ function TwitterTab({ api }) {
     catch (err) { toast.error(err.response?.data?.detail || "Failed"); }
     setAdding(false);
   };
+  const addLs = async (e) => {
+    e.preventDefault(); if (!lsId.trim() || !lsName.trim()) return;
+    setAdding("ls");
+    try { await axios.post(`${api}/social/twitter/lists`, { list_id: lsId.trim(), name: lsName.trim(), max_results: lsMax });
+      toast.success("List added"); setLsId(""); setLsName(""); setShowLs(false); ls.refresh(); }
+    catch (err) { toast.error(err.response?.data?.detail || "Failed"); }
+    setAdding(false);
+  };
 
   return (
     <div className="space-y-5">
+      {/* Lists section — first because it works on free tier */}
+      <SmSection
+        accent="text-emerald-400" title="Lists (free-tier friendly)" items={ls.items} loading={ls.loading}
+        showForm={showLs} setShowForm={setShowLs} addLabel="Add List"
+        renderRow={item => <SmRow key={item.id} item={item} primary={item.name} secondary={`List ID: ${item.list_id} · ${item.max_results} tweets/run`} onDelete={id=>handleDel("/social/twitter/lists", ls.refresh, id)} deleting={del} />}
+        form={
+          <form onSubmit={addLs} className="border border-emerald-500/20 bg-emerald-500/5 p-3 space-y-2 mb-1">
+            <p className="text-[9px] text-emerald-400 font-mono uppercase tracking-wider">
+              Tip: Create a public List on x.com → /i/lists/&lt;ID&gt; → paste the numeric ID below.
+              One fetch returns tweets from every account in the list — works on free X API tier.
+            </p>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+              <div><label className="text-[9px] uppercase font-mono text-muted-foreground block mb-1">List ID *</label>
+                <Input value={lsId} onChange={e=>setLsId(e.target.value)} placeholder="e.g. 1234567890123456789" className="rounded-none text-xs h-8 font-mono" /></div>
+              <div><label className="text-[9px] uppercase font-mono text-muted-foreground block mb-1">Display Name *</label>
+                <Input value={lsName} onChange={e=>setLsName(e.target.value)} placeholder="e.g. Indian Defence" className="rounded-none text-xs h-8" /></div>
+              <div><label className="text-[9px] uppercase font-mono text-muted-foreground block mb-1">Tweets Per Fetch</label>
+                <Input type="number" value={lsMax} onChange={e=>setLsMax(parseInt(e.target.value)||50)} min={1} max={100} className="rounded-none text-xs h-8" /></div>
+            </div>
+            <div className="flex gap-2">
+              <Button type="submit" disabled={adding==="ls"} size="sm" className="rounded-none text-[10px] uppercase h-7">
+                {adding==="ls"?<Loader2 size={10} className="mr-1 animate-spin"/>:<Plus size={10} className="mr-1"/>}Add List</Button>
+              <Button type="button" variant="outline" size="sm" onClick={()=>setShowLs(false)} className="rounded-none text-[10px] h-7">Cancel</Button>
+            </div>
+          </form>
+        }
+      />
       <SmSection
         accent="text-slate-300" title="Accounts to Monitor" items={ac.items} loading={ac.loading}
         showForm={showAc} setShowForm={setShowAc} addLabel="Add Account"

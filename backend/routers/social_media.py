@@ -39,6 +39,12 @@ class TwitterSearchBody(BaseModel):
     num_results: int = 10
     active: bool = True
 
+class TwitterListBody(BaseModel):
+    list_id: str          # numeric id from x.com URL, e.g. /i/lists/1234567890
+    name: str             # human-readable name
+    max_results: int = 50
+    active: bool = True
+
 class YouTubeChannelBody(BaseModel):
     name: str
     channel_id: str
@@ -246,6 +252,68 @@ async def run_twitter_search_now(item_id: str):
         saved += 1
     await db.twitter_searches.update_one({"id": item_id}, {"$set": {"last_run": datetime.now(timezone.utc)}})
     return {"saved": saved, "query": s["query"]}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Twitter — lists (free-tier friendly: 1 call → many accounts)
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.get("/social/twitter/lists")
+async def list_twitter_lists():
+    items = await db.twitter_lists.find({}, {"_id": 0}).sort("name", 1).to_list(100)
+    return {"lists": items, "count": len(items)}
+
+
+@router.post("/social/twitter/lists", status_code=201)
+async def add_twitter_list(body: TwitterListBody):
+    if await db.twitter_lists.find_one({"list_id": body.list_id}):
+        raise HTTPException(409, "List already tracked")
+    doc = {"id": str(uuid.uuid4()), "list_id": body.list_id, "name": body.name,
+           "max_results": body.max_results, "active": body.active,
+           "last_fetched": None, "created_at": datetime.now(timezone.utc)}
+    await db.twitter_lists.insert_one(doc)
+    doc.pop("_id", None)
+    return {"list": doc}
+
+
+@router.delete("/social/twitter/lists/{item_id}")
+async def delete_twitter_list(item_id: str):
+    r = await db.twitter_lists.delete_one({"id": item_id})
+    if r.deleted_count == 0:
+        raise HTTPException(404, "Not found")
+    return {"deleted": True}
+
+
+@router.post("/social/twitter/lists/{item_id}/fetch")
+async def fetch_twitter_list_now(item_id: str):
+    lst = await db.twitter_lists.find_one({"id": item_id})
+    if not lst:
+        raise HTTPException(404, "Not found")
+    from twitter_fetcher import fetch_list_tweets_official, _tweet_to_intel_item
+    from ai_pipeline import classify_and_analyze_article
+
+    list_id   = lst["list_id"]
+    list_name = lst["name"]
+    loop = asyncio.get_event_loop()
+    tweets = await loop.run_in_executor(
+        None, lambda: fetch_list_tweets_official(list_id, list_name, lst.get("max_results", 50))
+    )
+    saved = 0
+    for tw in tweets:
+        if await db.twitter_feeds.find_one({"tweet_url": tw["tweet_url"]}):
+            continue
+        await db.twitter_feeds.insert_one(tw)
+        if len(tw.get("tweet_text", "")) > 50:
+            item = _tweet_to_intel_item(tw)
+            try:
+                analysis = await classify_and_analyze_article(tw["tweet_text"], f"X List: {list_name}")
+                item.update(analysis)
+            except Exception:
+                item["processed"] = False
+            await db.intelligence_items.insert_one(item)
+        saved += 1
+    await db.twitter_lists.update_one({"id": item_id}, {"$set": {"last_fetched": datetime.now(timezone.utc)}})
+    return {"saved": saved, "list": list_name}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -507,11 +575,12 @@ async def fetch_all_social_now(background_tasks: BackgroundTasks):
             db.facebook_pages.update_many({"active": {"$ne": False}},   {"$set": {"last_fetched": now}}),
             db.telegram_channels.update_many({"active": {"$ne": False}}, {"$set": {"last_fetched": now}}),
             db.twitter_searches.update_many({"active": {"$ne": False}},  {"$set": {"last_run": now}}),
+            db.twitter_lists.update_many({"active": {"$ne": False}},     {"$set": {"last_fetched": now}}),
             db.web_sources.update_many({"active": {"$ne": False}},       {"$set": {"last_fetched": now}}),
             db.firecrawl_searches.update_many({"active": {"$ne": False}}, {"$set": {"last_run": now}}),
         )
         counts = [r.modified_count for r in results]
-        labels = ["yt_ch", "fb_pg", "tg_ch", "tw_srch", "web_src", "fc_srch"]
+        labels = ["yt_ch", "fb_pg", "tg_ch", "tw_srch", "tw_lists", "web_src", "fc_srch"]
         logger.info(f"fetch-all: timestamps written — {dict(zip(labels, counts))}")
     except Exception as e:
         logger.error(f"fetch-all: instant timestamp update failed: {e}")
@@ -519,7 +588,7 @@ async def fetch_all_social_now(background_tasks: BackgroundTasks):
     # ── 2. Background network fetches ─────────────────────────────────────────
     async def _run_all():
         try:
-            from twitter_fetcher   import fetch_twitter_accounts, fetch_twitter_searches
+            from twitter_fetcher   import fetch_twitter_accounts, fetch_twitter_searches, fetch_twitter_lists
             from youtube_fetcher   import fetch_youtube_channels, fetch_youtube_searches
             from facebook_fetcher  import fetch_facebook_pages
             from telegram_fetcher  import fetch_telegram_channels
@@ -528,6 +597,7 @@ async def fetch_all_social_now(background_tasks: BackgroundTasks):
             coros  = [
                 fetch_twitter_accounts(db),
                 fetch_twitter_searches(db),
+                fetch_twitter_lists(db),
                 fetch_youtube_channels(db),
                 fetch_youtube_searches(db),
                 fetch_facebook_pages(db),
@@ -536,7 +606,7 @@ async def fetch_all_social_now(background_tasks: BackgroundTasks):
                 run_keyword_searches(db),
             ]
             labels = [
-                "twitter_accounts", "twitter_searches",
+                "twitter_accounts", "twitter_searches", "twitter_lists",
                 "youtube_channels", "youtube_searches",
                 "facebook_pages",   "telegram_channels",
                 "firecrawl_sites",  "firecrawl_searches",
