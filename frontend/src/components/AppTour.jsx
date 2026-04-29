@@ -363,17 +363,19 @@ export default function AppTour() {
     }
   };
 
-  // No steps for this route → render nothing
-  if (steps.length === 0) return null;
+  // Only mount Joyride when the tour is actively running AND this route has
+  // steps.  Conditional mounting (rather than run={running}) guarantees that
+  // every mount is a brand-new Joyride instance that starts at step 0 — no
+  // stale internal state from a previously-completed tour.
+  // key={joyKey} handles the edge-case where startTour() fires while the tour
+  // is already running: the key change forces a full remount even then.
+  if (!running || steps.length === 0) return null;
 
-  // key={joyKey} forces a full Joyride remount every time startTour() is
-  // called, clearing its internal state so the tour always starts at step 0.
-  // run={running} controls whether the tour is active.
   return (
     <Joyride
       key={joyKey}
       steps={steps}
-      run={running}
+      run={true}
       continuous
       showSkipButton
       showProgress

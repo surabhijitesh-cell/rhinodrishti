@@ -198,6 +198,10 @@ function SourceScanners({ api, socialTrigger }) {
   const [twData, setTwData]           = useState({ accounts: [], searches: [] });
   const [fcData, setFcData]           = useState({ sources: [], searches: [] });
   const [triggering, setTriggering]   = useState({});
+  // Local timestamp set immediately when "Fetch Intel" / "Scan Social Media"
+  // fires so cards show "0s ago" right away instead of stale MongoDB data.
+  // Cleared once the last scheduled refreshSocial() poll completes.
+  const [localScanTime, setLocalScanTime] = useState(null);
 
   // ── RSS status (fast poll) ──
   useEffect(() => {
@@ -241,17 +245,22 @@ function SourceScanners({ api, socialTrigger }) {
 
   // ── respond to "Fetch Intel" button from parent Dashboard ────────────────
   // socialTrigger increments each time the parent fires /social/fetch-all.
-  // We show FETCHING on all social cards and schedule polls so the updated
-  // timestamps (written synchronously in the backend endpoint) become visible.
+  // We immediately set a local timestamp so cards show "0s ago" without
+  // waiting for MongoDB Atlas read-after-write propagation.
   useEffect(() => {
     if (!socialTrigger) return; // skip initial render (value=0)
+    setLocalScanTime(new Date().toISOString()); // instant local override
     setTriggering(t => ({ ...t, all: true }));
-    refreshSocial(); // immediate — timestamps were already written by backend
+    refreshSocial();
     const delays = [8000, 18000, 35000, 55000, 90000];
     const timers = delays.map((delay, i) =>
       setTimeout(() => {
         refreshSocial();
-        if (i === delays.length - 1) setTriggering(t => ({ ...t, all: false }));
+        if (i === delays.length - 1) {
+          setTriggering(t => ({ ...t, all: false }));
+          // After final poll MongoDB data should be fresh — drop the override
+          setLocalScanTime(null);
+        }
       }, delay)
     );
     return () => timers.forEach(clearTimeout);
@@ -263,18 +272,28 @@ function SourceScanners({ api, socialTrigger }) {
   // slow sources (Telegram can take 60-90s, Firecrawl up to 3 min).
   const trigger = async (key, endpoint) => {
     setTriggering(t => ({ ...t, [key]: true }));
+    setLocalScanTime(new Date().toISOString()); // instant local timestamp
     try { await axios.post(`${api}${endpoint}`); } catch {}
 
     const pollDelays = [10000, 20000, 35000, 55000, 80000, 110000, 150000];
     pollDelays.forEach((delay, i) => {
       setTimeout(() => {
         refreshSocial();
-        // Clear the FETCHING badge after the last poll
         if (i === pollDelays.length - 1) {
           setTriggering(t => ({ ...t, [key]: false }));
+          setLocalScanTime(null); // drop override after final poll
         }
       }, delay);
     });
+  };
+
+  // ── timestamp helper: use local override if it's newer than MongoDB data ──
+  // This ensures "0s ago" is shown immediately after a global fetch trigger
+  // instead of waiting for MongoDB Atlas read-after-write propagation.
+  const freshTime = (mongoIso) => {
+    if (!localScanTime) return mongoIso;
+    if (!mongoIso) return localScanTime;
+    return new Date(localScanTime) >= new Date(mongoIso) ? localScanTime : mongoIso;
   };
 
   // ── derived ──
@@ -419,7 +438,7 @@ function SourceScanners({ api, socialTrigger }) {
                 isConfigured={ytActive} isActive={triggering["youtube"] || triggering["all"]} activeLabel="FETCHING"
                 progress={ytActive ? 100 : 0}
                 stat1={ytActive ? `${ytChannels.length} ch · ${ytData.searches.filter(s=>s.active).length} srch` : ""}
-                lastFetched={latest(ytChannels, "last_fetched")}
+                lastFetched={freshTime(latest(ytChannels, "last_fetched"))}
                 onTrigger={() => trigger("youtube", "/social/fetch-all")}
                 triggering={triggering["youtube"] || triggering["all"]}
                 configNote="Add YOUTUBE_API_KEY"
@@ -436,7 +455,7 @@ function SourceScanners({ api, socialTrigger }) {
                 isConfigured={fbActive} isActive={triggering["facebook"] || triggering["all"]} activeLabel="FETCHING"
                 progress={fbActive ? 100 : 0}
                 stat1={fbActive ? `${fbPages.length} pages` : ""}
-                lastFetched={latest(fbPages, "last_fetched")}
+                lastFetched={freshTime(latest(fbPages, "last_fetched"))}
                 onTrigger={() => trigger("facebook", "/social/fetch-all")}
                 triggering={triggering["facebook"] || triggering["all"]}
                 configNote="Add FB credentials"
@@ -453,7 +472,7 @@ function SourceScanners({ api, socialTrigger }) {
                 isConfigured={tgActive} isActive={triggering["telegram"] || triggering["all"]} activeLabel="FETCHING"
                 progress={tgActive ? 100 : 0}
                 stat1={tgActive ? `${tgChannels.length} channels` : ""}
-                lastFetched={latest(tgChannels, "last_fetched")}
+                lastFetched={freshTime(latest(tgChannels, "last_fetched"))}
                 onTrigger={() => trigger("telegram", "/social/fetch-all")}
                 triggering={triggering["telegram"] || triggering["all"]}
                 configNote="Run telegram_setup.py"
@@ -471,7 +490,7 @@ function SourceScanners({ api, socialTrigger }) {
                 progress={100}
                 stat1={twConfigured ? `${twAccounts.length} acct · ${twData.searches.filter(s=>s.active).length} srch` : `${twAccounts.length} acct`}
                 stat2={twConfigured ? "API" : "Nitter"}
-                lastFetched={latest(twData.searches, "last_run")}
+                lastFetched={freshTime(latest(twData.searches, "last_run"))}
                 onTrigger={() => trigger("twitter", "/social/fetch-all")}
                 triggering={triggering["twitter"] || triggering["all"]}
                 isSelected={selected === "twitter"}
@@ -487,7 +506,7 @@ function SourceScanners({ api, socialTrigger }) {
                 isConfigured={fcConfigured} isActive={triggering["firecrawl"] || triggering["all"]} activeLabel="CRAWLING"
                 progress={fcConfigured ? 100 : 0}
                 stat1={fcConfigured ? `${fcSources.length} sites · ${fcSearches.length} queries` : ""}
-                lastFetched={latest(fcSources, "last_fetched")}
+                lastFetched={freshTime(latest(fcSources, "last_fetched"))}
                 onTrigger={fcConfigured ? () => trigger("firecrawl", "/social/fetch-all") : null}
                 triggering={triggering["firecrawl"] || triggering["all"]}
                 configNote="Add FIRECRAWL_API_KEY"
