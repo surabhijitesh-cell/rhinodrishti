@@ -77,16 +77,45 @@ async def social_status():
     import os
     from telegram_fetcher import _is_configured as tg_ok
 
+    twitter_configured  = bool(os.environ.get("TWITTER_BEARER_TOKEN", "").strip())
+    youtube_configured  = bool(os.environ.get("YOUTUBE_API_KEY", "").strip())
+    facebook_configured = bool(os.environ.get("FACEBOOK_APP_ID", "").strip() and
+                               os.environ.get("FACEBOOK_APP_SECRET", "").strip())
+    firecrawl_configured = bool(os.environ.get("FIRECRAWL_API_KEY", "").strip())
+
     return {
-        "twitter":  {"configured": bool(os.environ.get("TWITTER_BEARER_TOKEN", "").strip()),
-                     "note": "Official API v2. Without key, Nitter fallback is used for account monitoring."},
-        "youtube":  {"configured": bool(os.environ.get("YOUTUBE_API_KEY", "").strip()),
-                     "note": "YouTube Data API v3 (free, 10k quota/day)"},
-        "facebook": {"configured": bool(os.environ.get("FACEBOOK_APP_ID", "").strip() and
-                                        os.environ.get("FACEBOOK_APP_SECRET", "").strip()),
-                     "note": "Graph API app access token — public pages only"},
-        "telegram": {"configured": tg_ok(),
-                     "note": "Telethon user session — run telegram_setup.py once to generate session"},
+        "twitter": {
+            "configured": twitter_configured,
+            "available":  twitter_configured,  # No Nitter fallback — needs API key
+            "note": ("Official X API v2 (Basic tier+). Nitter fallback was removed because "
+                     "all public Nitter instances broke when Twitter killed guest-account "
+                     "access in mid-2023. Set TWITTER_BEARER_TOKEN to enable.")
+            if not twitter_configured else "Official X API v2 active.",
+        },
+        "youtube": {
+            "configured": youtube_configured,
+            "available":  youtube_configured,
+            "note": "YouTube Data API v3 (free, 10k quota/day). Set YOUTUBE_API_KEY."
+            if not youtube_configured else "YouTube Data API v3 active.",
+        },
+        "facebook": {
+            "configured": facebook_configured,
+            "available":  facebook_configured,
+            "note": "Graph API app access token — public pages only. Set FACEBOOK_APP_ID + FACEBOOK_APP_SECRET."
+            if not facebook_configured else "Graph API v19 active.",
+        },
+        "telegram": {
+            "configured": tg_ok(),
+            "available":  tg_ok(),
+            "note": "Telethon user session — run telegram_setup.py once to generate session."
+            if not tg_ok() else "Telethon user session active.",
+        },
+        "firecrawl": {
+            "configured": firecrawl_configured,
+            "available":  firecrawl_configured,
+            "note": "Firecrawl SaaS — set FIRECRAWL_API_KEY."
+            if not firecrawl_configured else "Firecrawl active.",
+        },
     }
 
 

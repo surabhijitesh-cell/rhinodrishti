@@ -144,28 +144,21 @@ def search_tweets_official(query: str, max_results: int = 10) -> list:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Nitter fallback helpers (reuses existing twitter_scraper logic)
-# ─────────────────────────────────────────────────────────────────────────────
-
-def fetch_user_tweets_nitter(handle: str, account_name: str,
-                             category: str, max_tweets: int = 5) -> list:
-    try:
-        from twitter_scraper import scrape_tweets_sync
-        return scrape_tweets_sync(handle, max_tweets)
-    except Exception as e:
-        logger.warning(f"Nitter fallback failed for @{handle}: {e}")
-        return []
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Unified fetch (tries official, falls back to Nitter)
+# Unified fetch — official API ONLY (Nitter fallback removed; instances dead 2023+)
 # ─────────────────────────────────────────────────────────────────────────────
 
 def fetch_user_tweets(handle: str, account_name: str,
                       category: str, max_results: int = 10) -> list:
-    if _bearer_token():
-        return fetch_user_tweets_official(handle, account_name, category, max_results)
-    return fetch_user_tweets_nitter(handle, account_name, category, max_results)
+    """
+    Fetch tweets via X API v2. Returns [] if TWITTER_BEARER_TOKEN is unset.
+
+    Nitter fallback was removed because all public Nitter instances broke
+    when Twitter killed guest-account access in mid-2023. Set
+    TWITTER_BEARER_TOKEN (X API Basic tier or higher) to re-enable Twitter.
+    """
+    if not _bearer_token():
+        return []
+    return fetch_user_tweets_official(handle, account_name, category, max_results)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -173,8 +166,16 @@ def fetch_user_tweets(handle: str, account_name: str,
 # ─────────────────────────────────────────────────────────────────────────────
 
 async def fetch_twitter_accounts(db) -> int:
-    """Scheduled: scrape/fetch all active twitter_accounts documents."""
+    """Scheduled: fetch all active twitter_accounts documents via official X API.
+
+    Returns 0 immediately if TWITTER_BEARER_TOKEN is not set — Nitter
+    fallback was removed (all public Nitter instances are dead post-2023).
+    """
     from ai_pipeline import classify_and_analyze_article
+
+    if not _bearer_token():
+        logger.info("Twitter disabled — TWITTER_BEARER_TOKEN not set (Nitter fallback removed)")
+        return 0
 
     accounts = await db.twitter_accounts.find({"active": True}).to_list(200)
     if not accounts:

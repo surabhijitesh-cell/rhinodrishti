@@ -1079,6 +1079,40 @@ const SM_TABS = [
   { id: "firecrawl", label: "Firecrawl", Icon: Activity, accent: "text-orange-400" },
 ];
 
+function useSocialStatus(api) {
+  const [status, setStatus] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    axios.get(`${api}/social/status`)
+      .then(r => { if (!cancelled) setStatus(r.data); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [api]);
+  return status;
+}
+
+function PlatformBanner({ status, platformId }) {
+  if (!status || !status[platformId]) return null;
+  const p = status[platformId];
+  if (p.available) return null;
+  return (
+    <div className="border border-amber-500/30 bg-amber-500/5 p-3 flex items-start gap-3 mb-3">
+      <AlertTriangle size={14} className="text-amber-400 shrink-0 mt-0.5" />
+      <div className="flex-1 min-w-0">
+        <p className="text-[11px] font-bold uppercase tracking-wider text-amber-400 font-['Barlow_Condensed']">
+          Source Currently Disabled
+        </p>
+        <p className="text-[10px] text-muted-foreground font-mono leading-relaxed mt-1">
+          {p.note}
+        </p>
+        <p className="text-[10px] text-muted-foreground/70 font-mono mt-1">
+          You can still configure sources below — fetching will resume once the API key is set.
+        </p>
+      </div>
+    </div>
+  );
+}
+
 function useSourceList(api, path, listKey) {
   const [items, setItems]     = useState([]);
   const [loading, setLoading] = useState(true);
@@ -1515,6 +1549,7 @@ function FirecrawlTab({ api }) {
 function SocialScanManager({ api }) {
   const [activeTab, setActiveTab] = useState("youtube");
   const active = SM_TABS.find(t => t.id === activeTab);
+  const status = useSocialStatus(api);
 
   const renderTab = () => {
     switch (activeTab) {
@@ -1574,6 +1609,7 @@ function SocialScanManager({ api }) {
           <p className="text-[10px] text-muted-foreground font-mono mb-4">
             Configure which {active?.label} {tabDesc[activeTab]} are scanned during each intelligence fetch cycle. Changes apply on the next fetch.
           </p>
+          <PlatformBanner status={status} platformId={activeTab} />
           {renderTab()}
         </div>
       </CardContent>
