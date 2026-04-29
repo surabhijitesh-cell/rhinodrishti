@@ -470,16 +470,20 @@ async def fetch_all_social_now(background_tasks: BackgroundTasks):
     now = datetime.now(timezone.utc)
 
     # ── 1. Instant timestamp update (awaited before response) ─────────────────
+    # Filter uses $ne False rather than == True so documents where the active
+    # field is missing or stored as a non-bool truthy value are also matched.
     try:
-        await asyncio.gather(
-            db.youtube_channels.update_many({"active": True}, {"$set": {"last_fetched": now}}),
-            db.facebook_pages.update_many({"active": True},   {"$set": {"last_fetched": now}}),
-            db.telegram_channels.update_many({"active": True}, {"$set": {"last_fetched": now}}),
-            db.twitter_searches.update_many({"active": True},  {"$set": {"last_run": now}}),
-            db.web_sources.update_many({"active": True},       {"$set": {"last_fetched": now}}),
-            db.firecrawl_searches.update_many({"active": True}, {"$set": {"last_run": now}}),
+        results = await asyncio.gather(
+            db.youtube_channels.update_many({"active": {"$ne": False}}, {"$set": {"last_fetched": now}}),
+            db.facebook_pages.update_many({"active": {"$ne": False}},   {"$set": {"last_fetched": now}}),
+            db.telegram_channels.update_many({"active": {"$ne": False}}, {"$set": {"last_fetched": now}}),
+            db.twitter_searches.update_many({"active": {"$ne": False}},  {"$set": {"last_run": now}}),
+            db.web_sources.update_many({"active": {"$ne": False}},       {"$set": {"last_fetched": now}}),
+            db.firecrawl_searches.update_many({"active": {"$ne": False}}, {"$set": {"last_run": now}}),
         )
-        logger.info("fetch-all: instant timestamps written")
+        counts = [r.modified_count for r in results]
+        labels = ["yt_ch", "fb_pg", "tg_ch", "tw_srch", "web_src", "fc_srch"]
+        logger.info(f"fetch-all: timestamps written — {dict(zip(labels, counts))}")
     except Exception as e:
         logger.error(f"fetch-all: instant timestamp update failed: {e}")
 

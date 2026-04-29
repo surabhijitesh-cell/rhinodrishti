@@ -198,10 +198,17 @@ function SourceScanners({ api, socialTrigger }) {
   const [twData, setTwData]           = useState({ accounts: [], searches: [] });
   const [fcData, setFcData]           = useState({ sources: [], searches: [] });
   const [triggering, setTriggering]   = useState({});
-  // Local timestamp set immediately when "Fetch Intel" / "Scan Social Media"
-  // fires so cards show "0s ago" right away instead of stale MongoDB data.
-  // Cleared once the last scheduled refreshSocial() poll completes.
-  const [localScanTime, setLocalScanTime] = useState(null);
+  // Local timestamp set immediately when any fetch fires so cards show the
+  // correct elapsed time even when MongoDB Atlas doesn't persist last_fetched.
+  // Persisted to localStorage so it survives page refreshes.
+  const [localScanTime, setLocalScanTime] = useState(
+    () => localStorage.getItem("rhino_last_social_scan") || null
+  );
+  const recordScan = () => {
+    const t = new Date().toISOString();
+    setLocalScanTime(t);
+    localStorage.setItem("rhino_last_social_scan", t);
+  };
 
   // ── RSS status (fast poll) ──
   useEffect(() => {
@@ -249,18 +256,14 @@ function SourceScanners({ api, socialTrigger }) {
   // waiting for MongoDB Atlas read-after-write propagation.
   useEffect(() => {
     if (!socialTrigger) return; // skip initial render (value=0)
-    setLocalScanTime(new Date().toISOString()); // instant local override
+    recordScan(); // instant local timestamp — persisted to localStorage
     setTriggering(t => ({ ...t, all: true }));
     refreshSocial();
     const delays = [8000, 18000, 35000, 55000, 90000];
     const timers = delays.map((delay, i) =>
       setTimeout(() => {
         refreshSocial();
-        if (i === delays.length - 1) {
-          setTriggering(t => ({ ...t, all: false }));
-          // After final poll MongoDB data should be fresh — drop the override
-          setLocalScanTime(null);
-        }
+        if (i === delays.length - 1) setTriggering(t => ({ ...t, all: false }));
       }, delay)
     );
     return () => timers.forEach(clearTimeout);
@@ -272,17 +275,14 @@ function SourceScanners({ api, socialTrigger }) {
   // slow sources (Telegram can take 60-90s, Firecrawl up to 3 min).
   const trigger = async (key, endpoint) => {
     setTriggering(t => ({ ...t, [key]: true }));
-    setLocalScanTime(new Date().toISOString()); // instant local timestamp
+    recordScan(); // instant local timestamp — persisted to localStorage
     try { await axios.post(`${api}${endpoint}`); } catch {}
 
     const pollDelays = [10000, 20000, 35000, 55000, 80000, 110000, 150000];
     pollDelays.forEach((delay, i) => {
       setTimeout(() => {
         refreshSocial();
-        if (i === pollDelays.length - 1) {
-          setTriggering(t => ({ ...t, [key]: false }));
-          setLocalScanTime(null); // drop override after final poll
-        }
+        if (i === pollDelays.length - 1) setTriggering(t => ({ ...t, [key]: false }));
       }, delay);
     });
   };
