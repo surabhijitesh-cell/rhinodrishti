@@ -12,11 +12,10 @@ import { useAuth } from "./AuthContext";
 const TourContext = createContext(null);
 
 export function TourProvider({ children }) {
-  const [running, setRunning]     = useState(false);
-  const [stepIndex, setStepIndex] = useState(0);
+  const [running, setRunning] = useState(false);
   // Incrementing this forces Joyride to fully remount, resetting its
   // internal state so the tour plays correctly every time startTour() fires.
-  const [joyKey, setJoyKey]       = useState(0);
+  const [joyKey, setJoyKey]   = useState(0);
   const { user } = useAuth();
   const location = useLocation();
   const autoStarted = useRef(false);
@@ -31,7 +30,6 @@ export function TourProvider({ children }) {
     if (!seen) {
       // Small delay so page renders first
       const t = setTimeout(() => {
-        setStepIndex(0);
         setJoyKey(k => k + 1);
         setRunning(true);
       }, 1200);
@@ -46,8 +44,7 @@ export function TourProvider({ children }) {
 
   const startTour = useCallback(() => {
     // Increment key → Joyride fully remounts with clean internal state.
-    // Set run=true in the same batch so it starts immediately.
-    setStepIndex(0);
+    // run=true in same batch so it starts immediately.
     setJoyKey(k => k + 1);
     setRunning(true);
   }, []);
@@ -69,7 +66,7 @@ export function TourProvider({ children }) {
   }, [user]);
 
   return (
-    <TourContext.Provider value={{ running, stepIndex, setStepIndex, startTour, stopTour, markSeen, resetAllTours, joyKey }}>
+    <TourContext.Provider value={{ running, startTour, stopTour, markSeen, resetAllTours, joyKey }}>
       {children}
     </TourContext.Provider>
   );

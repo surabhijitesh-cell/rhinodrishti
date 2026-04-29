@@ -346,36 +346,34 @@ const JOYRIDE_STYLES = {
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export default function AppTour() {
-  const location  = useLocation();
-  const { running, stepIndex, setStepIndex, stopTour, markSeen, joyKey } = useTour();
+  const location = useLocation();
+  const { running, stopTour, joyKey } = useTour();
 
   const steps = PAGE_STEPS[location.pathname] || [];
 
-  const handleCallback = ({ action, index, status, type }) => {
-    if ([STATUS.FINISHED, STATUS.SKIPPED].includes(status)) {
-      stopTour();
-      return;
-    }
-    if ([EVENTS.STEP_AFTER, EVENTS.TARGET_NOT_FOUND].includes(type)) {
-      setStepIndex(action === ACTIONS.PREV ? index - 1 : index + 1);
-    }
-    if (action === ACTIONS.CLOSE) {
+  // Only handle lifecycle events — step navigation is managed by Joyride itself
+  // (uncontrolled mode: no stepIndex prop).
+  const handleCallback = ({ status, action }) => {
+    if (
+      status === STATUS.FINISHED ||
+      status === STATUS.SKIPPED  ||
+      action  === ACTIONS.CLOSE
+    ) {
       stopTour();
     }
   };
 
-  // No steps defined for this page → nothing to show
+  // No steps for this route → render nothing
   if (steps.length === 0) return null;
 
-  // Always keep Joyride mounted so the key-change remount works reliably.
-  // run={running} controls visibility; key={joyKey} forces a full remount
-  // (clearing Joyride's internal "finished" state) every time startTour() fires.
+  // key={joyKey} forces a full Joyride remount every time startTour() is
+  // called, clearing its internal state so the tour always starts at step 0.
+  // run={running} controls whether the tour is active.
   return (
     <Joyride
       key={joyKey}
       steps={steps}
       run={running}
-      stepIndex={stepIndex}
       continuous
       showSkipButton
       showProgress

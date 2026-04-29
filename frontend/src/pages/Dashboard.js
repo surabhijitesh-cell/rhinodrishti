@@ -186,7 +186,7 @@ function SourceDetailPanel({ platform, accentColor, borderAccent, bgAccent, icon
 }
 
 // ─── collapsible source scanners ─────────────────────────────────────────────
-function SourceScanners({ api }) {
+function SourceScanners({ api, socialTrigger }) {
   const [open, setOpen]               = useState(true);   // expanded by default
   const [selected, setSelected]       = useState(null);   // which card is drilled into
   const [rss, setRss]                 = useState(null);
@@ -238,6 +238,24 @@ function SourceScanners({ api }) {
     const id = setInterval(refreshSocial, 60000);
     return () => clearInterval(id);
   }, [refreshSocial]);
+
+  // ── respond to "Fetch Intel" button from parent Dashboard ────────────────
+  // socialTrigger increments each time the parent fires /social/fetch-all.
+  // We show FETCHING on all social cards and schedule polls so the updated
+  // timestamps (written synchronously in the backend endpoint) become visible.
+  useEffect(() => {
+    if (!socialTrigger) return; // skip initial render (value=0)
+    setTriggering(t => ({ ...t, all: true }));
+    refreshSocial(); // immediate — timestamps were already written by backend
+    const delays = [8000, 18000, 35000, 55000, 90000];
+    const timers = delays.map((delay, i) =>
+      setTimeout(() => {
+        refreshSocial();
+        if (i === delays.length - 1) setTriggering(t => ({ ...t, all: false }));
+      }, delay)
+    );
+    return () => timers.forEach(clearTimeout);
+  }, [socialTrigger, refreshSocial]);
 
   // ── trigger fetch + persistent polling until last_fetched updates ──
   // Backend now returns immediately (BackgroundTasks) so we poll at
@@ -627,6 +645,9 @@ export default function Dashboard({ stats: propStats, api }) {
   const [localStats, setLocalStats] = useState(null);
   const [sortBy, setSortBy] = useState("published_at");
   const [minPriority, setMinPriority] = useState("");
+  // Increments every time "Fetch Intel" fires social/fetch-all so SourceScanners
+  // can show FETCHING badges and start its polling schedule.
+  const [socialTrigger, setSocialTrigger] = useState(0);
   const navigate = useNavigate();
 
   // WebSocket real-time connection
@@ -679,11 +700,14 @@ export default function Dashboard({ stats: propStats, api }) {
   const handleFetchNews = async () => {
     setLoading(true);
     try {
-      // Trigger all 6 sources: RSS + the 5 social/web sources in parallel
+      // Trigger all 6 sources: RSS + social/web in parallel
       await Promise.allSettled([
         axios.post(`${api}/fetch-news`),
         axios.post(`${api}/social/fetch-all`),
       ]);
+      // Tell SourceScanners a global social fetch just fired so it can
+      // show FETCHING badges and kick off its own polling schedule.
+      setSocialTrigger(t => t + 1);
     } catch (e) {
       console.error("Fetch failed:", e);
     }
@@ -809,7 +833,7 @@ export default function Dashboard({ stats: propStats, api }) {
       </div>
 
       {/* Source Scanners */}
-      <div data-tour="source-scanners"><SourceScanners api={api} /></div>
+      <div data-tour="source-scanners"><SourceScanners api={api} socialTrigger={socialTrigger} /></div>
 
       {/* Unacknowledged Critical Alerts - Sticky Panel */}
       <UnacknowledgedAlerts api={api} />
