@@ -7,10 +7,69 @@ import os
 import re
 import uuid
 import json
+import anthropic
 from shared import db, uploads_col, intelligence_col, patterns_col, logger
 from llm_client import get_client, MODEL
 
 router = APIRouter()
+
+
+# ============================================================
+# Robust JSON extraction helper
+# ============================================================
+
+def _extract_json(text: str) -> dict:
+    """
+    Extract a JSON object from Claude's response text.
+
+    Handles:
+    - Markdown code fences (```json ... ```)
+    - Trailing commas before } or ] (common Claude quirk)
+    - Extra prose before/after the JSON block
+    - Truncated responses (graceful fallback)
+    """
+    # 1. Strip markdown code fences
+    cleaned = re.sub(r"```(?:json)?\s*", "", text).strip()
+    cleaned = re.sub(r"```\s*$", "", cleaned).strip()
+
+    # 2. Try parsing the whole cleaned string directly
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError:
+        pass
+
+    # 3. Find the outermost {...} block
+    start = cleaned.find("{")
+    if start != -1:
+        # Walk backwards from end to find matching closing brace
+        depth = 0
+        end = -1
+        for i, ch in enumerate(cleaned[start:], start):
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    end = i
+                    break
+        if end != -1:
+            json_str = cleaned[start : end + 1]
+            try:
+                return json.loads(json_str)
+            except json.JSONDecodeError:
+                # 4. Fix trailing commas before } or ] (common Claude formatting issue)
+                fixed = re.sub(r",\s*([}\]])", r"\1", json_str)
+                try:
+                    return json.loads(fixed)
+                except json.JSONDecodeError:
+                    pass
+
+    # 5. Final fallback — return whatever we got as a plain summary
+    logger.warning("_extract_json: could not parse JSON from LLM response")
+    return {
+        "executive_summary": text[:600],
+        "error": "Could not parse structured response — raw text stored",
+    }
 
 
 class URLAnalysisRequest(BaseModel):
@@ -354,23 +413,32 @@ async def _run_contextual_analysis(doc_id: str):
 
     text = doc.get("extracted_text", "")
     if not text or len(text) < 20:
-        await uploads_col.update_one({"id": doc_id}, {"$set": {"processed": True, "analysis": {"error": "No extractable text found"}}})
+        await uploads_col.update_one(
+            {"id": doc_id},
+            {"$set": {"processed": True, "analysis": {"error": "No extractable text found"}}}
+        )
         return
 
     try:
         security_context = await _get_security_context()
         extra_query = doc.get("analysis_query", "")
 
-        user_prompt = f"=== DOCUMENT/ARTICLE SUBMITTED FOR ANALYSIS ===\n\n{text[:6000]}\n\n"
+        # Cap document text at 4 000 chars to keep prompt size manageable and
+        # reduce the chance of the LLM response being truncated at max_tokens.
+        user_prompt = f"=== DOCUMENT/ARTICLE SUBMITTED FOR ANALYSIS ===\n\n{text[:4000]}\n\n"
         user_prompt += f"=== SECURITY CONTEXT ===\n{security_context}\n\n"
         if extra_query:
             user_prompt += f"=== SPECIFIC ANALYSIS REQUEST ===\n{extra_query}\n\n"
         user_prompt += "Provide your COMPREHENSIVE CONTEXTUAL INTELLIGENCE ASSESSMENT as JSON."
 
         client = get_client()
+        # max_tokens raised to 3000 so the full JSON body is never truncated.
+        # timeout=90 gives Render-hosted background tasks a generous window
+        # while still surfacing a clean error if the API is unresponsive.
         response = await client.messages.create(
             model=MODEL,
-            max_tokens=2048,
+            max_tokens=3000,
+            timeout=90.0,
             system=[
                 {
                     "type": "text",
@@ -382,12 +450,9 @@ async def _run_contextual_analysis(doc_id: str):
         )
         response_text = response.content[0].text
 
-        # Parse JSON from response
-        json_match = re.search(r'\{[\s\S]*\}', response_text)
-        if json_match:
-            analysis = json.loads(json_match.group())
-        else:
-            analysis = {"executive_summary": response_text[:500], "error": "Could not parse structured response"}
+        # Robust JSON extraction — handles markdown fences, trailing commas,
+        # and partial responses much better than a plain regex+json.loads.
+        analysis = _extract_json(response_text)
 
         await uploads_col.update_one(
             {"id": doc_id},
@@ -397,7 +462,21 @@ async def _run_contextual_analysis(doc_id: str):
                 "region": analysis.get("relevance_assessment", {}).get("primary_region", ""),
             }}
         )
-        logger.info(f"Contextual analysis complete for {doc_id}: {analysis.get('threat_classification', {}).get('severity', '?')}")
+        logger.info(
+            f"Contextual analysis complete for {doc_id}: "
+            f"{analysis.get('threat_classification', {}).get('severity', '?')}"
+        )
+
+    except (anthropic.APITimeoutError, anthropic.APIConnectionError) as e:
+        msg = (
+            "Analysis request timed out. The document may be too large or the AI "
+            "service is temporarily slow. Please try again in a few minutes."
+        )
+        logger.error(f"Analysis timeout/connection error for {doc_id}: {e}")
+        await uploads_col.update_one(
+            {"id": doc_id},
+            {"$set": {"processed": True, "analysis": {"error": msg}}}
+        )
 
     except Exception as e:
         logger.error(f"Analysis failed for {doc_id}: {e}")
