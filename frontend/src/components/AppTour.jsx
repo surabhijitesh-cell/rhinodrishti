@@ -1,10 +1,18 @@
 /**
- * AppTour — Joyride-powered guided walkthrough for every page.
+ * AppTour — Joyride v3 guided walkthrough for every page.
  *
  * Steps are keyed by route pathname.
  * Targets use data-tour="<name>" attributes placed on DOM elements.
+ *
+ * react-joyride v3 API notes (breaking changes from v2):
+ *   - callback  → onEvent
+ *   - styles.options.* → separate `options` prop
+ *   - buttonNext → buttonPrimary in styles
+ *   - showSkipButton → add "skip" to options.buttons
+ *   - disableScrollParentFix → removed
+ *   - skipBeacon defaults false; set true so tooltips appear without beacon click
  */
-import { Joyride, ACTIONS, EVENTS, STATUS } from "react-joyride";
+import { Joyride, ACTIONS, STATUS } from "react-joyride";
 import { useLocation } from "react-router-dom";
 import { useTour } from "../contexts/TourContext";
 
@@ -258,19 +266,29 @@ const PAGE_STEPS = {
   ],
 };
 
-// ─── Joyride styles matching military dark theme ──────────────────────────────
+// ─── react-joyride v3: options separate from styles ──────────────────────────
+// primaryColor / backgroundColor / textColor / overlayColor / zIndex / width
+// must be in the `options` prop.  styles only handles visual overrides.
 
-const JOYRIDE_STYLES = {
-  options: {
-    primaryColor: "hsl(var(--primary))",
-    backgroundColor: "hsl(var(--card))",
-    textColor: "hsl(var(--foreground))",
-    overlayColor: "rgba(0,0,0,0.65)",
-    spotlightShadow: "0 0 0 2px hsl(var(--primary)/0.5), 0 0 30px rgba(0,0,0,0.8)",
-    zIndex: 10000,
-    arrowColor: "hsl(var(--card))",
-    width: 360,
-  },
+const TOUR_OPTIONS = {
+  // Skip the beacon entirely for every step — without this, the first
+  // step shows a beacon that must be clicked before the tooltip appears.
+  // Since we hide beacons via CSS the tour looked like it never started.
+  skipBeacon: true,
+  // Show Back, Skip, and Next/Done buttons
+  buttons: ["back", "skip", "close", "primary"],
+  // Theme colours pulled from CSS custom properties
+  primaryColor: "hsl(var(--primary))",
+  backgroundColor: "hsl(var(--card))",
+  textColor: "hsl(var(--foreground))",
+  overlayColor: "rgba(0,0,0,0.65)",
+  arrowColor: "hsl(var(--card))",
+  width: 360,
+  zIndex: 10000,
+  spotlightPadding: 6,
+};
+
+const TOUR_STYLES = {
   tooltip: {
     borderRadius: 0,
     border: "1px solid hsl(var(--border))",
@@ -293,7 +311,8 @@ const JOYRIDE_STYLES = {
     color: "hsl(var(--muted-foreground))",
     padding: "0",
   },
-  buttonNext: {
+  // In v3 the "Next / Done" button is `buttonPrimary` (was `buttonNext` in v2)
+  buttonPrimary: {
     borderRadius: 0,
     backgroundColor: "hsl(var(--primary))",
     color: "hsl(var(--primary-foreground))",
@@ -339,7 +358,7 @@ const JOYRIDE_STYLES = {
     borderRadius: 0,
   },
   beacon: {
-    display: "none", // we start tour explicitly, no floating beacon
+    display: "none", // safety net — skipBeacon:true already prevents beacon rendering
   },
 };
 
@@ -351,9 +370,10 @@ export default function AppTour() {
 
   const steps = PAGE_STEPS[location.pathname] || [];
 
-  // Only handle lifecycle events — step navigation is managed by Joyride itself
-  // (uncontrolled mode: no stepIndex prop).
-  const handleCallback = ({ status, action }) => {
+  // In react-joyride v3 the event callback prop is `onEvent`, not `callback`.
+  // Without this rename, stopTour() is never called and the tour state is
+  // never persisted to localStorage.
+  const handleEvent = ({ status, action }) => {
     if (
       status === STATUS.FINISHED ||
       status === STATUS.SKIPPED  ||
@@ -364,11 +384,10 @@ export default function AppTour() {
   };
 
   // Only mount Joyride when the tour is actively running AND this route has
-  // steps.  Conditional mounting (rather than run={running}) guarantees that
-  // every mount is a brand-new Joyride instance that starts at step 0 — no
-  // stale internal state from a previously-completed tour.
-  // key={joyKey} handles the edge-case where startTour() fires while the tour
-  // is already running: the key change forces a full remount even then.
+  // steps.  Conditional mounting guarantees every mount is a brand-new
+  // Joyride instance that starts at step 0 with clean internal state.
+  // key={joyKey} handles the edge-case where startTour() fires while the
+  // tour is already running — the key change forces a full remount.
   if (!running || steps.length === 0) return null;
 
   return (
@@ -377,11 +396,9 @@ export default function AppTour() {
       steps={steps}
       run={true}
       continuous
-      showSkipButton
       showProgress
-      disableScrollParentFix
-      spotlightPadding={6}
-      styles={JOYRIDE_STYLES}
+      options={TOUR_OPTIONS}
+      styles={TOUR_STYLES}
       locale={{
         back: "← Back",
         close: "✕",
@@ -389,7 +406,7 @@ export default function AppTour() {
         next: "Next →",
         skip: "Skip Tour",
       }}
-      callback={handleCallback}
+      onEvent={handleEvent}
     />
   );
 }
