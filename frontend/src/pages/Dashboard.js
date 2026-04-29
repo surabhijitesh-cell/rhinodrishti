@@ -187,6 +187,7 @@ function SourceDetailPanel({ platform, accentColor, borderAccent, bgAccent, icon
 
 // ─── collapsible source scanners ─────────────────────────────────────────────
 function SourceScanners({ api, socialTrigger }) {
+  const navigate                      = useNavigate();    // route to /twitter-feed on Twitter card click
   const [open, setOpen]               = useState(true);   // expanded by default
   const [selected, setSelected]       = useState(null);   // which card is drilled into
   const [rss, setRss]                 = useState(null);
@@ -353,14 +354,9 @@ function SourceScanners({ api, socialTrigger }) {
       items: tgChannels.map(c => ({ label: c.name, sub: `@${c.username}`, time: timeAgo(c.last_fetched) })),
       emptyMsg: "No Telegram channels configured. Run telegram_setup.py to generate session.",
     },
-    twitter: {
-      icon: Twitter, accentColor: "text-slate-300", borderAccent: "border-slate-500/20", bgAccent: "bg-slate-500/5",
-      items: [
-        ...twAccounts.map(a => ({ label: a.name || `@${a.handle}`, sub: a.category, time: "—" })),
-        ...twData.searches.filter(s=>s.active).map(s => ({ label: s.query, sub: "search", time: timeAgo(s.last_run) })),
-      ],
-      emptyMsg: "No Twitter accounts configured.",
-    },
+    // X/Twitter is intentionally omitted from the drill-down panel.
+    // Clicking the X/Twitter card navigates to /twitter-feed instead, which
+    // shows actual tweet content rather than a list of monitored handles.
     firecrawl: {
       icon: Globe, accentColor: "text-orange-400", borderAccent: "border-orange-500/20", bgAccent: "bg-orange-500/5",
       items: [
@@ -486,17 +482,18 @@ function SourceScanners({ api, socialTrigger }) {
                 label="X / Twitter" icon={Twitter}
                 accentColor="text-slate-300" bgAccent="bg-slate-500/10"
                 borderAccent="border-slate-500/30" barColor="bg-slate-400"
-                isConfigured={true} isActive={triggering["twitter"] || triggering["all"]} activeLabel="FETCHING"
-                progress={100}
-                stat1={twConfigured ? `${twAccounts.length} acct · ${twData.searches.filter(s=>s.active).length} srch` : `${twAccounts.length} acct`}
-                stat2={twConfigured ? "API" : "Nitter"}
+                isConfigured={twConfigured} isActive={triggering["twitter"] || triggering["all"]} activeLabel="FETCHING"
+                progress={twConfigured ? 100 : 0}
+                stat1={twConfigured ? `${twAccounts.length} acct · ${twData.searches.filter(s=>s.active).length} srch` : "API key needed"}
+                stat2={twConfigured ? "Live" : "—"}
                 lastFetched={freshTime(latest(twData.searches, "last_run"))}
                 onTrigger={() => trigger("twitter", "/social/fetch-all")}
                 triggering={triggering["twitter"] || triggering["all"]}
-                isSelected={selected === "twitter"}
-                onClick={() => handleCardClick("twitter")}
+                isSelected={false}
+                onClick={() => navigate("/twitter-feed")}
+                configNote="Add TWITTER_BEARER_TOKEN"
                 testId="scanner-twitter"
-                tooltip={`X/Twitter — ${twAccounts.length} accounts + ${twData.searches.filter(s=>s.active).length} keyword searches. ${twConfigured ? "Using official API." : "Nitter fallback (no API key)."} Monitors political figures, security analysts and journalists.`}
+                tooltip={`X/Twitter — click to open the live tweet feed. ${twConfigured ? "Official API active." : "Set TWITTER_BEARER_TOKEN to enable."} ${twAccounts.length} accounts + ${twData.searches.filter(s=>s.active).length} searches monitored. Configure Lists in Settings → Social Scan for free-tier compatibility.`}
               />
 
               <ScannerCard
