@@ -96,6 +96,9 @@ function SettingsContent({ api }) {
       {/* RSS Feed Management — Full width */}
       <RssFeedManager api={api} />
 
+      {/* Social Media Scan Configuration — Full width */}
+      <SocialScanManager api={api} />
+
       {/* Row 1: Retention + Pipeline side by side */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {/* News Retention Window */}
@@ -1054,6 +1057,525 @@ function BiasImpactReport({ api }) {
             </table>
           </div>
         )}
+      </CardContent>
+    </Card>
+  );
+}
+
+
+// ─── Social Media Scan Manager ────────────────────────────────────────────────
+
+const SM_CATS = ["media", "government", "defense", "paramilitary", "general", "intelligence"];
+const SM_REGIONS_LIST = [
+  "Northeast", "NER", "Assam", "Manipur", "Meghalaya", "Mizoram", "Tripura",
+  "Nagaland", "Arunachal Pradesh", "Sikkim", "India", "Bangladesh", "Myanmar", "International",
+];
+
+const SM_TABS = [
+  { id: "youtube",   label: "YouTube",   Icon: Youtube,  accent: "text-red-400"    },
+  { id: "facebook",  label: "Facebook",  Icon: Facebook, accent: "text-blue-400"   },
+  { id: "telegram",  label: "Telegram",  Icon: Radio,    accent: "text-sky-400"    },
+  { id: "twitter",   label: "X/Twitter", Icon: Twitter,  accent: "text-slate-300"  },
+  { id: "firecrawl", label: "Firecrawl", Icon: Activity, accent: "text-orange-400" },
+];
+
+function useSourceList(api, path, listKey) {
+  const [items, setItems]     = useState([]);
+  const [loading, setLoading] = useState(true);
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await axios.get(`${api}${path}`);
+      setItems(res.data[listKey] || []);
+    } catch (e) { console.error(`fetch ${path} failed`, e); }
+    setLoading(false);
+  }, [api, path, listKey]);
+  useEffect(() => { load(); }, [load]);
+  return { items, loading, refresh: load };
+}
+
+function SmRow({ item, primary, secondary, badge, onDelete, deleting }) {
+  const busy = deleting === item.id;
+  return (
+    <div className="px-3 py-2.5 flex items-center gap-3 hover:bg-muted/5 group">
+      <div className="flex-1 min-w-0">
+        <p className="text-xs font-medium truncate">{primary}</p>
+        {secondary && <p className="text-[9px] font-mono text-muted-foreground/60 truncate mt-0.5">{secondary}</p>}
+      </div>
+      {badge && (
+        <Badge className="rounded-none text-[8px] px-1.5 py-0 bg-muted text-muted-foreground border-border shrink-0">{badge}</Badge>
+      )}
+      {item.active === false && (
+        <Badge className="rounded-none text-[8px] px-1.5 py-0 bg-amber-500/10 text-amber-400 border-amber-500/20 shrink-0">paused</Badge>
+      )}
+      <button
+        onClick={() => onDelete(item.id)}
+        disabled={busy}
+        className="p-1 shrink-0 text-muted-foreground/30 hover:text-red-400 transition-colors opacity-0 group-hover:opacity-100"
+        title="Remove"
+      >
+        {busy ? <Loader2 size={11} className="animate-spin" /> : <Trash2 size={11} />}
+      </button>
+    </div>
+  );
+}
+
+function SmSection({ accent, title, items, loading, renderRow, showForm, setShowForm, addLabel, form }) {
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between">
+        <p className={`text-[10px] uppercase tracking-widest font-mono font-semibold ${accent}`}>
+          {title}
+          <span className="text-muted-foreground font-normal ml-2">({loading ? "…" : items.length})</span>
+        </p>
+        {!showForm && (
+          <Button
+            variant="outline" size="sm"
+            className="rounded-none text-[10px] h-6 px-2 uppercase tracking-wider"
+            onClick={() => setShowForm(true)}
+          >
+            <Plus size={10} className="mr-1" />{addLabel}
+          </Button>
+        )}
+      </div>
+      {showForm && form}
+      {loading ? (
+        <div className="flex items-center gap-2 py-3"><Loader2 size={12} className="animate-spin text-muted-foreground" /><span className="text-[10px] text-muted-foreground font-mono">Loading…</span></div>
+      ) : items.length === 0 ? (
+        <p className="text-[10px] text-muted-foreground font-mono py-2.5 px-3 border border-dashed border-border">None configured</p>
+      ) : (
+        <div className="divide-y divide-border border border-border">{items.map(renderRow)}</div>
+      )}
+    </div>
+  );
+}
+
+// ── YouTube Tab ───────────────────────────────────────────────────────────────
+
+function YouTubeTab({ api }) {
+  const ch = useSourceList(api, "/social/youtube/channels", "channels");
+  const sr = useSourceList(api, "/social/youtube/searches", "searches");
+  const [del, setDel] = useState(null);
+  const [showCh, setShowCh] = useState(false);
+  const [showSr, setShowSr] = useState(false);
+  const [chName, setChName] = useState(""); const [chId, setChId] = useState(""); const [chCat, setChCat] = useState("media");
+  const [srQ, setSrQ] = useState(""); const [srMax, setSrMax] = useState(5);
+  const [adding, setAdding] = useState(false);
+
+  const handleDel = async (path, refresh, id) => {
+    setDel(id);
+    try { await axios.delete(`${api}${path}/${id}`); refresh(); toast.success("Removed"); }
+    catch { toast.error("Delete failed"); }
+    setDel(null);
+  };
+  const addCh = async (e) => {
+    e.preventDefault(); if (!chName.trim() || !chId.trim()) return;
+    setAdding("ch");
+    try { await axios.post(`${api}/social/youtube/channels`, { name: chName.trim(), channel_id: chId.trim(), category: chCat });
+      toast.success("Channel added"); setChName(""); setChId(""); setShowCh(false); ch.refresh(); }
+    catch (err) { toast.error(err.response?.data?.detail || "Failed"); }
+    setAdding(false);
+  };
+  const addSr = async (e) => {
+    e.preventDefault(); if (!srQ.trim()) return;
+    setAdding("sr");
+    try { await axios.post(`${api}/social/youtube/searches`, { query: srQ.trim(), max_results: srMax });
+      toast.success("Search added"); setSrQ(""); setShowSr(false); sr.refresh(); }
+    catch (err) { toast.error(err.response?.data?.detail || "Failed"); }
+    setAdding(false);
+  };
+
+  return (
+    <div className="space-y-5">
+      <SmSection
+        accent="text-red-400" title="Channels" items={ch.items} loading={ch.loading}
+        showForm={showCh} setShowForm={setShowCh} addLabel="Add Channel"
+        renderRow={item => <SmRow key={item.id} item={item} primary={item.name} secondary={`Channel ID: ${item.channel_id}`} badge={item.category} onDelete={id=>handleDel("/social/youtube/channels", ch.refresh, id)} deleting={del} />}
+        form={
+          <form onSubmit={addCh} className="border border-red-500/20 bg-red-500/5 p-3 space-y-2 mb-1">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+              <div><label className="text-[9px] uppercase font-mono text-muted-foreground block mb-1">Channel Name *</label>
+                <Input value={chName} onChange={e=>setChName(e.target.value)} placeholder="e.g. DD News" className="rounded-none text-xs h-8" /></div>
+              <div><label className="text-[9px] uppercase font-mono text-muted-foreground block mb-1">Channel ID *</label>
+                <Input value={chId} onChange={e=>setChId(e.target.value)} placeholder="UCxxxxxxxxxxxxxxxxxxx" className="rounded-none text-xs h-8 font-mono" /></div>
+              <div><label className="text-[9px] uppercase font-mono text-muted-foreground block mb-1">Category</label>
+                <Select value={chCat} onValueChange={setChCat}><SelectTrigger className="rounded-none text-xs h-8"><SelectValue /></SelectTrigger>
+                  <SelectContent className="rounded-none">{SM_CATS.map(c=><SelectItem key={c} value={c} className="text-xs">{c}</SelectItem>)}</SelectContent></Select></div>
+            </div>
+            <div className="flex gap-2">
+              <Button type="submit" disabled={adding==="ch"} size="sm" className="rounded-none text-[10px] uppercase h-7">
+                {adding==="ch"?<Loader2 size={10} className="mr-1 animate-spin"/>:<Plus size={10} className="mr-1"/>}Add Channel</Button>
+              <Button type="button" variant="outline" size="sm" onClick={()=>setShowCh(false)} className="rounded-none text-[10px] h-7">Cancel</Button>
+            </div>
+          </form>
+        }
+      />
+      <SmSection
+        accent="text-red-400" title="Keyword Searches" items={sr.items} loading={sr.loading}
+        showForm={showSr} setShowForm={setShowSr} addLabel="Add Search"
+        renderRow={item => <SmRow key={item.id} item={item} primary={item.query} secondary={`${item.max_results} results per run`} onDelete={id=>handleDel("/social/youtube/searches", sr.refresh, id)} deleting={del} />}
+        form={
+          <form onSubmit={addSr} className="border border-red-500/20 bg-red-500/5 p-3 space-y-2 mb-1">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+              <div><label className="text-[9px] uppercase font-mono text-muted-foreground block mb-1">Search Query *</label>
+                <Input value={srQ} onChange={e=>setSrQ(e.target.value)} placeholder="e.g. Assam border incident" className="rounded-none text-xs h-8" /></div>
+              <div><label className="text-[9px] uppercase font-mono text-muted-foreground block mb-1">Max Results</label>
+                <Input type="number" value={srMax} onChange={e=>setSrMax(parseInt(e.target.value)||5)} min={1} max={50} className="rounded-none text-xs h-8" /></div>
+            </div>
+            <div className="flex gap-2">
+              <Button type="submit" disabled={adding==="sr"} size="sm" className="rounded-none text-[10px] uppercase h-7">
+                {adding==="sr"?<Loader2 size={10} className="mr-1 animate-spin"/>:<Plus size={10} className="mr-1"/>}Add Search</Button>
+              <Button type="button" variant="outline" size="sm" onClick={()=>setShowSr(false)} className="rounded-none text-[10px] h-7">Cancel</Button>
+            </div>
+          </form>
+        }
+      />
+    </div>
+  );
+}
+
+// ── Facebook Tab ──────────────────────────────────────────────────────────────
+
+function FacebookTab({ api }) {
+  const pg = useSourceList(api, "/social/facebook/pages", "pages");
+  const [del, setDel] = useState(null);
+  const [showForm, setShowForm] = useState(false);
+  const [pgName, setPgName] = useState(""); const [pgId, setPgId] = useState(""); const [pgCat, setPgCat] = useState("media");
+  const [adding, setAdding] = useState(false);
+
+  const handleDel = async (id) => {
+    setDel(id);
+    try { await axios.delete(`${api}/social/facebook/pages/${id}`); pg.refresh(); toast.success("Page removed"); }
+    catch { toast.error("Delete failed"); }
+    setDel(null);
+  };
+  const handleAdd = async (e) => {
+    e.preventDefault(); if (!pgName.trim() || !pgId.trim()) return;
+    setAdding(true);
+    try { await axios.post(`${api}/social/facebook/pages`, { name: pgName.trim(), page_id: pgId.trim(), category: pgCat });
+      toast.success("Page added"); setPgName(""); setPgId(""); setShowForm(false); pg.refresh(); }
+    catch (err) { toast.error(err.response?.data?.detail || "Failed"); }
+    setAdding(false);
+  };
+
+  return (
+    <SmSection
+      accent="text-blue-400" title="Pages" items={pg.items} loading={pg.loading}
+      showForm={showForm} setShowForm={setShowForm} addLabel="Add Page"
+      renderRow={item => <SmRow key={item.id} item={item} primary={item.name} secondary={`Page ID: ${item.page_id}`} badge={item.category} onDelete={handleDel} deleting={del} />}
+      form={
+        <form onSubmit={handleAdd} className="border border-blue-500/20 bg-blue-500/5 p-3 space-y-2 mb-1">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+            <div><label className="text-[9px] uppercase font-mono text-muted-foreground block mb-1">Page Name *</label>
+              <Input value={pgName} onChange={e=>setPgName(e.target.value)} placeholder="e.g. BSF Official" className="rounded-none text-xs h-8" /></div>
+            <div><label className="text-[9px] uppercase font-mono text-muted-foreground block mb-1">Page ID / Slug *</label>
+              <Input value={pgId} onChange={e=>setPgId(e.target.value)} placeholder="e.g. BSFIndia" className="rounded-none text-xs h-8 font-mono" /></div>
+            <div><label className="text-[9px] uppercase font-mono text-muted-foreground block mb-1">Category</label>
+              <Select value={pgCat} onValueChange={setPgCat}><SelectTrigger className="rounded-none text-xs h-8"><SelectValue /></SelectTrigger>
+                <SelectContent className="rounded-none">{SM_CATS.map(c=><SelectItem key={c} value={c} className="text-xs">{c}</SelectItem>)}</SelectContent></Select></div>
+          </div>
+          <div className="flex gap-2">
+            <Button type="submit" disabled={adding} size="sm" className="rounded-none text-[10px] uppercase h-7">
+              {adding?<Loader2 size={10} className="mr-1 animate-spin"/>:<Plus size={10} className="mr-1"/>}Add Page</Button>
+            <Button type="button" variant="outline" size="sm" onClick={()=>setShowForm(false)} className="rounded-none text-[10px] h-7">Cancel</Button>
+          </div>
+        </form>
+      }
+    />
+  );
+}
+
+// ── Telegram Tab ──────────────────────────────────────────────────────────────
+
+function TelegramTab({ api }) {
+  const ch = useSourceList(api, "/social/telegram/channels", "channels");
+  const [del, setDel] = useState(null);
+  const [showForm, setShowForm] = useState(false);
+  const [tgUser, setTgUser] = useState(""); const [tgName, setTgName] = useState(""); const [tgCat, setTgCat] = useState("media");
+  const [adding, setAdding] = useState(false);
+
+  const handleDel = async (id) => {
+    setDel(id);
+    try { await axios.delete(`${api}/social/telegram/channels/${id}`); ch.refresh(); toast.success("Channel removed"); }
+    catch { toast.error("Delete failed"); }
+    setDel(null);
+  };
+  const handleAdd = async (e) => {
+    e.preventDefault(); if (!tgUser.trim() || !tgName.trim()) return;
+    setAdding(true);
+    try { await axios.post(`${api}/social/telegram/channels`, { username: tgUser.trim().replace(/^@/, ""), name: tgName.trim(), category: tgCat });
+      toast.success("Channel added"); setTgUser(""); setTgName(""); setShowForm(false); ch.refresh(); }
+    catch (err) { toast.error(err.response?.data?.detail || "Failed"); }
+    setAdding(false);
+  };
+
+  return (
+    <SmSection
+      accent="text-sky-400" title="Channels" items={ch.items} loading={ch.loading}
+      showForm={showForm} setShowForm={setShowForm} addLabel="Add Channel"
+      renderRow={item => <SmRow key={item.id} item={item} primary={item.name} secondary={`@${item.username}`} badge={item.category} onDelete={handleDel} deleting={del} />}
+      form={
+        <form onSubmit={handleAdd} className="border border-sky-500/20 bg-sky-500/5 p-3 space-y-2 mb-1">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+            <div><label className="text-[9px] uppercase font-mono text-muted-foreground block mb-1">Username (no @) *</label>
+              <Input value={tgUser} onChange={e=>setTgUser(e.target.value)} placeholder="e.g. BSFIndia" className="rounded-none text-xs h-8 font-mono" /></div>
+            <div><label className="text-[9px] uppercase font-mono text-muted-foreground block mb-1">Display Name *</label>
+              <Input value={tgName} onChange={e=>setTgName(e.target.value)} placeholder="e.g. BSF India Official" className="rounded-none text-xs h-8" /></div>
+            <div><label className="text-[9px] uppercase font-mono text-muted-foreground block mb-1">Category</label>
+              <Select value={tgCat} onValueChange={setTgCat}><SelectTrigger className="rounded-none text-xs h-8"><SelectValue /></SelectTrigger>
+                <SelectContent className="rounded-none">{SM_CATS.map(c=><SelectItem key={c} value={c} className="text-xs">{c}</SelectItem>)}</SelectContent></Select></div>
+          </div>
+          <div className="flex gap-2">
+            <Button type="submit" disabled={adding} size="sm" className="rounded-none text-[10px] uppercase h-7">
+              {adding?<Loader2 size={10} className="mr-1 animate-spin"/>:<Plus size={10} className="mr-1"/>}Add Channel</Button>
+            <Button type="button" variant="outline" size="sm" onClick={()=>setShowForm(false)} className="rounded-none text-[10px] h-7">Cancel</Button>
+          </div>
+        </form>
+      }
+    />
+  );
+}
+
+// ── Twitter Tab ───────────────────────────────────────────────────────────────
+
+function TwitterTab({ api }) {
+  const ac = useSourceList(api, "/social/twitter/accounts", "accounts");
+  const sr = useSourceList(api, "/social/twitter/searches", "searches");
+  const [del, setDel] = useState(null);
+  const [showAc, setShowAc] = useState(false);
+  const [showSr, setShowSr] = useState(false);
+  const [acHandle, setAcHandle] = useState(""); const [acName, setAcName] = useState(""); const [acCat, setAcCat] = useState("general");
+  const [srQ, setSrQ] = useState(""); const [srNum, setSrNum] = useState(10);
+  const [adding, setAdding] = useState(false);
+
+  const handleDel = async (path, refresh, id) => {
+    setDel(id);
+    try { await axios.delete(`${api}${path}/${id}`); refresh(); toast.success("Removed"); }
+    catch { toast.error("Delete failed"); }
+    setDel(null);
+  };
+  const addAc = async (e) => {
+    e.preventDefault(); if (!acHandle.trim() || !acName.trim()) return;
+    setAdding("ac");
+    try { await axios.post(`${api}/social/twitter/accounts`, { handle: acHandle.trim().replace(/^@/, ""), name: acName.trim(), category: acCat });
+      toast.success("Account added"); setAcHandle(""); setAcName(""); setShowAc(false); ac.refresh(); }
+    catch (err) { toast.error(err.response?.data?.detail || "Failed"); }
+    setAdding(false);
+  };
+  const addSr = async (e) => {
+    e.preventDefault(); if (!srQ.trim()) return;
+    setAdding("sr");
+    try { await axios.post(`${api}/social/twitter/searches`, { query: srQ.trim(), num_results: srNum });
+      toast.success("Search added"); setSrQ(""); setShowSr(false); sr.refresh(); }
+    catch (err) { toast.error(err.response?.data?.detail || "Failed"); }
+    setAdding(false);
+  };
+
+  return (
+    <div className="space-y-5">
+      <SmSection
+        accent="text-slate-300" title="Accounts to Monitor" items={ac.items} loading={ac.loading}
+        showForm={showAc} setShowForm={setShowAc} addLabel="Add Account"
+        renderRow={item => <SmRow key={item.id} item={item} primary={item.name} secondary={`@${item.handle}`} badge={item.category} onDelete={id=>handleDel("/social/twitter/accounts", ac.refresh, id)} deleting={del} />}
+        form={
+          <form onSubmit={addAc} className="border border-slate-500/20 bg-slate-500/5 p-3 space-y-2 mb-1">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+              <div><label className="text-[9px] uppercase font-mono text-muted-foreground block mb-1">Handle (no @) *</label>
+                <Input value={acHandle} onChange={e=>setAcHandle(e.target.value)} placeholder="e.g. BSF_India" className="rounded-none text-xs h-8 font-mono" /></div>
+              <div><label className="text-[9px] uppercase font-mono text-muted-foreground block mb-1">Display Name *</label>
+                <Input value={acName} onChange={e=>setAcName(e.target.value)} placeholder="e.g. Border Security Force" className="rounded-none text-xs h-8" /></div>
+              <div><label className="text-[9px] uppercase font-mono text-muted-foreground block mb-1">Category</label>
+                <Select value={acCat} onValueChange={setAcCat}><SelectTrigger className="rounded-none text-xs h-8"><SelectValue /></SelectTrigger>
+                  <SelectContent className="rounded-none">{SM_CATS.map(c=><SelectItem key={c} value={c} className="text-xs">{c}</SelectItem>)}</SelectContent></Select></div>
+            </div>
+            <div className="flex gap-2">
+              <Button type="submit" disabled={adding==="ac"} size="sm" className="rounded-none text-[10px] uppercase h-7">
+                {adding==="ac"?<Loader2 size={10} className="mr-1 animate-spin"/>:<Plus size={10} className="mr-1"/>}Add Account</Button>
+              <Button type="button" variant="outline" size="sm" onClick={()=>setShowAc(false)} className="rounded-none text-[10px] h-7">Cancel</Button>
+            </div>
+          </form>
+        }
+      />
+      <SmSection
+        accent="text-slate-300" title="Keyword Searches" items={sr.items} loading={sr.loading}
+        showForm={showSr} setShowForm={setShowSr} addLabel="Add Search"
+        renderRow={item => <SmRow key={item.id} item={item} primary={item.query} secondary={`${item.num_results} results per run`} onDelete={id=>handleDel("/social/twitter/searches", sr.refresh, id)} deleting={del} />}
+        form={
+          <form onSubmit={addSr} className="border border-slate-500/20 bg-slate-500/5 p-3 space-y-2 mb-1">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+              <div><label className="text-[9px] uppercase font-mono text-muted-foreground block mb-1">Search Query *</label>
+                <Input value={srQ} onChange={e=>setSrQ(e.target.value)} placeholder="e.g. Manipur violence OR Assam border" className="rounded-none text-xs h-8" /></div>
+              <div><label className="text-[9px] uppercase font-mono text-muted-foreground block mb-1">Results Per Run</label>
+                <Input type="number" value={srNum} onChange={e=>setSrNum(parseInt(e.target.value)||10)} min={1} max={100} className="rounded-none text-xs h-8" /></div>
+            </div>
+            <div className="flex gap-2">
+              <Button type="submit" disabled={adding==="sr"} size="sm" className="rounded-none text-[10px] uppercase h-7">
+                {adding==="sr"?<Loader2 size={10} className="mr-1 animate-spin"/>:<Plus size={10} className="mr-1"/>}Add Search</Button>
+              <Button type="button" variant="outline" size="sm" onClick={()=>setShowSr(false)} className="rounded-none text-[10px] h-7">Cancel</Button>
+            </div>
+          </form>
+        }
+      />
+    </div>
+  );
+}
+
+// ── Firecrawl Tab ─────────────────────────────────────────────────────────────
+
+function FirecrawlTab({ api }) {
+  const ws = useSourceList(api, "/web-sources", "sources");
+  const fc = useSourceList(api, "/firecrawl-searches", "searches");
+  const [del, setDel] = useState(null);
+  const [showWs, setShowWs] = useState(false);
+  const [showFc, setShowFc] = useState(false);
+  const [wsName, setWsName] = useState(""); const [wsUrl, setWsUrl] = useState("");
+  const [wsRegion, setWsRegion] = useState("Northeast"); const [wsCat, setWsCat] = useState("grassroots");
+  const [fcQ, setFcQ] = useState(""); const [fcNum, setFcNum] = useState(5);
+  const [adding, setAdding] = useState(false);
+
+  const handleDel = async (path, refresh, id) => {
+    setDel(id);
+    try { await axios.delete(`${api}${path}/${id}`); refresh(); toast.success("Removed"); }
+    catch { toast.error("Delete failed"); }
+    setDel(null);
+  };
+  const addWs = async (e) => {
+    e.preventDefault(); if (!wsName.trim() || !wsUrl.trim()) return;
+    setAdding("ws");
+    try { await axios.post(`${api}/web-sources`, { name: wsName.trim(), url: wsUrl.trim(), region: wsRegion, category: wsCat });
+      toast.success("Web source added"); setWsName(""); setWsUrl(""); setShowWs(false); ws.refresh(); }
+    catch (err) { toast.error(err.response?.data?.detail || "Failed"); }
+    setAdding(false);
+  };
+  const addFc = async (e) => {
+    e.preventDefault(); if (!fcQ.trim()) return;
+    setAdding("fc");
+    try { await axios.post(`${api}/firecrawl-searches`, { query: fcQ.trim(), num_results: fcNum });
+      toast.success("Search added"); setFcQ(""); setShowFc(false); fc.refresh(); }
+    catch (err) { toast.error(err.response?.data?.detail || "Failed"); }
+    setAdding(false);
+  };
+
+  return (
+    <div className="space-y-5">
+      <SmSection
+        accent="text-orange-400" title="Web Sources" items={ws.items} loading={ws.loading}
+        showForm={showWs} setShowForm={setShowWs} addLabel="Add Website"
+        renderRow={item => <SmRow key={item.id} item={item} primary={item.name} secondary={item.url} badge={item.region} onDelete={id=>handleDel("/web-sources", ws.refresh, id)} deleting={del} />}
+        form={
+          <form onSubmit={addWs} className="border border-orange-500/20 bg-orange-500/5 p-3 space-y-2 mb-1">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+              <div><label className="text-[9px] uppercase font-mono text-muted-foreground block mb-1">Source Name *</label>
+                <Input value={wsName} onChange={e=>setWsName(e.target.value)} placeholder="e.g. NorthEast Now" className="rounded-none text-xs h-8" /></div>
+              <div><label className="text-[9px] uppercase font-mono text-muted-foreground block mb-1">URL *</label>
+                <Input value={wsUrl} onChange={e=>setWsUrl(e.target.value)} placeholder="https://example.com" className="rounded-none text-xs h-8 font-mono" /></div>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+              <div><label className="text-[9px] uppercase font-mono text-muted-foreground block mb-1">Region</label>
+                <Select value={wsRegion} onValueChange={setWsRegion}><SelectTrigger className="rounded-none text-xs h-8"><SelectValue /></SelectTrigger>
+                  <SelectContent className="rounded-none max-h-48">{SM_REGIONS_LIST.map(r=><SelectItem key={r} value={r} className="text-xs">{r}</SelectItem>)}</SelectContent></Select></div>
+              <div><label className="text-[9px] uppercase font-mono text-muted-foreground block mb-1">Category</label>
+                <Select value={wsCat} onValueChange={setWsCat}><SelectTrigger className="rounded-none text-xs h-8"><SelectValue /></SelectTrigger>
+                  <SelectContent className="rounded-none"><SelectItem value="grassroots" className="text-xs">Grassroots</SelectItem><SelectItem value="established" className="text-xs">Established</SelectItem></SelectContent></Select></div>
+            </div>
+            <div className="flex gap-2">
+              <Button type="submit" disabled={adding==="ws"} size="sm" className="rounded-none text-[10px] uppercase h-7">
+                {adding==="ws"?<Loader2 size={10} className="mr-1 animate-spin"/>:<Plus size={10} className="mr-1"/>}Add Website</Button>
+              <Button type="button" variant="outline" size="sm" onClick={()=>setShowWs(false)} className="rounded-none text-[10px] h-7">Cancel</Button>
+            </div>
+          </form>
+        }
+      />
+      <SmSection
+        accent="text-orange-400" title="Keyword Searches" items={fc.items} loading={fc.loading}
+        showForm={showFc} setShowForm={setShowFc} addLabel="Add Search"
+        renderRow={item => <SmRow key={item.id} item={item} primary={item.query} secondary={`${item.num_results} results per run`} onDelete={id=>handleDel("/firecrawl-searches", fc.refresh, id)} deleting={del} />}
+        form={
+          <form onSubmit={addFc} className="border border-orange-500/20 bg-orange-500/5 p-3 space-y-2 mb-1">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+              <div><label className="text-[9px] uppercase font-mono text-muted-foreground block mb-1">Search Query *</label>
+                <Input value={fcQ} onChange={e=>setFcQ(e.target.value)} placeholder="e.g. northeast India border conflict" className="rounded-none text-xs h-8" /></div>
+              <div><label className="text-[9px] uppercase font-mono text-muted-foreground block mb-1">Results Per Run</label>
+                <Input type="number" value={fcNum} onChange={e=>setFcNum(parseInt(e.target.value)||5)} min={1} max={20} className="rounded-none text-xs h-8" /></div>
+            </div>
+            <div className="flex gap-2">
+              <Button type="submit" disabled={adding==="fc"} size="sm" className="rounded-none text-[10px] uppercase h-7">
+                {adding==="fc"?<Loader2 size={10} className="mr-1 animate-spin"/>:<Plus size={10} className="mr-1"/>}Add Search</Button>
+              <Button type="button" variant="outline" size="sm" onClick={()=>setShowFc(false)} className="rounded-none text-[10px] h-7">Cancel</Button>
+            </div>
+          </form>
+        }
+      />
+    </div>
+  );
+}
+
+// ── Main Social Scan Manager ─────────────────────────────────────────────────
+
+function SocialScanManager({ api }) {
+  const [activeTab, setActiveTab] = useState("youtube");
+  const active = SM_TABS.find(t => t.id === activeTab);
+
+  const renderTab = () => {
+    switch (activeTab) {
+      case "youtube":   return <YouTubeTab api={api} />;
+      case "facebook":  return <FacebookTab api={api} />;
+      case "telegram":  return <TelegramTab api={api} />;
+      case "twitter":   return <TwitterTab api={api} />;
+      case "firecrawl": return <FirecrawlTab api={api} />;
+      default: return null;
+    }
+  };
+
+  const tabDesc = {
+    youtube:   "channels and keyword searches",
+    facebook:  "pages",
+    telegram:  "channels",
+    twitter:   "accounts and keyword searches",
+    firecrawl: "websites and keyword searches",
+  };
+
+  return (
+    <Card className="border border-border rounded-none bg-card border-l-4 border-l-violet-500" data-testid="social-scan-manager" data-tour="social-scan-manager">
+      <CardHeader className="py-3 px-4 border-b border-border">
+        <CardTitle className="text-sm uppercase tracking-wider font-['Barlow_Condensed'] font-semibold flex items-center gap-2">
+          <Activity size={16} className="text-violet-400" />
+          Social Media Scan Configuration
+          <Badge className="rounded-none text-[9px] px-1.5 py-0 bg-violet-500/20 text-violet-400 border-violet-500/30 ml-1">
+            5 platforms
+          </Badge>
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="p-0">
+        {/* Tab bar */}
+        <div className="flex border-b border-border overflow-x-auto">
+          {SM_TABS.map(tab => {
+            const { Icon } = tab;
+            const isActive = activeTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                data-testid={`sm-tab-${tab.id}`}
+                className={`flex items-center gap-1.5 px-4 py-2.5 text-[10px] font-mono uppercase tracking-wider whitespace-nowrap transition-colors border-b-2 ${
+                  isActive
+                    ? `${tab.accent} border-current bg-muted/5`
+                    : "text-muted-foreground border-transparent hover:text-foreground hover:bg-muted/5"
+                }`}
+              >
+                <Icon size={12} />
+                {tab.label}
+              </button>
+            );
+          })}
+        </div>
+        {/* Tab content */}
+        <div className="p-4">
+          <p className="text-[10px] text-muted-foreground font-mono mb-4">
+            Configure which {active?.label} {tabDesc[activeTab]} are scanned during each intelligence fetch cycle. Changes apply on the next fetch.
+          </p>
+          {renderTab()}
+        </div>
       </CardContent>
     </Card>
   );
