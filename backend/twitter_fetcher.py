@@ -222,25 +222,40 @@ async def fetch_twitter_accounts(db) -> int:
 
 
 async def fetch_twitter_searches(db) -> int:
-    """Scheduled: run all active twitter_searches documents."""
+    """Scheduled: run all active twitter_searches documents + top keyword bank entries."""
     from ai_pipeline import classify_and_analyze_article
-
-    searches = await db.twitter_searches.find({"active": True}).to_list(100)
-    if not searches:
-        return 0
+    from keyword_engine import get_top_keywords_for_search
 
     if not _bearer_token():
         logger.info("TWITTER_BEARER_TOKEN not set — skipping keyword search (Nitter has no search)")
         return 0
 
+    # 1. Manual searches
+    manual = await db.twitter_searches.find({"active": True}).to_list(100)
+    queries = [(s.get("query"), s.get("num_results", 10), s.get("_id"))
+               for s in manual if s.get("query")]
+
+    # 2. Keyword bank queries — append twitter operators for cleaner results
+    bank_keywords = await get_top_keywords_for_search(db, limit=8, min_score=45)
+    seen = {q[0].lower() for q in queries}
+    for kw in bank_keywords:
+        # Add Twitter operators to filter retweets and force English
+        q_str = f"{kw} -is:retweet lang:en"
+        if q_str.lower() not in seen:
+            queries.append((q_str, 5, None))  # 5 results per bank query
+            seen.add(q_str.lower())
+
+    if not queries:
+        return 0
+
+    logger.info(f"Twitter searches: {len(manual)} manual + {len(bank_keywords)} from bank "
+                f"= {len(queries)} unique queries")
+
     saved = 0
-    for s in searches:
-        query = s.get("query")
-        if not query:
-            continue
+    for query, num_results, doc_id in queries:
         loop = asyncio.get_event_loop()
         tweets = await loop.run_in_executor(
-            None, lambda q=query, n=s.get("num_results", 10): search_tweets_official(q, n)
+            None, lambda q=query, n=num_results: search_tweets_official(q, n)
         )
 
         for tw in tweets:
@@ -260,12 +275,14 @@ async def fetch_twitter_searches(db) -> int:
                 await db.intelligence_items.insert_one(item)
             saved += 1
 
-        await db.twitter_searches.update_one(
-            {"_id": s["_id"]},
-            {"$set": {"last_run": datetime.now(timezone.utc)}}
-        )
+        # Only stamp last_run on manually-configured searches that have a doc id
+        if doc_id is not None:
+            await db.twitter_searches.update_one(
+                {"_id": doc_id},
+                {"$set": {"last_run": datetime.now(timezone.utc)}}
+            )
 
-    logger.info(f"fetch_twitter_searches: {saved} new tweets")
+    logger.info(f"fetch_twitter_searches: {saved} new tweets from {len(queries)} queries")
     return saved
 
 

@@ -590,6 +590,46 @@ def get_dynamic_keywords_for_matching(keywords: list) -> list:
     return [(kw["keyword"].lower(), kw["score"] / 100.0) for kw in keywords if kw["score"] > 20]
 
 
+async def get_top_keywords_for_search(db, limit: int = 10, min_score: int = 40) -> list:
+    """
+    Return top-scored keyword strings from db.keyword_store, suitable for use
+    as search queries on YouTube, Twitter, Firecrawl.
+
+    Falls back to SEED_KEYWORDS if the bank is empty or all below threshold —
+    so social media searches always have *something* to search for, even on
+    a fresh install before the keyword engine has run.
+
+    Args:
+      limit:     max number of queries to return
+      min_score: skip keywords scored below this (range 0-100)
+    """
+    keywords = []
+    try:
+        cursor = db.keyword_store.find(
+            {"score": {"$gte": min_score}},
+            {"_id": 0, "keyword": 1, "score": 1, "category": 1},
+        ).sort("score", -1).limit(limit * 2)  # over-fetch, then dedupe
+        async for doc in cursor:
+            kw = (doc.get("keyword") or "").strip()
+            if kw and 3 <= len(kw) <= 80 and kw.lower() not in {k.lower() for k in keywords}:
+                keywords.append(kw)
+            if len(keywords) >= limit:
+                break
+    except Exception as e:
+        logger.error(f"get_top_keywords_for_search: keyword_store query failed: {e}")
+
+    if not keywords:
+        logger.warning("Keyword bank empty — falling back to SEED_KEYWORDS for searches")
+        # Build a balanced fallback: 5 primary + 3 geo + 2 cross-border
+        keywords = (
+            SEED_KEYWORDS["primary"][:5]
+            + SEED_KEYWORDS["geo"][:3]
+            + SEED_KEYWORDS["cross_border"][:2]
+        )
+
+    return keywords[:limit]
+
+
 def score_article_against_keywords(article: dict, keyword_weights: list) -> float:
     """
     Score an article against dynamic keywords.

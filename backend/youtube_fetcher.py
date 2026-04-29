@@ -169,19 +169,32 @@ async def fetch_youtube_channels(db) -> int:
 
 async def fetch_youtube_searches(db) -> int:
     from ai_pipeline import classify_and_analyze_article
+    from keyword_engine import get_top_keywords_for_search
 
-    searches = await db.youtube_searches.find({"active": True}).to_list(100)
-    if not searches:
+    # 1. Manually-configured searches (user added via Settings UI)
+    manual = await db.youtube_searches.find({"active": True}).to_list(100)
+    queries = [(s.get("query"), s.get("max_results", 5), s.get("_id"), False)
+               for s in manual if s.get("query")]
+
+    # 2. Top keywords from the dynamic keyword bank
+    bank_keywords = await get_top_keywords_for_search(db, limit=10, min_score=40)
+    seen = {q[0].lower() for q in queries}
+    for kw in bank_keywords:
+        if kw.lower() not in seen:
+            queries.append((kw, 3, None, True))  # 3 results per bank query, no _id
+            seen.add(kw.lower())
+
+    if not queries:
         return 0
 
+    logger.info(f"YouTube searches: {len(manual)} manual + {len(bank_keywords)} from bank "
+                f"= {len(queries)} unique queries")
+
     saved = 0
-    for s in searches:
-        query = s.get("query")
-        if not query:
-            continue
+    for query, max_results, doc_id, is_bank in queries:
         loop = asyncio.get_event_loop()
         videos = await loop.run_in_executor(
-            None, lambda q=query, n=s.get("max_results", 5): _search_youtube(query=q, max_results=n)
+            None, lambda q=query, n=max_results: _search_youtube(query=q, max_results=n)
         )
 
         for v in videos:
@@ -203,12 +216,14 @@ async def fetch_youtube_searches(db) -> int:
             await db.intelligence_items.insert_one(item)
             saved += 1
 
-        await db.youtube_searches.update_one(
-            {"_id": s["_id"]},
-            {"$set": {"last_run": datetime.now(timezone.utc)}}
-        )
+        # Only stamp last_run on manually-configured searches that have a doc id
+        if doc_id is not None:
+            await db.youtube_searches.update_one(
+                {"_id": doc_id},
+                {"$set": {"last_run": datetime.now(timezone.utc)}}
+            )
 
-    logger.info(f"fetch_youtube_searches: {saved} new items from {len(searches)} queries")
+    logger.info(f"fetch_youtube_searches: {saved} new items from {len(queries)} queries")
     return saved
 
 

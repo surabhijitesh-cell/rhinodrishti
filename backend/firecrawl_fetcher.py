@@ -215,23 +215,34 @@ async def fetch_web_sources(db) -> int:
 
 async def run_keyword_searches(db) -> int:
     """
-    Scheduled job: run all active firecrawl_searches documents and push
-    results through the AI classification pipeline.
+    Scheduled job: run all active firecrawl_searches documents + top keyword
+    bank entries through Firecrawl search, then push results through AI.
     """
     import asyncio
     from ai_pipeline import classify_and_analyze_article
+    from keyword_engine import get_top_keywords_for_search
 
-    searches = await db.firecrawl_searches.find({"active": True}).to_list(length=100)
-    if not searches:
+    # 1. Manual searches (user added via Settings UI)
+    manual = await db.firecrawl_searches.find({"active": True}).to_list(length=100)
+    queries = [(s.get("query"), s.get("num_results", 5), s.get("_id"))
+               for s in manual if s.get("query")]
+
+    # 2. Top keywords from the dynamic keyword bank
+    bank_keywords = await get_top_keywords_for_search(db, limit=10, min_score=40)
+    seen = {q[0].lower() for q in queries}
+    for kw in bank_keywords:
+        if kw.lower() not in seen:
+            queries.append((kw, 3, None))  # 3 results per bank query (credit-conscious)
+            seen.add(kw.lower())
+
+    if not queries:
         return 0
 
-    saved = 0
-    for search in searches:
-        query = search.get("query")
-        if not query:
-            continue
+    logger.info(f"Firecrawl searches: {len(manual)} manual + {len(bank_keywords)} from bank "
+                f"= {len(queries)} unique queries")
 
-        num_results = search.get("num_results", 5)
+    saved = 0
+    for query, num_results, doc_id in queries:
         loop = asyncio.get_event_loop()
         results = await loop.run_in_executor(
             None, lambda q=query, n=num_results: search_sync(q, n)
@@ -256,12 +267,14 @@ async def run_keyword_searches(db) -> int:
             saved += 1
             logger.info(f"Firecrawl search saved: {raw['title'][:60]}")
 
-        await db.firecrawl_searches.update_one(
-            {"_id": search["_id"]},
-            {"$set": {"last_run": datetime.now(timezone.utc)}}
-        )
+        # Only stamp last_run on manually-configured searches
+        if doc_id is not None:
+            await db.firecrawl_searches.update_one(
+                {"_id": doc_id},
+                {"$set": {"last_run": datetime.now(timezone.utc)}}
+            )
 
-    logger.info(f"run_keyword_searches: {saved} new items from {len(searches)} queries")
+    logger.info(f"run_keyword_searches: {saved} new items from {len(queries)} queries")
     return saved
 
 
