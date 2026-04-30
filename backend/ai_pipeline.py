@@ -271,11 +271,22 @@ Respond ONLY in valid JSON:
 }"""
 
 
-async def classify_and_analyze_article(article: dict) -> dict:
+async def classify_and_analyze_article(article, source_hint: str = "") -> dict:
     """Classify and analyze a news article using Claude Haiku 4.5 with enhanced military intelligence prompt.
-    Dynamically injects analyst feedback bias when available."""
-    title = article.get("title", "")
-    content = article.get("raw_content", "") or article.get("description", "") or title
+    Dynamically injects analyst feedback bias when available.
+
+    Accepts two calling conventions for backward-compatibility:
+      classify_and_analyze_article(article_dict)        — preferred
+      classify_and_analyze_article(text_str, src_name)  — legacy (fetchers pass raw text)
+    """
+    if isinstance(article, str):
+        # Legacy calling pattern: (raw_text, source_name)
+        # Used by telegram_fetcher, youtube_fetcher, twitter_fetcher, etc.
+        title = source_hint or ""
+        content = article
+    else:
+        title = article.get("title", "")
+        content = article.get("raw_content", "") or article.get("description", "") or title
 
     article_text = f"Title: {title}\nContent: {content[:2000]}"
 

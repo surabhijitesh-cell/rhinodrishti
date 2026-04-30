@@ -18,7 +18,7 @@ import {
 import NERMap from "../components/NERMap";
 import IntelligenceCard from "../components/IntelligenceCard";
 import { useIntelligenceWS } from "../hooks/useIntelligenceWS";
-import TwitterLiveFeedWidget from "../components/TwitterLiveFeedWidget";
+import SocialMediaFeedWidget from "../components/SocialMediaFeedWidget";
 import axios from "axios";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, PieChart, Pie
@@ -515,20 +515,22 @@ function SourceScanners({ api, socialTrigger, twitterPinned, onToggleTwitterPin 
             </div>
           </div>
 
-          {/* ── source detail panel ── */}
-          {/* Twitter gets the live tweet feed widget inline; all other
-              platforms get the standard handle/page/channel listing. */}
-          {selected === "twitter" ? (
-            <TwitterLiveFeedWidget
+          {/* ── source detail / live-feed panel ── */}
+          {/* All 5 social platforms now show a live-feed widget with direct
+              (raw) and curated (AI-classified) toggle instead of a static
+              handle list. The RSS card still shows the old static panel. */}
+          {selected && ["youtube","facebook","telegram","twitter","firecrawl"].includes(selected) ? (
+            <SocialMediaFeedWidget
               api={api}
+              sourceType={selected}
               compact={true}
-              pinned={twitterPinned}
-              onTogglePin={onToggleTwitterPin}
+              pinned={twitterPinned && selected === "twitter"}
+              onTogglePin={selected === "twitter" ? onToggleTwitterPin : undefined}
               onClose={() => setSelected(null)}
             />
-          ) : selected && detailData[selected] && (
-            <SourceDetailPanel {...detailData[selected]} platform={selected} />
-          )}
+          ) : selected === "rss" && detailData.rss ? (
+            <SourceDetailPanel {...detailData.rss} platform="rss" />
+          ) : null}
         </>
       )}
     </Card>
@@ -874,8 +876,9 @@ export default function Dashboard({ stats: propStats, api }) {
       {/* Pinned Twitter Live Feed (only renders when user has pinned) */}
       {twitterPinned && (
         <div className="border border-slate-500/30 rounded-none bg-card overflow-hidden" data-testid="pinned-twitter-feed">
-          <TwitterLiveFeedWidget
+          <SocialMediaFeedWidget
             api={api}
+            sourceType="twitter"
             compact={false}
             pinned={true}
             onTogglePin={toggleTwitterPin}

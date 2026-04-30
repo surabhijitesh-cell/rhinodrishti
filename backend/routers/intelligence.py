@@ -85,7 +85,14 @@ async def get_dashboard_stats():
 
 @router.get("/intelligence/source-stats")
 async def get_source_stats():
-    """Per-source-type effectiveness breakdown for the Settings page."""
+    """Per-source-type effectiveness breakdown for the Settings page.
+
+    Now includes full pipeline flow stats per source:
+      total_fetched    — items that entered the system from this source
+      pipeline_entered — items that went through the AI classifier
+      pipeline_accepted — classified as relevant with processed=True
+      pipeline_rejected — classified as not_relevant or irrelevant
+    """
     now = datetime.now(timezone.utc)
     settings = await db.app_settings.find_one({"key": "retention_days"}, {"_id": 0})
     retention_days = settings.get("value", 30) if settings else 30
@@ -93,13 +100,46 @@ async def get_source_stats():
 
     NON_RSS = ["youtube", "facebook", "telegram", "twitter", "firecrawl"]
 
-    # Aggregate per source_type
+    # Use prefix-regex so "twitter_account", "twitter_search", "twitter_list"
+    # all roll up under "twitter", and similarly for "firecrawl_scrape" etc.
+    def _regex_match(prefix: str):
+        return {"$regex": f"^{prefix}", "$options": "i"}
+
+    # Aggregate per source_type (exact matches first; we'll merge prefixes below)
     pipeline = [
-        {"$match": {"source_type": {"$in": NON_RSS}, "published_at": {"$gte": cutoff}}},
+        {"$match": {"source_type": {"$in": NON_RSS + [
+            "twitter_account", "twitter_search", "twitter_list",
+            "firecrawl_scrape", "firecrawl_search",
+            "youtube_channel", "youtube_search",
+        ]}, "published_at": {"$gte": cutoff}}},
+        {"$addFields": {
+            # Normalise sub-types to their parent bucket
+            "src_bucket": {"$switch": {"branches": [
+                {"case": {"$regexMatch": {"input": "$source_type", "regex": "^twitter", "options": "i"}}, "then": "twitter"},
+                {"case": {"$regexMatch": {"input": "$source_type", "regex": "^youtube", "options": "i"}}, "then": "youtube"},
+                {"case": {"$regexMatch": {"input": "$source_type", "regex": "^facebook", "options": "i"}}, "then": "facebook"},
+                {"case": {"$regexMatch": {"input": "$source_type", "regex": "^telegram", "options": "i"}}, "then": "telegram"},
+                {"case": {"$regexMatch": {"input": "$source_type", "regex": "^firecrawl", "options": "i"}}, "then": "firecrawl"},
+            ], "default": "$source_type"}},
+        }},
         {"$group": {
-            "_id": "$source_type",
+            "_id": "$src_bucket",
             "total":     {"$sum": 1},
             "processed": {"$sum": {"$cond": ["$processed", 1, 0]}},
+            # Accepted = processed AND is_relevant != false AND not tagged "not_relevant"
+            "accepted":  {"$sum": {"$cond": [
+                {"$and": [
+                    {"$eq": ["$processed", True]},
+                    {"$ne": ["$is_relevant", False]},
+                ]}, 1, 0
+            ]}},
+            # Rejected = explicitly marked not relevant
+            "rejected":  {"$sum": {"$cond": [
+                {"$or": [
+                    {"$eq": ["$is_relevant", False]},
+                    {"$in": ["not_relevant", {"$ifNull": ["$tags", []]}]},
+                ]}, 1, 0
+            ]}},
             "critical":  {"$sum": {"$cond": [{"$eq": ["$severity", "critical"]}, 1, 0]}},
             "high":      {"$sum": {"$cond": [{"$eq": ["$severity", "high"]},    1, 0]}},
             "medium":    {"$sum": {"$cond": [{"$eq": ["$severity", "medium"]},  1, 0]}},
@@ -114,23 +154,35 @@ async def get_source_stats():
         st = doc["_id"]
         # fetch the latest item for a preview
         latest = await intelligence_col.find_one(
-            {"source_type": st, "published_at": {"$gte": cutoff}},
+            {"source_type": _regex_match(st), "published_at": {"$gte": cutoff}},
             {"_id": 0, "title": 1, "source_url": 1, "severity": 1, "source": 1},
             sort=[("published_at", -1)],
         )
+
+        # For Twitter, also count raw tweets in twitter_feeds collection
+        raw_fetched = doc["total"]
+        if st == "twitter":
+            try:
+                raw_fetched = await db.twitter_feeds.count_documents({})
+            except Exception:
+                pass
+
         sources.append({
             "source_type": st,
-            "total":       doc["total"],
-            "processed":   doc["processed"],
+            "total":           doc["total"],
+            "raw_fetched":     raw_fetched,
+            "processed":       doc["processed"],
+            "accepted":        doc["accepted"],
+            "rejected":        doc["rejected"],
             "severity": {
                 "critical": doc["critical"],
                 "high":     doc["high"],
                 "medium":   doc["medium"],
                 "low":      doc["low"],
             },
-            "latest_at":    doc.get("latest_at"),
-            "latest_title": latest.get("title") if latest else None,
-            "latest_url":   latest.get("source_url") if latest else None,
+            "latest_at":       doc.get("latest_at"),
+            "latest_title":    latest.get("title") if latest else None,
+            "latest_url":      latest.get("source_url") if latest else None,
             "latest_severity": latest.get("severity") if latest else None,
         })
 
@@ -139,7 +191,8 @@ async def get_source_stats():
     for st in NON_RSS:
         if st not in found_types:
             sources.append({
-                "source_type": st, "total": 0, "processed": 0,
+                "source_type": st, "total": 0, "raw_fetched": 0,
+                "processed": 0, "accepted": 0, "rejected": 0,
                 "severity": {"critical": 0, "high": 0, "medium": 0, "low": 0},
                 "latest_at": None, "latest_title": None, "latest_url": None, "latest_severity": None,
             })
@@ -346,6 +399,14 @@ async def trigger_fading_pass(background_tasks: BackgroundTasks):
     from fading_engine import run_fading_pass
     background_tasks.add_task(run_fading_pass)
     return {"message": "Fading pass started"}
+
+
+@router.post("/fading/cleanup-low")
+async def trigger_low_sev_cleanup(background_tasks: BackgroundTasks):
+    """Manually trigger hard-deletion of expired low-severity items."""
+    from fading_engine import delete_expired_low_severity
+    background_tasks.add_task(delete_expired_low_severity)
+    return {"message": "Low-severity cleanup started"}
 
 
 @router.get("/fading/stats")

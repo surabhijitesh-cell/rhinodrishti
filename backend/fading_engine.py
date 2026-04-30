@@ -31,6 +31,11 @@ from shared import intelligence_col, db
 
 logger = logging.getLogger(__name__)
 
+# ─── Hard-delete rules for low severity items ────────────────────────────────
+# Low-severity items are permanently deleted after this many days.
+# Exception rules are checked before deletion (see delete_expired_low_severity).
+LOW_SEV_DELETE_AFTER_DAYS = 3
+
 # ─── Severity time constants (τ in hours) ────────────────────────────────────
 # After t = τ hours, V falls to P₀/e ≈ 37% of its birth value.
 
@@ -184,6 +189,69 @@ def score_breakdown(item: dict, now: datetime | None = None) -> dict:
 
 
 # ─── Batch job ────────────────────────────────────────────────────────────────
+
+async def delete_expired_low_severity() -> dict:
+    """
+    Hard-delete low-severity items older than LOW_SEV_DELETE_AFTER_DAYS.
+
+    Safety-net exceptions — items are NEVER deleted if any of these are true:
+      1. severity is critical, high, or medium  (only low is touched)
+      2. pinned = True  (analyst explicitly pinned the item)
+      3. special_flags contains "PATTERN_DETECTED"  (part of an identified pattern)
+      4. cluster_size >= 2  (fused item — multiple sources corroborate the story)
+      5. is_cross_border = True  (cross-border items carry higher long-term value)
+      6. india_relevance_score >= 8  (strongly India-facing — retain for analysis)
+
+    Returns a summary dict with deleted count and skipped count.
+    """
+    cutoff_dt = datetime.now(timezone.utc) - timedelta(days=LOW_SEV_DELETE_AFTER_DAYS)
+    cutoff_iso = cutoff_dt.isoformat()
+
+    stats = {"deleted": 0, "skipped_exceptions": 0, "errors": 0}
+
+    # Find candidate low-severity items older than the cutoff
+    candidates_cursor = intelligence_col.find(
+        {
+            "severity": {"$in": ["low", "LOW"]},
+            "published_at": {"$lt": cutoff_iso},
+            "pinned": {"$ne": True},
+        },
+        {
+            "_id": 1, "id": 1, "severity": 1, "published_at": 1,
+            "pinned": 1, "special_flags": 1, "cluster_size": 1,
+            "is_cross_border": 1, "india_relevance_score": 1,
+        },
+    )
+
+    to_delete = []
+    async for item in candidates_cursor:
+        # Check all exception conditions
+        flags = item.get("special_flags") or []
+        if (
+            item.get("pinned")
+            or "PATTERN_DETECTED" in flags
+            or (item.get("cluster_size") or 0) >= 2
+            or item.get("is_cross_border")
+            or (item.get("india_relevance_score") or 0) >= 8
+        ):
+            stats["skipped_exceptions"] += 1
+            continue
+        to_delete.append(item["_id"])
+
+    if to_delete:
+        try:
+            result = await intelligence_col.delete_many({"_id": {"$in": to_delete}})
+            stats["deleted"] = result.deleted_count
+        except Exception as e:
+            logger.error(f"Low-severity deletion error: {e}")
+            stats["errors"] += 1
+
+    logger.info(
+        f"Low-severity cleanup — deleted:{stats['deleted']} "
+        f"excepted:{stats['skipped_exceptions']} errors:{stats['errors']}"
+    )
+    return stats
+
 
 async def run_fading_pass(batch_size: int = 500) -> dict:
     """

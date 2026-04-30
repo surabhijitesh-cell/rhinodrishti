@@ -753,9 +753,14 @@ function SourceEffectivenessCard({ api }) {
           {sources.map(src => {
             const meta = SOURCE_META[src.source_type] || { label: src.source_type, Icon: Globe, accent: "text-muted-foreground", border: "", bg: "bg-muted/10", dot: "bg-muted-foreground" };
             const { Icon } = meta;
-            const pctProcessed = src.total > 0 ? Math.round((src.processed / src.total) * 100) : 0;
-            const isOpen = expanded === src.source_type;
-            const highValue = src.severity.critical + src.severity.high;
+            const total          = src.raw_fetched ?? src.total;
+            const pipelineIn     = src.total;          // entered intelligence_items
+            const accepted       = src.accepted ?? 0;
+            const rejected       = src.rejected ?? 0;
+            const pctAccepted    = pipelineIn > 0 ? Math.round((accepted / pipelineIn) * 100) : 0;
+            const pctRejected    = pipelineIn > 0 ? Math.round((rejected / pipelineIn) * 100) : 0;
+            const isOpen         = expanded === src.source_type;
+            const highValue      = src.severity.critical + src.severity.high;
 
             return (
               <div key={src.source_type}>
@@ -772,30 +777,45 @@ function SourceEffectivenessCard({ api }) {
                     <p className="text-[9px] font-mono text-muted-foreground">{timeAgoShort(src.latest_at)}</p>
                   </div>
 
-                  {/* Total count */}
-                  <div className="w-16 shrink-0 text-center">
-                    <p className="text-lg font-bold font-['Barlow_Condensed']">{src.total}</p>
-                    <p className="text-[8px] uppercase font-mono text-muted-foreground">items</p>
+                  {/* Pipeline flow: Fetched → Pipeline → ✓ Accepted / ✗ Rejected */}
+                  <div className="flex-1 min-w-0">
+                    {total === 0 ? (
+                      <p className="text-[9px] font-mono text-muted-foreground">no data yet</p>
+                    ) : (
+                      <>
+                        {/* Arrow pipeline diagram */}
+                        <div className="flex items-center gap-1 text-[9px] font-mono flex-wrap">
+                          <span className="text-muted-foreground font-semibold">{total} fetched</span>
+                          <span className="text-muted-foreground/40">→</span>
+                          <span className="text-blue-400">{pipelineIn} AI pipeline</span>
+                          <span className="text-muted-foreground/40">→</span>
+                          <span className="text-emerald-400">{accepted} ✓</span>
+                          <span className="text-muted-foreground/30 mx-0.5">|</span>
+                          <span className="text-red-400/70">{rejected} ✗</span>
+                        </div>
+                        {/* Severity bar */}
+                        <div className="mt-1">
+                          <SevBar severity={src.severity} />
+                        </div>
+                        <div className="flex gap-2 text-[8px] font-mono mt-0.5">
+                          {src.severity.critical > 0 && <span className="text-red-400">{src.severity.critical} crit</span>}
+                          {src.severity.high > 0     && <span className="text-orange-400">{src.severity.high} high</span>}
+                          {src.severity.medium > 0   && <span className="text-yellow-400">{src.severity.medium} med</span>}
+                          {src.severity.low > 0      && <span className="text-emerald-400">{src.severity.low} low</span>}
+                        </div>
+                      </>
+                    )}
                   </div>
 
-                  {/* Severity bar + counts */}
-                  <div className="flex-1 min-w-0 space-y-1">
-                    <SevBar severity={src.severity} />
-                    <div className="flex gap-2 text-[8px] font-mono">
-                      {src.severity.critical > 0 && <span className="text-red-400">{src.severity.critical} crit</span>}
-                      {src.severity.high > 0     && <span className="text-orange-400">{src.severity.high} high</span>}
-                      {src.severity.medium > 0   && <span className="text-yellow-400">{src.severity.medium} med</span>}
-                      {src.severity.low > 0      && <span className="text-emerald-400">{src.severity.low} low</span>}
-                      {src.total === 0 && <span className="text-muted-foreground">no data yet</span>}
-                    </div>
-                  </div>
-
-                  {/* AI processed rate */}
+                  {/* Accept % */}
                   <div className="w-20 shrink-0 text-right">
-                    <p className={`text-sm font-bold font-['Barlow_Condensed'] ${pctProcessed >= 80 ? "text-emerald-400" : pctProcessed >= 50 ? "text-amber-400" : "text-red-400"}`}>
-                      {pctProcessed}%
+                    <p className={`text-sm font-bold font-['Barlow_Condensed'] ${pctAccepted >= 30 ? "text-emerald-400" : pipelineIn === 0 ? "text-muted-foreground" : "text-amber-400"}`}>
+                      {pipelineIn === 0 ? "—" : `${pctAccepted}%`}
                     </p>
-                    <p className="text-[8px] font-mono text-muted-foreground">AI processed</p>
+                    <p className="text-[8px] font-mono text-muted-foreground">accepted</p>
+                    {rejected > 0 && (
+                      <p className="text-[8px] font-mono text-red-400/70">{pctRejected}% rej.</p>
+                    )}
                   </div>
 
                   {/* High-value badge */}
@@ -813,16 +833,39 @@ function SourceEffectivenessCard({ api }) {
                   <span className="text-muted-foreground/50 text-xs">{isOpen ? "▲" : "▼"}</span>
                 </button>
 
-                {/* Expanded: latest catch preview */}
+                {/* Expanded: pipeline detail + latest catch */}
                 {isOpen && (
-                  <div className={`px-4 pb-3 pt-1 ${meta.bg} border-t border-border`}>
+                  <div className={`px-4 pb-3 pt-2 ${meta.bg} border-t border-border space-y-2`}>
+                    {/* Pipeline breakdown */}
+                    {pipelineIn > 0 && (
+                      <div>
+                        <p className="text-[9px] uppercase tracking-widest font-mono text-muted-foreground font-semibold mb-1">AI Pipeline Breakdown</p>
+                        <div className="grid grid-cols-4 gap-2 text-center">
+                          {[
+                            { label: "Fetched",  val: total,      color: "text-foreground" },
+                            { label: "→ AI In",  val: pipelineIn, color: "text-blue-400" },
+                            { label: "✓ Accept", val: accepted,   color: "text-emerald-400" },
+                            { label: "✗ Reject", val: rejected,   color: "text-red-400/70" },
+                          ].map(({ label, val, color }) => (
+                            <div key={label} className="bg-black/20 p-1.5 rounded-none border border-border/50">
+                              <p className={`text-base font-bold font-['Barlow_Condensed'] ${color}`}>{val}</p>
+                              <p className="text-[8px] font-mono text-muted-foreground uppercase">{label}</p>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {/* Latest catch */}
                     {src.latest_title ? (
-                      <div className="space-y-1">
+                      <div className="space-y-0.5">
                         <p className="text-[9px] uppercase tracking-widest font-mono text-muted-foreground font-semibold">Latest Catch</p>
                         <div className="flex items-start gap-2">
                           <div className={`w-1.5 h-1.5 rounded-full mt-1.5 shrink-0 ${SEV_COLOR[src.latest_severity] || "bg-muted"}`} />
                           <div className="flex-1 min-w-0">
                             <p className="text-xs font-medium leading-tight line-clamp-2">{src.latest_title}</p>
+                            <p className="text-[9px] font-mono text-muted-foreground">
+                              {src.latest_severity?.toUpperCase()} · {timeAgoShort(src.latest_at)}
+                            </p>
                           </div>
                           {src.latest_url && (
                             <a href={src.latest_url} target="_blank" rel="noreferrer"
@@ -832,9 +875,6 @@ function SourceEffectivenessCard({ api }) {
                             </a>
                           )}
                         </div>
-                        <p className="text-[9px] font-mono text-muted-foreground pl-3.5">
-                          {src.latest_severity?.toUpperCase()} · {timeAgoShort(src.latest_at)}
-                        </p>
                       </div>
                     ) : (
                       <p className="text-[10px] text-muted-foreground font-mono py-1">No items collected yet — fetch will populate this source.</p>

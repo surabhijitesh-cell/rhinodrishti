@@ -47,7 +47,7 @@ from twitter_fetcher import fetch_twitter_accounts, fetch_twitter_searches, seed
 from youtube_fetcher import fetch_youtube_channels, fetch_youtube_searches, seed_youtube_defaults
 from facebook_fetcher import fetch_facebook_pages, seed_facebook_defaults
 from telegram_fetcher import fetch_telegram_channels, seed_telegram_defaults
-from fading_engine import run_fading_pass
+from fading_engine import run_fading_pass, delete_expired_low_severity
 
 
 app = FastAPI(title="Rhino Drishti API")
@@ -237,6 +237,21 @@ async def startup():
                 logger.warning(f"Fading pass failed: {e}")
 
         scheduler.add_job(_run_fading_pass, 'interval', hours=1, id='fading_pass')
+
+        # Daily low-severity hard-delete (runs at 02:00 UTC each day)
+        async def _delete_low_sev():
+            try:
+                stats = await delete_expired_low_severity()
+                logger.info(f"Low-severity cleanup: {stats}")
+            except Exception as e:
+                logger.warning(f"Low-severity cleanup failed: {e}")
+
+        scheduler.add_job(
+            _delete_low_sev,
+            CronTrigger(hour=2, minute=0, timezone='UTC'),
+            id='low_sev_cleanup',
+            misfire_grace_time=3600,
+        )
 
         scheduler.start()
         logger.info("Scheduler: grassroots/60min, standard/30min, established/12hr, retry/15min, brief/0600 IST, embeddings/6hr, fusion/30min, firecrawl-web/3hr, firecrawl-search/6hr, twitter/2hr, youtube/4hr, facebook/4hr, telegram/1hr, fading/1hr")
