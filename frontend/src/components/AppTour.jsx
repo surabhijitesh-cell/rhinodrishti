@@ -15,6 +15,7 @@
 import { Joyride, ACTIONS, STATUS } from "react-joyride";
 import { useLocation } from "react-router-dom";
 import { useTour } from "../contexts/TourContext";
+import { toast } from "sonner";
 
 // ─── Step definitions per route ──────────────────────────────────────────────
 
@@ -366,7 +367,7 @@ const TOUR_STYLES = {
 
 export default function AppTour() {
   const location = useLocation();
-  const { running, stopTour, joyKey } = useTour();
+  const { running, stopTour, disableAllTours, joyKey } = useTour();
 
   const steps = PAGE_STEPS[location.pathname] || [];
 
@@ -380,6 +381,22 @@ export default function AppTour() {
       action  === ACTIONS.CLOSE
     ) {
       stopTour();
+
+      // After the user finishes a full walkthrough (vs. closing/skipping
+      // partway), offer a one-click way to silence ALL future auto-tours.
+      // Manual ? button still works after — only auto-start is suppressed.
+      if (status === STATUS.FINISHED) {
+        toast("Walkthrough complete. Stop showing tours on every page?", {
+          duration: 12000,
+          action: {
+            label: "Disable All Tours",
+            onClick: () => {
+              disableAllTours();
+              toast.success("Auto-tours disabled. Click the ? icon any time to bring them back.");
+            },
+          },
+        });
+      }
     }
   };
 

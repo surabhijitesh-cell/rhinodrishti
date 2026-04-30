@@ -168,6 +168,7 @@ async def get_intelligence(
     date_to: Optional[str] = None,
     is_cross_border: Optional[bool] = None,
     min_priority: Optional[int] = None,
+    source_type: Optional[str] = None,   # filter by source_type field (twitter, youtube, telegram, ...)
     sort_by: Optional[str] = Query(None, description="Sort field: published_at, priority_score, severity"),
     sort_order: Optional[str] = Query("desc", description="Sort order: asc or desc"),
     page: int = Query(1, ge=1),
@@ -193,6 +194,10 @@ async def get_intelligence(
         query["threat_category"] = threat_type
     if severity:
         query["severity"] = severity
+    if source_type:
+        # Match any source_type beginning with the given value (e.g. "twitter"
+        # matches "twitter", "twitter_account", "twitter_search", "twitter_list")
+        query["source_type"] = {"$regex": f"^{source_type}", "$options": "i"}
     if search:
         query["$or"] = [
             {"title": {"$regex": search, "$options": "i"}},

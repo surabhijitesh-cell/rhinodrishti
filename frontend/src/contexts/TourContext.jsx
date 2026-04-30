@@ -21,11 +21,21 @@ export function TourProvider({ children }) {
   const autoStarted = useRef(false);
 
   const storageKey = user?.username ? `tour_seen_${user.username}_${location.pathname}` : null;
+  const globalDisableKey = user?.username ? `tours_disabled_${user.username}` : null;
 
-  // Auto-start for first-time users on this page
+  // Per-user "never show any tour again" override. When set, no auto-start
+  // happens on any page — but startTour() still works for explicit requests
+  // via the ? button so users can opt back in any time.
+  const isGloballyDisabled = useCallback(() => {
+    if (!globalDisableKey) return false;
+    return localStorage.getItem(globalDisableKey) === "1";
+  }, [globalDisableKey]);
+
+  // Auto-start for first-time users on this page (skipped when globally disabled)
   useEffect(() => {
     if (!user || !storageKey || autoStarted.current) return;
     autoStarted.current = true;
+    if (isGloballyDisabled()) return;
     const seen = localStorage.getItem(storageKey);
     if (!seen) {
       // Small delay so page renders first
@@ -35,7 +45,7 @@ export function TourProvider({ children }) {
       }, 1200);
       return () => clearTimeout(t);
     }
-  }, [user, storageKey]);
+  }, [user, storageKey, isGloballyDisabled]);
 
   // Reset autoStarted ref when route changes so each page can auto-trigger once
   useEffect(() => {
@@ -63,10 +73,22 @@ export function TourProvider({ children }) {
     Object.keys(localStorage)
       .filter(k => k.startsWith(`tour_seen_${user.username}`))
       .forEach(k => localStorage.removeItem(k));
-  }, [user]);
+    // Also clear the global disable flag so the user gets a fresh start
+    if (globalDisableKey) localStorage.removeItem(globalDisableKey);
+  }, [user, globalDisableKey]);
+
+  // Mark all tours globally disabled for this user — auto-start stops firing
+  // anywhere. The user can still trigger a tour manually via the ? button.
+  const disableAllTours = useCallback(() => {
+    if (globalDisableKey) localStorage.setItem(globalDisableKey, "1");
+    setRunning(false);
+  }, [globalDisableKey]);
 
   return (
-    <TourContext.Provider value={{ running, startTour, stopTour, markSeen, resetAllTours, joyKey }}>
+    <TourContext.Provider value={{
+      running, startTour, stopTour, markSeen, resetAllTours,
+      disableAllTours, isGloballyDisabled, joyKey,
+    }}>
       {children}
     </TourContext.Provider>
   );

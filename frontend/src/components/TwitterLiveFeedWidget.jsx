@@ -9,7 +9,7 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import axios from "axios";
 import {
   Twitter, RefreshCw, ExternalLink, Heart, Repeat2, Loader2,
-  Filter, AlertTriangle, Pin, PinOff, X as XIcon, Zap,
+  Filter, AlertTriangle, Pin, PinOff, X as XIcon, Zap, Brain, Eye,
 } from "lucide-react";
 import { Button } from "../components/ui/button";
 import { Badge } from "../components/ui/badge";
@@ -100,23 +100,59 @@ export default function TwitterLiveFeedWidget({
   const [triggering, setTriggering] = useState(false);
   const [lastUpdated, setLastUpdated] = useState(null);
   const [error, setError]       = useState(null);
-  const [filterText, setFilterText] = useState("");
-  const [filterSource, setFilterSource] = useState("all");
+
+  // Filter state
+  const [filterText, setFilterText]     = useState("");
+  const [filterSource, setFilterSource] = useState("all");      // all | list | account | search
+  const [timeWindow, setTimeWindow]     = useState("all");      // 24h | 7d | 30d | all
+  const [hideLowEng, setHideLowEng]     = useState(false);      // hide tweets with likes+rts<5
+
+  // DIRECT mode (default) → /api/twitter-feeds (raw tweets, no AI filter)
+  // CURATED mode          → /api/intelligence?source_type=twitter (AI-classified, low-severity hidden)
+  const [mode, setMode] = useState("direct");
 
   const load = useCallback(async (silent = false) => {
     if (!silent) setRefreshing(true);
     try {
-      const res = await axios.get(`${api}/twitter-feeds?limit=100`);
-      setTweets(res.data.feeds || []);
+      let url;
+      if (mode === "direct") {
+        url = `${api}/twitter-feeds?limit=100`;
+      } else {
+        url = `${api}/intelligence?source_type=twitter&limit=100&sort_by=published_at&sort_order=desc`;
+      }
+      const res = await axios.get(url);
+
+      // Normalize response shape — twitter-feeds returns {feeds:[...]},
+      // intelligence returns {items:[...]} with different field names.
+      let items = [];
+      if (mode === "direct") {
+        items = res.data.feeds || [];
+      } else {
+        items = (res.data.items || []).map(it => ({
+          id:           it.id,
+          handle:       it.source || "",
+          account_name: (it.title || "").replace(/^Tweet by\s*/i, ""),
+          tweet_text:   it.raw_content || it.ai_summary || "",
+          tweet_url:    it.source_url,
+          posted_at:    it.published_at,
+          likes:        0,                         // not preserved in intel pipeline
+          retweets:     0,
+          category:     it.threat_category || "",
+          severity:     it.severity,
+          priority:     it.priority_score,
+          state:        it.state,
+        }));
+      }
+      setTweets(items);
       setLastUpdated(new Date());
       setError(null);
     } catch (e) {
-      console.error("twitter-feeds fetch failed:", e);
+      console.error("twitter widget fetch failed:", e);
       setError(e.response?.data?.detail || e.message || "Failed to load tweets");
     }
     setLoading(false);
     setRefreshing(false);
-  }, [api]);
+  }, [api, mode]);
 
   useEffect(() => {
     load();
@@ -142,17 +178,34 @@ export default function TwitterLiveFeedWidget({
     }
   };
 
-  const filtered = useMemo(() => tweets.filter(t => {
-    if (filterSource === "list" && !t.list_id) return false;
-    if (filterSource === "account" && (t.list_id || t.category === "search")) return false;
-    if (filterSource === "search" && t.category !== "search") return false;
-    if (filterText) {
-      const n = filterText.toLowerCase();
-      const h = `${t.tweet_text||""} ${t.handle||""} ${t.account_name||""}`.toLowerCase();
-      if (!h.includes(n)) return false;
-    }
-    return true;
-  }), [tweets, filterText, filterSource]);
+  const filtered = useMemo(() => {
+    const windowMs = {
+      "24h": 24 * 3600 * 1000,
+      "7d":   7 * 86400 * 1000,
+      "30d": 30 * 86400 * 1000,
+    }[timeWindow] || null;
+    const cutoff = windowMs ? Date.now() - windowMs : null;
+
+    return tweets.filter(t => {
+      // Source-type filter (only meaningful in direct mode)
+      if (mode === "direct") {
+        if (filterSource === "list"    && !t.list_id) return false;
+        if (filterSource === "account" && (t.list_id || t.category === "search")) return false;
+        if (filterSource === "search"  && t.category !== "search") return false;
+      }
+      // Time-window filter
+      if (cutoff && t.posted_at && new Date(t.posted_at).getTime() < cutoff) return false;
+      // Engagement filter (direct mode only — intel items don't preserve like/RT counts)
+      if (mode === "direct" && hideLowEng && (t.likes || 0) + (t.retweets || 0) < 5) return false;
+      // Text search across body / handle / name
+      if (filterText) {
+        const n = filterText.toLowerCase();
+        const h = `${t.tweet_text||""} ${t.handle||""} ${t.account_name||""}`.toLowerCase();
+        if (!h.includes(n)) return false;
+      }
+      return true;
+    });
+  }, [tweets, filterText, filterSource, timeWindow, hideLowEng, mode]);
 
   const stats = useMemo(() => {
     const out = { lists: 0, accounts: 0, searches: 0 };
@@ -180,7 +233,34 @@ export default function TwitterLiveFeedWidget({
             updated {timeAgo(lastUpdated.toISOString())} ago · auto 30s
           </span>
         )}
-        <div className="ml-auto flex items-center gap-1">
+
+        {/* DIRECT / CURATED toggle — pill-style segmented control */}
+        <div className="ml-auto flex items-center border border-border rounded-none overflow-hidden mr-1" data-testid="tw-mode-toggle">
+          <button
+            onClick={() => setMode("direct")}
+            className={`text-[9px] uppercase tracking-wider font-mono font-semibold h-6 px-2 transition-colors ${
+              mode === "direct"
+                ? "bg-emerald-500/20 text-emerald-300"
+                : "text-muted-foreground hover:bg-muted/30"
+            }`}
+            title="Show all fetched tweets directly from twitter_feeds (no AI filter, no severity gate)"
+          >
+            <Eye size={9} className="inline mr-1" />Direct
+          </button>
+          <button
+            onClick={() => setMode("curated")}
+            className={`text-[9px] uppercase tracking-wider font-mono font-semibold h-6 px-2 transition-colors border-l border-border ${
+              mode === "curated"
+                ? "bg-violet-500/20 text-violet-300"
+                : "text-muted-foreground hover:bg-muted/30"
+            }`}
+            title="Show AI-classified tweets only — filters out low-severity items and unprocessed tweets"
+          >
+            <Brain size={9} className="inline mr-1" />Curated
+          </button>
+        </div>
+
+        <div className="flex items-center gap-1">
           <Button
             variant="ghost" size="sm"
             onClick={fetchNow}
@@ -233,19 +313,48 @@ export default function TwitterLiveFeedWidget({
             placeholder="Filter…"
             value={filterText}
             onChange={(e) => setFilterText(e.target.value)}
-            className="rounded-none text-xs h-6 w-48"
+            className="rounded-none text-xs h-6 w-44"
           />
-          <Select value={filterSource} onValueChange={setFilterSource}>
-            <SelectTrigger className="rounded-none text-[10px] h-6 w-32"><SelectValue /></SelectTrigger>
+
+          {/* Source-type — only meaningful in direct mode (curated lacks list_id metadata) */}
+          {mode === "direct" && (
+            <Select value={filterSource} onValueChange={setFilterSource}>
+              <SelectTrigger className="rounded-none text-[10px] h-6 w-28" title="Filter by where the tweet came from"><SelectValue /></SelectTrigger>
+              <SelectContent className="rounded-none">
+                <SelectItem value="all"     className="text-xs">All Sources</SelectItem>
+                <SelectItem value="list"    className="text-xs">Lists Only</SelectItem>
+                <SelectItem value="account" className="text-xs">Accounts Only</SelectItem>
+                <SelectItem value="search"  className="text-xs">Searches Only</SelectItem>
+              </SelectContent>
+            </Select>
+          )}
+
+          {/* Time window */}
+          <Select value={timeWindow} onValueChange={setTimeWindow}>
+            <SelectTrigger className="rounded-none text-[10px] h-6 w-24" title="Restrict to a recent time window"><SelectValue /></SelectTrigger>
             <SelectContent className="rounded-none">
-              <SelectItem value="all" className="text-xs">All Sources</SelectItem>
-              <SelectItem value="list" className="text-xs">Lists Only</SelectItem>
-              <SelectItem value="account" className="text-xs">Accounts Only</SelectItem>
-              <SelectItem value="search" className="text-xs">Searches Only</SelectItem>
+              <SelectItem value="24h" className="text-xs">Last 24h</SelectItem>
+              <SelectItem value="7d"  className="text-xs">Last 7d</SelectItem>
+              <SelectItem value="30d" className="text-xs">Last 30d</SelectItem>
+              <SelectItem value="all" className="text-xs">All Time</SelectItem>
             </SelectContent>
           </Select>
+
+          {/* Hide low-engagement toggle (direct mode only) */}
+          {mode === "direct" && (
+            <button
+              onClick={() => setHideLowEng(v => !v)}
+              className={`text-[9px] uppercase tracking-wider font-mono h-6 px-2 border border-border rounded-none transition-colors ${
+                hideLowEng ? "bg-amber-500/15 text-amber-300 border-amber-500/30" : "text-muted-foreground hover:bg-muted/20"
+              }`}
+              title="Hide tweets with fewer than 5 total likes+retweets"
+            >
+              {hideLowEng ? "Hi-Eng ✓" : "Hi-Eng"}
+            </button>
+          )}
+
           <span className="text-[9px] font-mono text-muted-foreground ml-auto">
-            {filtered.length} of {tweets.length}
+            {filtered.length} of {tweets.length} {mode === "curated" ? "(AI)" : "(raw)"}
           </span>
         </div>
       )}
