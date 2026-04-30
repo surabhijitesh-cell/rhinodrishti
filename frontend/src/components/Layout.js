@@ -6,7 +6,7 @@ import {
   Shield, LayoutDashboard, Newspaper, FileText, TrendingUp,
   Globe, Bell, ChevronLeft, ChevronRight, Sun, Moon, Search,
   Activity, Menu, X, Upload, GitBranch, Settings, Network, Key, BookOpen, Brain,
-  LogOut, Users, Megaphone, HelpCircle, RotateCcw, Twitter
+  LogOut, Users, Megaphone, HelpCircle, RotateCcw
 } from "lucide-react";
 import { Input } from "../components/ui/input";
 import { Button } from "../components/ui/button";
@@ -46,10 +46,6 @@ const ALL_NAV_ITEMS = [
   {
     path: "/alerts", label: "Alerts", icon: Bell, roles: ["admin", "analyst", "viewer"],
     tooltip: "CRITICAL and HIGH severity items only. ACK button marks each alert as reviewed.",
-  },
-  {
-    path: "/twitter-feed", label: "X / Twitter Feed", icon: Twitter, roles: ["admin", "analyst", "viewer"],
-    tooltip: "Live chronological feed of fetched tweets from monitored Lists, Accounts and Searches. Auto-refreshes every 30s.",
   },
   {
     path: "/keywords", label: "Keyword Engine", icon: Key, roles: ["admin", "analyst", "viewer"],

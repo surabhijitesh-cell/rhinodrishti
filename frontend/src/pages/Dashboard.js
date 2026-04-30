@@ -18,6 +18,7 @@ import {
 import NERMap from "../components/NERMap";
 import IntelligenceCard from "../components/IntelligenceCard";
 import { useIntelligenceWS } from "../hooks/useIntelligenceWS";
+import TwitterLiveFeedWidget from "../components/TwitterLiveFeedWidget";
 import axios from "axios";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, PieChart, Pie
@@ -186,8 +187,7 @@ function SourceDetailPanel({ platform, accentColor, borderAccent, bgAccent, icon
 }
 
 // ─── collapsible source scanners ─────────────────────────────────────────────
-function SourceScanners({ api, socialTrigger }) {
-  const navigate                      = useNavigate();    // route to /twitter-feed on Twitter card click
+function SourceScanners({ api, socialTrigger, twitterPinned, onToggleTwitterPin }) {
   const [open, setOpen]               = useState(true);   // expanded by default
   const [selected, setSelected]       = useState(null);   // which card is drilled into
   const [rss, setRss]                 = useState(null);
@@ -489,11 +489,11 @@ function SourceScanners({ api, socialTrigger }) {
                 lastFetched={freshTime(latest(twData.searches, "last_run"))}
                 onTrigger={() => trigger("twitter", "/social/fetch-all")}
                 triggering={triggering["twitter"] || triggering["all"]}
-                isSelected={false}
-                onClick={() => navigate("/twitter-feed")}
+                isSelected={selected === "twitter"}
+                onClick={() => handleCardClick("twitter")}
                 configNote="Add TWITTER_BEARER_TOKEN"
                 testId="scanner-twitter"
-                tooltip={`X/Twitter — click to open the live tweet feed. ${twConfigured ? "Official API active." : "Set TWITTER_BEARER_TOKEN to enable."} ${twAccounts.length} accounts + ${twData.searches.filter(s=>s.active).length} searches monitored. Configure Lists in Settings → Social Scan for free-tier compatibility.`}
+                tooltip={`X/Twitter — click to open the live tweet feed inline. ${twConfigured ? "Official API active." : "Set TWITTER_BEARER_TOKEN to enable."} ${twAccounts.length} accounts + ${twData.searches.filter(s=>s.active).length} searches monitored. Configure Lists in Settings → Social Scan for free-tier compatibility.`}
               />
 
               <ScannerCard
@@ -516,7 +516,17 @@ function SourceScanners({ api, socialTrigger }) {
           </div>
 
           {/* ── source detail panel ── */}
-          {selected && detailData[selected] && (
+          {/* Twitter gets the live tweet feed widget inline; all other
+              platforms get the standard handle/page/channel listing. */}
+          {selected === "twitter" ? (
+            <TwitterLiveFeedWidget
+              api={api}
+              compact={true}
+              pinned={twitterPinned}
+              onTogglePin={onToggleTwitterPin}
+              onClose={() => setSelected(null)}
+            />
+          ) : selected && detailData[selected] && (
             <SourceDetailPanel {...detailData[selected]} platform={selected} />
           )}
         </>
@@ -665,6 +675,19 @@ export default function Dashboard({ stats: propStats, api }) {
   // can show FETCHING badges and start its polling schedule.
   const [socialTrigger, setSocialTrigger] = useState(0);
   const navigate = useNavigate();
+
+  // Twitter Live Feed widget pin state — persisted to localStorage so the
+  // user's choice survives page reloads.
+  const [twitterPinned, setTwitterPinned] = useState(
+    () => localStorage.getItem("dashboard_twitter_pinned") === "1"
+  );
+  const toggleTwitterPin = () => {
+    setTwitterPinned(p => {
+      const next = !p;
+      localStorage.setItem("dashboard_twitter_pinned", next ? "1" : "0");
+      return next;
+    });
+  };
 
   // WebSocket real-time connection
   const { connected: wsConnected, newItems: wsNewItems, criticalAlerts, clearNewItems } = useIntelligenceWS(api);
@@ -848,8 +871,27 @@ export default function Dashboard({ stats: propStats, api }) {
         </Tip>
       </div>
 
+      {/* Pinned Twitter Live Feed (only renders when user has pinned) */}
+      {twitterPinned && (
+        <div className="border border-slate-500/30 rounded-none bg-card overflow-hidden" data-testid="pinned-twitter-feed">
+          <TwitterLiveFeedWidget
+            api={api}
+            compact={false}
+            pinned={true}
+            onTogglePin={toggleTwitterPin}
+          />
+        </div>
+      )}
+
       {/* Source Scanners */}
-      <div data-tour="source-scanners"><SourceScanners api={api} socialTrigger={socialTrigger} /></div>
+      <div data-tour="source-scanners">
+        <SourceScanners
+          api={api}
+          socialTrigger={socialTrigger}
+          twitterPinned={twitterPinned}
+          onToggleTwitterPin={toggleTwitterPin}
+        />
+      </div>
 
       {/* Unacknowledged Critical Alerts - Sticky Panel */}
       <UnacknowledgedAlerts api={api} />
