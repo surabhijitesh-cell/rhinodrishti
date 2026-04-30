@@ -238,7 +238,7 @@ async def startup():
 
         scheduler.add_job(_run_fading_pass, 'interval', hours=1, id='fading_pass')
 
-        # Daily low-severity hard-delete (runs at 02:00 UTC each day)
+        # Daily low-severity hard-delete (runs at 02:00 IST = 20:30 UTC previous day)
         async def _delete_low_sev():
             try:
                 stats = await delete_expired_low_severity()
@@ -248,7 +248,7 @@ async def startup():
 
         scheduler.add_job(
             _delete_low_sev,
-            CronTrigger(hour=2, minute=0, timezone='UTC'),
+            CronTrigger(hour=20, minute=30, timezone='UTC'),  # 02:00 IST (UTC+5:30)
             id='low_sev_cleanup',
             misfire_grace_time=3600,
         )

@@ -940,6 +940,7 @@ export default function Dashboard({ stats: propStats, api }) {
         <div className="lg:col-span-7" data-tour="ner-map">
           <NERMap
             stateStats={stateStatsMap}
+            items={stats?.recent_critical || []}
             onStateClick={(state) => navigate(`/feed?state=${encodeURIComponent(state)}`)}
           />
         </div>
