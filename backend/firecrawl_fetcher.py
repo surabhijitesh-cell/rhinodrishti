@@ -33,6 +33,19 @@ DEFAULT_WEB_SOURCES = [
     {"name": "The Meghalayan",          "url": "https://themeghalayan.com",          "region": "Meghalaya",         "category": "grassroots"},
     {"name": "Nagaland Tribune",        "url": "https://nagalandtribune.in",         "region": "Nagaland",          "category": "grassroots"},
     {"name": "Northeast Live",          "url": "https://northeastlive.in",           "region": "Northeast",         "category": "grassroots"},
+
+    # ── Bangladesh outlets — secondary priority. Captured for events with NER impact:
+    # Indo-BD relations, China-BD nexus, BD armed forces, border insurgency / smuggling,
+    # refugee movement, minority attacks, political/economic instability with cross-border
+    # spillover. Pure-domestic BD politics filtered downstream by AI relevance scoring.
+    {"name": "The Daily Star (BD)",       "url": "https://www.thedailystar.net/news/bangladesh", "region": "Bangladesh", "category": "established"},
+    {"name": "bdnews24",                  "url": "https://bdnews24.com/bangladesh",              "region": "Bangladesh", "category": "established"},
+    {"name": "Prothom Alo English",       "url": "https://en.prothomalo.com/bangladesh",         "region": "Bangladesh", "category": "established"},
+    {"name": "TBS News (Business Std)",   "url": "https://www.tbsnews.net/bangladesh",           "region": "Bangladesh", "category": "established"},
+    {"name": "Dhaka Tribune",             "url": "https://www.dhakatribune.com/bangladesh",      "region": "Bangladesh", "category": "established"},
+    {"name": "New Age (BD)",              "url": "https://www.newagebd.net/section/bangladesh",  "region": "Bangladesh", "category": "established"},
+    {"name": "United News Bangladesh",    "url": "https://www.unb.com.bd/category/Bangladesh",   "region": "Bangladesh", "category": "established"},
+    {"name": "BSS News (BD official)",    "url": "https://www.bssnews.net/news",                 "region": "Bangladesh", "category": "established"},
 ]
 
 # ── OSINT keyword searches seeded by default ──────────────────────────────────
@@ -280,11 +293,24 @@ async def run_keyword_searches(db) -> int:
 
 async def seed_firecrawl_defaults(db) -> None:
     """
-    Called once at startup: insert DEFAULT_WEB_SOURCES and
-    DEFAULT_KEYWORD_SEARCHES if the collections are empty.
+    Called once at startup: ensure DEFAULT_WEB_SOURCES and
+    DEFAULT_KEYWORD_SEARCHES are present.
+
+    Web sources are seeded *idempotently* — any DEFAULT entry whose URL
+    is not already in db.web_sources gets inserted. This lets us add
+    new outlets to DEFAULT_WEB_SOURCES (e.g. Bangladesh feeds) and have
+    them flow into existing installs on next backend restart, without
+    re-seeding or duplicating user-added sources.
     """
-    ws_count = await db.web_sources.count_documents({})
-    if ws_count == 0:
+    # ── Idempotent web-source seeding ─────────────────────────────────
+    existing_urls = set()
+    async for doc in db.web_sources.find({}, {"_id": 0, "url": 1}):
+        u = doc.get("url")
+        if u:
+            existing_urls.add(u)
+
+    new_sources = [s for s in DEFAULT_WEB_SOURCES if s["url"] not in existing_urls]
+    if new_sources:
         docs = [
             {
                 "id": str(uuid.uuid4()),
@@ -296,10 +322,11 @@ async def seed_firecrawl_defaults(db) -> None:
                 "last_fetched": None,
                 "created_at": datetime.now(timezone.utc),
             }
-            for s in DEFAULT_WEB_SOURCES
+            for s in new_sources
         ]
         await db.web_sources.insert_many(docs)
-        logger.info(f"Seeded {len(docs)} default web sources")
+        logger.info(f"Seeded {len(docs)} new web sources: "
+                    f"{[s['name'] for s in new_sources]}")
 
     ks_count = await db.firecrawl_searches.count_documents({})
     if ks_count == 0:

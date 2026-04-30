@@ -45,11 +45,78 @@ SEED_KEYWORDS = {
         "Tawang standoff", "Siliguri corridor", "Chicken Neck vulnerability",
     ],
     "cross_border": [
+        # ── Existing NER-relevant cross-border seeds ───────────────────────
         "India Bangladesh border issue", "Myanmar insurgent camps",
         "Rohingya infiltration India", "BGB BSF coordination",
         "China PLA activity Arunachal", "Pakistan ISI northeast",
         "Myanmar junta resistance", "Chin refugee Mizoram",
         "Arakan Army India border", "Bangladesh India water dispute",
+
+        # ── Bangladesh — events with NER impact ────────────────────────────
+        # Each phrase pairs a BD entity/topic with an NER-relevant anchor
+        # (border, infiltration, smuggling, India relations, NER state names,
+        # insurgent groups operating across the BD border). Pure domestic-BD
+        # politics is intentionally excluded — those don't help NER analysts.
+
+        # Indo-Bangladesh diplomacy & political ties
+        "India Bangladesh diplomatic relations",
+        "Bangladesh Sheikh Hasina India visit",
+        "BNP rally India relations",
+        "Awami League India bilateral",
+        "Indo-Bangla connectivity Northeast",
+
+        # China–Bangladesh nexus (strategic concern for NER)
+        "China Bangladesh strategic investment",
+        "China loan Bangladesh debt trap",
+        "Bangladesh military exercise China",
+        "BNS submarine Chinese supply",
+        "Belt Road Bangladesh Chittagong",
+
+        # Bangladesh armed forces / paramilitary at NER border
+        "BGB border firing infiltrator",
+        "BSF BGB joint patrol",
+        "Bangladesh Rifles Tripura border",
+        "Bangladesh Coast Guard smuggling seizure",
+
+        # Border crime & smuggling impacting NER
+        "Tripura Bangladesh cattle smuggling",
+        "Meghalaya Dawki coal smuggling",
+        "Bangladesh fake currency NER seizure",
+        "Yaba pills Bangladesh border",
+        "Bangladesh phensedyl smuggling Assam",
+        "human trafficking Bangladesh India border",
+        "arms smuggling Bangladesh NSCN",
+
+        # Insurgency in BD-NER border belt
+        "ULFA Bangladesh hideout",
+        "NSCN Bangladesh refuge",
+        "JMB Ansar al Islam India border",
+        "HuJI Bangladesh terror Northeast",
+        "Chittagong Hill Tracts insurgency Tripura",
+
+        # Refugee / minority movement
+        "Hindu minority attack Bangladesh",
+        "Rohingya Bangladesh repatriation Myanmar",
+        "Cox Bazar refugee crisis spillover",
+        "Bangladesh Hindu Tripura refugee",
+
+        # Political stability with cross-border spillover
+        "Bangladesh election violence border",
+        "Hefazat Islamists Bangladesh",
+        "Bangladesh political unrest infiltration",
+        "Khaleda Zia BNP protest border",
+
+        # Economic stability impacting NER trade
+        "Bangladesh forex crisis trade",
+        "Bangladesh garment workers protest",
+        "Bangladesh economic slowdown Northeast trade",
+
+        # Water / energy / infrastructure shared with NER
+        "Teesta water sharing dispute",
+        "Ganges Farakka treaty",
+        "Bangladesh Maitree power import",
+        "Bangladesh Padma Bridge trade impact",
+        "Bangladesh Northeast India transit",
     ],
 }
 
