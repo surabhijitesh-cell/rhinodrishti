@@ -65,6 +65,49 @@ function formatTime(isoStr) {
   }
 }
 
+// ── Fading helpers ────────────────────────────────────────────────────────────
+// Map visibility_band → CSS opacity so the card itself dims as the item ages.
+const FADE_OPACITY = {
+  full:     "opacity-100",
+  fading:   "opacity-80",
+  dim:      "opacity-55",
+  archived: "opacity-30",
+};
+
+function FadingBadge({ item }) {
+  const v = item.visibility_score;
+  const band = item.visibility_band;
+  if (v == null || band == null) return null;
+
+  const label = band === "full"     ? `V${Math.round(v)}`
+              : band === "fading"   ? `V${Math.round(v)} ↘`
+              : band === "dim"      ? `V${Math.round(v)} ↓↓`
+              : `V${Math.round(v)} ⌛`;
+
+  const colour = band === "full"   ? "text-green-400"
+               : band === "fading" ? "text-yellow-400"
+               : band === "dim"    ? "text-orange-400"
+               : "text-red-400/60";
+
+  return (
+    <Tip
+      text={
+        `Visibility Score ${Math.round(v)}/100 — computed by the Drishti fading formula: ` +
+        `V = P₀ × e^(−t/τ) × W_cb × W_fb × W_traj × W_flag.  ` +
+        `P₀=${item.priority_score} (birth priority), τ=${
+          {critical:1440,high:720,medium:336,low:72}[item.severity] ?? 336
+        }h (${item.severity} half-life), ` +
+        `cross-border boost ${item.is_cross_border ? '+25%' : '—'}, ` +
+        `trajectory ${item.threat_trajectory || '—'}.  ` +
+        `Threshold: ≥50 full, 30–50 fading, 15–30 dim, <15 archived.`
+      }
+      side="left"
+    >
+      <span className={`text-[10px] font-mono cursor-default ${colour}`}>{label}</span>
+    </Tip>
+  );
+}
+
 export default function IntelligenceCard({ item, compact = false, api, feedbackData, onDelete }) {
   const [expanded, setExpanded] = useState(false);
   const [sourcesExpanded, setSourcesExpanded] = useState(false);
@@ -73,10 +116,11 @@ export default function IntelligenceCard({ item, compact = false, api, feedbackD
   const severityClass = SEVERITY_CLASSES[item.severity] || "severity-low";
   const borderClass = CARD_BORDER_CLASSES[item.severity] || "intel-card-low";
   const priorityScore = item.priority_score || 0;
+  const fadeOpacity = FADE_OPACITY[item.visibility_band] || "opacity-100";
 
   return (
     <div
-      className={`intel-card ${borderClass} p-4 animate-slide-in ${item.severity === "critical" ? "glow-critical" : ""}`}
+      className={`intel-card ${borderClass} p-4 animate-slide-in ${item.severity === "critical" ? "glow-critical" : ""} ${fadeOpacity} transition-opacity duration-500`}
       data-testid={`intel-card-${item.id}`}
     >
       {/* Header */}
@@ -149,6 +193,9 @@ export default function IntelligenceCard({ item, compact = false, api, feedbackD
               </span>
             </Tip>
           )}
+
+          {/* Fading / Visibility score */}
+          <FadingBadge item={item} />
 
           {/* Threat trajectory */}
           {item.threat_trajectory && item.threat_trajectory !== "INDETERMINATE" && (

@@ -47,6 +47,7 @@ from twitter_fetcher import fetch_twitter_accounts, fetch_twitter_searches, seed
 from youtube_fetcher import fetch_youtube_channels, fetch_youtube_searches, seed_youtube_defaults
 from facebook_fetcher import fetch_facebook_pages, seed_facebook_defaults
 from telegram_fetcher import fetch_telegram_channels, seed_telegram_defaults
+from fading_engine import run_fading_pass
 
 
 app = FastAPI(title="Rhino Drishti API")
@@ -227,8 +228,18 @@ async def startup():
         scheduler.add_job(_fetch_facebook, 'interval', hours=4,  id='facebook_fetch')
         scheduler.add_job(_fetch_telegram, 'interval', hours=1,  id='telegram_fetch')
 
+        # Fading engine — recomputes visibility_score every hour
+        async def _run_fading_pass():
+            try:
+                stats = await run_fading_pass()
+                logger.info(f"Fading pass: {stats}")
+            except Exception as e:
+                logger.warning(f"Fading pass failed: {e}")
+
+        scheduler.add_job(_run_fading_pass, 'interval', hours=1, id='fading_pass')
+
         scheduler.start()
-        logger.info("Scheduler: grassroots/60min, standard/30min, established/12hr, retry/15min, brief/0600 IST, embeddings/6hr, fusion/30min, firecrawl-web/3hr, firecrawl-search/6hr, twitter/2hr, youtube/4hr, facebook/4hr, telegram/1hr")
+        logger.info("Scheduler: grassroots/60min, standard/30min, established/12hr, retry/15min, brief/0600 IST, embeddings/6hr, fusion/30min, firecrawl-web/3hr, firecrawl-search/6hr, twitter/2hr, youtube/4hr, facebook/4hr, telegram/1hr, fading/1hr")
     except Exception as e:
         logger.warning(f"Scheduler setup failed: {e}")
 

@@ -180,6 +180,9 @@ async def get_intelligence(
         "is_cluster_primary": {"$ne": False},
         "severity": {"$nin": ["low", "LOW"]},
         "tags": {"$nin": ["not_relevant", "unprocessed"]},
+        # Hide items that have been soft-archived by the fading engine,
+        # unless the caller explicitly requests them via date_from (historical view).
+        "is_archived": {"$ne": True},
     }
 
     if not date_from:
@@ -187,6 +190,10 @@ async def get_intelligence(
         retention_days = settings.get("value", 30) if settings else 30
         retention_cutoff = (datetime.now(timezone.utc) - timedelta(days=retention_days)).isoformat()
         query["published_at"] = {"$gte": retention_cutoff}
+    else:
+        # When caller provides an explicit date_from, they want historical data —
+        # lift the archive filter so faded items are included.
+        del query["is_archived"]
 
     if state:
         query["state"] = state
@@ -331,6 +338,63 @@ async def trigger_batch_fusion(background_tasks: BackgroundTasks):
     from fusion_engine import run_batch_fusion
     background_tasks.add_task(run_batch_fusion, db)
     return {"message": "Batch fusion started"}
+
+
+@router.post("/fading/run")
+async def trigger_fading_pass(background_tasks: BackgroundTasks):
+    """Manually trigger a visibility-score recomputation pass."""
+    from fading_engine import run_fading_pass
+    background_tasks.add_task(run_fading_pass)
+    return {"message": "Fading pass started"}
+
+
+@router.get("/fading/stats")
+async def get_fading_stats():
+    """Distribution of visibility bands across the current corpus."""
+    full     = await intelligence_col.count_documents({"processed": True, "visibility_band": "full"})
+    fading   = await intelligence_col.count_documents({"processed": True, "visibility_band": "fading"})
+    dim      = await intelligence_col.count_documents({"processed": True, "visibility_band": "dim"})
+    archived = await intelligence_col.count_documents({"processed": True, "visibility_band": "archived"})
+    unscored = await intelligence_col.count_documents({"processed": True, "visibility_band": {"$exists": False}})
+    return {
+        "full": full, "fading": fading, "dim": dim,
+        "archived": archived, "unscored": unscored,
+        "total": full + fading + dim + archived + unscored,
+    }
+
+
+@router.get("/intelligence/{item_id}/fading")
+async def get_item_fading_breakdown(item_id: str):
+    """Return a detailed fading formula breakdown for a single item."""
+    item = await intelligence_col.find_one({"id": item_id}, {"_id": 0})
+    if not item:
+        raise HTTPException(status_code=404, detail="Item not found")
+    from fading_engine import score_breakdown
+    return score_breakdown(item)
+
+
+@router.post("/intelligence/{item_id}/pin")
+async def pin_intelligence_item(item_id: str):
+    """Pin an item so it never fades from the feed."""
+    result = await intelligence_col.update_one(
+        {"id": item_id},
+        {"$set": {"pinned": True, "pinned_at": datetime.now(timezone.utc).isoformat()}}
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Item not found")
+    return {"message": "Item pinned — fading disabled", "id": item_id}
+
+
+@router.delete("/intelligence/{item_id}/pin")
+async def unpin_intelligence_item(item_id: str):
+    """Remove pin so normal fading resumes."""
+    result = await intelligence_col.update_one(
+        {"id": item_id},
+        {"$unset": {"pinned": "", "pinned_at": ""}}
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Item not found")
+    return {"message": "Item unpinned — fading resumed", "id": item_id}
 
 
 @router.get("/fusion/stats")
