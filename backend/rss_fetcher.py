@@ -86,6 +86,21 @@ RSS_SOURCES = [
     {"name": "Daily Star BD", "url": "https://www.thedailystar.net/feed", "category": "bangladesh", "language": "en", "region": "Bangladesh", "priority": "elite"},
     {"name": "Daily Sun BD", "url": "https://www.daily-sun.com/feed", "category": "bangladesh", "language": "en", "region": "Bangladesh", "priority": "standard"},
     {"name": "Ekhon TV", "url": "https://ekhon.tv/feed", "category": "bangladesh", "language": "bn", "region": "Bangladesh", "priority": "standard"},
+
+    # ---- BANGLADESH (NER-IMPACT GAP-FILL) ----
+    # Outlets added to plug coverage gaps for events with NER spillover:
+    # wire-agency breaking news (UNB), economic stability (Financial Express),
+    # Indo-BD diplomacy (The Independent), outside-POV reporting (BBC Bangla),
+    # opposition-lens (Naya Diganta) and Islamist-scene (Daily Inqilab) for
+    # tracking political volatility that can affect the BD-NER border belt.
+    {"name": "UNB (United News BD)",     "url": "https://unb.com.bd/rss/category/bangladesh.xml",        "category": "bangladesh", "language": "en", "region": "Bangladesh", "priority": "elite"},
+    {"name": "BBC Bangla",               "url": "https://feeds.bbci.co.uk/bengali/rss.xml",               "category": "bangladesh", "language": "bn", "region": "Bangladesh", "priority": "elite"},
+    {"name": "Financial Express BD",     "url": "https://thefinancialexpress.com.bd/rss.xml",             "category": "bangladesh", "language": "en", "region": "Bangladesh", "priority": "standard"},
+    {"name": "The Independent BD",       "url": "https://www.theindependentbd.com/rss.xml",               "category": "bangladesh", "language": "en", "region": "Bangladesh", "priority": "standard"},
+    {"name": "Risingbd",                 "url": "https://www.risingbd.com/feed",                          "category": "bangladesh", "language": "en", "region": "Bangladesh", "priority": "standard"},
+    {"name": "Dhaka Post",               "url": "https://www.dhakapost.com/feed",                         "category": "bangladesh", "language": "bn", "region": "Bangladesh", "priority": "standard"},
+    {"name": "Naya Diganta (Bangla)",    "url": "https://www.dailynayadiganta.com/feed",                  "category": "bangladesh", "language": "bn", "region": "Bangladesh", "priority": "standard"},
+    {"name": "Daily Inqilab (Bangla)",   "url": "https://www.dailyinqilab.com/rss.xml",                   "category": "bangladesh", "language": "bn", "region": "Bangladesh", "priority": "standard"},
     {"name": "Irrawaddy", "url": "https://www.irrawaddy.com/feed", "category": "myanmar", "language": "en", "region": "Myanmar", "priority": "elite"},
     {"name": "Mizzima English", "url": "https://eng.mizzima.com/feed", "category": "myanmar", "language": "en", "region": "Myanmar", "priority": "elite"},
     {"name": "DVB Burmese", "url": "https://burmese.dvb.no/feed/", "category": "myanmar", "language": "my", "region": "Myanmar", "priority": "grassroots"},
