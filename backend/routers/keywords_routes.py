@@ -11,7 +11,7 @@ router = APIRouter()
 async def get_keywords(
     type: Optional[str] = None,
     min_score: int = Query(0, ge=0, le=100),
-    limit: int = Query(100, ge=1, le=300),
+    limit: int = Query(100, ge=1, le=500),
 ):
     from keyword_engine import generate_keywords
 
@@ -20,7 +20,7 @@ async def get_keywords(
     stored = await db.keyword_store.find(
         {"score": {"$gte": min_score}},
         {"_id": 0}
-    ).sort("score", -1).limit(300).to_list(300)
+    ).sort("score", -1).limit(500).to_list(500)
 
     kw_map = {k["keyword"].lower(): k for k in keywords}
 

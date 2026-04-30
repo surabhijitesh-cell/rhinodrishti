@@ -163,11 +163,28 @@ function AnalysisCard({ doc, onDelete, onAddToFeed, api }) {
             </div>
           )}
           {(ke.actors?.length > 0 || ke.locations?.length > 0 || ke.events?.length > 0) && (
-            <div className="p-3 bg-muted/20 border border-border">
-              <h4 className="text-[10px] uppercase tracking-widest text-muted-foreground font-mono mb-2 flex items-center gap-1">
-                <Users size={12} /> Key Entities
-                <span className="text-muted-foreground/50 ml-1">(click to select for keyword bank)</span>
-              </h4>
+            <div className="p-3 bg-emerald-500/5 border border-emerald-500/20 border-l-4 border-l-emerald-500">
+              <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
+                <h4 className="text-[11px] uppercase tracking-widest text-emerald-400 font-mono font-semibold flex items-center gap-1.5">
+                  <Users size={12} /> Promote to Keyword Bank
+                </h4>
+                <button
+                  className="text-[9px] font-mono uppercase tracking-wider text-emerald-400 hover:text-emerald-300 underline-offset-2 hover:underline"
+                  onClick={() => {
+                    const all = new Set();
+                    (ke.actors || []).forEach(a => all.add(`entity|${typeof a === "string" ? a : JSON.stringify(a)}`));
+                    (ke.locations || []).forEach(l => all.add(`geo|${typeof l === "string" ? l : JSON.stringify(l)}`));
+                    (ke.events || []).forEach(e => all.add(`primary|${typeof e === "string" ? e : JSON.stringify(e)}`));
+                    setSelectedKw(all);
+                  }}
+                  data-testid="select-all-kw"
+                >
+                  Select All ({(ke.actors?.length || 0) + (ke.locations?.length || 0) + (ke.events?.length || 0)})
+                </button>
+              </div>
+              <p className="text-[10px] text-muted-foreground font-mono mb-2 leading-relaxed">
+                Click individual entities to select them, or use <strong>Select All</strong>. Selected keywords feed into Twitter/YouTube/Firecrawl searches automatically.
+              </p>
               <div className="flex flex-wrap gap-1.5">
                 {ke.actors?.map((a, i) => {
                   const sel = selectedKw.has(`entity|${a}`);

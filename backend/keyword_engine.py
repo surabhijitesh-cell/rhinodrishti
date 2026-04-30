@@ -60,7 +60,7 @@ _keyword_cache = {
     "ttl_seconds": 1800,  # 30 min cache
 }
 
-MAX_KEYWORDS = 300
+MAX_KEYWORDS = 500
 
 
 def _time_decay_score(published_at: str, base_score: float, half_life_days: int = 7) -> float:
