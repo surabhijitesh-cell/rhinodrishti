@@ -413,6 +413,92 @@ async def trigger_fading_pass(background_tasks: BackgroundTasks):
     return {"message": "Fading pass started"}
 
 
+@router.get("/debug/data-health")
+async def debug_data_health():
+    """Diagnostic endpoint: shows exactly how many items exist at each filter stage.
+    Use this to diagnose why items are not appearing in the feed.
+    """
+    now = datetime.now(timezone.utc)
+    seven_days_ago = (now - timedelta(days=7)).isoformat()
+    one_day_ago    = (now - timedelta(days=1)).isoformat()
+
+    total                = await intelligence_col.count_documents({})
+    total_7d             = await intelligence_col.count_documents({"published_at": {"$gte": seven_days_ago}})
+    total_24h            = await intelligence_col.count_documents({"published_at": {"$gte": one_day_ago}})
+    fetched_7d           = await intelligence_col.count_documents({"fetched_at":   {"$gte": seven_days_ago}})
+    fetched_24h          = await intelligence_col.count_documents({"fetched_at":   {"$gte": one_day_ago}})
+    processed_true       = await intelligence_col.count_documents({"processed": True})
+    processed_false      = await intelligence_col.count_documents({"processed": False})
+    archived             = await intelligence_col.count_documents({"is_archived": True})
+    archived_7d          = await intelligence_col.count_documents({"is_archived": True, "published_at": {"$gte": seven_days_ago}})
+    not_relevant         = await intelligence_col.count_documents({"tags": "not_relevant"})
+    acknowledged         = await intelligence_col.count_documents({"acknowledged": True})
+    cluster_non_primary  = await intelligence_col.count_documents({"is_cluster_primary": False})
+    cluster_primary      = await intelligence_col.count_documents({"is_cluster_primary": True})
+    no_cluster_field     = await intelligence_col.count_documents({"is_cluster_primary": {"$exists": False}})
+
+    # Items visible in default feed (all filters applied)
+    feed_visible = await intelligence_col.count_documents({
+        "processed": True,
+        "is_cluster_primary": {"$ne": False},
+        "tags": {"$nin": ["not_relevant", "unprocessed"]},
+        "acknowledged": {"$ne": True},
+        "is_archived": {"$ne": True},
+        "published_at": {"$gte": seven_days_ago},
+    })
+    feed_visible_24h = await intelligence_col.count_documents({
+        "processed": True,
+        "is_cluster_primary": {"$ne": False},
+        "tags": {"$nin": ["not_relevant", "unprocessed"]},
+        "acknowledged": {"$ne": True},
+        "is_archived": {"$ne": True},
+        "published_at": {"$gte": one_day_ago},
+    })
+
+    # Severity distribution in last 7d
+    sev_pipeline = [
+        {"$match": {"published_at": {"$gte": seven_days_ago}, "processed": True}},
+        {"$group": {"_id": "$severity", "count": {"$sum": 1}}},
+        {"$sort": {"count": -1}},
+    ]
+    sev_dist = {doc["_id"]: doc["count"] async for doc in intelligence_col.aggregate(sev_pipeline)}
+
+    # Source type distribution in last 7d
+    src_pipeline = [
+        {"$match": {"published_at": {"$gte": seven_days_ago}}},
+        {"$group": {"_id": "$source_type", "count": {"$sum": 1}}},
+        {"$sort": {"count": -1}},
+    ]
+    src_dist = {doc["_id"]: doc["count"] async for doc in intelligence_col.aggregate(src_pipeline)}
+
+    return {
+        "totals": {
+            "all_time": total,
+            "by_published_at_7d": total_7d,
+            "by_published_at_24h": total_24h,
+            "by_fetched_at_7d": fetched_7d,
+            "by_fetched_at_24h": fetched_24h,
+        },
+        "pipeline_stages": {
+            "processed_true": processed_true,
+            "processed_false_unprocessed": processed_false,
+            "is_archived_true": archived,
+            "is_archived_true_AND_7d_old": archived_7d,
+            "tagged_not_relevant": not_relevant,
+            "acknowledged": acknowledged,
+            "cluster_primary_true": cluster_primary,
+            "cluster_primary_false_hidden": cluster_non_primary,
+            "cluster_field_not_set": no_cluster_field,
+        },
+        "feed_visible": {
+            "last_7_days": feed_visible,
+            "last_24_hours": feed_visible_24h,
+        },
+        "severity_distribution_7d": sev_dist,
+        "source_type_distribution_7d": src_dist,
+    }
+
+
 @router.post("/fading/repair-fresh")
 async def repair_fresh_archived():
     """One-shot repair: un-archive any item younger than 7 days that was incorrectly

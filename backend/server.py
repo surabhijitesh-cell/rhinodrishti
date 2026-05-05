@@ -165,6 +165,21 @@ async def startup():
     except Exception as e:
         logger.warning(f"Startup archive repair failed: {e}")
 
+    # One-time repair: re-assign cluster primaries using recency-first logic.
+    # Previously pick_primary sorted by summary length, causing old items to stay as
+    # cluster heads while fresh articles were hidden.  This re-assigns primaries
+    # within all clusters formed in the last 30 days.
+    try:
+        from fusion_engine import repair_cluster_primaries
+        repair_stats = await repair_cluster_primaries(db)
+        if repair_stats.get("primaries_reassigned", 0) > 0:
+            logger.info(
+                f"Startup cluster repair: reassigned {repair_stats['primaries_reassigned']} "
+                f"cluster primaries to most-recent items (checked {repair_stats.get('clusters_checked', 0)} clusters)"
+            )
+    except Exception as e:
+        logger.warning(f"Startup cluster primary repair failed: {e}")
+
     try:
         from apscheduler.schedulers.asyncio import AsyncIOScheduler
         from apscheduler.triggers.cron import CronTrigger
