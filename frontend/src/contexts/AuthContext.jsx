@@ -62,6 +62,10 @@ export function AuthProvider({ children, api }) {
     const { token, user: userData } = res.data;
     localStorage.setItem("rd_token", token);
     localStorage.setItem("rd_user", JSON.stringify(userData));
+    // Increment login count — used by TourContext to suppress auto-tour after first login.
+    const countKey = `rd_login_count_${userData.username}`;
+    const prev = parseInt(localStorage.getItem(countKey) || "0", 10);
+    localStorage.setItem(countKey, String(prev + 1));
     setUser(userData);
     return userData;
   }, [api]);

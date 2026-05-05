@@ -367,35 +367,22 @@ const TOUR_STYLES = {
 
 export default function AppTour() {
   const location = useLocation();
-  const { running, stopTour, disableAllTours, joyKey } = useTour();
+  const { running, skipTour, finishTour, joyKey } = useTour();
 
   const steps = PAGE_STEPS[location.pathname] || [];
 
-  // In react-joyride v3 the event callback prop is `onEvent`, not `callback`.
-  // Without this rename, stopTour() is never called and the tour state is
-  // never persisted to localStorage.
   const handleEvent = ({ status, action }) => {
-    if (
-      status === STATUS.FINISHED ||
-      status === STATUS.SKIPPED  ||
-      action  === ACTIONS.CLOSE
-    ) {
-      stopTour();
-
-      // After the user finishes a full walkthrough (vs. closing/skipping
-      // partway), offer a one-click way to silence ALL future auto-tours.
-      // Manual ? button still works after — only auto-start is suppressed.
+    if (status === STATUS.SKIPPED) {
+      skipTour();
+      toast("Tour skipped. Click the ? button anytime to restart.", {
+        duration: 8000,
+      });
+      return;
+    }
+    if (status === STATUS.FINISHED || action === ACTIONS.CLOSE) {
+      finishTour();
       if (status === STATUS.FINISHED) {
-        toast("Walkthrough complete. Stop showing tours on every page?", {
-          duration: 12000,
-          action: {
-            label: "Disable All Tours",
-            onClick: () => {
-              disableAllTours();
-              toast.success("Auto-tours disabled. Click the ? icon any time to bring them back.");
-            },
-          },
-        });
+        toast.success("Walkthrough complete. Click ? anytime to replay.");
       }
     }
   };

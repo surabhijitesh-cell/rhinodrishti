@@ -104,7 +104,7 @@ export default function Layout({ children, alertCount = 0, onSearch }) {
   const { theme, toggleTheme } = useTheme();
   const location = useLocation();
   const { user, logout } = useAuth();
-  const { startTour, resetAllTours } = useTour();
+  const { startTour, resetTour } = useTour();
 
   const userRole = user?.role || "viewer";
   const navItems = ALL_NAV_ITEMS.filter((item) => item.roles.includes(userRole));
@@ -290,7 +290,7 @@ export default function Layout({ children, alertCount = 0, onSearch }) {
                 <Button
                   variant="ghost"
                   size="sm"
-                  onClick={() => { resetAllTours(); startTour(); }}
+                  onClick={() => { resetTour(); startTour(); }}
                   className="text-muted-foreground hover:text-amber-400"
                   data-testid="reset-tour-btn"
                 >
