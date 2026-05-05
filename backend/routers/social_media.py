@@ -15,7 +15,7 @@ POST /api/social/fetch-all — trigger all platforms now (admin use)
 
 import uuid
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Optional
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 from pydantic import BaseModel
@@ -89,40 +89,228 @@ async def social_status():
                                os.environ.get("FACEBOOK_APP_SECRET", "").strip())
     firecrawl_configured = bool(os.environ.get("FIRECRAWL_API_KEY", "").strip())
 
+    # Fetch item counts per source from DB
+    now_utc = datetime.now(timezone.utc)
+    cutoff  = (now_utc - timedelta(days=30)).isoformat()
+
+    async def _count(src_prefix: str) -> int:
+        return await db.intelligence_items.count_documents({
+            "source_type": {"$regex": f"^{src_prefix}", "$options": "i"},
+            "published_at": {"$gte": cutoff},
+        })
+
+    twitter_count   = await db.twitter_feeds.count_documents({})
+    youtube_count   = await _count("youtube")
+    facebook_count  = await _count("facebook")
+    telegram_count  = await _count("telegram")
+    firecrawl_count = await _count("firecrawl")
+    intel_twitter_count = await _count("twitter")
+
     return {
         "twitter": {
             "configured": twitter_configured,
-            "available":  twitter_configured,  # No Nitter fallback — needs API key
-            "note": ("Official X API v2 (Basic tier+). Nitter fallback was removed because "
-                     "all public Nitter instances broke when Twitter killed guest-account "
-                     "access in mid-2023. Set TWITTER_BEARER_TOKEN to enable.")
-            if not twitter_configured else "Official X API v2 active.",
+            "available":  twitter_configured,
+            "item_count": twitter_count,
+            "intel_count": intel_twitter_count,
+            "note": (
+                "⚠ X API v2 requires Basic tier ($100/mo) to READ tweets. "
+                "Free tier tokens only allow posting. If your token is Free tier, "
+                "all fetches silently return empty. Set TWITTER_BEARER_TOKEN (Basic tier+)."
+            ) if not twitter_configured else (
+                f"X API v2 active. {twitter_count} raw tweets in cache, {intel_twitter_count} in intel feed (30d)."
+            ),
         },
         "youtube": {
             "configured": youtube_configured,
             "available":  youtube_configured,
+            "item_count": youtube_count,
             "note": "YouTube Data API v3 (free, 10k quota/day). Set YOUTUBE_API_KEY."
-            if not youtube_configured else "YouTube Data API v3 active.",
+            if not youtube_configured else f"YouTube Data API v3 active. {youtube_count} items (30d).",
         },
         "facebook": {
             "configured": facebook_configured,
             "available":  facebook_configured,
-            "note": "Graph API app access token — public pages only. Set FACEBOOK_APP_ID + FACEBOOK_APP_SECRET."
-            if not facebook_configured else "Graph API v19 active.",
+            "item_count": facebook_count,
+            "note": (
+                "⚠ Facebook Graph API client-credentials access token NO LONGER "
+                "allows reading page posts as of 2018 API changes. Each page must "
+                "grant your app a Page Access Token via Meta Business Suite. "
+                "Set FACEBOOK_PAGE_TOKEN_<PAGE_ID> per page, or use the Firecrawl "
+                "source instead to scrape public FB pages."
+            ) if not facebook_configured else (
+                f"Graph API credentials set. {facebook_count} items saved (30d). "
+                "⚠ If count is 0, pages likely need per-page access tokens — see FACEBOOK_PAGE_TOKEN_<PAGE_ID>."
+            ),
         },
         "telegram": {
             "configured": tg_ok(),
             "available":  tg_ok(),
+            "item_count": telegram_count,
             "note": "Telethon user session — run telegram_setup.py once to generate session."
-            if not tg_ok() else "Telethon user session active.",
+            if not tg_ok() else f"Telethon session active. {telegram_count} items (30d).",
         },
         "firecrawl": {
             "configured": firecrawl_configured,
             "available":  firecrawl_configured,
+            "item_count": firecrawl_count,
             "note": "Firecrawl SaaS — set FIRECRAWL_API_KEY."
-            if not firecrawl_configured else "Firecrawl active.",
+            if not firecrawl_configured else (
+                f"Firecrawl active. {firecrawl_count} items (30d). "
+                "Web sources: each homepage scraped once (dedup by URL); keyword searches add fresh items every 6h."
+            ),
         },
     }
+
+
+@router.post("/social/test-connections")
+async def test_social_connections():
+    """
+    Actually test each API connection live — not just check if keys are set.
+    Returns ok/error/warning per platform with actionable messages.
+    """
+    import os, asyncio
+
+    results = {}
+
+    # ── Twitter ──────────────────────────────────────────────────────────────
+    token = os.environ.get("TWITTER_BEARER_TOKEN", "").strip()
+    if not token:
+        results["twitter"] = {"status": "not_configured", "message": "TWITTER_BEARER_TOKEN not set"}
+    else:
+        try:
+            import tweepy
+            loop = asyncio.get_event_loop()
+            def _test_twitter():
+                c = tweepy.Client(bearer_token=token, wait_on_rate_limit=False)
+                # search_recent_tweets with a simple query — fails on Free tier
+                resp = c.search_recent_tweets(
+                    query="india",
+                    max_results=10,
+                    tweet_fields=["created_at"],
+                )
+                return resp
+            resp = await loop.run_in_executor(None, _test_twitter)
+            count = len(resp.data or [])
+            results["twitter"] = {"status": "ok", "message": f"Connected — returned {count} tweets"}
+        except Exception as e:
+            err = str(e)
+            if "403" in err or "Read" in err or "Forbidden" in err or "unauthorized" in err.lower():
+                results["twitter"] = {
+                    "status": "auth_error",
+                    "message": (
+                        "401/403 from X API — your Bearer Token is likely a FREE tier key. "
+                        "Free tier only allows posting (no tweet reads). "
+                        "Upgrade to X API Basic ($100/mo) to fetch tweets."
+                    )
+                }
+            elif "429" in err or "rate" in err.lower():
+                results["twitter"] = {"status": "rate_limited", "message": f"Rate limited: {err}"}
+            else:
+                results["twitter"] = {"status": "error", "message": err[:200]}
+
+    # ── YouTube ──────────────────────────────────────────────────────────────
+    yt_key = os.environ.get("YOUTUBE_API_KEY", "").strip()
+    if not yt_key:
+        results["youtube"] = {"status": "not_configured", "message": "YOUTUBE_API_KEY not set"}
+    else:
+        try:
+            import httpx
+            async with httpx.AsyncClient(timeout=8) as hc:
+                r = await hc.get(
+                    "https://www.googleapis.com/youtube/v3/videos",
+                    params={"key": yt_key, "id": "dQw4w9WgXcQ", "part": "id"},
+                )
+            if r.status_code == 200:
+                results["youtube"] = {"status": "ok", "message": "Connected — YouTube Data API v3 active"}
+            elif r.status_code == 403:
+                results["youtube"] = {"status": "auth_error", "message": f"403 Forbidden — key may be restricted or quota exceeded. Response: {r.text[:200]}"}
+            else:
+                results["youtube"] = {"status": "error", "message": f"HTTP {r.status_code}: {r.text[:200]}"}
+        except Exception as e:
+            results["youtube"] = {"status": "error", "message": str(e)[:200]}
+
+    # ── Facebook ─────────────────────────────────────────────────────────────
+    fb_id     = os.environ.get("FACEBOOK_APP_ID", "").strip()
+    fb_secret = os.environ.get("FACEBOOK_APP_SECRET", "").strip()
+    if not fb_id or not fb_secret:
+        results["facebook"] = {"status": "not_configured", "message": "FACEBOOK_APP_ID or FACEBOOK_APP_SECRET not set"}
+    else:
+        try:
+            import httpx
+            async with httpx.AsyncClient(timeout=8) as hc:
+                r = await hc.get(
+                    "https://graph.facebook.com/v19.0/oauth/access_token",
+                    params={"client_id": fb_id, "client_secret": fb_secret, "grant_type": "client_credentials"},
+                )
+            data = r.json()
+            if "access_token" in data:
+                # Try reading a known public page to test if posts are accessible
+                token_val = data["access_token"]
+                async with httpx.AsyncClient(timeout=8) as hc:
+                    r2 = await hc.get(
+                        "https://graph.facebook.com/v19.0/IndianArmy.adgpi/posts",
+                        params={"fields": "id,message", "limit": 1, "access_token": token_val},
+                    )
+                d2 = r2.json()
+                if r2.status_code == 200 and "data" in d2:
+                    count = len(d2.get("data", []))
+                    if count > 0:
+                        results["facebook"] = {"status": "ok", "message": f"Connected — app token works, got {count} posts from test page"}
+                    else:
+                        results["facebook"] = {
+                            "status": "warning",
+                            "message": (
+                                "App token obtained but test page returned 0 posts. "
+                                "Meta now requires Page Access Tokens (not app tokens) to read posts. "
+                                "Set FACEBOOK_PAGE_TOKEN_<PAGE_ID> per page in your environment."
+                            )
+                        }
+                else:
+                    err_msg = d2.get("error", {}).get("message", r2.text[:200])
+                    results["facebook"] = {
+                        "status": "warning",
+                        "message": (
+                            f"App token OK but page read failed: {err_msg}. "
+                            "Meta restricts post access — set FACEBOOK_PAGE_TOKEN_<PAGE_ID> per page."
+                        )
+                    }
+            else:
+                results["facebook"] = {"status": "auth_error", "message": f"Token exchange failed: {data.get('error', {}).get('message', str(data)[:200])}"}
+        except Exception as e:
+            results["facebook"] = {"status": "error", "message": str(e)[:200]}
+
+    # ── Firecrawl ────────────────────────────────────────────────────────────
+    fc_key = os.environ.get("FIRECRAWL_API_KEY", "").strip()
+    if not fc_key:
+        results["firecrawl"] = {"status": "not_configured", "message": "FIRECRAWL_API_KEY not set"}
+    else:
+        try:
+            import httpx
+            async with httpx.AsyncClient(timeout=10) as hc:
+                r = await hc.get(
+                    "https://api.firecrawl.dev/v1/team/usage",
+                    headers={"Authorization": f"Bearer {fc_key}"},
+                )
+            if r.status_code == 200:
+                usage = r.json()
+                credits_used = usage.get("creditsUsed", usage.get("credits_used", "?"))
+                credits_total = usage.get("totalCredits", usage.get("total_credits", "?"))
+                results["firecrawl"] = {"status": "ok", "message": f"Connected — credits used: {credits_used}/{credits_total}"}
+            elif r.status_code == 401:
+                results["firecrawl"] = {"status": "auth_error", "message": "401 Unauthorized — FIRECRAWL_API_KEY is invalid"}
+            else:
+                results["firecrawl"] = {"status": "warning", "message": f"Status endpoint returned {r.status_code} — key may be valid but usage check failed"}
+        except Exception as e:
+            results["firecrawl"] = {"status": "error", "message": str(e)[:200]}
+
+    # ── Telegram ─────────────────────────────────────────────────────────────
+    from telegram_fetcher import _is_configured as tg_ok
+    results["telegram"] = {
+        "status": "ok" if tg_ok() else "not_configured",
+        "message": "Telethon session file present" if tg_ok() else "No Telethon session — run telegram_setup.py on the server",
+    }
+
+    return {"results": results}
 
 
 # ─────────────────────────────────────────────────────────────────────────────

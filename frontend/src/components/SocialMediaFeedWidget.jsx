@@ -365,6 +365,7 @@ export default function SocialMediaFeedWidget({
   const [triggering, setTriggering] = useState(false);
   const [lastUpdated, setLastUpdated] = useState(null);
   const [error, setError]         = useState(null);
+  const [statusNote, setStatusNote] = useState(null);   // from /social/status endpoint
 
   // DIRECT mode  → raw /social-feeds/{type} endpoint (no AI filter)
   // CURATED mode → /intelligence?source_type=X (AI-classified only)
@@ -390,6 +391,15 @@ export default function SocialMediaFeedWidget({
       setItems(rawItems);
       setLastUpdated(new Date());
       setError(null);
+
+      // If empty, fetch the status note so we can show WHY (API tier limits, etc.)
+      if (rawItems.length === 0 && !statusNote) {
+        try {
+          const statusRes = await axios.get(`${api}/social/status`);
+          const srcStatus = statusRes.data?.[sourceType];
+          if (srcStatus?.note) setStatusNote(srcStatus.note);
+        } catch (_) {/* non-fatal */}
+      }
     } catch (e) {
       console.error(`[SocialFeed/${sourceType}] fetch failed:`, e);
       // FastAPI 422 detail is an array of objects — serialise to string to avoid React crash
@@ -401,7 +411,7 @@ export default function SocialMediaFeedWidget({
     }
     setLoading(false);
     setRefreshing(false);
-  }, [api, mode, sourceType, cfg]);
+  }, [api, mode, sourceType, cfg, statusNote]);
 
   useEffect(() => {
     load();
@@ -594,6 +604,19 @@ export default function SocialMediaFeedWidget({
                 <p className="text-xs text-muted-foreground mb-3">
                   No {label} data in the database yet.
                 </p>
+
+                {/* Status note from backend — shows API tier warnings / restrictions */}
+                {statusNote && (
+                  <div className={`text-left max-w-md mx-auto mb-3 p-2 border text-[10px] font-mono leading-relaxed ${
+                    statusNote.includes("⚠")
+                      ? "border-amber-500/40 bg-amber-500/5 text-amber-300"
+                      : "border-emerald-500/30 bg-emerald-500/5 text-emerald-300"
+                  }`}>
+                    <AlertTriangle size={10} className="inline mr-1 shrink-0" />
+                    {statusNote}
+                  </div>
+                )}
+
                 <ul className="text-[10px] font-mono text-muted-foreground/70 text-left max-w-md mx-auto space-y-1 mb-3">
                   {cfg.emptyHint.map((h, i) => (
                     <li key={i}>{i + 1}. {h}</li>

@@ -11,7 +11,7 @@ Handles three modes:
 import os
 import uuid
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -195,8 +195,20 @@ async def fetch_web_sources(db) -> int:
         if not raw:
             continue
 
-        # Deduplicate by URL
-        existing = await db.intelligence_items.find_one({"source_url": url})
+        # Deduplicate by title+source to avoid saving identical homepage scrapes.
+        # We do NOT deduplicate by source_url alone because the homepage URL never
+        # changes — deduping by URL would block all future fetches of the same site.
+        raw_title = (raw.get("title") or "").strip()
+        if raw_title:
+            recent_cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+            existing = await db.intelligence_items.find_one({
+                "title": raw_title,
+                "source_url": url,
+                "published_at": {"$gte": recent_cutoff},
+            })
+        else:
+            existing = None
+
         if existing:
             await db.web_sources.update_one(
                 {"_id": source["_id"]},
