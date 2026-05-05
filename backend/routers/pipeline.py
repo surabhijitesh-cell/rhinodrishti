@@ -538,12 +538,15 @@ async def bulk_scrape_all_feeds():
 
 
 async def analyze_unprocessed_items():
-    MAX_RETRY_PER_CYCLE = 20
+    MAX_RETRY_PER_CYCLE = 50  # increased from 20 — clears backlog faster
     INTER_ARTICLE_DELAY = 2.5
 
+    # Sort NEWEST first so today's news is always classified before old backlog items.
+    # Without this sort, MongoDB returns items in insertion order (oldest first),
+    # meaning a 3000-item backlog would hide all fresh articles for days.
     unprocessed = await intelligence_col.find(
         {"processed": False}, {"_id": 0}
-    ).limit(MAX_RETRY_PER_CYCLE).to_list(MAX_RETRY_PER_CYCLE)
+    ).sort("published_at", -1).limit(MAX_RETRY_PER_CYCLE).to_list(MAX_RETRY_PER_CYCLE)
 
     if not unprocessed:
         logger.info("No unprocessed items to retry.")
