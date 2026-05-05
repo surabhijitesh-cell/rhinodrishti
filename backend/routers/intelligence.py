@@ -47,9 +47,16 @@ async def get_dashboard_stats():
             threat_dist[doc["_id"]] = doc["count"]
 
     recent_critical = await intelligence_col.find(
-        {**base_filter, "severity": {"$in": ["critical", "high"]}},
+        {
+            **base_filter,
+            "severity": {"$in": ["critical", "high"]},
+            # Don't surface already-acknowledged alerts in the dashboard panel
+            "acknowledged": {"$ne": True},
+            "is_archived": {"$ne": True},
+            "tags": {"$nin": ["not_relevant", "unprocessed"]},
+        },
         {"_id": 0}
-    ).sort("published_at", -1).limit(5).to_list(5)
+    ).sort("published_at", -1).limit(10).to_list(10)
 
     today = now.strftime("%Y-%m-%d")
     today_count = await intelligence_col.count_documents(
@@ -231,10 +238,15 @@ async def get_intelligence(
     query = {
         "processed": True,
         "is_cluster_primary": {"$ne": False},
-        "severity": {"$nin": ["low", "LOW"]},
+        # NOTE: low-severity items are intentionally NOT excluded here — the caller
+        # can apply a severity filter if needed.  Excluding them globally caused
+        # recent low-severity items to be invisible even minutes after ingestion.
         "tags": {"$nin": ["not_relevant", "unprocessed"]},
-        # Hide items that have been soft-archived by the fading engine,
-        # unless the caller explicitly requests them via date_from (historical view).
+        # Hide acknowledged critical/high alerts from the default feed so they
+        # don't clog the "latest" view after an analyst has actioned them.
+        "acknowledged": {"$ne": True},
+        # Hide items soft-archived by the fading engine, unless the caller
+        # explicitly requests historical data via date_from.
         "is_archived": {"$ne": True},
     }
 
@@ -399,6 +411,29 @@ async def trigger_fading_pass(background_tasks: BackgroundTasks):
     from fading_engine import run_fading_pass
     background_tasks.add_task(run_fading_pass)
     return {"message": "Fading pass started"}
+
+
+@router.post("/fading/repair-fresh")
+async def repair_fresh_archived():
+    """One-shot repair: un-archive any item younger than 7 days that was incorrectly
+    soft-archived by the fading engine before the freshness guard was added.
+
+    Safe to call multiple times — idempotent.
+    """
+    seven_days_ago = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+    result = await intelligence_col.update_many(
+        {
+            "is_archived": True,
+            "published_at": {"$gte": seven_days_ago},
+            "pinned": {"$ne": True},
+        },
+        {"$set": {"is_archived": False, "visibility_band": "fading"}},
+    )
+    invalidate_stats_cache()
+    return {
+        "message": "Fresh-item archive repair complete",
+        "unarchived": result.modified_count,
+    }
 
 
 @router.post("/fading/cleanup-low")

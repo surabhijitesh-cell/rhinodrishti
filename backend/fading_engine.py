@@ -253,15 +253,24 @@ async def delete_expired_low_severity() -> dict:
     return stats
 
 
+# Items younger than this threshold are NEVER archived regardless of their
+# computed visibility score.  This stops the fading engine from hiding freshly-
+# ingested items that have a low base priority_score (e.g. social-media posts).
+MIN_ARCHIVE_AGE_HOURS = 168   # 7 days
+
+
 async def run_fading_pass(batch_size: int = 500) -> dict:
     """
     Hourly background job.  Recomputes visibility_score for recent processed
     items and marks fully-faded items as archived.
 
+    Items younger than MIN_ARCHIVE_AGE_HOURS (7 days) are never archived,
+    even if their computed visibility score falls below the threshold.
+
     Returns a summary dict with counts.
     """
     now = datetime.now(timezone.utc)
-    stats = {"updated": 0, "archived": 0, "errors": 0}
+    stats = {"updated": 0, "archived": 0, "too_fresh": 0, "errors": 0}
 
     # Only recompute items that haven't been manually pinned
     query = {
@@ -280,6 +289,16 @@ async def run_fading_pass(batch_size: int = 500) -> dict:
             v = compute_visibility(item, now)
             band = visibility_band(v)
 
+            # ── Compute item age for the freshness guard ──────────────────────
+            pub_str = item.get("published_at", "")
+            try:
+                pub_dt = datetime.fromisoformat(pub_str.replace("Z", "+00:00"))
+                if pub_dt.tzinfo is None:
+                    pub_dt = pub_dt.replace(tzinfo=timezone.utc)
+                age_hours = max((now - pub_dt).total_seconds() / 3600, 0.0)
+            except Exception:
+                age_hours = 0.0  # treat as brand-new if date unparseable
+
             update = {
                 "$set": {
                     "visibility_score": v,
@@ -287,12 +306,18 @@ async def run_fading_pass(batch_size: int = 500) -> dict:
                     "visibility_updated_at": now.isoformat(),
                 }
             }
-            # Items that fall below threshold get soft-archived (not deleted)
+
             if band == "archived":
-                update["$set"]["is_archived"] = True
-                stats["archived"] += 1
+                if age_hours >= MIN_ARCHIVE_AGE_HOURS:
+                    # Old enough — safe to soft-archive
+                    update["$set"]["is_archived"] = True
+                    stats["archived"] += 1
+                else:
+                    # Too fresh to archive — keep visible even if score is low
+                    update["$set"]["is_archived"] = False
+                    stats["too_fresh"] += 1
             else:
-                # Unarchive if they somehow get a boost (e.g. analyst rate up)
+                # Unarchive if score recovered (e.g. analyst rated it up)
                 update["$set"]["is_archived"] = False
 
             await intelligence_col.update_one({"_id": item["_id"]}, update)
@@ -304,6 +329,7 @@ async def run_fading_pass(batch_size: int = 500) -> dict:
 
     logger.info(
         f"Fading pass complete — updated:{stats['updated']} "
-        f"archived:{stats['archived']} errors:{stats['errors']}"
+        f"archived:{stats['archived']} too_fresh(protected):{stats['too_fresh']} "
+        f"errors:{stats['errors']}"
     )
     return stats

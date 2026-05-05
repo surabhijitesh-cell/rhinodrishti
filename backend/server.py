@@ -151,6 +151,20 @@ async def startup():
             logger.info(f"{unprocessed} unprocessed items found - triggering retry...")
             asyncio.create_task(analyze_unprocessed_items())
 
+    # One-time repair: un-archive any items younger than 7 days that were
+    # incorrectly archived before the freshness guard was added to fading_engine.
+    try:
+        from datetime import datetime, timezone, timedelta
+        seven_days_ago = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+        repair_result = await intelligence_col.update_many(
+            {"is_archived": True, "published_at": {"$gte": seven_days_ago}, "pinned": {"$ne": True}},
+            {"$set": {"is_archived": False, "visibility_band": "fading"}},
+        )
+        if repair_result.modified_count:
+            logger.info(f"Startup repair: un-archived {repair_result.modified_count} fresh items (< 7 days old)")
+    except Exception as e:
+        logger.warning(f"Startup archive repair failed: {e}")
+
     try:
         from apscheduler.schedulers.asyncio import AsyncIOScheduler
         from apscheduler.triggers.cron import CronTrigger
