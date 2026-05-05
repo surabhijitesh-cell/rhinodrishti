@@ -354,19 +354,11 @@ export default function SocialMediaFeedWidget({
   const cfg = SOURCE_CFG[sourceType] || SOURCE_CFG.twitter;
   const { Icon, color, label, borderColor, bgColor } = cfg;
 
-  // ── Role gate: only admin / analyst may view raw social feeds ──────────────
+  // ── Auth — MUST be first hook, never after an early return ─────────────────
   const { user } = useAuth();
-  if (!user || !ALLOWED_ROLES.includes(user.role)) {
-    return (
-      <div className={`border-t ${borderColor} ${bgColor} p-6 flex flex-col items-center gap-2 text-center`}>
-        <Lock size={20} className="text-muted-foreground/40" />
-        <p className="text-xs text-muted-foreground font-mono">
-          Social media feeds are restricted to <strong>Analyst</strong> and <strong>Admin</strong> users.
-        </p>
-      </div>
-    );
-  }
+  const isAllowed = !!(user && ALLOWED_ROLES.includes(user.role));
 
+  // All hooks must be declared unconditionally (Rules of Hooks)
   const [items, setItems]         = useState([]);
   const [loading, setLoading]     = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -456,6 +448,19 @@ export default function SocialMediaFeedWidget({
     const accepted  = items.filter(it => it.processed && it.is_relevant !== false && !(it.tags || []).includes("not_relevant")).length;
     return { total, processed, accepted, rejected, pending: total - processed };
   }, [items, mode]);
+
+  // ── Role gate — rendered AFTER all hooks (Rules of Hooks) ──────────────────
+  if (!isAllowed) {
+    return (
+      <div className={`border-t ${borderColor} ${bgColor} p-6 flex flex-col items-center gap-2 text-center`}>
+        <Lock size={20} className="text-muted-foreground/40" />
+        <p className="text-xs text-muted-foreground font-mono">
+          Social media feeds are restricted to <strong>Analyst</strong> and{" "}
+          <strong>Admin</strong> users.
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div className={`border-t ${borderColor} ${bgColor}`}>
