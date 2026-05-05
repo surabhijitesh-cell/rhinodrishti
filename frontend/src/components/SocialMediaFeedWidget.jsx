@@ -15,8 +15,8 @@ import axios from "axios";
 import {
   RefreshCw, ExternalLink, Heart, Repeat2, Loader2,
   Filter, AlertTriangle, Pin, PinOff, X as XIcon, Zap, Brain, Eye,
-  Youtube, Facebook, Send, Globe, Twitter, Eye as EyeIcon, CheckCircle2,
-  XCircle, Clock, FileText,
+  Youtube, Facebook, Send, Globe, Twitter, CheckCircle2,
+  XCircle, Clock, PlusCircle, Lock,
 } from "lucide-react";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
@@ -25,6 +25,10 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "./ui/select";
 import { toast } from "sonner";
+import { useAuth } from "../contexts/AuthContext";
+
+// Roles that may view the raw social-media feed
+const ALLOWED_ROLES = ["admin", "analyst"];
 
 const REFRESH_MS = 30_000;
 
@@ -183,7 +187,7 @@ const SEV_COLOR = {
 };
 
 // ─── Item card (source-aware) ─────────────────────────────────────────────────
-function FeedCard({ item, cfg }) {
+function FeedCard({ item, cfg, api }) {
   const title    = cfg.getTitle(item);
   const subtitle = cfg.getSubtitle(item);
   const text     = cfg.getText(item);
@@ -193,6 +197,50 @@ function FeedCard({ item, cfg }) {
   const shares   = cfg.getShares(item);
   const { Icon, color, shareIcon: ShareIcon } = cfg;
   const sev      = item.severity;
+
+  // ── Add-to-Feed ────────────────────────────────────────────────────────────
+  const [adding, setAdding]   = useState(false);
+  const [added,  setAdded]    = useState(
+    // Pre-mark as already in feed if item is processed+relevant
+    !!(item.processed && item.is_relevant !== false &&
+       !( item.tags || [] ).includes("not_relevant") &&
+       item.severity && item.severity !== "low")
+  );
+
+  const handleAddToFeed = async () => {
+    setAdding(true);
+    try {
+      const itemId   = item.id;
+      const sourceUrl = item.source_url || item.tweet_url;
+
+      if (itemId) {
+        // Item is already in intelligence_items — force-accept it
+        try {
+          await axios.post(`${api}/intelligence/${itemId}/accept`);
+          toast.success("Added to intelligence feed");
+          setAdded(true);
+        } catch (e) {
+          if (e.response?.status === 404) {
+            // ID belongs to twitter_feeds, not intelligence_items — import it
+            await axios.post(`${api}/social/import`, item);
+            toast.success("Item imported into intelligence feed");
+            setAdded(true);
+          } else {
+            throw e;
+          }
+        }
+      } else if (sourceUrl) {
+        await axios.post(`${api}/social/import`, item);
+        toast.success("Item imported into intelligence feed");
+        setAdded(true);
+      } else {
+        toast.error("Cannot add item — no ID or URL");
+      }
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Failed to add item");
+    }
+    setAdding(false);
+  };
 
   return (
     <div className="border-b border-border px-3 py-2.5 hover:bg-muted/5 transition-colors group">
@@ -243,7 +291,7 @@ function FeedCard({ item, cfg }) {
             </p>
           )}
 
-          {/* Footer: engagement + link */}
+          {/* Footer: engagement + link + Add to Feed */}
           <div className="flex items-center gap-3 mt-1.5">
             {likes > 0 && (
               <span className="flex items-center gap-1 text-[10px] font-mono text-muted-foreground">
@@ -260,6 +308,27 @@ function FeedCard({ item, cfg }) {
                 {item.state}
               </span>
             )}
+
+            {/* ── Add to Feed button ── */}
+            <button
+              onClick={handleAddToFeed}
+              disabled={adding || added}
+              title={added ? "Already in intelligence feed" : "Promote this item to the intelligence feed"}
+              className={`flex items-center gap-0.5 text-[9px] font-mono uppercase tracking-wider px-1.5 py-0.5 border transition-colors ${
+                added
+                  ? "border-emerald-500/30 text-emerald-400/60 cursor-default"
+                  : "border-violet-500/30 text-violet-400 hover:bg-violet-500/10 hover:border-violet-500/60"
+              }`}
+            >
+              {adding
+                ? <Loader2 size={8} className="animate-spin" />
+                : added
+                  ? <CheckCircle2 size={8} />
+                  : <PlusCircle size={8} />
+              }
+              <span>{added ? "In Feed" : "Add"}</span>
+            </button>
+
             {url && (
               <a href={url} target="_blank" rel="noreferrer"
                  className="ml-auto flex items-center gap-1 text-[10px] font-mono text-muted-foreground hover:text-primary uppercase tracking-wider opacity-0 group-hover:opacity-100">
@@ -285,6 +354,19 @@ export default function SocialMediaFeedWidget({
   const cfg = SOURCE_CFG[sourceType] || SOURCE_CFG.twitter;
   const { Icon, color, label, borderColor, bgColor } = cfg;
 
+  // ── Role gate: only admin / analyst may view raw social feeds ──────────────
+  const { user } = useAuth();
+  if (!user || !ALLOWED_ROLES.includes(user.role)) {
+    return (
+      <div className={`border-t ${borderColor} ${bgColor} p-6 flex flex-col items-center gap-2 text-center`}>
+        <Lock size={20} className="text-muted-foreground/40" />
+        <p className="text-xs text-muted-foreground font-mono">
+          Social media feeds are restricted to <strong>Analyst</strong> and <strong>Admin</strong> users.
+        </p>
+      </div>
+    );
+  }
+
   const [items, setItems]         = useState([]);
   const [loading, setLoading]     = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -301,12 +383,16 @@ export default function SocialMediaFeedWidget({
   const load = useCallback(async (silent = false) => {
     if (!silent) setRefreshing(true);
     try {
-      let url, rawItems = [];
+      let rawItems = [];
       if (mode === "direct") {
-        const res = await axios.get(cfg.rawEndpoint(api) + "?limit=150");
+        // Raw mode — no AI gate, returns all fetched items
+        const res = await axios.get(`${cfg.rawEndpoint(api)}?limit=150`);
         rawItems = res.data.items || res.data.feeds || [];
       } else {
-        const res = await axios.get(cfg.curatedEndpoint(api) + "&limit=150");
+        // Curated mode — AI-classified only via intelligence endpoint
+        // The curatedEndpoint already contains ?param=val so just use it as-is
+        // (do NOT append &limit=150 — the intelligence endpoint caps at le=100 → 422)
+        const res = await axios.get(cfg.curatedEndpoint(api));
         rawItems = res.data.items || [];
       }
       setItems(rawItems);
@@ -314,7 +400,12 @@ export default function SocialMediaFeedWidget({
       setError(null);
     } catch (e) {
       console.error(`[SocialFeed/${sourceType}] fetch failed:`, e);
-      setError(e.response?.data?.detail || e.message || "Failed to load");
+      // FastAPI 422 detail is an array of objects — serialise to string to avoid React crash
+      const detail = e.response?.data?.detail;
+      const errMsg = Array.isArray(detail)
+        ? (detail[0]?.msg || `Validation error (${e.response.status})`)
+        : (typeof detail === "string" ? detail : e.message || "Failed to load");
+      setError(errMsg);
     }
     setLoading(false);
     setRefreshing(false);
@@ -516,7 +607,7 @@ export default function SocialMediaFeedWidget({
         ) : (
           <div>
             {filtered.map((it, idx) => (
-              <FeedCard key={it.id || it.tweet_url || it.source_url || idx} item={it} cfg={cfg} />
+              <FeedCard key={it.id || it.tweet_url || it.source_url || idx} item={it} cfg={cfg} api={api} />
             ))}
           </div>
         )}

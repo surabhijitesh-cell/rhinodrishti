@@ -458,6 +458,51 @@ async def unpin_intelligence_item(item_id: str):
     return {"message": "Item unpinned — fading resumed", "id": item_id}
 
 
+@router.post("/intelligence/{item_id}/accept")
+async def force_accept_item(item_id: str):
+    """Manually promote a social-media / raw item into the intelligence feed.
+
+    Overrides AI rejection:
+    - Sets processed=True, is_relevant=True
+    - Removes not_relevant tag and is_archived flag
+    - Bumps severity to 'medium' if currently missing or 'low'
+    - Marks manually_accepted=True for audit trail
+    """
+    existing = await intelligence_col.find_one(
+        {"id": item_id},
+        {"_id": 0, "severity": 1, "tags": 1}
+    )
+    if not existing:
+        raise HTTPException(status_code=404, detail="Item not found in intelligence database")
+
+    now = datetime.now(timezone.utc).isoformat()
+    set_fields: dict = {
+        "processed": True,
+        "is_relevant": True,
+        "manually_accepted": True,
+        "manually_accepted_at": now,
+    }
+    # Bump severity if missing or low
+    cur_sev = (existing.get("severity") or "").lower()
+    if cur_sev in ("", "low"):
+        set_fields["severity"] = "medium"
+
+    result = await intelligence_col.update_one(
+        {"id": item_id},
+        {
+            "$set":   set_fields,
+            "$unset": {"is_archived": ""},
+            "$pull":  {"tags": "not_relevant"},
+        },
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Item not found")
+
+    invalidate_stats_cache()
+    final_sev = set_fields.get("severity", existing.get("severity", "medium"))
+    return {"message": "Item promoted to intelligence feed", "id": item_id, "severity": final_sev}
+
+
 @router.get("/fusion/stats")
 async def get_fusion_stats():
     from datetime import timedelta

@@ -1,7 +1,9 @@
 """Sources, Social feeds, and Handbook endpoints."""
 from fastapi import APIRouter, Query, HTTPException
+from datetime import datetime, timezone
+import uuid
 import os
-from shared import sources_col, tweets_col, intelligence_col, TWITTER_ACCOUNTS_TO_MONITOR, logger, db
+from shared import sources_col, tweets_col, intelligence_col, TWITTER_ACCOUNTS_TO_MONITOR, logger, db, invalidate_stats_cache
 
 router = APIRouter()
 
@@ -94,6 +96,68 @@ def _intel_to_tweet_shape(item: dict) -> dict:
             "posted_at", "fetched_at", "category",
         )},
     }
+
+
+@router.post("/social/import")
+async def import_social_item(body: dict):
+    """Import a raw social-media item into the intelligence_items collection.
+
+    Used when the item has NOT yet been processed by the AI pipeline (e.g. a raw
+    tweet from db.twitter_feeds that wasn't stored in intelligence_items).
+
+    Pass the full item dict from the social-feed widget.  A new intelligence_items
+    entry is upserted by source_url / tweet_url so duplicates are avoided.
+    """
+    source_url = (
+        body.get("tweet_url") or body.get("source_url") or body.get("url") or ""
+    )
+    if not source_url:
+        raise HTTPException(status_code=422, detail="item must have tweet_url or source_url")
+
+    now = datetime.now(timezone.utc).isoformat()
+
+    # Check if already in intelligence_items
+    existing = await intelligence_col.find_one(
+        {"source_url": source_url}, {"_id": 0, "id": 1, "processed": 1}
+    )
+    if existing:
+        # Already imported — if accepted flag wanted, caller should use /intelligence/{id}/accept
+        return {
+            "message": "Item already in intelligence database",
+            "id": existing["id"],
+            "action": "existing",
+        }
+
+    # Build a minimal intelligence_items document from the raw feed item
+    new_id = str(uuid.uuid4())
+    raw_content = (
+        body.get("tweet_text") or body.get("raw_content") or
+        body.get("ai_summary") or body.get("title") or ""
+    )
+    source_type = body.get("source_type") or body.get("category") or "social"
+    doc = {
+        "id":                new_id,
+        "title":             body.get("account_name") or body.get("title") or body.get("source") or "",
+        "raw_content":       raw_content,
+        "source":            body.get("handle") or body.get("source") or source_type,
+        "source_url":        source_url,
+        "source_type":       source_type,
+        "published_at":      body.get("posted_at") or body.get("published_at") or now,
+        "fetched_at":        now,
+        "processed":         True,          # manually added — mark as accepted
+        "is_relevant":       True,
+        "manually_accepted": True,
+        "manually_accepted_at": now,
+        "severity":          body.get("severity") or "medium",
+        "state":             body.get("state") or "",
+        "tags":              ["manually_imported"],
+        "entities":          body.get("entities") or {},
+        "priority_score":    body.get("priority") or body.get("priority_score") or 5,
+    }
+
+    await intelligence_col.insert_one(doc)
+    invalidate_stats_cache()
+    return {"message": "Item imported into intelligence feed", "id": new_id, "action": "created"}
 
 
 @router.get("/handbook")

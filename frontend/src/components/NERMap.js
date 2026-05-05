@@ -154,11 +154,14 @@ const STATE_CENTERS = {
 };
 
 // ─── Severity colours matching dashboard severity cards ───────────────────────
+// NOTE: medium uses cyan (#06b6d4) instead of yellow to distinguish from high/amber.
+// Polygon fills are intentionally near-zero — colour appears only as a border stroke
+// so the underlying satellite imagery stays clearly visible.
 const SEV = {
-  critical: { fill: "rgba(239,68,68,0.28)",    stroke: "#ef4444", strokeW: 2.0, glow: "#ef4444" },
-  high:     { fill: "rgba(245,158,11,0.22)",   stroke: "#f59e0b", strokeW: 1.6, glow: "#f59e0b" },
-  medium:   { fill: "rgba(234,179,8,0.14)",    stroke: "#eab308", strokeW: 1.0, glow: "#eab308" },
-  none:     { fill: "rgba(255,255,255,0.03)",  stroke: "rgba(255,255,255,0.15)", strokeW: 0.5, glow: null },
+  critical: { fill: "rgba(239,68,68,0.06)",   stroke: "#ef4444", strokeW: 3.0, glow: "#ef4444" },
+  high:     { fill: "rgba(245,158,11,0.05)",  stroke: "#f59e0b", strokeW: 2.5, glow: "#f59e0b" },
+  medium:   { fill: "rgba(6,182,212,0.04)",   stroke: "#06b6d4", strokeW: 2.0, glow: "#06b6d4" },
+  none:     { fill: "rgba(255,255,255,0.0)",  stroke: "rgba(255,255,255,0.14)", strokeW: 0.6, glow: null },
 };
 
 function stateSeverity(stats) {
@@ -173,7 +176,7 @@ function pulseMarkerHtml(severity, count) {
   const cfg = {
     critical: { outer: 22, inner: 10, color: "#ef4444", rings: 3, dur: 1.8 },
     high:     { outer: 18, inner:  8, color: "#f59e0b", rings: 2, dur: 2.2 },
-    medium:   { outer: 12, inner:  6, color: "#eab308", rings: 1, dur: 3.0 },
+    medium:   { outer: 12, inner:  6, color: "#06b6d4", rings: 1, dur: 3.0 },
   }[severity] || { outer: 10, inner: 5, color: "#6b7280", rings: 0, dur: 3 };
 
   const rings = Array.from({ length: cfg.rings }, (_, i) => `
@@ -221,6 +224,14 @@ const MAP_CSS = `
 .leaflet-container { background: #0a0f0a !important; }
 .map-pop { font-family: 'JetBrains Mono', monospace; font-size: 11px; }
 .map-pop b { color: #a3e635; font-size: 12px; text-transform: uppercase; letter-spacing: 0.1em; }
+.ner-view-btn {
+  display:block; width:100%; margin-top:7px;
+  background:transparent; border:1px solid rgba(163,230,53,0.35);
+  color:#a3e635; font:bold 9px/1 'JetBrains Mono',monospace;
+  text-transform:uppercase; letter-spacing:0.12em;
+  padding:4px 0; cursor:pointer; transition:background 0.15s;
+}
+.ner-view-btn:hover { background:rgba(163,230,53,0.12); }
 `;
 
 function injectCSS(css) {
@@ -232,11 +243,20 @@ function injectCSS(css) {
 }
 
 // ─── Main component ───────────────────────────────────────────────────────────
-const InteractiveNERMap = memo(function InteractiveNERMap({ stateStats = {}, items = [], onStateClick }) {
+const InteractiveNERMap = memo(function InteractiveNERMap({
+  stateStats = {},
+  items = [],
+  onStateClick,
+  navigate,          // pass useNavigate() from parent for "View in Feed" clicks
+}) {
   const mapRef      = useRef(null);
   const leafletRef  = useRef(null);   // L.Map instance
   const markersRef  = useRef(null);   // L.LayerGroup for intel markers
   const geoLayerRef = useRef(null);   // L.GeoJSON state layer
+
+  // Keep a stable ref to navigate so the map init closure can call it later
+  const navigateRef = useRef(navigate);
+  useEffect(() => { navigateRef.current = navigate; }, [navigate]);
 
   // ── Init map once ──────────────────────────────────────────────────────────
   useEffect(() => {
@@ -295,6 +315,27 @@ const InteractiveNERMap = memo(function InteractiveNERMap({ stateStats = {}, ite
 
     // ── Zoom control ───────────────────────────────────────────────────────────
     L.control.zoom({ position: "topright" }).addTo(map);
+
+    // ── "View in Feed" button inside marker popups ─────────────────────────────
+    // Delegate clicks to .ner-view-btn elements — the actual button is injected as
+    // HTML so we can't use React event handlers.  popupopen fires after Leaflet
+    // inserts the content into the DOM.
+    map.on("popupopen", (e) => {
+      setTimeout(() => {
+        const el = e.popup?.getElement?.();
+        if (!el) return;
+        const btn = el.querySelector(".ner-view-btn");
+        if (btn && !btn._nerHandled) {
+          btn._nerHandled = true;
+          btn.addEventListener("click", () => {
+            const title = decodeURIComponent(btn.getAttribute("data-title") || "");
+            if (title && navigateRef.current) {
+              navigateRef.current(`/feed?search=${encodeURIComponent(title)}`);
+            }
+          });
+        }
+      }, 0);
+    });
 
     // ── Marker layer group ─────────────────────────────────────────────────────
     markersRef.current = L.layerGroup().addTo(map);
@@ -479,12 +520,15 @@ const InteractiveNERMap = memo(function InteractiveNERMap({ stateStats = {}, ite
         iconAnchor: [sz / 2, sz / 2],
       });
 
+      // First title used as the "View in Feed" search query
+      const firstTitle = encodeURIComponent((titles[0] || locKey).slice(0, 80));
       const popupHtml = `<div class="map-pop">
         <b>${locKey}</b>
         <div style="margin-top:4px; color:#6b7280; font-size:9px; text-transform:uppercase; letter-spacing:.08em">
           ${sev} severity · ${count} item${count > 1 ? "s" : ""}${state ? ` · ${state}` : ""}
         </div>
-        ${titles.map(t => `<div style="margin-top:3px; color:#d4d4d4; font-size:10px; line-height:1.4">${t.slice(0,80)}${t.length>80?"…":""}</div>`).join("")}
+        ${titles.map(t => `<div style="margin-top:3px; color:#d4d4d4; font-size:10px; line-height:1.4">• ${t.slice(0,80)}${t.length>80?"…":""}</div>`).join("")}
+        <button class="ner-view-btn" data-title="${firstTitle}">View in Feed →</button>
       </div>`;
 
       L.marker(coords, { icon, zIndexOffset: sev === "critical" ? 1000 : sev === "high" ? 500 : 0 })
@@ -520,7 +564,7 @@ const InteractiveNERMap = memo(function InteractiveNERMap({ stateStats = {}, ite
         {[
           { sev: "critical", color: "#ef4444", label: "Critical" },
           { sev: "high",     color: "#f59e0b", label: "High" },
-          { sev: "medium",   color: "#eab308", label: "Medium" },
+          { sev: "medium",   color: "#06b6d4", label: "Medium" },
         ].map(({ color, label, sev }) => (
           <div key={sev} style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 3 }}>
             <div style={{
