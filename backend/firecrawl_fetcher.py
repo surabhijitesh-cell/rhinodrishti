@@ -10,6 +10,7 @@ Handles three modes:
 
 import os
 import uuid
+import hashlib
 import logging
 from datetime import datetime, timezone, timedelta
 from typing import Optional
@@ -84,36 +85,70 @@ def _get_app() -> Optional[object]:
 # Public helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _extract_from_result(result) -> tuple[str, dict]:
+    """
+    Extract (markdown, metadata_dict) from a Firecrawl SDK response.
+    Handles both v1 (ScrapeResponse object) and legacy dict response shapes.
+    """
+    # firecrawl-py v1 returns a ScrapeResponse object with direct attributes
+    if hasattr(result, "markdown"):
+        markdown = result.markdown or ""
+        meta = result.metadata if hasattr(result, "metadata") else {}
+        if hasattr(meta, "__dict__"):
+            meta = meta.__dict__
+        return markdown, (meta if isinstance(meta, dict) else {})
+
+    # Legacy dict shape
+    if isinstance(result, dict):
+        markdown = result.get("markdown") or result.get("content") or ""
+        meta = result.get("metadata") or {}
+        if hasattr(meta, "__dict__"):
+            meta = meta.__dict__
+        return markdown, (meta if isinstance(meta, dict) else {})
+
+    # Fallback: try __dict__
+    if hasattr(result, "__dict__"):
+        d = result.__dict__
+        markdown = d.get("markdown") or d.get("content") or ""
+        meta = d.get("metadata") or {}
+        if hasattr(meta, "__dict__"):
+            meta = meta.__dict__
+        return markdown, (meta if isinstance(meta, dict) else {})
+
+    return "", {}
+
+
 def scrape_url_sync(url: str) -> Optional[dict]:
     """
     Scrape a single URL (synchronous — Firecrawl SDK is sync).
     Returns a dict ready to merge into an intelligence item, or None on failure.
+    Supports firecrawl-py v1 (formats= kwarg) and legacy (params= kwarg).
     """
     app = _get_app()
     if not app:
         return None
     try:
-        result = app.scrape_url(url, params={"formats": ["markdown"]})
+        # firecrawl-py v1 API uses keyword args, not params= dict
+        try:
+            result = app.scrape_url(url, formats=["markdown"])
+        except TypeError:
+            # fallback for older SDK versions
+            result = app.scrape_url(url, params={"formats": ["markdown"]})
+
         if not result:
+            logger.warning(f"Firecrawl returned empty result for {url}")
             return None
 
-        # SDK can return a dict or a ScrapeResponse object
-        if hasattr(result, "__dict__"):
-            result = result.__dict__
+        markdown, metadata = _extract_from_result(result)
 
-        markdown = result.get("markdown") or result.get("content") or ""
-        if not markdown or len(markdown.strip()) < 100:
-            logger.warning(f"Firecrawl returned thin content for {url}")
+        if not markdown or len(markdown.strip()) < 50:
+            logger.warning(f"Firecrawl thin content ({len(markdown)} chars) for {url}")
             return None
-
-        metadata = result.get("metadata") or {}
-        if hasattr(metadata, "__dict__"):
-            metadata = metadata.__dict__
 
         return {
-            "title":        metadata.get("title") or url,
+            "title":        metadata.get("title") or metadata.get("ogTitle") or url,
             "raw_content":  markdown,
-            "source":       metadata.get("siteName") or _domain(url),
+            "source":       metadata.get("siteName") or metadata.get("ogSiteName") or _domain(url),
             "source_url":   url,
             "published_at": datetime.now(timezone.utc).isoformat(),
             "source_type":  "firecrawl_scrape",
@@ -126,27 +161,55 @@ def scrape_url_sync(url: str) -> Optional[dict]:
 def search_sync(query: str, num_results: int = 5) -> list:
     """
     Keyword search via Firecrawl — returns a list of raw result dicts.
-    Each item has title, raw_content, source_url, source.
+    Supports firecrawl-py v1 (limit= kwarg) and legacy (params= dict).
     """
     app = _get_app()
     if not app:
         return []
     try:
-        response = app.search(query, params={"limit": num_results})
-        if hasattr(response, "__dict__"):
-            response = response.__dict__
+        # firecrawl-py v1 uses keyword args
+        try:
+            response = app.search(query, limit=num_results)
+        except TypeError:
+            response = app.search(query, params={"limit": num_results})
 
-        data = response.get("data") or response.get("results") or []
+        # v1 returns SearchResponse with .data list of SearchResult objects
+        if hasattr(response, "data"):
+            raw_list = response.data or []
+        elif isinstance(response, dict):
+            raw_list = response.get("data") or response.get("results") or []
+        elif hasattr(response, "__dict__"):
+            d = response.__dict__
+            raw_list = d.get("data") or d.get("results") or []
+        else:
+            raw_list = []
+
         items = []
-        for r in data:
-            if hasattr(r, "__dict__"):
-                r = r.__dict__
-            content = r.get("markdown") or r.get("description") or r.get("content") or ""
-            url = r.get("url") or ""
+        for r in raw_list:
+            # Each result may be a SearchResult object or a dict
+            if hasattr(r, "url"):
+                url     = r.url or ""
+                content = (getattr(r, "markdown", None) or
+                           getattr(r, "description", None) or
+                           getattr(r, "content", None) or "")
+                title   = getattr(r, "title", None) or url
+            elif isinstance(r, dict):
+                url     = r.get("url") or ""
+                content = r.get("markdown") or r.get("description") or r.get("content") or ""
+                title   = r.get("title") or url
+            elif hasattr(r, "__dict__"):
+                rd      = r.__dict__
+                url     = rd.get("url") or ""
+                content = rd.get("markdown") or rd.get("description") or rd.get("content") or ""
+                title   = rd.get("title") or url
+            else:
+                continue
+
             if not content or len(content.strip()) < 50:
                 continue
+
             items.append({
-                "title":        r.get("title") or url,
+                "title":        title,
                 "raw_content":  content,
                 "source":       _domain(url),
                 "source_url":   url,
@@ -154,6 +217,7 @@ def search_sync(query: str, num_results: int = 5) -> list:
                 "source_type":  "firecrawl_search",
                 "search_query": query,
             })
+        logger.info(f"Firecrawl search '{query}': {len(items)} results")
         return items
     except Exception as e:
         logger.error(f"Firecrawl search error for '{query}': {e}")
@@ -195,19 +259,12 @@ async def fetch_web_sources(db) -> int:
         if not raw:
             continue
 
-        # Deduplicate by title+source to avoid saving identical homepage scrapes.
-        # We do NOT deduplicate by source_url alone because the homepage URL never
-        # changes — deduping by URL would block all future fetches of the same site.
-        raw_title = (raw.get("title") or "").strip()
-        if raw_title:
-            recent_cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
-            existing = await db.intelligence_items.find_one({
-                "title": raw_title,
-                "source_url": url,
-                "published_at": {"$gte": recent_cutoff},
-            })
-        else:
-            existing = None
+        # Dedup by MD5 hash of content — identical homepage snapshots are skipped,
+        # but a changed homepage (new articles at top) always saves.
+        # Title-based dedup was wrong: homepage title never changes → blocked every
+        # subsequent fetch.  URL-based dedup also wrong: same reason.
+        content_hash = hashlib.md5(raw["raw_content"].encode(errors="ignore")).hexdigest()
+        existing = await db.intelligence_items.find_one({"content_hash": content_hash})
 
         if existing:
             await db.web_sources.update_one(
@@ -274,7 +331,9 @@ async def run_keyword_searches(db) -> int:
         )
 
         for raw in results:
-            existing = await db.intelligence_items.find_one({"source_url": raw["source_url"]})
+            # Dedup by content hash — same article content already stored → skip
+            content_hash = hashlib.md5(raw["raw_content"].encode(errors="ignore")).hexdigest()
+            existing = await db.intelligence_items.find_one({"content_hash": content_hash})
             if existing:
                 continue
 
@@ -369,6 +428,7 @@ def _domain(url: str) -> str:
 
 
 def _base_item(raw: dict) -> dict:
+    content = raw.get("raw_content", "")
     return {
         "id":           str(uuid.uuid4()),
         "title":        raw.get("title", "Untitled"),
@@ -376,7 +436,8 @@ def _base_item(raw: dict) -> dict:
         "source_url":   raw.get("source_url", ""),
         "published_at": raw.get("published_at", datetime.now(timezone.utc).isoformat()),
         "fetched_at":   datetime.now(timezone.utc).isoformat(),
-        "raw_content":  raw.get("raw_content", ""),
+        "raw_content":  content,
+        "content_hash": hashlib.md5(content.encode(errors="ignore")).hexdigest(),
         "source_type":  raw.get("source_type", "firecrawl_scrape"),
         "search_query": raw.get("search_query"),
         "processed":    True,

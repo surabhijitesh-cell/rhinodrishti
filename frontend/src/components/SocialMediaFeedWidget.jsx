@@ -165,12 +165,18 @@ const SOURCE_CFG = {
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function timeAgo(iso) {
   if (!iso) return "—";
-  const diff = Math.floor((Date.now() - new Date(iso)) / 1000);
-  if (diff < 60)     return `${diff}s`;
-  if (diff < 3600)   return `${Math.floor(diff / 60)}m`;
-  if (diff < 86400)  return `${Math.floor(diff / 3600)}h`;
-  if (diff < 604800) return `${Math.floor(diff / 86400)}d`;
-  return new Date(iso).toLocaleDateString();
+  try {
+    const d   = new Date(iso);
+    const diff = Math.floor((Date.now() - d) / 1000);
+    const abs  = d.toLocaleDateString("en-IN", { day: "numeric", month: "short" });
+    if (diff < 60)     return `${diff}s · ${abs}`;
+    if (diff < 3600)   return `${Math.floor(diff / 60)}m · ${abs}`;
+    if (diff < 86400)  return `${Math.floor(diff / 3600)}h · ${abs}`;
+    if (diff < 604800) return `${Math.floor(diff / 86400)}d · ${abs}`;
+    return abs;
+  } catch {
+    return "—";
+  }
 }
 
 function initials(name) {

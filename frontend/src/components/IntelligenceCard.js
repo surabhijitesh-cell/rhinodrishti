@@ -56,10 +56,11 @@ function formatTime(isoStr) {
     const diff = now - d;
     const hours = Math.floor(diff / 3600000);
     const days = Math.floor(diff / 86400000);
-    if (hours < 1) return "Just now";
-    if (hours < 24) return `${hours}h ago`;
-    if (days < 7) return `${days}d ago`;
-    return d.toLocaleDateString("en-IN", { day: "numeric", month: "short" });
+    const abs = d.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: days > 300 ? "numeric" : undefined });
+    if (hours < 1) return `Just now · ${abs}`;
+    if (hours < 24) return `${hours}h ago · ${abs}`;
+    if (days < 7)   return `${days}d ago · ${abs}`;
+    return abs;
   } catch {
     return "";
   }
