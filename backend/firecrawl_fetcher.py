@@ -254,7 +254,7 @@ async def fetch_web_sources(db) -> int:
                 continue
 
         # Firecrawl SDK is synchronous — run in thread pool
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         raw = await loop.run_in_executor(None, scrape_url_sync, url)
         if not raw:
             continue
@@ -325,7 +325,7 @@ async def run_keyword_searches(db) -> int:
 
     saved = 0
     for query, num_results, doc_id in queries:
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         results = await loop.run_in_executor(
             None, lambda q=query, n=num_results: search_sync(q, n)
         )

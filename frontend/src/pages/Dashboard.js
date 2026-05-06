@@ -848,7 +848,19 @@ export default function Dashboard({ stats: propStats, api }) {
       <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-4">
         <Tip text="Total AI-processed intelligence items in your retention window. Click to open the full Intelligence Feed." side="bottom">
           <div data-tour="stat-total">
-            <StatBox label="Total Items" value={stats?.total_items || 0} icon={Activity} color="bg-primary/10 text-primary" sub={`${stats?.today_count || 0} today`} testId="stat-total" onClick={() => navigate("/feed")} />
+            <StatBox
+              label="Total Items"
+              value={stats?.total_items || 0}
+              icon={Activity}
+              color="bg-primary/10 text-primary"
+              sub={
+                stats?.pending_classification > 0
+                  ? `${stats?.today_processed || 0} visible today · ${stats?.pending_classification} pending AI`
+                  : `${stats?.today_count || 0} today`
+              }
+              testId="stat-total"
+              onClick={() => navigate("/feed")}
+            />
           </div>
         </Tip>
         <Tip text="CRITICAL items — immediate threats. Click to filter feed to critical only." side="bottom">

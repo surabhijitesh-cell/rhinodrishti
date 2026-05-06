@@ -121,12 +121,27 @@ export default function DailyBrief({ api }) {
       );
     }
     // Object format with title, summary, source_url, and analysis fields
+    // brief items store date as `timestamp` (build_brief_item) or `published_at`
+    const briefItemDate = (() => {
+      const raw = item.timestamp || item.published_at;
+      if (!raw) return null;
+      try {
+        const d = new Date(raw);
+        return d.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
+      } catch { return null; }
+    })();
+
     return (
       <li key={index} className="border-b border-border/50 pb-4 last:border-0 last:pb-0">
         <div className="flex items-start gap-2">
           <span className="text-primary font-mono text-xs mt-1 shrink-0">{String(index + 1).padStart(2, '0')}.</span>
           <div className="flex-1 space-y-1.5">
-            <p className="text-sm font-medium">{safeStr(item.title)}</p>
+            <div className="flex items-start justify-between gap-2 flex-wrap">
+              <p className="text-sm font-medium flex-1">{safeStr(item.title)}</p>
+              {briefItemDate && (
+                <span className="text-[10px] font-mono text-muted-foreground shrink-0">{briefItemDate}</span>
+              )}
+            </div>
             {item.summary && (
               <p className="text-xs text-muted-foreground leading-relaxed">{safeStr(item.summary)}</p>
             )}

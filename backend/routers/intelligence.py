@@ -62,6 +62,13 @@ async def get_dashboard_stats():
     today_count = await intelligence_col.count_documents(
         {"published_at": {"$regex": f"^{today}"}}
     )
+    today_processed = await intelligence_col.count_documents(
+        {"published_at": {"$regex": f"^{today}"}, "processed": True,
+         "tags": {"$nin": ["not_relevant", "unprocessed"]}}
+    )
+    # Total items awaiting AI classification — helps analysts understand why
+    # recent news may not yet be visible in the feed.
+    pending_classification = await intelligence_col.count_documents({"processed": False})
 
     trend_data = []
     async for doc in intelligence_col.aggregate([
@@ -77,7 +84,10 @@ async def get_dashboard_stats():
         trend_data.append({"date": doc["_id"], "count": doc["count"], "critical": doc["critical"], "high": doc["high"]})
 
     result = {
-        "total_items": total, "today_count": today_count,
+        "total_items": total,
+        "today_count": today_count,
+        "today_processed": today_processed,
+        "pending_classification": pending_classification,
         "critical_count": critical, "high_count": high,
         "medium_count": medium, "low_count": low,
         "state_distribution": state_dist, "threat_distribution": threat_dist,
