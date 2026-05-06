@@ -311,6 +311,7 @@ async def classify_and_analyze_article(article, source_hint: str = "") -> dict:
             max_tokens=1024,
             system=system_blocks,
             messages=[{"role": "user", "content": f"Analyze this article:\n\n{article_text}"}],
+            extra_headers={"anthropic-beta": "prompt-caching-2024-07-31"},
         )
 
         # Parse JSON from response
@@ -445,6 +446,7 @@ async def generate_daily_brief_ai(items: list, date: str) -> dict:
                     "content": f"Generate a Daily Intelligence Brief for {date} based on these intelligence items:\n\n{items_summary}",
                 }
             ],
+            extra_headers={"anthropic-beta": "prompt-caching-2024-07-31"},
         )
 
         response_text = response.content[0].text

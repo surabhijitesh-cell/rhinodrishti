@@ -447,6 +447,7 @@ async def _run_contextual_analysis(doc_id: str):
                 }
             ],
             messages=[{"role": "user", "content": user_prompt}],
+            extra_headers={"anthropic-beta": "prompt-caching-2024-07-31"},
         )
         response_text = response.content[0].text
 

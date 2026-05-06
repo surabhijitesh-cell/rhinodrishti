@@ -538,7 +538,7 @@ async def bulk_scrape_all_feeds():
 
 
 async def analyze_unprocessed_items():
-    MAX_RETRY_PER_CYCLE = 50  # increased from 20 — clears backlog faster
+    MAX_RETRY_PER_CYCLE = 25  # 25 items/15min = 100/hr — keeps up with normal ingestion without burning tokens
     INTER_ARTICLE_DELAY = 2.5
 
     # Sort NEWEST first so today's news is always classified before old backlog items.
