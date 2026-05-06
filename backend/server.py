@@ -45,7 +45,6 @@ from fusion_engine import run_batch_fusion
 from firecrawl_fetcher import fetch_web_sources, run_keyword_searches, seed_firecrawl_defaults
 from twitter_fetcher import fetch_twitter_accounts, fetch_twitter_searches, seed_twitter_defaults
 from youtube_fetcher import fetch_youtube_channels, fetch_youtube_searches, seed_youtube_defaults
-from facebook_fetcher import fetch_facebook_pages, seed_facebook_defaults
 from telegram_fetcher import fetch_telegram_channels, seed_telegram_defaults
 from fading_engine import run_fading_pass, delete_expired_low_severity
 
@@ -138,7 +137,6 @@ async def startup():
     await seed_firecrawl_defaults(db)
     await seed_twitter_defaults(db)
     await seed_youtube_defaults(db)
-    await seed_facebook_defaults(db)
     await seed_telegram_defaults(db)
     item_count = await intelligence_col.count_documents({})
     if item_count == 0:
@@ -238,13 +236,6 @@ async def startup():
             except Exception as e:
                 logger.warning(f"YouTube job failed: {e}")
 
-        async def _fetch_facebook():
-            try:
-                n = await fetch_facebook_pages(db)
-                logger.info(f"Facebook: {n} new posts")
-            except Exception as e:
-                logger.warning(f"Facebook job failed: {e}")
-
         async def _fetch_telegram():
             try:
                 n = await fetch_telegram_channels(db)
@@ -254,7 +245,6 @@ async def startup():
 
         scheduler.add_job(_fetch_twitter,  'interval', hours=2,  id='twitter_fetch')
         scheduler.add_job(_fetch_youtube,  'interval', hours=4,  id='youtube_fetch')
-        scheduler.add_job(_fetch_facebook, 'interval', hours=4,  id='facebook_fetch')
         scheduler.add_job(_fetch_telegram, 'interval', hours=1,  id='telegram_fetch')
 
         # Fading engine — recomputes visibility_score every hour
@@ -283,7 +273,7 @@ async def startup():
         )
 
         scheduler.start()
-        logger.info("Scheduler: grassroots/60min, standard/30min, established/12hr, retry/15min, brief/0600 IST, embeddings/6hr, fusion/30min, firecrawl-web/3hr, firecrawl-search/6hr, twitter/2hr, youtube/4hr, facebook/4hr, telegram/1hr, fading/1hr")
+        logger.info("Scheduler: grassroots/60min, standard/30min, established/12hr, retry/15min, brief/0600 IST, embeddings/6hr, fusion/30min, firecrawl-web/3hr, firecrawl-search/6hr, twitter/2hr, youtube/4hr, telegram/1hr, fading/1hr")
     except Exception as e:
         logger.warning(f"Scheduler setup failed: {e}")
 

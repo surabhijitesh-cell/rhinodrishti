@@ -179,7 +179,7 @@ async def test_social_connections():
     else:
         try:
             import tweepy
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             def _test_twitter():
                 c = tweepy.Client(bearer_token=token, wait_on_rate_limit=False)
                 # search_recent_tweets with a simple query — fails on Free tier
@@ -363,7 +363,7 @@ async def fetch_twitter_account_now(item_id: str):
     from twitter_fetcher import fetch_user_tweets, _tweet_to_intel_item
     from ai_pipeline import classify_and_analyze_article
     handle = acc["handle"].lstrip("@")
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     tweets = await loop.run_in_executor(
         None, lambda: fetch_user_tweets(handle, acc["name"], acc.get("category", "general"), 10)
     )
@@ -420,7 +420,7 @@ async def run_twitter_search_now(item_id: str):
         raise HTTPException(404, "Not found")
     from twitter_fetcher import search_tweets_official, _tweet_to_intel_item
     from ai_pipeline import classify_and_analyze_article
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     tweets = await loop.run_in_executor(
         None, lambda: search_tweets_official(s["query"], s.get("num_results", 10))
     )
@@ -482,7 +482,7 @@ async def fetch_twitter_list_now(item_id: str):
 
     list_id   = lst["list_id"]
     list_name = lst["name"]
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     tweets = await loop.run_in_executor(
         None, lambda: fetch_list_tweets_official(list_id, list_name, lst.get("max_results", 50))
     )
@@ -552,7 +552,7 @@ async def fetch_youtube_channel_now(item_id: str):
         raise HTTPException(404, "Not found")
     from youtube_fetcher import _search_youtube, _to_intel_item
     from ai_pipeline import classify_and_analyze_article
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     videos = await loop.run_in_executor(None, lambda: _search_youtube(channel_id=ch["channel_id"], max_results=5))
     saved = 0
     for v in videos:
@@ -647,7 +647,7 @@ async def fetch_facebook_page_now(item_id: str):
         raise HTTPException(404, "Not found")
     from facebook_fetcher import fetch_page_posts_sync, _post_to_intel_item
     from ai_pipeline import classify_and_analyze_article
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     posts = await loop.run_in_executor(
         None, lambda: fetch_page_posts_sync(page["page_id"], page["name"], 10)
     )

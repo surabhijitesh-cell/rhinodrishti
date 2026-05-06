@@ -15,7 +15,7 @@ import axios from "axios";
 import {
   RefreshCw, ExternalLink, Heart, Repeat2, Loader2,
   Filter, AlertTriangle, Pin, PinOff, X as XIcon, Zap, Brain, Eye,
-  Youtube, Facebook, Send, Globe, Twitter, CheckCircle2,
+  Youtube, Send, Globe, Twitter, CheckCircle2,
   XCircle, Clock, PlusCircle, Lock,
 } from "lucide-react";
 import { Button } from "./ui/button";
@@ -107,31 +107,6 @@ const SOURCE_CFG = {
     emptyHint: [
       "Add YOUTUBE_API_KEY to backend .env",
       "Add channels in Settings → Social Scan → YouTube",
-      "Click Fetch Now below",
-    ],
-  },
-  facebook: {
-    label: "Facebook",
-    Icon: Facebook,
-    color: "text-blue-400",
-    borderColor: "border-blue-500/20",
-    bgColor: "bg-blue-500/5",
-    headerBg: "bg-blue-500/10",
-    rawEndpoint: (api) => `${api}/social-feeds/facebook`,
-    curatedEndpoint: (api) => `${api}/intelligence?source_type=facebook&limit=100&sort_by=published_at`,
-    getTitle: (it) => it.source || it.title || "Facebook Post",
-    getSubtitle: (it) => it.source || "",
-    getText: (it) => it.raw_content || it.ai_summary || "",
-    getUrl: (it) => it.source_url || "",
-    getTime: (it) => it.published_at || "",
-    getLikes: () => 0,
-    getShares: () => 0,
-    shareIcon: RefreshCw,
-    shareLabel: "",
-    likeLabel: "",
-    emptyHint: [
-      "Add FACEBOOK_APP_ID + FACEBOOK_APP_SECRET to backend .env",
-      "Add pages in Settings → Social Scan → Facebook",
       "Click Fetch Now below",
     ],
   },

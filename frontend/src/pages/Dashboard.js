@@ -5,7 +5,7 @@ import {
   ChevronRight, RefreshCw, Target, ArrowUp,
   Rss, Eye, EyeOff, Clock, CheckCircle2, Loader2,
   Filter, Languages, BellRing, GitBranch, Check, Wifi, WifiOff,
-  ArrowUpDown, Youtube, Facebook, Send, Twitter, ChevronDown, ChevronUp,
+  ArrowUpDown, Youtube, Send, Twitter, ChevronDown, ChevronUp,
   Play, Zap, Radio, Globe
 } from "lucide-react";
 import Tip from "../components/Tip";
@@ -194,7 +194,6 @@ function SourceScanners({ api, socialTrigger, twitterPinned, onToggleTwitterPin 
   const [rssSources, setRssSources]   = useState([]);
   const [socialStatus, setSocialStatus] = useState(null);
   const [ytData, setYtData]           = useState({ channels: [], searches: [] });
-  const [fbData, setFbData]           = useState({ pages: [] });
   const [tgData, setTgData]           = useState({ channels: [] });
   const [twData, setTwData]           = useState({ accounts: [], searches: [] });
   const [fcData, setFcData]           = useState({ sources: [], searches: [] });
@@ -226,7 +225,6 @@ function SourceScanners({ api, socialTrigger, twitterPinned, onToggleTwitterPin 
         axios.get(`${api}/social/status`),
         axios.get(`${api}/social/youtube/channels`),
         axios.get(`${api}/social/youtube/searches`),
-        axios.get(`${api}/social/facebook/pages`),
         axios.get(`${api}/social/telegram/channels`),
         axios.get(`${api}/social/twitter/accounts`),
         axios.get(`${api}/social/twitter/searches`),
@@ -234,10 +232,9 @@ function SourceScanners({ api, socialTrigger, twitterPinned, onToggleTwitterPin 
         axios.get(`${api}/firecrawl-searches`),
         axios.get(`${api}/sources`),
       ]);
-      const [status, yt, ytS, fb, tg, twA, twS, ws, fs, rssS] = results;
+      const [status, yt, ytS, tg, twA, twS, ws, fs, rssS] = results;
       if (status.status === "fulfilled") setSocialStatus(status.value.data);
       setYtData({ channels: yt.value?.data?.channels || [], searches: ytS.value?.data?.searches || [] });
-      setFbData({ pages: fb.value?.data?.pages || [] });
       setTgData({ channels: tg.value?.data?.channels || [] });
       setTwData({ accounts: twA.value?.data?.accounts || [], searches: twS.value?.data?.searches || [] });
       setFcData({ sources: ws.value?.data?.sources || [], searches: fs.value?.data?.searches || [] });
@@ -301,7 +298,6 @@ function SourceScanners({ api, socialTrigger, twitterPinned, onToggleTwitterPin 
   const rssScanning  = rss?.is_scanning || false;
   const lastResult   = rss?.last_scan_result;
   const ytActive     = !!socialStatus?.youtube?.configured;
-  const fbActive     = !!socialStatus?.facebook?.configured;
   const tgActive     = !!socialStatus?.telegram?.configured;
   const twConfigured = !!socialStatus?.twitter?.configured;
   const fcConfigured = !!socialStatus?.firecrawl?.configured || fcData.sources.length > 0;
@@ -312,7 +308,6 @@ function SourceScanners({ api, socialTrigger, twitterPinned, onToggleTwitterPin 
   }, null);
 
   const ytChannels = ytData.channels.filter(c => c.active);
-  const fbPages    = fbData.pages.filter(p => p.active);
   const tgChannels = tgData.channels.filter(c => c.active);
   const twAccounts = twData.accounts.filter(a => a.active);
   const fcSources  = fcData.sources.filter(s => s.active);
@@ -321,7 +316,6 @@ function SourceScanners({ api, socialTrigger, twitterPinned, onToggleTwitterPin 
   const platforms = [
     { key: "rss", ok: true,         active: rssScanning },
     { key: "yt",  ok: ytActive,     active: triggering["youtube"] },
-    { key: "fb",  ok: fbActive,     active: triggering["facebook"] },
     { key: "tg",  ok: tgActive,     active: triggering["telegram"] },
     { key: "tw",  ok: true,         active: triggering["twitter"] },
     { key: "fc",  ok: fcConfigured, active: triggering["firecrawl"] },
@@ -343,11 +337,6 @@ function SourceScanners({ api, socialTrigger, twitterPinned, onToggleTwitterPin 
         ...ytData.searches.filter(s=>s.active).map(s => ({ label: s.query, sub: "search", time: timeAgo(s.last_run) })),
       ],
       emptyMsg: "No YouTube channels configured. Add YOUTUBE_API_KEY to Render.",
-    },
-    facebook: {
-      icon: Facebook, accentColor: "text-blue-400", borderAccent: "border-blue-500/20", bgAccent: "bg-blue-500/5",
-      items: fbPages.map(p => ({ label: p.name, sub: p.category, time: timeAgo(p.last_fetched) })),
-      emptyMsg: "No Facebook pages configured. Add FACEBOOK_APP_ID + FACEBOOK_APP_SECRET.",
     },
     telegram: {
       icon: Send, accentColor: "text-sky-400", borderAccent: "border-sky-500/20", bgAccent: "bg-sky-500/5",
@@ -444,22 +433,6 @@ function SourceScanners({ api, socialTrigger, twitterPinned, onToggleTwitterPin 
                 tooltip={`YouTube — ${ytChannels.length} subscribed channels + ${ytData.searches.filter(s=>s.active).length} keyword searches. Requires YOUTUBE_API_KEY on Render. Fetches video metadata and transcripts.`}
               />
 
-              <ScannerCard
-                label="Facebook" icon={Facebook}
-                accentColor="text-blue-400" bgAccent="bg-blue-500/10"
-                borderAccent="border-blue-500/30" barColor="bg-blue-500"
-                isConfigured={fbActive} isActive={triggering["facebook"] || triggering["all"]} activeLabel="FETCHING"
-                progress={fbActive ? 100 : 0}
-                stat1={fbActive ? `${fbPages.length} pages` : ""}
-                lastFetched={freshTime(latest(fbPages, "last_fetched"))}
-                onTrigger={() => trigger("facebook", "/social/fetch-all")}
-                triggering={triggering["facebook"] || triggering["all"]}
-                configNote="Add FB credentials"
-                isSelected={selected === "facebook"}
-                onClick={() => handleCardClick("facebook")}
-                testId="scanner-facebook"
-                tooltip={`Facebook — ${fbPages.length} monitored pages. Requires FACEBOOK_APP_ID + FACEBOOK_APP_SECRET on Render. Good for NER political party and activist pages.`}
-              />
 
               <ScannerCard
                 label="Telegram" icon={Send}
@@ -519,7 +492,7 @@ function SourceScanners({ api, socialTrigger, twitterPinned, onToggleTwitterPin 
           {/* All 5 social platforms now show a live-feed widget with direct
               (raw) and curated (AI-classified) toggle instead of a static
               handle list. The RSS card still shows the old static panel. */}
-          {selected && ["youtube","facebook","telegram","twitter","firecrawl"].includes(selected) ? (
+          {selected && ["youtube","telegram","twitter","firecrawl"].includes(selected) ? (
             <SocialMediaFeedWidget
               api={api}
               sourceType={selected}
@@ -829,7 +802,7 @@ export default function Dashboard({ stats: propStats, api }) {
               )}
             </div>
           </Tip>
-          <Tip text="Trigger a full sweep of all 6 sources — RSS feeds + YouTube, Facebook, Telegram, X/Twitter and Firecrawl — simultaneously" side="bottom">
+          <Tip text="Trigger a full sweep of all 5 sources — RSS feeds + YouTube, Telegram, X/Twitter and Firecrawl — simultaneously" side="bottom">
             <Button
               onClick={handleFetchNews}
               disabled={loading}

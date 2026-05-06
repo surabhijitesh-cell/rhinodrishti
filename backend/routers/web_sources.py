@@ -136,18 +136,20 @@ async def scrape_web_source_now(source_id: str):
 
     from firecrawl_fetcher import scrape_url_sync, _base_item
     from ai_pipeline import classify_and_analyze_article
+    import hashlib
 
     url = source["url"]
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     raw = await loop.run_in_executor(None, scrape_url_sync, url)
 
     if not raw:
         raise HTTPException(status_code=502, detail="Firecrawl could not scrape this URL")
 
-    # Deduplicate
-    existing = await db.intelligence_items.find_one({"source_url": url})
+    # Deduplicate by content hash (URL dedup was wrong — homepage URL never changes)
+    content_hash = hashlib.md5(raw["raw_content"].encode(errors="ignore")).hexdigest()
+    existing = await db.intelligence_items.find_one({"content_hash": content_hash})
     if existing:
-        return {"message": "Already in database", "id": existing.get("id")}
+        return {"message": "Already in database (same content)", "id": existing.get("id")}
 
     item = _base_item(raw)
     try:
@@ -226,14 +228,16 @@ async def run_keyword_search_now(search_id: str):
     query = search["query"]
     num_results = search.get("num_results", 5)
 
-    loop = asyncio.get_event_loop()
+    import hashlib
+    loop = asyncio.get_running_loop()
     results = await loop.run_in_executor(
         None, lambda: search_sync(query, num_results)
     )
 
     saved = 0
     for raw in results:
-        existing = await db.intelligence_items.find_one({"source_url": raw["source_url"]})
+        content_hash = hashlib.md5(raw["raw_content"].encode(errors="ignore")).hexdigest()
+        existing = await db.intelligence_items.find_one({"content_hash": content_hash})
         if existing:
             continue
         item = _base_item(raw)
@@ -262,14 +266,16 @@ async def scrape_any_url(body: ScrapeUrlRequest):
     """Scrape any URL on demand and run it through the AI pipeline."""
     from firecrawl_fetcher import scrape_url_sync, _base_item
     from ai_pipeline import classify_and_analyze_article
+    import hashlib
 
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     raw = await loop.run_in_executor(None, scrape_url_sync, body.url)
 
     if not raw:
         raise HTTPException(status_code=502, detail="Firecrawl could not scrape this URL. Check URL or Firecrawl key.")
 
-    existing = await db.intelligence_items.find_one({"source_url": body.url})
+    content_hash = hashlib.md5(raw["raw_content"].encode(errors="ignore")).hexdigest()
+    existing = await db.intelligence_items.find_one({"content_hash": content_hash})
     if existing:
         return {"message": "Already in database", "id": existing.get("id")}
 

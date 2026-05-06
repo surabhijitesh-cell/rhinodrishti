@@ -3,7 +3,7 @@ import { Navigate } from "react-router-dom";
 import {
   Settings as SettingsIcon, Clock, Save, RefreshCw, ShieldCheck, Zap,
   TrendingUp, TrendingDown, Minus, BarChart3, Loader2, Rss, Plus, Trash2, Globe,
-  Youtube, Facebook, MessageCircle, Twitter, Activity, ExternalLink, Radio,
+  Youtube, MessageCircle, Twitter, Activity, ExternalLink, Radio,
   Database, HardDrive, Wifi, WifiOff, Download, CheckCircle2, AlertTriangle,
   Server, ArrowRight, Copy,
 } from "lucide-react";
@@ -653,7 +653,6 @@ function BiasSettings({ api }) {
 
 const SOURCE_META = {
   youtube:   { label: "YouTube",   Icon: Youtube,       accent: "text-red-400",     border: "border-l-red-500",     bg: "bg-red-500/10",   dot: "bg-red-400"   },
-  facebook:  { label: "Facebook",  Icon: Facebook,      accent: "text-blue-400",    border: "border-l-blue-500",    bg: "bg-blue-500/10",  dot: "bg-blue-400"  },
   telegram:  { label: "Telegram",  Icon: Radio,         accent: "text-sky-400",     border: "border-l-sky-500",     bg: "bg-sky-500/10",   dot: "bg-sky-400"   },
   twitter:   { label: "X/Twitter", Icon: Twitter,       accent: "text-slate-300",   border: "border-l-slate-400",   bg: "bg-slate-500/10", dot: "bg-slate-300" },
   firecrawl: { label: "Firecrawl", Icon: Activity,      accent: "text-orange-400",  border: "border-l-orange-500",  bg: "bg-orange-500/10",dot: "bg-orange-400"},
@@ -1117,7 +1116,6 @@ const SM_REGIONS_LIST = [
 
 const SM_TABS = [
   { id: "youtube",   label: "YouTube",   Icon: Youtube,  accent: "text-red-400"    },
-  { id: "facebook",  label: "Facebook",  Icon: Facebook, accent: "text-blue-400"   },
   { id: "telegram",  label: "Telegram",  Icon: Radio,    accent: "text-sky-400"    },
   { id: "twitter",   label: "X/Twitter", Icon: Twitter,  accent: "text-slate-300"  },
   { id: "firecrawl", label: "Firecrawl", Icon: Activity, accent: "text-orange-400" },
@@ -1312,56 +1310,6 @@ function YouTubeTab({ api }) {
   );
 }
 
-// ── Facebook Tab ──────────────────────────────────────────────────────────────
-
-function FacebookTab({ api }) {
-  const pg = useSourceList(api, "/social/facebook/pages", "pages");
-  const [del, setDel] = useState(null);
-  const [showForm, setShowForm] = useState(false);
-  const [pgName, setPgName] = useState(""); const [pgId, setPgId] = useState(""); const [pgCat, setPgCat] = useState("media");
-  const [adding, setAdding] = useState(false);
-
-  const handleDel = async (id) => {
-    setDel(id);
-    try { await axios.delete(`${api}/social/facebook/pages/${id}`); pg.refresh(); toast.success("Page removed"); }
-    catch { toast.error("Delete failed"); }
-    setDel(null);
-  };
-  const handleAdd = async (e) => {
-    e.preventDefault(); if (!pgName.trim() || !pgId.trim()) return;
-    setAdding(true);
-    try { await axios.post(`${api}/social/facebook/pages`, { name: pgName.trim(), page_id: pgId.trim(), category: pgCat });
-      toast.success("Page added"); setPgName(""); setPgId(""); setShowForm(false); pg.refresh(); }
-    catch (err) { toast.error(err.response?.data?.detail || "Failed"); }
-    setAdding(false);
-  };
-
-  return (
-    <SmSection
-      accent="text-blue-400" title="Pages" items={pg.items} loading={pg.loading}
-      showForm={showForm} setShowForm={setShowForm} addLabel="Add Page"
-      renderRow={item => <SmRow key={item.id} item={item} primary={item.name} secondary={`Page ID: ${item.page_id}`} badge={item.category} onDelete={handleDel} deleting={del} />}
-      form={
-        <form onSubmit={handleAdd} className="border border-blue-500/20 bg-blue-500/5 p-3 space-y-2 mb-1">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-            <div><label className="text-[9px] uppercase font-mono text-muted-foreground block mb-1">Page Name *</label>
-              <Input value={pgName} onChange={e=>setPgName(e.target.value)} placeholder="e.g. BSF Official" className="rounded-none text-xs h-8" /></div>
-            <div><label className="text-[9px] uppercase font-mono text-muted-foreground block mb-1">Page ID / Slug *</label>
-              <Input value={pgId} onChange={e=>setPgId(e.target.value)} placeholder="e.g. BSFIndia" className="rounded-none text-xs h-8 font-mono" /></div>
-            <div><label className="text-[9px] uppercase font-mono text-muted-foreground block mb-1">Category</label>
-              <Select value={pgCat} onValueChange={setPgCat}><SelectTrigger className="rounded-none text-xs h-8"><SelectValue /></SelectTrigger>
-                <SelectContent className="rounded-none">{SM_CATS.map(c=><SelectItem key={c} value={c} className="text-xs">{c}</SelectItem>)}</SelectContent></Select></div>
-          </div>
-          <div className="flex gap-2">
-            <Button type="submit" disabled={adding} size="sm" className="rounded-none text-[10px] uppercase h-7">
-              {adding?<Loader2 size={10} className="mr-1 animate-spin"/>:<Plus size={10} className="mr-1"/>}Add Page</Button>
-            <Button type="button" variant="outline" size="sm" onClick={()=>setShowForm(false)} className="rounded-none text-[10px] h-7">Cancel</Button>
-          </div>
-        </form>
-      }
-    />
-  );
-}
 
 // ── Telegram Tab ──────────────────────────────────────────────────────────────
 
@@ -1636,7 +1584,6 @@ function SocialScanManager({ api }) {
   const renderTab = () => {
     switch (activeTab) {
       case "youtube":   return <YouTubeTab api={api} />;
-      case "facebook":  return <FacebookTab api={api} />;
       case "telegram":  return <TelegramTab api={api} />;
       case "twitter":   return <TwitterTab api={api} />;
       case "firecrawl": return <FirecrawlTab api={api} />;
@@ -1646,7 +1593,6 @@ function SocialScanManager({ api }) {
 
   const tabDesc = {
     youtube:   "channels and keyword searches",
-    facebook:  "pages",
     telegram:  "channels",
     twitter:   "accounts and keyword searches",
     firecrawl: "websites and keyword searches",
