@@ -414,28 +414,36 @@ async def _classify_with_retry(article, max_retries=3):
 
 
 async def _classify_with_retry_v2(article, max_retries=4):
+    """
+    Classify an article via Claude with exponential back-off on failure.
+
+    NOTE: classify_and_analyze_article is already async — we call it directly
+    on the running event loop.  The old asyncio.to_thread(_sync_classify)
+    pattern created a *new* event loop in a worker thread, which broke the
+    AsyncAnthropic singleton (bound to the main loop) causing silent failures.
+    """
+    from ai_pipeline import classify_and_analyze_article
+
     RATE_LIMIT_INDICATORS = ['rate', '429', 'limit', 'quota', 'too many', 'throttle']
     was_rate_limited = False
 
     for attempt in range(max_retries):
         try:
             result = await asyncio.wait_for(
-                asyncio.to_thread(_sync_classify, article),
-                timeout=60
+                classify_and_analyze_article(article),
+                timeout=90,
             )
             return result, was_rate_limited
 
         except asyncio.TimeoutError:
-            base_wait = 5
-            wait = base_wait * (2 ** attempt)
+            wait = 5 * (2 ** attempt)
             logger.warning(f"  [Attempt {attempt + 1}/{max_retries}] Timeout for: "
                            f"{article.get('title', '')[:40]}... retrying in {wait}s")
             await asyncio.sleep(wait)
 
         except Exception as e:
             err_str = str(e).lower()
-            is_rate_limit = any(indicator in err_str for indicator in RATE_LIMIT_INDICATORS)
-
+            is_rate_limit = any(ind in err_str for ind in RATE_LIMIT_INDICATORS)
             if is_rate_limit:
                 was_rate_limited = True
                 wait = 15 * (2 ** attempt)
@@ -443,23 +451,12 @@ async def _classify_with_retry_v2(article, max_retries=4):
                                f"{article.get('title', '')[:40]}... backing off {wait}s")
             else:
                 wait = 3 * (2 ** attempt)
-                logger.warning(f"  [Attempt {attempt + 1}/{max_retries}] Error ({str(e)[:60]}) for: "
+                logger.warning(f"  [Attempt {attempt + 1}/{max_retries}] Error ({str(e)[:80]}) for: "
                                f"{article.get('title', '')[:40]}... retrying in {wait}s")
-
             await asyncio.sleep(wait)
 
     logger.error(f"  All {max_retries} retries exhausted for: {article.get('title', '')[:50]}")
     return None, was_rate_limited
-
-
-def _sync_classify(article):
-    import asyncio
-    loop = asyncio.new_event_loop()
-    try:
-        from ai_pipeline import classify_and_analyze_article
-        return loop.run_until_complete(classify_and_analyze_article(article))
-    finally:
-        loop.close()
 
 
 def _make_raw_doc(article):
