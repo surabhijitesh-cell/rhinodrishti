@@ -3,7 +3,7 @@ import { Navigate } from "react-router-dom";
 import {
   Settings as SettingsIcon, Clock, Save, RefreshCw, ShieldCheck, Zap,
   TrendingUp, TrendingDown, Minus, BarChart3, Loader2, Rss, Plus, Trash2, Globe,
-  Youtube, MessageCircle, Twitter, Activity, ExternalLink, Radio,
+  Youtube, MessageCircle, Twitter, Activity, ExternalLink, Radio, Play,
   Database, HardDrive, Wifi, WifiOff, Download, CheckCircle2, AlertTriangle,
   Server, ArrowRight, Copy,
 } from "lucide-react";
@@ -1170,8 +1170,9 @@ function useSourceList(api, path, listKey) {
   return { items, loading, refresh: load };
 }
 
-function SmRow({ item, primary, secondary, badge, onDelete, deleting }) {
+function SmRow({ item, primary, secondary, badge, onDelete, deleting, onAction, actionLabel, actioning }) {
   const busy = deleting === item.id;
+  const running = actioning === item.id;
   return (
     <div className="px-3 py-2.5 flex items-center gap-3 hover:bg-muted/5 group">
       <div className="flex-1 min-w-0">
@@ -1183,6 +1184,16 @@ function SmRow({ item, primary, secondary, badge, onDelete, deleting }) {
       )}
       {item.active === false && (
         <Badge className="rounded-none text-[8px] px-1.5 py-0 bg-amber-500/10 text-amber-400 border-amber-500/20 shrink-0">paused</Badge>
+      )}
+      {onAction && (
+        <button
+          onClick={() => onAction(item.id)}
+          disabled={running || busy}
+          className="p-1 shrink-0 text-muted-foreground/30 hover:text-orange-400 transition-colors opacity-0 group-hover:opacity-100"
+          title={actionLabel || "Run now"}
+        >
+          {running ? <Loader2 size={11} className="animate-spin" /> : <Play size={11} />}
+        </button>
       )}
       <button
         onClick={() => onDelete(item.id)}
@@ -1496,6 +1507,8 @@ function FirecrawlTab({ api }) {
   const [wsRegion, setWsRegion] = useState("Northeast"); const [wsCat, setWsCat] = useState("grassroots");
   const [fcQ, setFcQ] = useState(""); const [fcNum, setFcNum] = useState(5);
   const [adding, setAdding] = useState(false);
+  const [scraping, setScraping] = useState(null);   // web-source id being scraped
+  const [running, setRunning]   = useState(null);   // search id being run
 
   const handleDel = async (path, refresh, id) => {
     setDel(id);
@@ -1503,6 +1516,32 @@ function FirecrawlTab({ api }) {
     catch { toast.error("Delete failed"); }
     setDel(null);
   };
+
+  const scrapeNow = async (id) => {
+    setScraping(id);
+    try {
+      const r = await axios.post(`${api}/web-sources/${id}/scrape`);
+      if (r.data?.saved) toast.success(`Scraped & saved: ${r.data.title?.slice(0, 60) || "article"}`);
+      else toast(`Already in database — no new content`);
+      ws.refresh();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Scrape failed — check Firecrawl key");
+    }
+    setScraping(null);
+  };
+
+  const runNow = async (id) => {
+    setRunning(id);
+    try {
+      const r = await axios.post(`${api}/firecrawl-searches/${id}/run`);
+      toast.success(`Ran search — ${r.data?.saved ?? 0} new items saved`);
+      fc.refresh();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Search run failed");
+    }
+    setRunning(null);
+  };
+
   const addWs = async (e) => {
     e.preventDefault(); if (!wsName.trim() || !wsUrl.trim()) return;
     setAdding("ws");
@@ -1525,7 +1564,9 @@ function FirecrawlTab({ api }) {
       <SmSection
         accent="text-orange-400" title="Web Sources" items={ws.items} loading={ws.loading}
         showForm={showWs} setShowForm={setShowWs} addLabel="Add Website"
-        renderRow={item => <SmRow key={item.id} item={item} primary={item.name} secondary={item.url} badge={item.region} onDelete={id=>handleDel("/web-sources", ws.refresh, id)} deleting={del} />}
+        renderRow={item => <SmRow key={item.id} item={item} primary={item.name} secondary={item.url} badge={item.region}
+          onDelete={id=>handleDel("/web-sources", ws.refresh, id)} deleting={del}
+          onAction={scrapeNow} actionLabel="Scrape now" actioning={scraping} />}
         form={
           <form onSubmit={addWs} className="border border-orange-500/20 bg-orange-500/5 p-3 space-y-2 mb-1">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
@@ -1553,7 +1594,9 @@ function FirecrawlTab({ api }) {
       <SmSection
         accent="text-orange-400" title="Keyword Searches" items={fc.items} loading={fc.loading}
         showForm={showFc} setShowForm={setShowFc} addLabel="Add Search"
-        renderRow={item => <SmRow key={item.id} item={item} primary={item.query} secondary={`${item.num_results} results per run`} onDelete={id=>handleDel("/firecrawl-searches", fc.refresh, id)} deleting={del} />}
+        renderRow={item => <SmRow key={item.id} item={item} primary={item.query} secondary={`${item.num_results} results per run`}
+          onDelete={id=>handleDel("/firecrawl-searches", fc.refresh, id)} deleting={del}
+          onAction={runNow} actionLabel="Run search now" actioning={running} />}
         form={
           <form onSubmit={addFc} className="border border-orange-500/20 bg-orange-500/5 p-3 space-y-2 mb-1">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-2">

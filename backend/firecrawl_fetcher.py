@@ -50,17 +50,46 @@ DEFAULT_WEB_SOURCES = [
 ]
 
 # ── OSINT keyword searches seeded by default ──────────────────────────────────
+# Runs every 6 hours. Each query fetches num_results pages via Firecrawl search,
+# then each new (non-duplicate) result goes through the AI classification pipeline.
+# Keep num_results at 3-5 for broad queries; up to 8 for highly specific ones.
 DEFAULT_KEYWORD_SEARCHES = [
-    {"query": "northeast india insurgency militant",            "num_results": 5},
-    {"query": "NSCN ULFA ceasefire negotiation",               "num_results": 5},
-    {"query": "Manipur ethnic violence displaced",              "num_results": 5},
-    {"query": "Bangladesh border infiltration Assam",           "num_results": 5},
-    {"query": "Myanmar military junta northeast india border",  "num_results": 5},
-    {"query": "China PLA Arunachal Pradesh border",             "num_results": 5},
-    {"query": "drug trafficking northeast india Myanmar",       "num_results": 5},
-    {"query": "Brahmaputra floods infrastructure disruption",   "num_results": 3},
-    {"query": "arms smuggling BSF Assam Tripura",               "num_results": 3},
-    {"query": "Mizoram Chin refugees Myanmar border",           "num_results": 3},
+    # ── NER insurgency & militancy ────────────────────────────────────────────
+    {"query": "northeast india insurgency militant 2025",           "num_results": 5},
+    {"query": "NSCN ULFA ceasefire negotiation Naga peace",        "num_results": 5},
+    {"query": "Manipur ethnic violence Meitei Kuki displaced",      "num_results": 5},
+    {"query": "Assam Meghalaya Tripura insurgency arrest",          "num_results": 5},
+    {"query": "Nagaland armed group ceasefire 2025",                "num_results": 3},
+
+    # ── Bangladesh security & cross-border ────────────────────────────────────
+    {"query": "Bangladesh border infiltration Assam BSF",           "num_results": 5},
+    {"query": "BGB BSF border shooting Bangladesh India",           "num_results": 5},
+    {"query": "Bangladesh China military cooperation 2025",         "num_results": 5},
+    {"query": "Bangladesh minority Hindu attack violence",          "num_results": 5},
+    {"query": "Bangladesh political instability military Dhaka",    "num_results": 5},
+    {"query": "Bangladesh Rohingya border Myanmar Cox Bazar",       "num_results": 3},
+    {"query": "illegal immigration Bangladesh Assam arrest",        "num_results": 5},
+
+    # ── Myanmar & Chin State ──────────────────────────────────────────────────
+    {"query": "Myanmar civil war Chin State India border Mizoram",  "num_results": 5},
+    {"query": "Myanmar military junta northeast india border",      "num_results": 5},
+    {"query": "Tatmadaw Arakan Army offensive Rakhine",             "num_results": 5},
+    {"query": "Myanmar refugees Mizoram India 2025",                "num_results": 5},
+    {"query": "Myanmar drug trafficking methamphetamine India",     "num_results": 3},
+
+    # ── China & PLA ───────────────────────────────────────────────────────────
+    {"query": "China PLA Arunachal Pradesh border incursion",       "num_results": 5},
+    {"query": "China Bangladesh infrastructure Belt Road",          "num_results": 5},
+    {"query": "PLA exercise India border Himalaya 2025",            "num_results": 3},
+
+    # ── Smuggling, trafficking, drones ───────────────────────────────────────
+    {"query": "drug trafficking northeast india Myanmar heroin",    "num_results": 5},
+    {"query": "arms smuggling BSF Assam Tripura arrested",          "num_results": 5},
+    {"query": "drone incursion northeast india border UAV",         "num_results": 3},
+
+    # ── Infrastructure & early warning ────────────────────────────────────────
+    {"query": "Brahmaputra floods infrastructure disruption 2025",  "num_results": 3},
+    {"query": "northeast india highway blockade shutdown protest",  "num_results": 3},
 ]
 
 
