@@ -33,6 +33,7 @@ from routers.app_updates import router as app_updates_router
 from routers.reports import router as reports_router
 from routers.web_sources import router as web_sources_router
 from routers.social_media import router as social_media_router
+from routers.admin import router as admin_router
 
 # Import scheduler functions
 from routers.pipeline import (
@@ -71,6 +72,7 @@ app.include_router(app_updates_router, prefix="/api")
 app.include_router(reports_router, prefix="/api")
 app.include_router(web_sources_router, prefix="/api")
 app.include_router(social_media_router, prefix="/api")
+app.include_router(admin_router, prefix="/api")
 
 
 # ============================================================

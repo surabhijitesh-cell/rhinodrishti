@@ -347,6 +347,7 @@ export default function SocialMediaFeedWidget({
   const [lastUpdated, setLastUpdated] = useState(null);
   const [error, setError]         = useState(null);
   const [statusNote, setStatusNote] = useState(null);   // from /social/status endpoint
+  const [twitterFreeTier, setTwitterFreeTier] = useState(false);
 
   // DIRECT mode  → raw /social-feeds/{type} endpoint (no AI filter)
   // CURATED mode → /intelligence?source_type=X (AI-classified only)
@@ -373,12 +374,16 @@ export default function SocialMediaFeedWidget({
       setLastUpdated(new Date());
       setError(null);
 
-      // If empty, fetch the status note so we can show WHY (API tier limits, etc.)
-      if (rawItems.length === 0 && !statusNote) {
+      // Always fetch status for Twitter (to detect free vs paid tier).
+      // For other sources only fetch when empty.
+      if (sourceType === "twitter" || rawItems.length === 0) {
         try {
           const statusRes = await axios.get(`${api}/social/status`);
           const srcStatus = statusRes.data?.[sourceType];
           if (srcStatus?.note) setStatusNote(srcStatus.note);
+          if (sourceType === "twitter") {
+            setTwitterFreeTier(!!srcStatus?.free_tier);
+          }
         } catch (_) {/* non-fatal */}
       }
     } catch (e) {
@@ -539,6 +544,26 @@ export default function SocialMediaFeedWidget({
           )}
         </div>
       </div>
+
+      {/* ── Twitter free-tier persistent banner ── */}
+      {sourceType === "twitter" && twitterFreeTier && (
+        <div className="flex items-start gap-2 px-3 py-2.5 border-b border-amber-500/30 bg-amber-500/8 text-amber-300">
+          <AlertTriangle size={13} className="shrink-0 mt-0.5 text-amber-400" />
+          <div className="text-[10px] font-mono leading-relaxed">
+            <span className="font-semibold text-amber-300">Free API tier — Twitter data unavailable.</span>
+            <span className="text-amber-300/70 ml-1">
+              X/Twitter API v2 requires the <span className="text-amber-300">Basic plan ($100/mo)</span> to
+              read public tweets. Your current Bearer Token is Free tier (post-only).
+              Upgrade at{" "}
+              <a href="https://developer.x.com/en/portal/dashboard"
+                target="_blank" rel="noopener noreferrer"
+                className="underline hover:text-amber-200">developer.x.com</a>
+              , then update TWITTER_BEARER_TOKEN on Render — this banner will disappear automatically
+              once tweets start flowing.
+            </span>
+          </div>
+        </div>
+      )}
 
       {/* ── Filters ── */}
       {items.length > 0 && (

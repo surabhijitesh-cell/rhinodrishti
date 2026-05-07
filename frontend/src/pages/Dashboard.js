@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
+import { useAuth } from "../contexts/AuthContext";
+import ApiUsageWidget from "../components/ApiUsageWidget";
 import {
   Shield, AlertTriangle, Activity, TrendingUp,
   ChevronRight, RefreshCw, Target, ArrowUp,
@@ -650,6 +652,8 @@ export default function Dashboard({ stats: propStats, api }) {
   // can show FETCHING badges and start its polling schedule.
   const [socialTrigger, setSocialTrigger] = useState(0);
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const isAdmin = user?.role === "admin";
 
   // Twitter Live Feed widget pin state — persisted to localStorage so the
   // user's choice survives page reloads.
@@ -1069,6 +1073,13 @@ export default function Dashboard({ stats: propStats, api }) {
 
       {/* Pattern Insights */}
       <PatternInsights api={api} />
+
+      {/* Admin-only: Anthropic API Usage Monitor */}
+      {isAdmin && (
+        <div data-testid="api-usage-widget">
+          <ApiUsageWidget api={api} />
+        </div>
+      )}
 
       {/* Recent Intelligence */}
       <div data-tour="recent-intel">

@@ -314,6 +314,13 @@ async def classify_and_analyze_article(article, source_hint: str = "") -> dict:
             extra_headers={"anthropic-beta": "prompt-caching-2024-07-31"},
         )
 
+        # Track token usage and cost
+        try:
+            from usage_tracker import track_usage
+            await track_usage(response.usage, MODEL)
+        except Exception:
+            pass
+
         # Parse JSON from response
         response_text = response.content[0].text
         # Try to extract JSON from the response
@@ -448,6 +455,12 @@ async def generate_daily_brief_ai(items: list, date: str) -> dict:
             ],
             extra_headers={"anthropic-beta": "prompt-caching-2024-07-31"},
         )
+
+        try:
+            from usage_tracker import track_usage
+            await track_usage(response.usage, MODEL)
+        except Exception:
+            pass
 
         response_text = response.content[0].text
         json_start = response_text.find('{')

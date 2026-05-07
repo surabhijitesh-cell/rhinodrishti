@@ -112,12 +112,16 @@ async def social_status():
             "available":  twitter_configured,
             "item_count": twitter_count,
             "intel_count": intel_twitter_count,
+            "free_tier": twitter_configured and twitter_count == 0,
             "note": (
-                "⚠ X API v2 requires Basic tier ($100/mo) to READ tweets. "
-                "Free tier tokens only allow posting. If your token is Free tier, "
-                "all fetches silently return empty. Set TWITTER_BEARER_TOKEN (Basic tier+)."
+                "⚠ TWITTER_BEARER_TOKEN not set. Add it to Render environment variables."
             ) if not twitter_configured else (
-                f"X API v2 active. {twitter_count} raw tweets in cache, {intel_twitter_count} in intel feed (30d)."
+                "⚠ Free API tier — your Bearer Token is set but no tweets have been collected. "
+                "X/Twitter API v2 requires the Basic plan ($100/month) to read public tweets. "
+                "Free tier tokens can only post, not read. "
+                "Upgrade at developer.x.com/en/portal/dashboard to enable data collection."
+            ) if twitter_count == 0 else (
+                f"✓ X API active — {twitter_count} raw tweets cached, {intel_twitter_count} in intel feed (30d)."
             ),
         },
         "youtube": {
