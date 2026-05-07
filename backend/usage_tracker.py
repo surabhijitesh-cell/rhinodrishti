@@ -27,10 +27,18 @@ USD_TO_INR = 84.0   # approximate — update periodically
 
 # Pricing per million tokens (USD)
 MODEL_PRICING: dict[str, dict] = {
+    # ── Active model ──────────────────────────────────────────────────────────
+    "claude-haiku-3-20240307": {       # $0.25/$1.25 MTok — 68% cheaper than 4.5
+        "input":       0.25,
+        "output":      1.25,
+        "cache_write": 0.30,
+        "cache_read":  0.03,
+    },
+    # ── Previous model (kept for historical cost tracking) ───────────────────
     "claude-haiku-4-5-20251001": {
         "input":       0.80,
         "output":      4.00,
-        "cache_write": 1.00,   # 5-min ephemeral write
+        "cache_write": 1.00,
         "cache_read":  0.08,
     },
     "claude-3-5-haiku-20241022": {
@@ -45,12 +53,12 @@ MODEL_PRICING: dict[str, dict] = {
         "cache_write": 3.75,
         "cache_read":  0.30,
     },
-    # Default fallback — assume Haiku pricing
+    # Default fallback — assume Haiku 3 pricing
     "_default": {
-        "input":       0.80,
-        "output":      4.00,
-        "cache_write": 1.00,
-        "cache_read":  0.08,
+        "input":       0.25,
+        "output":      1.25,
+        "cache_write": 0.30,
+        "cache_read":  0.03,
     },
 }
 

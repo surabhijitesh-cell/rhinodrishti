@@ -13,7 +13,10 @@ import anthropic
 _client: anthropic.AsyncAnthropic | None = None
 
 # Model used everywhere in the app — change here to upgrade globally
-MODEL = "claude-haiku-4-5-20251001"
+# Switched from claude-haiku-4-5-20251001 ($0.80/$4.00 MTok)
+#          to   claude-haiku-3-20240307    ($0.25/$1.25 MTok)  — ~68% cheaper,
+# same JSON reliability and content policy for NER security classification.
+MODEL = "claude-haiku-3-20240307"
 
 
 def get_client() -> anthropic.AsyncAnthropic:

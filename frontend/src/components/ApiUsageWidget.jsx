@@ -255,7 +255,7 @@ export default function ApiUsageWidget({ api }) {
             </div>
             <div className="text-muted-foreground/60 pl-2">5× cheaper than Haiku. Solid JSON output reliability.</div>
             <div className="mt-1.5 text-amber-300/70">
-              Current: claude-haiku-4-5 @ $0.80 / $4.00 per MTok
+              Current: claude-haiku-3 @ $0.25 / $1.25 per MTok (switched from haiku-4-5)
             </div>
           </div>
         </div>
