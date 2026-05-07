@@ -147,6 +147,73 @@ def _extract_from_result(result) -> tuple[str, dict]:
     return "", {}
 
 
+def _call_scrape(app, url: str):
+    """
+    Try all known firecrawl-py call signatures, newest first.
+    Returns the raw SDK response object on success, raises on failure.
+    """
+    # firecrawl-py >= 1.0: positional formats kwarg
+    try:
+        return app.scrape_url(url, formats=["markdown"])
+    except TypeError:
+        pass
+    # firecrawl-py 0.x: params dict
+    try:
+        return app.scrape_url(url, params={"formats": ["markdown"]})
+    except TypeError:
+        pass
+    # Last resort: no options (some enterprise endpoints)
+    return app.scrape_url(url)
+
+
+def scrape_url_raising(url: str) -> dict:
+    """
+    Same as scrape_url_sync but RAISES with a descriptive message on failure.
+    Used by on-demand HTTP endpoints so the real error surfaces to the client.
+    """
+    api_key = os.environ.get("FIRECRAWL_API_KEY", "").strip()
+    if not api_key:
+        raise RuntimeError("FIRECRAWL_API_KEY is not set on the server. Add it to Render environment variables.")
+
+    try:
+        from firecrawl import FirecrawlApp
+        import firecrawl as _fc_mod
+        version = getattr(_fc_mod, "__version__", "unknown")
+    except ImportError:
+        raise RuntimeError("firecrawl-py package not installed on server.")
+
+    try:
+        app = FirecrawlApp(api_key=api_key)
+    except Exception as e:
+        raise RuntimeError(f"Firecrawl init failed: {e}")
+
+    try:
+        result = _call_scrape(app, url)
+    except Exception as e:
+        raise RuntimeError(f"Firecrawl API error (SDK v{version}): {e}")
+
+    if not result:
+        raise RuntimeError(f"Firecrawl returned empty response for {url} (SDK v{version})")
+
+    markdown, metadata = _extract_from_result(result)
+
+    if not markdown or len(markdown.strip()) < 50:
+        chars = len(markdown.strip()) if markdown else 0
+        raise RuntimeError(
+            f"Firecrawl returned thin content ({chars} chars) for {url}. "
+            "The site may block scrapers or the page has no readable text."
+        )
+
+    return {
+        "title":        metadata.get("title") or metadata.get("ogTitle") or url,
+        "raw_content":  markdown,
+        "source":       metadata.get("siteName") or metadata.get("ogSiteName") or _domain(url),
+        "source_url":   url,
+        "published_at": datetime.now(timezone.utc).isoformat(),
+        "source_type":  "firecrawl_scrape",
+    }
+
+
 def scrape_url_sync(url: str) -> Optional[dict]:
     """
     Scrape a single URL (synchronous — Firecrawl SDK is sync).
@@ -157,12 +224,7 @@ def scrape_url_sync(url: str) -> Optional[dict]:
     if not app:
         return None
     try:
-        # firecrawl-py v1 API uses keyword args, not params= dict
-        try:
-            result = app.scrape_url(url, formats=["markdown"])
-        except TypeError:
-            # fallback for older SDK versions
-            result = app.scrape_url(url, params={"formats": ["markdown"]})
+        result = _call_scrape(app, url)
 
         if not result:
             logger.warning(f"Firecrawl returned empty result for {url}")

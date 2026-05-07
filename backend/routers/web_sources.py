@@ -78,6 +78,44 @@ async def firecrawl_status():
     }
 
 
+@router.get("/firecrawl/diagnose")
+async def firecrawl_diagnose():
+    """
+    Full diagnostic — call this to see exactly why Firecrawl is failing.
+    Returns: API key status, SDK version, and a live test scrape result.
+    """
+    import os
+    result = {}
+
+    # 1. API key
+    key = os.environ.get("FIRECRAWL_API_KEY", "").strip()
+    result["api_key_set"] = bool(key)
+    result["api_key_preview"] = f"{key[:8]}..." if key else "NOT SET"
+
+    # 2. SDK version
+    try:
+        import firecrawl as _fc
+        result["sdk_version"] = getattr(_fc, "__version__", "installed but version unknown")
+    except ImportError:
+        result["sdk_version"] = "NOT INSTALLED"
+        return result
+
+    # 3. Test scrape a small, reliable page
+    TEST_URL = "https://eastmojo.com"
+    from firecrawl_fetcher import scrape_url_raising
+    loop = asyncio.get_running_loop()
+    try:
+        raw = await loop.run_in_executor(None, scrape_url_raising, TEST_URL)
+        result["test_scrape"] = "OK"
+        result["test_title"] = raw.get("title", "")[:100]
+        result["test_content_chars"] = len(raw.get("raw_content", ""))
+    except RuntimeError as exc:
+        result["test_scrape"] = "FAILED"
+        result["test_error"] = str(exc)
+
+    return result
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Web Sources CRUD
 # ─────────────────────────────────────────────────────────────────────────────
@@ -134,16 +172,16 @@ async def scrape_web_source_now(source_id: str):
     if not source:
         raise HTTPException(status_code=404, detail="Web source not found")
 
-    from firecrawl_fetcher import scrape_url_sync, _base_item
+    from firecrawl_fetcher import scrape_url_raising, _base_item
     from ai_pipeline import classify_and_analyze_article
     import hashlib
 
     url = source["url"]
     loop = asyncio.get_running_loop()
-    raw = await loop.run_in_executor(None, scrape_url_sync, url)
-
-    if not raw:
-        raise HTTPException(status_code=502, detail="Firecrawl could not scrape this URL")
+    try:
+        raw = await loop.run_in_executor(None, scrape_url_raising, url)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
 
     # Deduplicate by content hash (URL dedup was wrong — homepage URL never changes)
     content_hash = hashlib.md5(raw["raw_content"].encode(errors="ignore")).hexdigest()
@@ -264,15 +302,15 @@ async def run_keyword_search_now(search_id: str):
 @router.post("/firecrawl/scrape-url")
 async def scrape_any_url(body: ScrapeUrlRequest):
     """Scrape any URL on demand and run it through the AI pipeline."""
-    from firecrawl_fetcher import scrape_url_sync, _base_item
+    from firecrawl_fetcher import scrape_url_raising, _base_item
     from ai_pipeline import classify_and_analyze_article
     import hashlib
 
     loop = asyncio.get_running_loop()
-    raw = await loop.run_in_executor(None, scrape_url_sync, body.url)
-
-    if not raw:
-        raise HTTPException(status_code=502, detail="Firecrawl could not scrape this URL. Check URL or Firecrawl key.")
+    try:
+        raw = await loop.run_in_executor(None, scrape_url_raising, body.url)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
 
     content_hash = hashlib.md5(raw["raw_content"].encode(errors="ignore")).hexdigest()
     existing = await db.intelligence_items.find_one({"content_hash": content_hash})
