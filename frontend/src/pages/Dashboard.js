@@ -33,6 +33,37 @@ const SEVERITY_COLORS = {
   low: "#a3e635",
 };
 
+// Scrollable container that only captures scroll wheel after first click inside.
+// Prevents the page from hijacking when the user just wants to scroll past.
+function ClickToScroll({ children, className = "" }) {
+  const [active, setActive] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    if (!active) return;
+    const handleOutside = (e) => {
+      if (ref.current && !ref.current.contains(e.target)) setActive(false);
+    };
+    document.addEventListener("mousedown", handleOutside);
+    return () => document.removeEventListener("mousedown", handleOutside);
+  }, [active]);
+
+  return (
+    <div
+      ref={ref}
+      className={`${className} relative ${active ? "overflow-y-auto" : "overflow-hidden cursor-pointer"}`}
+      onClick={() => !active && setActive(true)}
+    >
+      {children}
+      {!active && (
+        <div className="absolute bottom-0 left-0 right-0 h-8 bg-gradient-to-t from-card/90 to-transparent pointer-events-none flex items-end justify-center pb-1">
+          <span className="text-[9px] font-mono text-muted-foreground/50 uppercase tracking-wider">click to scroll</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function StatBox({ label, value, icon: Icon, color, sub, testId, onClick }) {
   return (
     <div
@@ -170,7 +201,8 @@ function SourceDetailPanel({ platform, accentColor, borderAccent, bgAccent, icon
   }
   return (
     <div className={`border-t ${borderAccent} ${bgAccent} px-4 py-3`}>
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-1 max-h-48 overflow-y-auto">
+      <ClickToScroll className="max-h-48">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-1">
         {items.map((item, i) => (
           <div key={i} className="flex items-center gap-2 min-w-0 py-0.5">
             <Icon size={9} className={`${accentColor} shrink-0`} />
@@ -184,6 +216,7 @@ function SourceDetailPanel({ platform, accentColor, borderAccent, bgAccent, icon
           </div>
         ))}
       </div>
+      </ClickToScroll>
     </div>
   );
 }
@@ -555,7 +588,8 @@ function UnacknowledgedAlerts({ api }) {
           View All <ChevronRight size={12} />
         </Button>
       </div>
-      <CardContent className="p-3 space-y-2 max-h-48 overflow-y-auto">
+      <CardContent className="p-3">
+        <ClickToScroll className="space-y-2 max-h-48">
         {alerts.slice(0, 5).map((item) => (
           <div key={item.id} className="flex items-center gap-3 p-2 border border-red-500/20 bg-red-950/30" data-testid={`unack-alert-${item.id}`}>
             <AlertTriangle size={14} className="text-red-400 shrink-0" />
@@ -578,6 +612,7 @@ function UnacknowledgedAlerts({ api }) {
             </Button>
           </div>
         ))}
+        </ClickToScroll>
       </CardContent>
     </Card>
   );
@@ -617,7 +652,8 @@ function PatternInsights({ api }) {
           </Tip>
         </div>
       </CardHeader>
-      <CardContent className="p-3 space-y-2 max-h-64 overflow-y-auto">
+      <CardContent className="p-3">
+        <ClickToScroll className="space-y-2 max-h-64">
         {patterns.slice(0, 8).map((p, i) => (
           <div key={i} className="p-2 border border-border space-y-1" data-testid={`pattern-${i}`}>
             <div className="flex items-center justify-between gap-2">
@@ -637,6 +673,7 @@ function PatternInsights({ api }) {
             )}
           </div>
         ))}
+        </ClickToScroll>
       </CardContent>
     </Card>
   );
@@ -905,7 +942,8 @@ export default function Dashboard({ stats: propStats, api }) {
               <RefreshCw size={12} className="mr-1" /> Refresh Dashboard
             </Button>
           </div>
-          <CardContent className="p-3 space-y-1.5 max-h-40 overflow-y-auto">
+          <CardContent className="p-3">
+            <ClickToScroll className="space-y-1.5 max-h-40">
             {wsNewItems.slice(0, 8).map((item, i) => (
               <div key={item.id || i} className="flex items-center gap-3 p-1.5 text-xs" data-testid={`ws-item-${i}`}>
                 <Badge className={`shrink-0 rounded-none uppercase text-[9px] px-1 py-0 border ${
@@ -919,6 +957,7 @@ export default function Dashboard({ stats: propStats, api }) {
                 <span className="text-muted-foreground font-mono shrink-0">P:{item.priority_score}</span>
               </div>
             ))}
+            </ClickToScroll>
           </CardContent>
         </Card>
       )}
@@ -956,7 +995,8 @@ export default function Dashboard({ stats: propStats, api }) {
                 </Button>
               </div>
             </CardHeader>
-            <CardContent className="p-3 space-y-3 max-h-[400px] overflow-y-auto" data-testid="recent-alerts-list">
+            <CardContent className="p-3" data-testid="recent-alerts-list">
+              <ClickToScroll className="space-y-3 max-h-[400px]">
               {(stats?.recent_critical || []).map((item, i) => (
                 <div
                   key={item.id || i}
@@ -979,6 +1019,7 @@ export default function Dashboard({ stats: propStats, api }) {
               {(!stats?.recent_critical || stats.recent_critical.length === 0) && (
                 <p className="text-sm text-muted-foreground text-center py-8">No critical alerts</p>
               )}
+              </ClickToScroll>
             </CardContent>
           </Card>
         </div>
