@@ -94,12 +94,27 @@ DEFAULT_KEYWORD_SEARCHES = [
 
 
 def _get_app() -> Optional[object]:
-    """Return a FirecrawlApp instance or None if key not set."""
+    """
+    Return a Firecrawl client or None if key not set.
+
+    firecrawl-py broke its API across major versions:
+      v0.x  → FirecrawlApp  + scrape_url(url, params={...})
+      v1.x  → FirecrawlApp  + scrape_url(url, formats=[...])
+      v1 SDK (PyPI ≥4.x rewrite) → Firecrawl + scrape(url, formats=[...])
+    Try newest naming first.
+    """
     api_key = os.environ.get("FIRECRAWL_API_KEY", "").strip()
     if not api_key:
         logger.warning("FIRECRAWL_API_KEY not set — Firecrawl disabled")
         return None
     try:
+        # New SDK (≥4.x): class is Firecrawl, method is scrape()
+        try:
+            from firecrawl import Firecrawl
+            return Firecrawl(api_key=api_key)
+        except (ImportError, Exception):
+            pass
+        # Legacy SDK: class is FirecrawlApp
         from firecrawl import FirecrawlApp
         return FirecrawlApp(api_key=api_key)
     except ImportError:
@@ -117,32 +132,34 @@ def _get_app() -> Optional[object]:
 def _extract_from_result(result) -> tuple[str, dict]:
     """
     Extract (markdown, metadata_dict) from a Firecrawl SDK response.
-    Handles both v1 (ScrapeResponse object) and legacy dict response shapes.
+    Handles all known SDK shapes across versions.
     """
-    # firecrawl-py v1 returns a ScrapeResponse object with direct attributes
+    def _safe_meta(raw_meta) -> dict:
+        if isinstance(raw_meta, dict):
+            return raw_meta
+        if hasattr(raw_meta, "__dict__"):
+            return {k: v for k, v in raw_meta.__dict__.items() if not k.startswith("_")}
+        return {}
+
+    # Object with direct attributes (v1 ScrapeResponse / v4 scrape result)
     if hasattr(result, "markdown"):
-        markdown = result.markdown or ""
-        meta = result.metadata if hasattr(result, "metadata") else {}
-        if hasattr(meta, "__dict__"):
-            meta = meta.__dict__
-        return markdown, (meta if isinstance(meta, dict) else {})
+        return result.markdown or "", _safe_meta(getattr(result, "metadata", {}))
 
-    # Legacy dict shape
+    # Some v4 responses may use `content` instead of `markdown`
+    if hasattr(result, "content"):
+        meta = _safe_meta(getattr(result, "metadata", {}))
+        return result.content or "", meta
+
+    # Dict shape (v0.x)
     if isinstance(result, dict):
-        markdown = result.get("markdown") or result.get("content") or ""
-        meta = result.get("metadata") or {}
-        if hasattr(meta, "__dict__"):
-            meta = meta.__dict__
-        return markdown, (meta if isinstance(meta, dict) else {})
+        md = result.get("markdown") or result.get("content") or ""
+        return md, _safe_meta(result.get("metadata") or {})
 
-    # Fallback: try __dict__
+    # Last resort: __dict__ of unknown object
     if hasattr(result, "__dict__"):
-        d = result.__dict__
-        markdown = d.get("markdown") or d.get("content") or ""
-        meta = d.get("metadata") or {}
-        if hasattr(meta, "__dict__"):
-            meta = meta.__dict__
-        return markdown, (meta if isinstance(meta, dict) else {})
+        d = {k: v for k, v in result.__dict__.items() if not k.startswith("_")}
+        md = d.get("markdown") or d.get("content") or ""
+        return md, _safe_meta(d.get("metadata") or {})
 
     return "", {}
 
@@ -151,19 +168,39 @@ def _call_scrape(app, url: str):
     """
     Try all known firecrawl-py call signatures, newest first.
     Returns the raw SDK response object on success, raises on failure.
+
+    Signature history:
+      v4+ SDK  → app.scrape(url, formats=[...])          ← try first
+      v1.x     → app.scrape_url(url, formats=[...])
+      v0.x     → app.scrape_url(url, params={...})
+      fallback → app.scrape_url(url)  or  app.scrape(url)
     """
-    # firecrawl-py >= 1.0: positional formats kwarg
-    try:
-        return app.scrape_url(url, formats=["markdown"])
-    except TypeError:
-        pass
-    # firecrawl-py 0.x: params dict
-    try:
-        return app.scrape_url(url, params={"formats": ["markdown"]})
-    except TypeError:
-        pass
-    # Last resort: no options (some enterprise endpoints)
-    return app.scrape_url(url)
+    # New SDK (≥4.x): method renamed to scrape()
+    if hasattr(app, "scrape"):
+        try:
+            return app.scrape(url, formats=["markdown"])
+        except TypeError:
+            try:
+                return app.scrape(url)
+            except Exception:
+                pass
+
+    # Legacy SDK: scrape_url()
+    if hasattr(app, "scrape_url"):
+        try:
+            return app.scrape_url(url, formats=["markdown"])
+        except TypeError:
+            pass
+        try:
+            return app.scrape_url(url, params={"formats": ["markdown"]})
+        except TypeError:
+            pass
+        return app.scrape_url(url)
+
+    raise AttributeError(
+        f"Neither scrape() nor scrape_url() found on {type(app).__name__} "
+        f"(firecrawl-py SDK). Check SDK version."
+    )
 
 
 def scrape_url_raising(url: str) -> dict:
@@ -176,16 +213,14 @@ def scrape_url_raising(url: str) -> dict:
         raise RuntimeError("FIRECRAWL_API_KEY is not set on the server. Add it to Render environment variables.")
 
     try:
-        from firecrawl import FirecrawlApp
         import firecrawl as _fc_mod
         version = getattr(_fc_mod, "__version__", "unknown")
     except ImportError:
         raise RuntimeError("firecrawl-py package not installed on server.")
 
-    try:
-        app = FirecrawlApp(api_key=api_key)
-    except Exception as e:
-        raise RuntimeError(f"Firecrawl init failed: {e}")
+    app = _get_app()
+    if not app:
+        raise RuntimeError(f"Firecrawl client init failed (SDK v{version}). Check server logs.")
 
     try:
         result = _call_scrape(app, url)
