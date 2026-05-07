@@ -318,8 +318,8 @@ async def classify_and_analyze_article(article, source_hint: str = "") -> dict:
         try:
             from usage_tracker import track_usage
             await track_usage(response.usage, MODEL)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"track_usage (classify) failed: {e}")
 
         # Parse JSON from response
         response_text = response.content[0].text
@@ -459,8 +459,8 @@ async def generate_daily_brief_ai(items: list, date: str) -> dict:
         try:
             from usage_tracker import track_usage
             await track_usage(response.usage, MODEL)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"track_usage (brief) failed: {e}")
 
         response_text = response.content[0].text
         json_start = response_text.find('{')

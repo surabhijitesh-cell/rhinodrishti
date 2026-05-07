@@ -76,6 +76,60 @@ async def get_today_usage():
     }
 
 
+@router.get("/admin/api-usage/debug")
+async def debug_usage():
+    """
+    Diagnostic endpoint — call this to verify usage tracking is working.
+    Returns collection stats, the 5 most recent documents, and does a test write.
+    """
+    import traceback
+    result = {
+        "collection_count": 0,
+        "recent_docs": [],
+        "test_write": None,
+        "test_write_error": None,
+    }
+
+    # Count all docs in the collection
+    try:
+        result["collection_count"] = await db.api_usage.count_documents({})
+    except Exception as e:
+        result["count_error"] = str(e)
+
+    # Fetch the 5 most recent docs
+    try:
+        docs = await db.api_usage.find(
+            {}, {"_id": 0}
+        ).sort("last_updated", -1).to_list(5)
+        result["recent_docs"] = docs
+    except Exception as e:
+        result["fetch_error"] = str(e)
+
+    # Attempt a test write — writes a sentinel document and immediately deletes it
+    try:
+        from datetime import datetime, timezone
+        test_doc = {
+            "date": "debug-test",
+            "hour": 0,
+            "model": "debug",
+            "input_tokens": 1,
+            "output_tokens": 1,
+            "cache_read_tokens": 0,
+            "cache_write_tokens": 0,
+            "call_count": 1,
+            "cost_usd": 0.0,
+            "last_updated": datetime.now(timezone.utc).isoformat(),
+        }
+        ins = await db.api_usage.insert_one(test_doc)
+        await db.api_usage.delete_one({"_id": ins.inserted_id})
+        result["test_write"] = "OK — insert+delete succeeded"
+    except Exception as e:
+        result["test_write_error"] = str(e)
+        result["test_write_traceback"] = traceback.format_exc()
+
+    return result
+
+
 @router.post("/admin/api-usage/threshold")
 async def set_threshold(body: ThresholdBody):
     """Update the daily cost alert threshold."""

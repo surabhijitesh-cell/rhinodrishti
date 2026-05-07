@@ -449,6 +449,14 @@ async def _run_contextual_analysis(doc_id: str):
             messages=[{"role": "user", "content": user_prompt}],
             extra_headers={"anthropic-beta": "prompt-caching-2024-07-31"},
         )
+
+        # Track token usage and cost
+        try:
+            from usage_tracker import track_usage
+            await track_usage(response.usage, MODEL)
+        except Exception as e:
+            logger.warning(f"track_usage (documents) failed: {e}")
+
         response_text = response.content[0].text
 
         # Robust JSON extraction — handles markdown fences, trailing commas,
