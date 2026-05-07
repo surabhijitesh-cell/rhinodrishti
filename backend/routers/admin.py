@@ -4,13 +4,15 @@ Admin-only endpoints for Rhino Drishti.
 GET  /api/admin/api-usage          — daily usage + cost for last 7 days
 GET  /api/admin/api-usage/today    — today's cost + alert status
 POST /api/admin/api-usage/threshold — set daily cost alert threshold (USD)
+GET  /api/admin/api-usage/debug    — collection stats + write test
+POST /api/admin/api-usage/force-test — directly call track_usage with mock data
 """
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from datetime import datetime, timezone
-from usage_tracker import get_daily_summary, get_today_cost_usd, USD_TO_INR
-from shared import db
+from usage_tracker import get_daily_summary, get_today_cost_usd, USD_TO_INR, track_usage
+from shared import db, logger
 
 router = APIRouter()
 
@@ -79,53 +81,87 @@ async def get_today_usage():
 @router.get("/admin/api-usage/debug")
 async def debug_usage():
     """
-    Diagnostic endpoint — call this to verify usage tracking is working.
-    Returns collection stats, the 5 most recent documents, and does a test write.
+    Diagnostic endpoint — full pipeline write test.
+    Tests: raw insert, upsert/$inc (same as track_usage), direct track_usage call.
     """
     import traceback
     result = {
         "collection_count": 0,
         "recent_docs": [],
-        "test_write": None,
-        "test_write_error": None,
+        "test_insert": None,
+        "test_upsert_inc": None,
+        "test_track_usage": None,
+        "errors": {},
     }
 
-    # Count all docs in the collection
+    # 1. Count docs
     try:
         result["collection_count"] = await db.api_usage.count_documents({})
     except Exception as e:
-        result["count_error"] = str(e)
+        result["errors"]["count"] = str(e)
 
-    # Fetch the 5 most recent docs
+    # 2. Recent docs
     try:
-        docs = await db.api_usage.find(
-            {}, {"_id": 0}
-        ).sort("last_updated", -1).to_list(5)
+        docs = await db.api_usage.find({}, {"_id": 0}).sort("last_updated", -1).to_list(5)
         result["recent_docs"] = docs
     except Exception as e:
-        result["fetch_error"] = str(e)
+        result["errors"]["fetch"] = str(e)
 
-    # Attempt a test write — writes a sentinel document and immediately deletes it
+    # 3. Test raw insert+delete (same as before)
     try:
-        from datetime import datetime, timezone
-        test_doc = {
-            "date": "debug-test",
-            "hour": 0,
-            "model": "debug",
-            "input_tokens": 1,
-            "output_tokens": 1,
-            "cache_read_tokens": 0,
-            "cache_write_tokens": 0,
-            "call_count": 1,
-            "cost_usd": 0.0,
+        ins = await db.api_usage.insert_one({
+            "date": "debug-test", "hour": 0, "model": "debug",
+            "input_tokens": 1, "output_tokens": 1,
+            "cache_read_tokens": 0, "cache_write_tokens": 0,
+            "call_count": 1, "cost_usd": 0.0,
             "last_updated": datetime.now(timezone.utc).isoformat(),
-        }
-        ins = await db.api_usage.insert_one(test_doc)
+        })
         await db.api_usage.delete_one({"_id": ins.inserted_id})
-        result["test_write"] = "OK — insert+delete succeeded"
+        result["test_insert"] = "OK"
     except Exception as e:
-        result["test_write_error"] = str(e)
-        result["test_write_traceback"] = traceback.format_exc()
+        result["errors"]["insert"] = str(e)
+
+    # 4. Test exact upsert/$inc operation (same path as track_usage)
+    try:
+        now = datetime.now(timezone.utc)
+        ur = await db.api_usage.update_one(
+            {"date": "debug-upsert-test", "hour": 0, "model": "debug"},
+            {
+                "$inc": {
+                    "input_tokens": 100, "output_tokens": 50,
+                    "cache_read_tokens": 0, "cache_write_tokens": 0,
+                    "call_count": 1, "cost_usd": 0.00005,
+                },
+                "$set": {"last_updated": now.isoformat()},
+                "$setOnInsert": {"date": "debug-upsert-test", "hour": 0, "model": "debug"},
+            },
+            upsert=True,
+        )
+        await db.api_usage.delete_one({"date": "debug-upsert-test"})
+        result["test_upsert_inc"] = f"OK — upserted={ur.upserted_id is not None}, modified={ur.modified_count}"
+    except Exception as e:
+        result["errors"]["upsert_inc"] = str(e)
+        result["errors"]["upsert_inc_trace"] = traceback.format_exc()
+
+    # 5. Call track_usage directly with a mock usage object, leave it in DB
+    #    so the widget can display it. Date marked "debug" so it's identifiable.
+    try:
+        class MockUsage:
+            input_tokens = 500
+            output_tokens = 200
+            cache_read_input_tokens = 0
+            cache_creation_input_tokens = 0
+
+        before = await db.api_usage.count_documents({})
+        await track_usage(MockUsage(), "claude-3-haiku-20240307")
+        after = await db.api_usage.count_documents({})
+        result["test_track_usage"] = f"OK — count before={before} after={after} (delta={after-before})"
+    except Exception as e:
+        result["errors"]["track_usage"] = str(e)
+        result["errors"]["track_usage_trace"] = traceback.format_exc()
+
+    # 6. Re-read count after all tests
+    result["collection_count_after"] = await db.api_usage.count_documents({})
 
     return result
 
