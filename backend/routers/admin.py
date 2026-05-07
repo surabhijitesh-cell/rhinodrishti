@@ -4,19 +4,19 @@ Admin-only endpoints for Rhino Drishti.
 GET  /api/admin/api-usage          — daily usage + cost for last 7 days
 GET  /api/admin/api-usage/today    — today's cost + alert status
 POST /api/admin/api-usage/threshold — set daily cost alert threshold (USD)
-GET  /api/admin/api-usage/debug    — collection stats + write test
-POST /api/admin/api-usage/force-test — directly call track_usage with mock data
+GET  /api/admin/api-usage/debug    — collection stats + full write-path test
 """
 
-from fastapi import APIRouter, Depends, HTTPException
+import traceback
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from datetime import datetime, timezone
-from usage_tracker import get_daily_summary, get_today_cost_usd, USD_TO_INR, track_usage
-from shared import db, logger
+from usage_tracker import get_daily_summary, get_today_cost_usd, USD_TO_INR
+from shared import db
 
 router = APIRouter()
 
-DEFAULT_ALERT_THRESHOLD_USD = 15.0   # alert when daily cost exceeds $15
+DEFAULT_ALERT_THRESHOLD_USD = 15.0
 
 
 class ThresholdBody(BaseModel):
@@ -30,29 +30,23 @@ async def _get_threshold() -> float:
 
 @router.get("/admin/api-usage")
 async def get_api_usage(days: int = 7):
-    """Return daily usage summary for the last N days."""
     daily = await get_daily_summary(days)
     threshold_usd = await _get_threshold()
     return {
         "daily": daily,
         "threshold_usd": threshold_usd,
         "threshold_inr": round(threshold_usd * USD_TO_INR, 2),
-        "usd_to_inr":    USD_TO_INR,
+        "usd_to_inr": USD_TO_INR,
     }
 
 
 @router.get("/admin/api-usage/today")
 async def get_today_usage():
-    """
-    Today's cost and whether the alert threshold is exceeded.
-    Polled by the frontend every 5 minutes to trigger alert popups.
-    """
     threshold_usd = await _get_threshold()
-    today_usd     = await get_today_cost_usd()
-    today_inr     = round(today_usd * USD_TO_INR, 2)
-    alert         = today_usd >= threshold_usd
+    today_usd = await get_today_cost_usd()
+    today_inr = round(today_usd * USD_TO_INR, 2)
+    alert = today_usd >= threshold_usd
 
-    # Also pull today's hourly breakdown for the spark-line
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     hourly_raw = await db.api_usage.find(
         {"date": today},
@@ -67,24 +61,25 @@ async def get_today_usage():
     ]
 
     return {
-        "date":          today,
-        "today_usd":     today_usd,
-        "today_inr":     today_inr,
+        "date": today,
+        "today_usd": today_usd,
+        "today_inr": today_inr,
         "threshold_usd": threshold_usd,
         "threshold_inr": round(threshold_usd * USD_TO_INR, 2),
-        "alert":         alert,
-        "pct_of_limit":  round((today_usd / threshold_usd) * 100, 1) if threshold_usd else 0,
-        "hourly":        hourly,
+        "alert": alert,
+        "pct_of_limit": round((today_usd / threshold_usd) * 100, 1) if threshold_usd else 0,
+        "hourly": hourly,
     }
 
 
 @router.get("/admin/api-usage/debug")
 async def debug_usage():
     """
-    Diagnostic endpoint — full pipeline write test.
-    Tests: raw insert, upsert/$inc (same as track_usage), direct track_usage call.
+    Full diagnostic. Tests:
+      1. Raw insert+delete
+      2. Exact upsert/$inc path (same as track_usage)
+      3. Direct track_usage() call with MockUsage — leaves 1 real record in DB
     """
-    import traceback
     result = {
         "collection_count": 0,
         "recent_docs": [],
@@ -94,7 +89,7 @@ async def debug_usage():
         "errors": {},
     }
 
-    # 1. Count docs
+    # 1. Count
     try:
         result["collection_count"] = await db.api_usage.count_documents({})
     except Exception as e:
@@ -107,7 +102,7 @@ async def debug_usage():
     except Exception as e:
         result["errors"]["fetch"] = str(e)
 
-    # 3. Test raw insert+delete (same as before)
+    # 3. Raw insert+delete
     try:
         ins = await db.api_usage.insert_one({
             "date": "debug-test", "hour": 0, "model": "debug",
@@ -121,7 +116,7 @@ async def debug_usage():
     except Exception as e:
         result["errors"]["insert"] = str(e)
 
-    # 4. Test exact upsert/$inc operation (same path as track_usage)
+    # 4. Exact upsert/$inc (same operation as track_usage)
     try:
         now = datetime.now(timezone.utc)
         ur = await db.api_usage.update_one(
@@ -138,14 +133,17 @@ async def debug_usage():
             upsert=True,
         )
         await db.api_usage.delete_one({"date": "debug-upsert-test"})
-        result["test_upsert_inc"] = f"OK — upserted={ur.upserted_id is not None}, modified={ur.modified_count}"
+        result["test_upsert_inc"] = (
+            f"OK — upserted={ur.upserted_id is not None}, modified={ur.modified_count}"
+        )
     except Exception as e:
         result["errors"]["upsert_inc"] = str(e)
         result["errors"]["upsert_inc_trace"] = traceback.format_exc()
 
-    # 5. Call track_usage directly with a mock usage object, leave it in DB
-    #    so the widget can display it. Date marked "debug" so it's identifiable.
+    # 5. Call track_usage() directly — leaves 1 real record so widget shows data
     try:
+        from usage_tracker import track_usage
+
         class MockUsage:
             input_tokens = 500
             output_tokens = 200
@@ -155,20 +153,19 @@ async def debug_usage():
         before = await db.api_usage.count_documents({})
         await track_usage(MockUsage(), "claude-3-haiku-20240307")
         after = await db.api_usage.count_documents({})
-        result["test_track_usage"] = f"OK — count before={before} after={after} (delta={after-before})"
+        result["test_track_usage"] = (
+            f"OK — count before={before} after={after} (delta={after - before})"
+        )
     except Exception as e:
         result["errors"]["track_usage"] = str(e)
         result["errors"]["track_usage_trace"] = traceback.format_exc()
 
-    # 6. Re-read count after all tests
     result["collection_count_after"] = await db.api_usage.count_documents({})
-
     return result
 
 
 @router.post("/admin/api-usage/threshold")
 async def set_threshold(body: ThresholdBody):
-    """Update the daily cost alert threshold."""
     if body.threshold_usd <= 0:
         raise HTTPException(status_code=422, detail="threshold_usd must be > 0")
     await db.admin_settings.update_one(
