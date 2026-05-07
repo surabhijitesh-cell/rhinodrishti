@@ -11,7 +11,7 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import axios from "axios";
-import toast from "react-hot-toast";
+import { toast } from "sonner";
 import {
   DollarSign, AlertTriangle, TrendingUp, Settings2,
   RefreshCw, Zap, CheckCircle2,
@@ -98,10 +98,8 @@ export default function ApiUsageWidget({ api }) {
       if (t.alert && !alertFiredRef.current) {
         alertFiredRef.current = true;
         toast.error(
-          `⚠ Anthropic API spend alert!\n` +
-          `Today: ₹${t.today_inr} ($${t.today_usd}) — ${t.pct_of_limit}% of your $${t.threshold_usd} daily limit.\n` +
-          `Review usage in the API Usage panel.`,
-          { duration: 12000, style: { maxWidth: 420 } }
+          `⚠ Anthropic API spend alert! Today: ₹${t.today_inr} ($${t.today_usd}) — ${t.pct_of_limit}% of your $${t.threshold_usd} daily limit. Review usage in the API Usage panel.`,
+          { duration: 12000 }
         );
       }
       // Reset alert flag if cost drops below threshold (e.g. new day)
