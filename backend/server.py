@@ -145,11 +145,8 @@ async def startup():
         logger.info("Empty database - triggering initial fetch...")
         asyncio.create_task(fetch_and_process_news())
     else:
-        logger.info(f"Database has {item_count} items. Skipping startup fetch (scheduler will handle next cycle).")
         unprocessed = await intelligence_col.count_documents({"processed": False})
-        if unprocessed > 0:
-            logger.info(f"{unprocessed} unprocessed items found - triggering retry...")
-            asyncio.create_task(analyze_unprocessed_items())
+        logger.info(f"Database has {item_count} items ({unprocessed} unprocessed). Scheduler handles fetch/retry cycles.")
 
     # One-time repair: un-archive any items younger than 7 days that were
     # incorrectly archived before the freshness guard was added to fading_engine.
