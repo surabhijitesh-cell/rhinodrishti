@@ -403,26 +403,10 @@ async def classify_and_analyze_article(article, source_hint: str = "") -> dict:
 
     except Exception as e:
         logger.error(f"AI classification failed: {e}")
-        # Return article with basic classification
-        return {
-            "title": title,
-            "source": article.get("source", "Unknown"),
-            "source_url": article.get("source_url", ""),
-            "published_at": article.get("published_at", ""),
-            "raw_content": content[:5000],
-            "ai_summary": content[:200],
-            "why_it_matters": "Requires manual review.",
-            "potential_impact": "Assessment pending.",
-            "attention_level": "Monitor",
-            "state": "",
-            "threat_category": "",
-            "severity": "low",
-            "is_cross_border": False,
-            "countries_involved": [],
-            "is_relevant": True,
-            "processed": False,
-            "tags": ["unprocessed"]
-        }
+        # Re-raise so _classify_with_retry_v2 can retry with back-off.
+        # Callers that need a fallback (fetch_and_process_news) get None after
+        # all retries are exhausted, and handle it via _make_raw_doc.
+        raise
 
 
 async def generate_daily_brief_ai(items: list, date: str) -> dict:
