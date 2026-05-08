@@ -288,31 +288,14 @@ async def shutdown():
 # ============================================================
 # CORS
 # ============================================================
-cors_origins_str = os.environ.get('CORS_ORIGINS', '*')
-if cors_origins_str.strip() == '*':
-    # Wildcard mode — allow any origin (no credentials)
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=["*"],
-        allow_credentials=False,
-        allow_methods=["*"],
-        allow_headers=["*"],
-        expose_headers=["Content-Disposition"],
-    )
-else:
-    origins = [o.strip() for o in cors_origins_str.split(',') if o.strip()]
-    # Always include known deployment domains
-    for domain in ["https://rhinodrishti.vercel.app", "https://www.rhinodrishti.vercel.app"]:
-        if domain not in origins:
-            origins.append(domain)
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=origins,
-        # Also match ALL Vercel preview/branch URLs via regex:
-        # e.g. rhinodrishti-abc123-team.vercel.app
-        allow_origin_regex=r"https://rhinodrishti.*\.vercel\.app",
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-        expose_headers=["Content-Disposition"],
-    )
+# Allow all origins unconditionally — auth uses JWT tokens in Authorization
+# header, not cookies, so allow_credentials=False is safe and allow_origins=["*"]
+# covers all Vercel preview URLs, custom domains, and local development.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+    expose_headers=["Content-Disposition"],
+)
