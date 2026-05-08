@@ -10,7 +10,7 @@
  *   1. Inline in Dashboard SourceScanners (compact=true, onClose provided)
  *   2. Pinned at top of Dashboard (compact=false, pinned=true)
  */
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import axios from "axios";
 import {
   RefreshCw, ExternalLink, Heart, Repeat2, Loader2,
@@ -348,6 +348,7 @@ export default function SocialMediaFeedWidget({
   const [error, setError]         = useState(null);
   const [statusNote, setStatusNote] = useState(null);   // from /social/status endpoint
   const [twitterFreeTier, setTwitterFreeTier] = useState(false);
+  const autoTriggeredRef = useRef(false);  // fire once per mount, not on every refresh
 
   // DIRECT mode  → raw /social-feeds/{type} endpoint (no AI filter)
   // CURATED mode → /intelligence?source_type=X (AI-classified only)
@@ -405,6 +406,38 @@ export default function SocialMediaFeedWidget({
     return () => clearInterval(id);
   }, [load]);
 
+  // Auto-trigger fetch when data is stale (firecrawl only) ───────────────────
+  // Fires once per widget mount. Triggers if:
+  //   a) no items at all, OR
+  //   b) newest item's fetched_at is > 3 hours old
+  // This catches cold starts where the scheduler hasn't run yet.
+  useEffect(() => {
+    if (sourceType !== "firecrawl") return;
+    if (autoTriggeredRef.current) return;
+    if (loading) return;   // wait for first load to complete
+
+    const THREE_HOURS_MS = 3 * 60 * 60 * 1000;
+    const newestFetch = items.reduce((best, it) => {
+      const t = new Date(it.fetched_at || it.published_at || 0).getTime();
+      return t > best ? t : best;
+    }, 0);
+
+    const isStale = newestFetch === 0 || (Date.now() - newestFetch) > THREE_HOURS_MS;
+
+    if (isStale) {
+      autoTriggeredRef.current = true;
+      setTriggering(true);
+      axios.post(`${api}/social/fetch-all`).catch(() => {});
+      // Poll after delays typical for firecrawl (can take 60–180s)
+      [15000, 40000, 80000, 140000].forEach((d, i) => setTimeout(() => {
+        load(true);
+        if (i === 3) setTriggering(false);
+      }, d));
+    } else {
+      autoTriggeredRef.current = true; // data is fresh, no need to trigger
+    }
+  }, [loading, items, sourceType, api, load]);
+
   const fetchNow = async () => {
     setTriggering(true);
     try {
@@ -423,7 +456,7 @@ export default function SocialMediaFeedWidget({
   const filtered = useMemo(() => {
     const windowMs = { "24h": 86400000, "7d": 604800000, "30d": 2592000000 }[timeWindow] || null;
     const cutoff   = windowMs ? Date.now() - windowMs : null;
-    return items.filter(it => {
+    const result = items.filter(it => {
       const t = cfg.getTime(it);
       if (cutoff && t && new Date(t).getTime() < cutoff) return false;
       if (filterText) {
@@ -433,6 +466,15 @@ export default function SocialMediaFeedWidget({
       }
       return true;
     });
+    // Sort: newest fetched_at first (falls back to published_at).
+    // For firecrawl this shows the latest crawl's items at the top
+    // regardless of the article's original publication date.
+    result.sort((a, b) => {
+      const ta = new Date(a.fetched_at || a.published_at || 0).getTime();
+      const tb = new Date(b.fetched_at || b.published_at || 0).getTime();
+      return tb - ta;
+    });
+    return result;
   }, [items, filterText, timeWindow, cfg]);
 
   // Pipeline stats (direct mode only — meaningful since raw items have processed flag)
