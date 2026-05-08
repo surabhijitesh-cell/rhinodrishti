@@ -115,9 +115,58 @@ async def initialize_sources():
     logger.info(f"RSS sources synced: {count} total ({len(RSS_SOURCES)} configured)")
 
 
+async def _deferred_init(item_count: int):
+    """
+    Heavy startup work deferred to a background task so the startup
+    handler returns fast and uvicorn can bind its port within Render's
+    port-scan window (~5 s).  All operations here are non-critical for
+    the first request.
+    """
+    # Source seeding (upserts — safe to run repeatedly)
+    try:
+        await seed_firecrawl_defaults(db)
+        await seed_twitter_defaults(db)
+        await seed_youtube_defaults(db)
+        await seed_telegram_defaults(db)
+    except Exception as e:
+        logger.warning(f"Deferred seed failed: {e}")
+
+    # Initial fetch only when DB is truly empty
+    if item_count == 0:
+        logger.info("Empty database — triggering initial fetch…")
+        await fetch_and_process_news()
+
+    # One-time archive repair (update_many on 23k docs can take 5-10 s)
+    try:
+        from datetime import timedelta
+        seven_days_ago = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+        r = await intelligence_col.update_many(
+            {"is_archived": True, "published_at": {"$gte": seven_days_ago}, "pinned": {"$ne": True}},
+            {"$set": {"is_archived": False, "visibility_band": "fading"}},
+        )
+        if r.modified_count:
+            logger.info(f"Deferred repair: un-archived {r.modified_count} fresh items (< 7 days old)")
+    except Exception as e:
+        logger.warning(f"Deferred archive repair failed: {e}")
+
+    # One-time cluster-primary repair (aggregates 3000+ clusters — slow)
+    try:
+        from fusion_engine import repair_cluster_primaries
+        stats = await repair_cluster_primaries(db)
+        if stats.get("primaries_reassigned", 0) > 0:
+            logger.info(f"Deferred cluster repair: reassigned {stats['primaries_reassigned']} primaries "
+                        f"(checked {stats.get('clusters_checked', 0)} clusters)")
+    except Exception as e:
+        logger.warning(f"Deferred cluster repair failed: {e}")
+
+
 @app.on_event("startup")
 async def startup():
-    # Auto-seed admin user if no users exist
+    """
+    KEEP THIS FAST — Render kills the process if the port is not open
+    within ~5 s of startup.  Heavy work goes into _deferred_init().
+    """
+    # Admin user seed (one count + maybe one insert — <100 ms)
     user_count = await db.users.count_documents({})
     if user_count == 0:
         from utils.auth import hash_password
@@ -135,47 +184,16 @@ async def startup():
         await db.users.insert_one(admin_doc)
         logger.info("Auto-seeded admin user (admin / Admin@2026!) — change password after first login")
 
+    # RSS source sync (upserts ~95 docs — <2 s, needed before scheduler fires)
     await initialize_sources()
-    await seed_firecrawl_defaults(db)
-    await seed_twitter_defaults(db)
-    await seed_youtube_defaults(db)
-    await seed_telegram_defaults(db)
+
+    # DB state log (two counts — <200 ms)
     item_count = await intelligence_col.count_documents({})
-    if item_count == 0:
-        logger.info("Empty database - triggering initial fetch...")
-        asyncio.create_task(fetch_and_process_news())
-    else:
-        unprocessed = await intelligence_col.count_documents({"processed": False})
-        logger.info(f"Database has {item_count} items ({unprocessed} unprocessed). Scheduler handles fetch/retry cycles.")
+    unprocessed  = await intelligence_col.count_documents({"processed": False})
+    logger.info(f"Database: {item_count} items ({unprocessed} unprocessed). Scheduler handles cycles.")
 
-    # One-time repair: un-archive any items younger than 7 days that were
-    # incorrectly archived before the freshness guard was added to fading_engine.
-    try:
-        from datetime import datetime, timezone, timedelta
-        seven_days_ago = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
-        repair_result = await intelligence_col.update_many(
-            {"is_archived": True, "published_at": {"$gte": seven_days_ago}, "pinned": {"$ne": True}},
-            {"$set": {"is_archived": False, "visibility_band": "fading"}},
-        )
-        if repair_result.modified_count:
-            logger.info(f"Startup repair: un-archived {repair_result.modified_count} fresh items (< 7 days old)")
-    except Exception as e:
-        logger.warning(f"Startup archive repair failed: {e}")
-
-    # One-time repair: re-assign cluster primaries using recency-first logic.
-    # Previously pick_primary sorted by summary length, causing old items to stay as
-    # cluster heads while fresh articles were hidden.  This re-assigns primaries
-    # within all clusters formed in the last 30 days.
-    try:
-        from fusion_engine import repair_cluster_primaries
-        repair_stats = await repair_cluster_primaries(db)
-        if repair_stats.get("primaries_reassigned", 0) > 0:
-            logger.info(
-                f"Startup cluster repair: reassigned {repair_stats['primaries_reassigned']} "
-                f"cluster primaries to most-recent items (checked {repair_stats.get('clusters_checked', 0)} clusters)"
-            )
-    except Exception as e:
-        logger.warning(f"Startup cluster primary repair failed: {e}")
+    # Defer all slow work so startup returns and port binds immediately
+    asyncio.create_task(_deferred_init(item_count))
 
     try:
         from apscheduler.schedulers.asyncio import AsyncIOScheduler
