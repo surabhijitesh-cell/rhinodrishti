@@ -1,8 +1,10 @@
 import { useState } from "react";
+import axios from "axios";
+import { toast } from "sonner";
 import {
   Target, MapPin, Users, Package, Shield, AlertTriangle,
   Wifi, Building, Clock, ExternalLink, ChevronDown, ChevronUp,
-  Flag, TrendingUp, Radar, Layers, Trash2
+  Flag, TrendingUp, Radar, Layers, Trash2, RefreshCw,
 } from "lucide-react";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
@@ -113,6 +115,19 @@ export default function IntelligenceCard({ item, compact = false, api, feedbackD
   const [expanded, setExpanded] = useState(false);
   const [sourcesExpanded, setSourcesExpanded] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [reprocessing, setReprocessing] = useState(false);
+
+  const handleReprocess = async (e) => {
+    e.stopPropagation();
+    setReprocessing(true);
+    try {
+      await axios.post(`${api}/intelligence/${item.id}/reprocess`);
+      toast.success("Queued for re-classification — severity will update within 30s");
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Re-queue failed");
+    }
+    setTimeout(() => setReprocessing(false), 5000);
+  };
   const ThreatIcon = THREAT_ICONS[item.threat_category] || THREAT_ICONS[item.tags?.[0]] || AlertTriangle;
   const severityClass = SEVERITY_CLASSES[item.severity] || "severity-low";
   const borderClass = CARD_BORDER_CLASSES[item.severity] || "intel-card-low";
@@ -220,6 +235,20 @@ export default function IntelligenceCard({ item, compact = false, api, feedbackD
                  item.threat_trajectory === "NEW_THREAT"    ? "NEW" :
                  item.threat_trajectory === "STABLE"        ? "STABLE" : ""}
               </Badge>
+            </Tip>
+          )}
+
+          {/* Reprocess */}
+          {api && (
+            <Tip text="Re-run AI classification on this item (e.g. after severity rule changes)" side="left">
+              <button
+                onClick={handleReprocess}
+                disabled={reprocessing}
+                className="p-1 text-muted-foreground/40 hover:text-violet-400 transition-colors mt-0.5"
+                data-testid={`reprocess-intel-${item.id}`}
+              >
+                <RefreshCw size={12} className={reprocessing ? "animate-spin text-violet-400" : ""} />
+              </button>
             </Tip>
           )}
 

@@ -634,6 +634,37 @@ async def force_accept_item(item_id: str):
     return {"message": "Item promoted to intelligence feed", "id": item_id, "severity": final_sev}
 
 
+@router.post("/intelligence/{item_id}/reprocess")
+async def reprocess_item(item_id: str, background_tasks: BackgroundTasks):
+    """Mark a processed item for re-classification by the AI pipeline.
+
+    Resets processed=False so the next analyze_unprocessed_items cycle
+    picks it up again.  Useful when classification rules change (e.g.
+    severity thresholds) and you want a specific item re-evaluated.
+    """
+    existing = await intelligence_col.find_one({"id": item_id}, {"_id": 0, "title": 1})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Item not found")
+
+    await intelligence_col.update_one(
+        {"id": item_id},
+        {"$set": {"processed": False, "reprocess_requested_at": datetime.now(timezone.utc).isoformat()}},
+    )
+    invalidate_stats_cache()
+
+    # Kick off a classification cycle immediately (don't wait for 15-min scheduler)
+    async def _run_classify():
+        try:
+            from routers.pipeline import analyze_unprocessed_items
+            await analyze_unprocessed_items()
+        except Exception as e:
+            logger.warning(f"Reprocess background classify failed: {e}")
+
+    background_tasks.add_task(_run_classify)
+
+    return {"message": "Item queued for re-classification", "id": item_id, "title": existing.get("title", "")}
+
+
 @router.get("/fusion/stats")
 async def get_fusion_stats():
     from datetime import timedelta
