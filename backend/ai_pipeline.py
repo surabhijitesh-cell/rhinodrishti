@@ -81,6 +81,9 @@ Assign an INTELLIGENCE PRIORITY SCORE (0–100):
 40–59 → MEDIUM (Situational awareness)
 <40 → LOW (Background noise)
 
+IMPORTANT: The "severity" field in your JSON output MUST match the priority_score band above.
+If priority_score >= 80, severity MUST be "critical". No exceptions.
+
 Boost score if:
 + Cross-border involvement (+10)
 + China / Pakistan presence (+15)
@@ -336,17 +339,19 @@ async def classify_and_analyze_article(article, source_hint: str = "") -> dict:
         display_title = analysis.get("title_english", title) or title
         priority_score = analysis.get("priority_score", 30)
         
-        # Determine severity from priority_score if not directly provided
-        severity = analysis.get("severity", "")
-        if not severity or severity not in ["critical", "high", "medium", "low"]:
-            if priority_score >= 80:
-                severity = "critical"
-            elif priority_score >= 60:
-                severity = "high"
-            elif priority_score >= 40:
-                severity = "medium"
-            else:
-                severity = "low"
+        # Severity always derived from priority_score — never trust AI's severity
+        # field directly, because the AI frequently outputs severity="high" even
+        # when it sets priority_score=100, creating inconsistent classifications.
+        # priority_score is the authoritative numeric measure; severity is just
+        # its categorical label.
+        if priority_score >= 80:
+            severity = "critical"
+        elif priority_score >= 60:
+            severity = "high"
+        elif priority_score >= 40:
+            severity = "medium"
+        else:
+            severity = "low"
         
         # Get primary region from regions array
         regions = analysis.get("regions", [])
