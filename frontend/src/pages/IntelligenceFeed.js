@@ -17,6 +17,7 @@ import { toast } from "sonner";
 
 const STATES = [
   "Assam", "Meghalaya", "Mizoram", "Manipur", "Arunachal Pradesh", "Tripura",
+  "Nagaland", "Sikkim", "West Bengal",
   "Bangladesh", "Myanmar"
 ];
 const THREAT_TYPES = [

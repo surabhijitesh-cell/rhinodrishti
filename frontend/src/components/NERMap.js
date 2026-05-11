@@ -101,6 +101,30 @@ const LOCATION_COORDS = {
   "Khowai":        [24.072, 91.614],
   // ── Sikkim ──
   "Gangtok":       [27.339, 88.612],
+  // ── West Bengal (Siliguri Corridor / Chicken's Neck) ──
+  "Siliguri":      [26.717, 88.429],
+  "Jalpaiguri":    [26.542, 88.729],
+  "Cooch Behar":   [26.324, 89.446],
+  "Alipurduar":    [26.486, 89.526],
+  "Darjeeling":    [27.036, 88.263],
+  "Kalimpong":     [27.059, 88.469],
+  "Kurseong":      [26.886, 88.278],
+  "Raiganj":       [25.621, 88.124],
+  "Islampur":      [26.260, 88.184],
+  "Siliguri Corridor": [26.717, 88.429],
+  "Chicken's Neck": [26.5, 88.5],
+  "Chickens Neck": [26.5, 88.5],
+  "Terai":         [26.8, 88.6],
+  // ── State name aliases (so item.state fallback always resolves) ──
+  "Tripura":           [23.8, 91.7],
+  "Assam":             [26.2, 92.5],
+  "Manipur":           [24.8, 93.9],
+  "Mizoram":           [23.2, 92.8],
+  "Nagaland":          [26.0, 94.5],
+  "Meghalaya":         [25.5, 91.3],
+  "Arunachal Pradesh": [28.0, 94.5],
+  "Sikkim":            [27.5, 88.5],
+  "West Bengal":       [24.5, 88.0],
   // ── Bangladesh ──
   "Dhaka":         [23.810, 90.413],
   "Chittagong":    [22.335, 91.834],
@@ -286,14 +310,25 @@ const InteractiveNERMap = memo(function InteractiveNERMap({
       { maxZoom: 12, opacity: 0, crossOrigin: true }
     );
 
+    // ── Layer 3: ESRI Reference / Boundaries overlay (district detail at high zoom) ──
+    // Shows district boundaries, city labels, and roads overlaid on the imagery.
+    const esriBoundaries = L.tileLayer(
+      "https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}",
+      { maxZoom: 12, opacity: 0, crossOrigin: true, pane: "overlayPane" }
+    );
+
     // Blend: show NASA Blue Marble at lower zoom, switch to ESRI detail when zoomed in
+    // District boundary overlay appears at zoom ≥ 9
     nasaBlueMarble.addTo(map);
     esriImagery.addTo(map);
+    esriBoundaries.addTo(map);
 
     map.on("zoomend", () => {
       const z = map.getZoom();
       nasaBlueMarble.setOpacity(z <= 7 ? 1.0 : 0.0);
       esriImagery.setOpacity(z >= 7 ? 1.0 : 0.0);
+      // District boundary reference layer — only visible when zoomed in enough
+      esriBoundaries.setOpacity(z >= 9 ? 0.75 : 0.0);
     });
 
     // ── Dark tactical vignette overlay ────────────────────────────────────────

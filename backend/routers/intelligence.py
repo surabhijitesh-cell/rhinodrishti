@@ -56,7 +56,7 @@ async def get_dashboard_stats():
             "tags": {"$nin": ["not_relevant", "unprocessed"]},
         },
         {"_id": 0}
-    ).sort("published_at", -1).limit(10).to_list(10)
+    ).sort("published_at", -1).limit(50).to_list(50)
 
     today = now.strftime("%Y-%m-%d")
     today_count = await intelligence_col.count_documents(

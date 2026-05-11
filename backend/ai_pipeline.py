@@ -13,7 +13,8 @@ from llm_client import get_client, MODEL
 
 CLASSIFICATION_PROMPT = """You are a SENIOR MILITARY INTELLIGENCE ANALYST specializing in:
 
-- India's North Eastern Region (Assam, Meghalaya, Mizoram, Manipur, Arunachal Pradesh, Tripura)
+- India's North Eastern Region (Assam, Meghalaya, Mizoram, Manipur, Arunachal Pradesh, Tripura, Nagaland, Sikkim)
+- West Bengal — especially the Siliguri Corridor (Chicken's Neck) connecting NER to mainland India
 - Bangladesh and Myanmar security dynamics
 - China (PLA) and Pakistan influence in South Asia
 - Hybrid warfare, information warfare, and cross-border threats
@@ -55,6 +56,13 @@ C. CROSS-BORDER & FOREIGN INFLUENCE:
 - PLA or Pakistan links with Bangladesh/Myanmar
 - Diplomatic or military engagements impacting India
 
+G. SILIGURI CORRIDOR / WEST BENGAL (HIGH PRIORITY):
+- Any activity in or affecting the Siliguri Corridor (Chicken's Neck), Jalpaiguri, Alipurduar, Cooch Behar, Darjeeling, Siliguri
+- Threats to the narrow land corridor connecting NE India to mainland India
+- Infrastructure (highways, railways, bridges) in the Terai / Dooars belt
+- Cross-border activity with Nepal, Bhutan, or Bangladesh near West Bengal
+- Chinese activities near Bhutan or Nepal that could affect corridor security
+
 D. SOCIETAL INSTABILITY / EARLY WARNING:
 - Tribal unrest or mobilization
 - Anti-minority incidents (especially anti-Hindu in Bangladesh)
@@ -89,6 +97,7 @@ Boost score if:
 + China / Pakistan presence (+15)
 + Military movement (+10)
 + Pattern or trend (not isolated event) (+5)
++ Siliguri Corridor / Chicken's Neck directly involved (+15)
 
 --------------------------------------------------
 STEP 3: CLASSIFICATION (MULTI-LABEL)
@@ -122,7 +131,7 @@ STEP 4: CONTEXTUAL INTELLIGENCE EXTRACTION
 
 Extract:
 
-1. REGION(S) affected (multi-select from: Assam, Meghalaya, Mizoram, Manipur, Arunachal Pradesh, Tripura, Bangladesh, Myanmar, Multiple)
+1. REGION(S) affected (multi-select from: Assam, Meghalaya, Mizoram, Manipur, Arunachal Pradesh, Tripura, Nagaland, Sikkim, West Bengal / Siliguri Corridor, Bangladesh, Myanmar, Multiple)
 2. CROSS-BORDER: Yes/No
 3. COUNTRIES involved (India, Bangladesh, Myanmar, China, Pakistan, USA, etc.)
 4. ACTORS involved (Army, BSF, BGB, Assam Rifles, PLA, insurgent groups, tribes, political parties etc.)

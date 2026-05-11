@@ -64,6 +64,47 @@ function ClickToScroll({ children, className = "" }) {
   );
 }
 
+// Wraps the Leaflet map so that scroll/zoom/drag are disabled until the user
+// first clicks inside it — prevents accidental pan while scrolling the page.
+function MapClickWrapper({ children }) {
+  const [activated, setActivated] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    if (!activated) return;
+    const handleOutside = (e) => {
+      if (ref.current && !ref.current.contains(e.target)) setActivated(false);
+    };
+    document.addEventListener("mousedown", handleOutside);
+    return () => document.removeEventListener("mousedown", handleOutside);
+  }, [activated]);
+
+  return (
+    <div ref={ref} style={{ position: "relative" }}>
+      {children}
+      {!activated && (
+        <div
+          onClick={() => setActivated(true)}
+          style={{
+            position: "absolute", inset: 0, zIndex: 1100,
+            cursor: "pointer", background: "transparent",
+            display: "flex", alignItems: "flex-end", justifyContent: "center",
+            paddingBottom: 8,
+          }}
+        >
+          <span style={{
+            fontFamily: "ui-monospace, monospace", fontSize: 9,
+            textTransform: "uppercase", letterSpacing: "0.15em",
+            color: "rgba(255,255,255,0.35)",
+            background: "rgba(0,0,0,0.45)", padding: "3px 8px",
+            borderRadius: 2, pointerEvents: "none",
+          }}>click to interact with map</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function StatBox({ label, value, icon: Icon, color, sub, testId, onClick }) {
   return (
     <div
@@ -964,14 +1005,16 @@ export default function Dashboard({ stats: propStats, api }) {
 
       {/* Map + Recent Alerts */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-        {/* NER Map */}
+        {/* NER Map — click-to-interact so page scroll isn't hijacked */}
         <div className="lg:col-span-7" data-tour="ner-map">
-          <NERMap
-            stateStats={stateStatsMap}
-            items={stats?.recent_critical || []}
-            navigate={navigate}
-            onStateClick={(state) => navigate(`/feed?state=${encodeURIComponent(state)}`)}
-          />
+          <MapClickWrapper>
+            <NERMap
+              stateStats={stateStatsMap}
+              items={stats?.recent_critical || []}
+              navigate={navigate}
+              onStateClick={(state) => navigate(`/feed?state=${encodeURIComponent(state)}`)}
+            />
+          </MapClickWrapper>
         </div>
 
         {/* Recent Critical Alerts */}
