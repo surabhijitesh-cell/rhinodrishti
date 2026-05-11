@@ -698,6 +698,14 @@ async def generate_brief_for_date(date: str):
         cutoff_utc = cutoff_ist.astimezone(timezone.utc).isoformat()
         logger.info(f"Brief window (first brief): {cutoff_utc} -> now")
 
+    # ── Hard cap: brief window must never exceed 48 hours ────────────────────
+    # Without this cap, if a previous brief ran days ago (e.g. after a gap day),
+    # the window stretches back days and the brief surfaces stale items.
+    max_cutoff_utc = (now_utc - timedelta(hours=48)).isoformat()
+    if cutoff_utc < max_cutoff_utc:
+        logger.info(f"Brief: capping window from {cutoff_utc} to {max_cutoff_utc} (48 h max)")
+        cutoff_utc = max_cutoff_utc
+
     logger.info(f"Excluding {len(previous_item_ids)} items from previous briefs")
 
     # Title dedup helpers
@@ -774,8 +782,14 @@ async def generate_brief_for_date(date: str):
     ).sort([("priority_score", -1), ("published_at", -1)]).to_list(100)
 
     if len(critical_high_items) < 5:
-        logger.info(f"Brief: Only {len(critical_high_items)} items in time window, expanding")
-        fallback_filter = {"processed": True}
+        logger.info(f"Brief: Only {len(critical_high_items)} items in time window, expanding to 7d")
+        # Fallback still respects a maximum 7-day window so the brief never
+        # surfaces items older than one week.
+        fallback_cutoff = (now_utc - timedelta(days=7)).isoformat()
+        fallback_filter = {
+            "processed": True,
+            "published_at": {"$gte": fallback_cutoff},
+        }
         if previous_item_ids:
             fallback_filter["id"] = {"$nin": list(previous_item_ids)}
         fallback_items = await intelligence_col.find(

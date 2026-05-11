@@ -169,13 +169,21 @@ SEVERITY_RANK = {"critical": 4, "high": 3, "medium": 2, "low": 1}
 
 
 def pick_primary(items: list) -> dict:
-    """Pick the best article as cluster primary: longest summary, then highest priority."""
+    """Pick the best article as cluster primary.
+
+    Priority order:
+      1. Most recent published_at  — ensures fresh news surfaces, not old primaries
+      2. Highest severity rank     — critical > high > medium > low
+      3. Highest priority_score    — AI confidence
+      4. Longest ai_summary        — richest analysis (tiebreaker only)
+    """
     if not items:
         return {}
     return max(items, key=lambda x: (
-        len(x.get("ai_summary", "") or ""),
-        x.get("priority_score", 0),
+        x.get("published_at", ""),                          # recency first
         SEVERITY_RANK.get(x.get("severity", "low"), 0),
+        x.get("priority_score", 0),
+        len(x.get("ai_summary", "") or ""),
     ))
 
 
@@ -285,32 +293,17 @@ async def find_and_merge_cluster(db, new_item: dict) -> dict:
 
         new_size = len(current_sources)
 
-        # Decide if new item should be primary (longer summary)
-        new_summary_len = len(new_item.get("ai_summary", "") or "")
-        primary_summary_len = len(primary.get("ai_summary", "") or "")
-
-        if new_summary_len > primary_summary_len:
-            # New item becomes primary
-            await intelligence_col.update_one(
-                {"id": primary.get("id")},
-                {"$set": {"is_cluster_primary": False}}
-            )
-            new_item["cluster_id"] = cluster_id
-            new_item["is_cluster_primary"] = True
-            new_item["cluster_sources"] = current_sources
-            new_item["cluster_size"] = new_size
-        else:
-            # Existing primary stays, mark new item as non-primary
-            new_item["cluster_id"] = cluster_id
-            new_item["is_cluster_primary"] = False
-            # Update primary with new source
-            await intelligence_col.update_one(
-                {"id": primary.get("id")},
-                {"$set": {
-                    "cluster_sources": current_sources,
-                    "cluster_size": new_size,
-                }}
-            )
+        # New incoming item is always more recent — promote it as primary so the
+        # feed shows fresh news, not a days-old cluster head.
+        # (Old logic based on summary length caused the "4 days old" stale-feed bug.)
+        await intelligence_col.update_one(
+            {"id": primary.get("id")},
+            {"$set": {"is_cluster_primary": False}}
+        )
+        new_item["cluster_id"] = cluster_id
+        new_item["is_cluster_primary"] = True
+        new_item["cluster_sources"] = current_sources
+        new_item["cluster_size"] = new_size
 
     else:
         # Create new cluster from these two items
@@ -482,4 +475,65 @@ async def run_batch_fusion(db, days: int = 7, max_items: int = 500) -> dict:
 
     stats = {"clusters_formed": clusters_formed, "items_clustered": items_clustered}
     logger.info(f"Batch fusion complete: {stats}")
+    return stats
+
+
+async def repair_cluster_primaries(db) -> dict:
+    """
+    One-shot repair: for every cluster, re-evaluate which item should be primary
+    using the recency-first rule (published_at DESC).
+
+    Previously pick_primary sorted by summary length, which caused old items with
+    long AI summaries to remain primary while fresh articles got demoted — leading
+    to a feed frozen on days-old news.
+
+    Safe to run multiple times (idempotent).
+    """
+    intelligence_col = db.intelligence_items
+    now = datetime.now(timezone.utc)
+    cutoff = (now - timedelta(days=30)).isoformat()
+
+    # Find all distinct cluster IDs in the last 30 days
+    pipeline = [
+        {"$match": {
+            "cluster_id": {"$exists": True, "$ne": None},
+            "published_at": {"$gte": cutoff},
+        }},
+        {"$group": {"_id": "$cluster_id"}},
+    ]
+    cluster_ids = [doc["_id"] async for doc in intelligence_col.aggregate(pipeline)]
+
+    stats = {"clusters_checked": len(cluster_ids), "primaries_reassigned": 0}
+    logger.info(f"Cluster repair: checking {len(cluster_ids)} clusters")
+
+    for cluster_id in cluster_ids:
+        members = await intelligence_col.find(
+            {"cluster_id": cluster_id},
+            {"_id": 0, "id": 1, "title": 1, "ai_summary": 1, "published_at": 1,
+             "priority_score": 1, "severity": 1, "is_cluster_primary": 1,
+             "cluster_sources": 1, "cluster_size": 1}
+        ).to_list(50)
+
+        if len(members) < 2:
+            continue
+
+        correct_primary = pick_primary(members)
+        current_primaries = [m for m in members if m.get("is_cluster_primary")]
+        already_correct = (
+            len(current_primaries) == 1 and
+            current_primaries[0]["id"] == correct_primary["id"]
+        )
+        if already_correct:
+            continue
+
+        # Re-assign: demote all, promote the correct one
+        for m in members:
+            should_be_primary = (m["id"] == correct_primary["id"])
+            await intelligence_col.update_one(
+                {"id": m["id"]},
+                {"$set": {"is_cluster_primary": should_be_primary}}
+            )
+        stats["primaries_reassigned"] += 1
+
+    logger.info(f"Cluster repair complete: {stats}")
     return stats

@@ -47,14 +47,28 @@ async def get_dashboard_stats():
             threat_dist[doc["_id"]] = doc["count"]
 
     recent_critical = await intelligence_col.find(
-        {**base_filter, "severity": {"$in": ["critical", "high"]}},
+        {
+            **base_filter,
+            "severity": {"$in": ["critical", "high"]},
+            # Don't surface already-acknowledged alerts in the dashboard panel
+            "acknowledged": {"$ne": True},
+            "is_archived": {"$ne": True},
+            "tags": {"$nin": ["not_relevant", "unprocessed"]},
+        },
         {"_id": 0}
-    ).sort("published_at", -1).limit(5).to_list(5)
+    ).sort("published_at", -1).limit(50).to_list(50)
 
     today = now.strftime("%Y-%m-%d")
     today_count = await intelligence_col.count_documents(
         {"published_at": {"$regex": f"^{today}"}}
     )
+    today_processed = await intelligence_col.count_documents(
+        {"published_at": {"$regex": f"^{today}"}, "processed": True,
+         "tags": {"$nin": ["not_relevant", "unprocessed"]}}
+    )
+    # Total items awaiting AI classification — helps analysts understand why
+    # recent news may not yet be visible in the feed.
+    pending_classification = await intelligence_col.count_documents({"processed": False})
 
     trend_data = []
     async for doc in intelligence_col.aggregate([
@@ -70,7 +84,10 @@ async def get_dashboard_stats():
         trend_data.append({"date": doc["_id"], "count": doc["count"], "critical": doc["critical"], "high": doc["high"]})
 
     result = {
-        "total_items": total, "today_count": today_count,
+        "total_items": total,
+        "today_count": today_count,
+        "today_processed": today_processed,
+        "pending_classification": pending_classification,
         "critical_count": critical, "high_count": high,
         "medium_count": medium, "low_count": low,
         "state_distribution": state_dist, "threat_distribution": threat_dist,
@@ -83,6 +100,134 @@ async def get_dashboard_stats():
     return result
 
 
+@router.get("/intelligence/source-stats")
+async def get_source_stats():
+    """Per-source-type effectiveness breakdown for the Settings page.
+
+    Now includes full pipeline flow stats per source:
+      total_fetched    — items that entered the system from this source
+      pipeline_entered — items that went through the AI classifier
+      pipeline_accepted — classified as relevant with processed=True
+      pipeline_rejected — classified as not_relevant or irrelevant
+    """
+    now = datetime.now(timezone.utc)
+    settings = await db.app_settings.find_one({"key": "retention_days"}, {"_id": 0})
+    retention_days = settings.get("value", 30) if settings else 30
+    cutoff = (now - timedelta(days=retention_days)).isoformat()
+
+    NON_RSS = ["youtube", "facebook", "telegram", "twitter", "firecrawl"]
+
+    # Use prefix-regex so "twitter_account", "twitter_search", "twitter_list"
+    # all roll up under "twitter", and similarly for "firecrawl_scrape" etc.
+    def _regex_match(prefix: str):
+        return {"$regex": f"^{prefix}", "$options": "i"}
+
+    # Aggregate per source_type (exact matches first; we'll merge prefixes below)
+    pipeline = [
+        {"$match": {"source_type": {"$in": NON_RSS + [
+            "twitter_account", "twitter_search", "twitter_list",
+            "firecrawl_scrape", "firecrawl_search",
+            "youtube_channel", "youtube_search",
+        ]}, "published_at": {"$gte": cutoff}}},
+        {"$addFields": {
+            # Normalise sub-types to their parent bucket
+            "src_bucket": {"$switch": {"branches": [
+                {"case": {"$regexMatch": {"input": "$source_type", "regex": "^twitter", "options": "i"}}, "then": "twitter"},
+                {"case": {"$regexMatch": {"input": "$source_type", "regex": "^youtube", "options": "i"}}, "then": "youtube"},
+                {"case": {"$regexMatch": {"input": "$source_type", "regex": "^facebook", "options": "i"}}, "then": "facebook"},
+                {"case": {"$regexMatch": {"input": "$source_type", "regex": "^telegram", "options": "i"}}, "then": "telegram"},
+                {"case": {"$regexMatch": {"input": "$source_type", "regex": "^firecrawl", "options": "i"}}, "then": "firecrawl"},
+            ], "default": "$source_type"}},
+        }},
+        {"$group": {
+            "_id": "$src_bucket",
+            "total":     {"$sum": 1},
+            "processed": {"$sum": {"$cond": ["$processed", 1, 0]}},
+            # Accepted = processed AND is_relevant != false AND not tagged "not_relevant"
+            "accepted":  {"$sum": {"$cond": [
+                {"$and": [
+                    {"$eq": ["$processed", True]},
+                    {"$ne": ["$is_relevant", False]},
+                ]}, 1, 0
+            ]}},
+            # Rejected = explicitly marked not relevant
+            "rejected":  {"$sum": {"$cond": [
+                {"$or": [
+                    {"$eq": ["$is_relevant", False]},
+                    {"$in": ["not_relevant", {"$ifNull": ["$tags", []]}]},
+                ]}, 1, 0
+            ]}},
+            "critical":  {"$sum": {"$cond": [{"$eq": ["$severity", "critical"]}, 1, 0]}},
+            "high":      {"$sum": {"$cond": [{"$eq": ["$severity", "high"]},    1, 0]}},
+            "medium":    {"$sum": {"$cond": [{"$eq": ["$severity", "medium"]},  1, 0]}},
+            "low":       {"$sum": {"$cond": [{"$eq": ["$severity", "low"]},     1, 0]}},
+            "latest_at": {"$max": "$published_at"},
+        }},
+        {"$sort": {"total": -1}},
+    ]
+
+    sources = []
+    async for doc in intelligence_col.aggregate(pipeline):
+        st = doc["_id"]
+        # fetch the latest item for a preview
+        latest = await intelligence_col.find_one(
+            {"source_type": _regex_match(st), "published_at": {"$gte": cutoff}},
+            {"_id": 0, "title": 1, "source_url": 1, "severity": 1, "source": 1},
+            sort=[("published_at", -1)],
+        )
+
+        # For Twitter, also count raw tweets in twitter_feeds collection
+        raw_fetched = doc["total"]
+        if st == "twitter":
+            try:
+                raw_fetched = await db.twitter_feeds.count_documents({})
+            except Exception:
+                pass
+
+        sources.append({
+            "source_type": st,
+            "total":           doc["total"],
+            "raw_fetched":     raw_fetched,
+            "processed":       doc["processed"],
+            "accepted":        doc["accepted"],
+            "rejected":        doc["rejected"],
+            "severity": {
+                "critical": doc["critical"],
+                "high":     doc["high"],
+                "medium":   doc["medium"],
+                "low":      doc["low"],
+            },
+            "latest_at":       doc.get("latest_at"),
+            "latest_title":    latest.get("title") if latest else None,
+            "latest_url":      latest.get("source_url") if latest else None,
+            "latest_severity": latest.get("severity") if latest else None,
+        })
+
+    # Ensure all 5 sources appear even if no data yet
+    found_types = {s["source_type"] for s in sources}
+    for st in NON_RSS:
+        if st not in found_types:
+            sources.append({
+                "source_type": st, "total": 0, "raw_fetched": 0,
+                "processed": 0, "accepted": 0, "rejected": 0,
+                "severity": {"critical": 0, "high": 0, "medium": 0, "low": 0},
+                "latest_at": None, "latest_title": None, "latest_url": None, "latest_severity": None,
+            })
+
+    # Sort in display order
+    order = {s: i for i, s in enumerate(NON_RSS)}
+    sources.sort(key=lambda x: order.get(x["source_type"], 99))
+
+    # Recent catches — last 10 processed items across all non-RSS sources
+    recent = await intelligence_col.find(
+        {"source_type": {"$in": NON_RSS}, "processed": True, "published_at": {"$gte": cutoff}},
+        {"_id": 0, "title": 1, "source_type": 1, "source": 1, "severity": 1,
+         "published_at": 1, "source_url": 1, "threat_category": 1},
+    ).sort("published_at", -1).limit(10).to_list(10)
+
+    return {"sources": sources, "recent_catches": recent, "retention_days": retention_days}
+
+
 @router.get("/intelligence")
 async def get_intelligence(
     state: Optional[str] = None,
@@ -93,6 +238,7 @@ async def get_intelligence(
     date_to: Optional[str] = None,
     is_cross_border: Optional[bool] = None,
     min_priority: Optional[int] = None,
+    source_type: Optional[str] = None,   # filter by source_type field (twitter, youtube, telegram, ...)
     sort_by: Optional[str] = Query(None, description="Sort field: published_at, priority_score, severity"),
     sort_order: Optional[str] = Query("desc", description="Sort order: asc or desc"),
     page: int = Query(1, ge=1),
@@ -102,8 +248,16 @@ async def get_intelligence(
     query = {
         "processed": True,
         "is_cluster_primary": {"$ne": False},
-        "severity": {"$nin": ["low", "LOW"]},
+        # NOTE: low-severity items are intentionally NOT excluded here — the caller
+        # can apply a severity filter if needed.  Excluding them globally caused
+        # recent low-severity items to be invisible even minutes after ingestion.
         "tags": {"$nin": ["not_relevant", "unprocessed"]},
+        # Hide acknowledged critical/high alerts from the default feed so they
+        # don't clog the "latest" view after an analyst has actioned them.
+        "acknowledged": {"$ne": True},
+        # Hide items soft-archived by the fading engine, unless the caller
+        # explicitly requests historical data via date_from.
+        "is_archived": {"$ne": True},
     }
 
     if not date_from:
@@ -111,6 +265,10 @@ async def get_intelligence(
         retention_days = settings.get("value", 30) if settings else 30
         retention_cutoff = (datetime.now(timezone.utc) - timedelta(days=retention_days)).isoformat()
         query["published_at"] = {"$gte": retention_cutoff}
+    else:
+        # When caller provides an explicit date_from, they want historical data —
+        # lift the archive filter so faded items are included.
+        del query["is_archived"]
 
     if state:
         query["state"] = state
@@ -118,6 +276,10 @@ async def get_intelligence(
         query["threat_category"] = threat_type
     if severity:
         query["severity"] = severity
+    if source_type:
+        # Match any source_type beginning with the given value (e.g. "twitter"
+        # matches "twitter", "twitter_account", "twitter_search", "twitter_list")
+        query["source_type"] = {"$regex": f"^{source_type}", "$options": "i"}
     if search:
         query["$or"] = [
             {"title": {"$regex": search, "$options": "i"}},
@@ -251,6 +413,256 @@ async def trigger_batch_fusion(background_tasks: BackgroundTasks):
     from fusion_engine import run_batch_fusion
     background_tasks.add_task(run_batch_fusion, db)
     return {"message": "Batch fusion started"}
+
+
+@router.post("/fading/run")
+async def trigger_fading_pass(background_tasks: BackgroundTasks):
+    """Manually trigger a visibility-score recomputation pass."""
+    from fading_engine import run_fading_pass
+    background_tasks.add_task(run_fading_pass)
+    return {"message": "Fading pass started"}
+
+
+@router.get("/debug/data-health")
+async def debug_data_health():
+    """Diagnostic endpoint: shows exactly how many items exist at each filter stage.
+    Use this to diagnose why items are not appearing in the feed.
+    """
+    now = datetime.now(timezone.utc)
+    seven_days_ago = (now - timedelta(days=7)).isoformat()
+    one_day_ago    = (now - timedelta(days=1)).isoformat()
+
+    total                = await intelligence_col.count_documents({})
+    total_7d             = await intelligence_col.count_documents({"published_at": {"$gte": seven_days_ago}})
+    total_24h            = await intelligence_col.count_documents({"published_at": {"$gte": one_day_ago}})
+    fetched_7d           = await intelligence_col.count_documents({"fetched_at":   {"$gte": seven_days_ago}})
+    fetched_24h          = await intelligence_col.count_documents({"fetched_at":   {"$gte": one_day_ago}})
+    processed_true       = await intelligence_col.count_documents({"processed": True})
+    processed_false      = await intelligence_col.count_documents({"processed": False})
+    archived             = await intelligence_col.count_documents({"is_archived": True})
+    archived_7d          = await intelligence_col.count_documents({"is_archived": True, "published_at": {"$gte": seven_days_ago}})
+    not_relevant         = await intelligence_col.count_documents({"tags": "not_relevant"})
+    acknowledged         = await intelligence_col.count_documents({"acknowledged": True})
+    cluster_non_primary  = await intelligence_col.count_documents({"is_cluster_primary": False})
+    cluster_primary      = await intelligence_col.count_documents({"is_cluster_primary": True})
+    no_cluster_field     = await intelligence_col.count_documents({"is_cluster_primary": {"$exists": False}})
+
+    # Items visible in default feed (all filters applied)
+    feed_visible = await intelligence_col.count_documents({
+        "processed": True,
+        "is_cluster_primary": {"$ne": False},
+        "tags": {"$nin": ["not_relevant", "unprocessed"]},
+        "acknowledged": {"$ne": True},
+        "is_archived": {"$ne": True},
+        "published_at": {"$gte": seven_days_ago},
+    })
+    feed_visible_24h = await intelligence_col.count_documents({
+        "processed": True,
+        "is_cluster_primary": {"$ne": False},
+        "tags": {"$nin": ["not_relevant", "unprocessed"]},
+        "acknowledged": {"$ne": True},
+        "is_archived": {"$ne": True},
+        "published_at": {"$gte": one_day_ago},
+    })
+
+    # Severity distribution in last 7d
+    sev_pipeline = [
+        {"$match": {"published_at": {"$gte": seven_days_ago}, "processed": True}},
+        {"$group": {"_id": "$severity", "count": {"$sum": 1}}},
+        {"$sort": {"count": -1}},
+    ]
+    sev_dist = {doc["_id"]: doc["count"] async for doc in intelligence_col.aggregate(sev_pipeline)}
+
+    # Source type distribution in last 7d
+    src_pipeline = [
+        {"$match": {"published_at": {"$gte": seven_days_ago}}},
+        {"$group": {"_id": "$source_type", "count": {"$sum": 1}}},
+        {"$sort": {"count": -1}},
+    ]
+    src_dist = {doc["_id"]: doc["count"] async for doc in intelligence_col.aggregate(src_pipeline)}
+
+    return {
+        "totals": {
+            "all_time": total,
+            "by_published_at_7d": total_7d,
+            "by_published_at_24h": total_24h,
+            "by_fetched_at_7d": fetched_7d,
+            "by_fetched_at_24h": fetched_24h,
+        },
+        "pipeline_stages": {
+            "processed_true": processed_true,
+            "processed_false_unprocessed": processed_false,
+            "is_archived_true": archived,
+            "is_archived_true_AND_7d_old": archived_7d,
+            "tagged_not_relevant": not_relevant,
+            "acknowledged": acknowledged,
+            "cluster_primary_true": cluster_primary,
+            "cluster_primary_false_hidden": cluster_non_primary,
+            "cluster_field_not_set": no_cluster_field,
+        },
+        "feed_visible": {
+            "last_7_days": feed_visible,
+            "last_24_hours": feed_visible_24h,
+        },
+        "severity_distribution_7d": sev_dist,
+        "source_type_distribution_7d": src_dist,
+    }
+
+
+@router.post("/fading/repair-fresh")
+async def repair_fresh_archived():
+    """One-shot repair: un-archive any item younger than 7 days that was incorrectly
+    soft-archived by the fading engine before the freshness guard was added.
+
+    Safe to call multiple times — idempotent.
+    """
+    seven_days_ago = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+    result = await intelligence_col.update_many(
+        {
+            "is_archived": True,
+            "published_at": {"$gte": seven_days_ago},
+            "pinned": {"$ne": True},
+        },
+        {"$set": {"is_archived": False, "visibility_band": "fading"}},
+    )
+    invalidate_stats_cache()
+    return {
+        "message": "Fresh-item archive repair complete",
+        "unarchived": result.modified_count,
+    }
+
+
+@router.post("/fading/cleanup-low")
+async def trigger_low_sev_cleanup(background_tasks: BackgroundTasks):
+    """Manually trigger hard-deletion of expired low-severity items."""
+    from fading_engine import delete_expired_low_severity
+    background_tasks.add_task(delete_expired_low_severity)
+    return {"message": "Low-severity cleanup started"}
+
+
+@router.get("/fading/stats")
+async def get_fading_stats():
+    """Distribution of visibility bands across the current corpus."""
+    full     = await intelligence_col.count_documents({"processed": True, "visibility_band": "full"})
+    fading   = await intelligence_col.count_documents({"processed": True, "visibility_band": "fading"})
+    dim      = await intelligence_col.count_documents({"processed": True, "visibility_band": "dim"})
+    archived = await intelligence_col.count_documents({"processed": True, "visibility_band": "archived"})
+    unscored = await intelligence_col.count_documents({"processed": True, "visibility_band": {"$exists": False}})
+    return {
+        "full": full, "fading": fading, "dim": dim,
+        "archived": archived, "unscored": unscored,
+        "total": full + fading + dim + archived + unscored,
+    }
+
+
+@router.get("/intelligence/{item_id}/fading")
+async def get_item_fading_breakdown(item_id: str):
+    """Return a detailed fading formula breakdown for a single item."""
+    item = await intelligence_col.find_one({"id": item_id}, {"_id": 0})
+    if not item:
+        raise HTTPException(status_code=404, detail="Item not found")
+    from fading_engine import score_breakdown
+    return score_breakdown(item)
+
+
+@router.post("/intelligence/{item_id}/pin")
+async def pin_intelligence_item(item_id: str):
+    """Pin an item so it never fades from the feed."""
+    result = await intelligence_col.update_one(
+        {"id": item_id},
+        {"$set": {"pinned": True, "pinned_at": datetime.now(timezone.utc).isoformat()}}
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Item not found")
+    return {"message": "Item pinned — fading disabled", "id": item_id}
+
+
+@router.delete("/intelligence/{item_id}/pin")
+async def unpin_intelligence_item(item_id: str):
+    """Remove pin so normal fading resumes."""
+    result = await intelligence_col.update_one(
+        {"id": item_id},
+        {"$unset": {"pinned": "", "pinned_at": ""}}
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Item not found")
+    return {"message": "Item unpinned — fading resumed", "id": item_id}
+
+
+@router.post("/intelligence/{item_id}/accept")
+async def force_accept_item(item_id: str):
+    """Manually promote a social-media / raw item into the intelligence feed.
+
+    Overrides AI rejection:
+    - Sets processed=True, is_relevant=True
+    - Removes not_relevant tag and is_archived flag
+    - Bumps severity to 'medium' if currently missing or 'low'
+    - Marks manually_accepted=True for audit trail
+    """
+    existing = await intelligence_col.find_one(
+        {"id": item_id},
+        {"_id": 0, "severity": 1, "tags": 1}
+    )
+    if not existing:
+        raise HTTPException(status_code=404, detail="Item not found in intelligence database")
+
+    now = datetime.now(timezone.utc).isoformat()
+    set_fields: dict = {
+        "processed": True,
+        "is_relevant": True,
+        "manually_accepted": True,
+        "manually_accepted_at": now,
+    }
+    # Bump severity if missing or low
+    cur_sev = (existing.get("severity") or "").lower()
+    if cur_sev in ("", "low"):
+        set_fields["severity"] = "medium"
+
+    result = await intelligence_col.update_one(
+        {"id": item_id},
+        {
+            "$set":   set_fields,
+            "$unset": {"is_archived": ""},
+            "$pull":  {"tags": "not_relevant"},
+        },
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Item not found")
+
+    invalidate_stats_cache()
+    final_sev = set_fields.get("severity", existing.get("severity", "medium"))
+    return {"message": "Item promoted to intelligence feed", "id": item_id, "severity": final_sev}
+
+
+@router.post("/intelligence/{item_id}/reprocess")
+async def reprocess_item(item_id: str, background_tasks: BackgroundTasks):
+    """Mark a processed item for re-classification by the AI pipeline.
+
+    Resets processed=False so the next analyze_unprocessed_items cycle
+    picks it up again.  Useful when classification rules change (e.g.
+    severity thresholds) and you want a specific item re-evaluated.
+    """
+    existing = await intelligence_col.find_one({"id": item_id}, {"_id": 0, "title": 1})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Item not found")
+
+    await intelligence_col.update_one(
+        {"id": item_id},
+        {"$set": {"processed": False, "reprocess_requested_at": datetime.now(timezone.utc).isoformat()}},
+    )
+    invalidate_stats_cache()
+
+    # Kick off a classification cycle immediately (don't wait for 15-min scheduler)
+    async def _run_classify():
+        try:
+            from routers.pipeline import analyze_unprocessed_items
+            await analyze_unprocessed_items()
+        except Exception as e:
+            logger.warning(f"Reprocess background classify failed: {e}")
+
+    background_tasks.add_task(_run_classify)
+
+    return {"message": "Item queued for re-classification", "id": item_id, "title": existing.get("title", "")}
 
 
 @router.get("/fusion/stats")

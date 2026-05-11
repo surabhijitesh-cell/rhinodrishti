@@ -31,6 +31,9 @@ from routers.cross_border import router as cross_border_router
 from routers.auth import router as auth_router
 from routers.app_updates import router as app_updates_router
 from routers.reports import router as reports_router
+from routers.web_sources import router as web_sources_router
+from routers.social_media import router as social_media_router
+from routers.admin import router as admin_router
 
 # Import scheduler functions
 from routers.pipeline import (
@@ -40,6 +43,11 @@ from routers.pipeline import (
 )
 from routers.briefs import generate_scheduled_daily_brief
 from fusion_engine import run_batch_fusion
+from firecrawl_fetcher import fetch_web_sources, run_keyword_searches, seed_firecrawl_defaults
+from twitter_fetcher import fetch_twitter_accounts, fetch_twitter_searches, seed_twitter_defaults
+from youtube_fetcher import fetch_youtube_channels, fetch_youtube_searches, seed_youtube_defaults
+from telegram_fetcher import fetch_telegram_channels, seed_telegram_defaults
+from fading_engine import run_fading_pass, delete_expired_low_severity
 
 
 app = FastAPI(title="Rhino Drishti API")
@@ -62,6 +70,9 @@ app.include_router(cross_border_router, prefix="/api")
 app.include_router(auth_router, prefix="/api")
 app.include_router(app_updates_router, prefix="/api")
 app.include_router(reports_router, prefix="/api")
+app.include_router(web_sources_router, prefix="/api")
+app.include_router(social_media_router, prefix="/api")
+app.include_router(admin_router, prefix="/api")
 
 
 # ============================================================
@@ -104,9 +115,58 @@ async def initialize_sources():
     logger.info(f"RSS sources synced: {count} total ({len(RSS_SOURCES)} configured)")
 
 
+async def _deferred_init(item_count: int):
+    """
+    Heavy startup work deferred to a background task so the startup
+    handler returns fast and uvicorn can bind its port within Render's
+    port-scan window (~5 s).  All operations here are non-critical for
+    the first request.
+    """
+    # Source seeding (upserts — safe to run repeatedly)
+    try:
+        await seed_firecrawl_defaults(db)
+        await seed_twitter_defaults(db)
+        await seed_youtube_defaults(db)
+        await seed_telegram_defaults(db)
+    except Exception as e:
+        logger.warning(f"Deferred seed failed: {e}")
+
+    # Initial fetch only when DB is truly empty
+    if item_count == 0:
+        logger.info("Empty database — triggering initial fetch…")
+        await fetch_and_process_news()
+
+    # One-time archive repair (update_many on 23k docs can take 5-10 s)
+    try:
+        from datetime import timedelta
+        seven_days_ago = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+        r = await intelligence_col.update_many(
+            {"is_archived": True, "published_at": {"$gte": seven_days_ago}, "pinned": {"$ne": True}},
+            {"$set": {"is_archived": False, "visibility_band": "fading"}},
+        )
+        if r.modified_count:
+            logger.info(f"Deferred repair: un-archived {r.modified_count} fresh items (< 7 days old)")
+    except Exception as e:
+        logger.warning(f"Deferred archive repair failed: {e}")
+
+    # One-time cluster-primary repair (aggregates 3000+ clusters — slow)
+    try:
+        from fusion_engine import repair_cluster_primaries
+        stats = await repair_cluster_primaries(db)
+        if stats.get("primaries_reassigned", 0) > 0:
+            logger.info(f"Deferred cluster repair: reassigned {stats['primaries_reassigned']} primaries "
+                        f"(checked {stats.get('clusters_checked', 0)} clusters)")
+    except Exception as e:
+        logger.warning(f"Deferred cluster repair failed: {e}")
+
+
 @app.on_event("startup")
 async def startup():
-    # Auto-seed admin user if no users exist
+    """
+    KEEP THIS FAST — Render kills the process if the port is not open
+    within ~5 s of startup.  Heavy work goes into _deferred_init().
+    """
+    # Admin user seed (one count + maybe one insert — <100 ms)
     user_count = await db.users.count_documents({})
     if user_count == 0:
         from utils.auth import hash_password
@@ -124,17 +184,16 @@ async def startup():
         await db.users.insert_one(admin_doc)
         logger.info("Auto-seeded admin user (admin / Admin@2026!) — change password after first login")
 
+    # RSS source sync (upserts ~95 docs — <2 s, needed before scheduler fires)
     await initialize_sources()
+
+    # DB state log (two counts — <200 ms)
     item_count = await intelligence_col.count_documents({})
-    if item_count == 0:
-        logger.info("Empty database - triggering initial fetch...")
-        asyncio.create_task(fetch_and_process_news())
-    else:
-        logger.info(f"Database has {item_count} items. Skipping startup fetch (scheduler will handle next cycle).")
-        unprocessed = await intelligence_col.count_documents({"processed": False})
-        if unprocessed > 0:
-            logger.info(f"{unprocessed} unprocessed items found - triggering retry...")
-            asyncio.create_task(analyze_unprocessed_items())
+    unprocessed  = await intelligence_col.count_documents({"processed": False})
+    logger.info(f"Database: {item_count} items ({unprocessed} unprocessed). Scheduler handles cycles.")
+
+    # Defer all slow work so startup returns and port binds immediately
+    asyncio.create_task(_deferred_init(item_count))
 
     try:
         from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -158,8 +217,80 @@ async def startup():
             except Exception as e:
                 logger.warning(f"Scheduled batch fusion failed: {e}")
         scheduler.add_job(_run_batch_fusion, 'interval', minutes=30, id='batch_fusion')
+
+        # Firecrawl jobs
+        async def _fetch_web_sources():
+            try:
+                n = await fetch_web_sources(db)
+                logger.info(f"Firecrawl web sources: {n} new items")
+            except Exception as e:
+                logger.warning(f"Firecrawl web sources job failed: {e}")
+
+        async def _run_keyword_searches():
+            try:
+                n = await run_keyword_searches(db)
+                logger.info(f"Firecrawl keyword searches: {n} new items")
+            except Exception as e:
+                logger.warning(f"Firecrawl keyword search job failed: {e}")
+
+        scheduler.add_job(_fetch_web_sources,    'interval', hours=3,   id='firecrawl_web_sources')
+        scheduler.add_job(_run_keyword_searches, 'interval', hours=6,   id='firecrawl_searches')
+
+        # Social media jobs
+        async def _fetch_twitter():
+            try:
+                a = await fetch_twitter_accounts(db)
+                s = await fetch_twitter_searches(db)
+                logger.info(f"Twitter: {a} account tweets, {s} search tweets")
+            except Exception as e:
+                logger.warning(f"Twitter job failed: {e}")
+
+        async def _fetch_youtube():
+            try:
+                c = await fetch_youtube_channels(db)
+                s = await fetch_youtube_searches(db)
+                logger.info(f"YouTube: {c} channel videos, {s} search videos")
+            except Exception as e:
+                logger.warning(f"YouTube job failed: {e}")
+
+        async def _fetch_telegram():
+            try:
+                n = await fetch_telegram_channels(db)
+                logger.info(f"Telegram: {n} new messages")
+            except Exception as e:
+                logger.warning(f"Telegram job failed: {e}")
+
+        scheduler.add_job(_fetch_twitter,  'interval', hours=2,  id='twitter_fetch')
+        scheduler.add_job(_fetch_youtube,  'interval', hours=4,  id='youtube_fetch')
+        scheduler.add_job(_fetch_telegram, 'interval', hours=1,  id='telegram_fetch')
+
+        # Fading engine — recomputes visibility_score every hour
+        async def _run_fading_pass():
+            try:
+                stats = await run_fading_pass()
+                logger.info(f"Fading pass: {stats}")
+            except Exception as e:
+                logger.warning(f"Fading pass failed: {e}")
+
+        scheduler.add_job(_run_fading_pass, 'interval', hours=1, id='fading_pass')
+
+        # Daily low-severity hard-delete (runs at 02:00 IST = 20:30 UTC previous day)
+        async def _delete_low_sev():
+            try:
+                stats = await delete_expired_low_severity()
+                logger.info(f"Low-severity cleanup: {stats}")
+            except Exception as e:
+                logger.warning(f"Low-severity cleanup failed: {e}")
+
+        scheduler.add_job(
+            _delete_low_sev,
+            CronTrigger(hour=20, minute=30, timezone='UTC'),  # 02:00 IST (UTC+5:30)
+            id='low_sev_cleanup',
+            misfire_grace_time=3600,
+        )
+
         scheduler.start()
-        logger.info("Scheduler: grassroots/60min, standard/30min, established/12hr, retry/15min, brief/0600 IST, embeddings/6hr, fusion/30min")
+        logger.info("Scheduler: grassroots/60min, standard/30min, established/12hr, retry/15min, brief/0600 IST, embeddings/6hr, fusion/30min, firecrawl-web/3hr, firecrawl-search/6hr, twitter/2hr, youtube/4hr, telegram/1hr, fading/1hr")
     except Exception as e:
         logger.warning(f"Scheduler setup failed: {e}")
 
@@ -172,27 +303,14 @@ async def shutdown():
 # ============================================================
 # CORS
 # ============================================================
-cors_origins_str = os.environ.get('CORS_ORIGINS', '*')
-if cors_origins_str.strip() == '*':
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=["*"],
-        allow_credentials=False,
-        allow_methods=["*"],
-        allow_headers=["*"],
-        expose_headers=["Content-Disposition"],
-    )
-else:
-    origins = [o.strip() for o in cors_origins_str.split(',') if o.strip()]
-    # Always include common deployment domains
-    for domain in ["https://rhinodrishti.vercel.app", "https://www.rhinodrishti.vercel.app"]:
-        if domain not in origins:
-            origins.append(domain)
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=origins,
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-        expose_headers=["Content-Disposition"],
-    )
+# Allow all origins unconditionally — auth uses JWT tokens in Authorization
+# header, not cookies, so allow_credentials=False is safe and allow_origins=["*"]
+# covers all Vercel preview URLs, custom domains, and local development.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+    expose_headers=["Content-Disposition"],
+)

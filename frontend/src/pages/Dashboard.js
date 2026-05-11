@@ -1,12 +1,16 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
+import { useAuth } from "../contexts/AuthContext";
+import ApiUsageWidget from "../components/ApiUsageWidget";
 import {
   Shield, AlertTriangle, Activity, TrendingUp,
   ChevronRight, RefreshCw, Target, ArrowUp,
   Rss, Eye, EyeOff, Clock, CheckCircle2, Loader2,
   Filter, Languages, BellRing, GitBranch, Check, Wifi, WifiOff,
-  ArrowUpDown
+  ArrowUpDown, Youtube, Send, Twitter, ChevronDown, ChevronUp,
+  Play, Zap, Radio, Globe
 } from "lucide-react";
+import Tip from "../components/Tip";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
@@ -16,6 +20,7 @@ import {
 import NERMap from "../components/NERMap";
 import IntelligenceCard from "../components/IntelligenceCard";
 import { useIntelligenceWS } from "../hooks/useIntelligenceWS";
+import SocialMediaFeedWidget from "../components/SocialMediaFeedWidget";
 import axios from "axios";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, PieChart, Pie
@@ -27,6 +32,78 @@ const SEVERITY_COLORS = {
   medium: "#eab308",
   low: "#a3e635",
 };
+
+// Scrollable container that only captures scroll wheel after first click inside.
+// Prevents the page from hijacking when the user just wants to scroll past.
+function ClickToScroll({ children, className = "" }) {
+  const [active, setActive] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    if (!active) return;
+    const handleOutside = (e) => {
+      if (ref.current && !ref.current.contains(e.target)) setActive(false);
+    };
+    document.addEventListener("mousedown", handleOutside);
+    return () => document.removeEventListener("mousedown", handleOutside);
+  }, [active]);
+
+  return (
+    <div
+      ref={ref}
+      className={`${className} relative ${active ? "overflow-y-auto" : "overflow-hidden cursor-pointer"}`}
+      onClick={() => !active && setActive(true)}
+    >
+      {children}
+      {!active && (
+        <div className="absolute bottom-0 left-0 right-0 h-8 bg-gradient-to-t from-card/90 to-transparent pointer-events-none flex items-end justify-center pb-1">
+          <span className="text-[9px] font-mono text-muted-foreground/50 uppercase tracking-wider">click to scroll</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Wraps the Leaflet map so that scroll/zoom/drag are disabled until the user
+// first clicks inside it — prevents accidental pan while scrolling the page.
+function MapClickWrapper({ children }) {
+  const [activated, setActivated] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    if (!activated) return;
+    const handleOutside = (e) => {
+      if (ref.current && !ref.current.contains(e.target)) setActivated(false);
+    };
+    document.addEventListener("mousedown", handleOutside);
+    return () => document.removeEventListener("mousedown", handleOutside);
+  }, [activated]);
+
+  return (
+    <div ref={ref} style={{ position: "relative" }}>
+      {children}
+      {!activated && (
+        <div
+          onClick={() => setActivated(true)}
+          style={{
+            position: "absolute", inset: 0, zIndex: 1100,
+            cursor: "pointer", background: "transparent",
+            display: "flex", alignItems: "flex-end", justifyContent: "center",
+            paddingBottom: 8,
+          }}
+        >
+          <span style={{
+            fontFamily: "ui-monospace, monospace", fontSize: 9,
+            textTransform: "uppercase", letterSpacing: "0.15em",
+            color: "rgba(255,255,255,0.35)",
+            background: "rgba(0,0,0,0.45)", padding: "3px 8px",
+            borderRadius: 2, pointerEvents: "none",
+          }}>click to interact with map</span>
+        </div>
+      )}
+    </div>
+  );
+}
 
 function StatBox({ label, value, icon: Icon, color, sub, testId, onClick }) {
   return (
@@ -50,143 +127,460 @@ function StatBox({ label, value, icon: Icon, color, sub, testId, onClick }) {
   );
 }
 
-function ScanProgressBar({ api }) {
-  const [scanStatus, setScanStatus] = useState(null);
-  const [visible, setVisible] = useState(true);
-  const pollRef = useRef(null);
+// ─── helpers ────────────────────────────────────────────────────────────────
+function formatIST(isoStr) {
+  if (!isoStr) return null;
+  try {
+    const d = new Date(isoStr);
+    return d.toLocaleString("en-IN", {
+      timeZone: "Asia/Kolkata", day: "2-digit", month: "short",
+      hour: "2-digit", minute: "2-digit", hour12: true,
+    });
+  } catch { return null; }
+}
 
-  useEffect(() => {
-    const fetchStatus = async () => {
-      try {
-        const res = await axios.get(`${api}/scan-status`);
-        setScanStatus(res.data);
-      } catch (e) { /* silent */ }
-    };
-    fetchStatus();
-    pollRef.current = setInterval(fetchStatus, 3000);
-    return () => clearInterval(pollRef.current);
-  }, [api]);
+function timeAgo(isoStr) {
+  if (!isoStr) return "never";
+  const diff = Math.floor((Date.now() - new Date(isoStr)) / 1000);
+  if (diff < 60) return `${diff}s ago`;
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+  return `${Math.floor(diff / 86400)}d ago`;
+}
 
-  const formatIST = (isoStr) => {
-    if (!isoStr) return "N/A";
-    try {
-      const d = new Date(isoStr);
-      return d.toLocaleString("en-IN", { timeZone: "Asia/Kolkata", day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: true });
-    } catch { return "N/A"; }
-  };
-
-  if (!scanStatus) return null;
-
-  const isScanning = scanStatus.is_scanning;
-  const progress = scanStatus.progress || 0;
-  const lastResult = scanStatus.last_scan_result;
+// ─── compact scanner card (grid item) ───────────────────────────────────────
+function ScannerCard({
+  label, icon: Icon, accentColor, bgAccent, borderAccent, barColor,
+  isConfigured, isActive, activeLabel, progress, stat1, stat2,
+  lastFetched, onTrigger, triggering, configNote, testId,
+  isSelected, onClick, tooltip,
+}) {
+  const badge = isActive
+    ? <Badge className={`rounded-none text-[8px] px-1 py-0 border ${bgAccent} ${accentColor} ${borderAccent} animate-pulse leading-3`}>{activeLabel || "ACTIVE"}</Badge>
+    : isConfigured
+      ? <Badge className="rounded-none text-[8px] px-1 py-0 bg-muted/20 text-muted-foreground border-border leading-3">IDLE</Badge>
+      : <Badge className="rounded-none text-[8px] px-1 py-0 bg-orange-500/10 text-orange-400 border-orange-500/20 leading-3">SETUP</Badge>;
 
   return (
-    <Card className="border border-border rounded-none bg-card overflow-hidden" data-testid="scan-progress-card">
-      <div className="flex items-center justify-between px-4 py-2 border-b border-border">
-        <div className="flex items-center gap-2">
-          <Rss size={14} className={isScanning ? "text-primary animate-pulse" : "text-muted-foreground"} />
-          <span className="text-xs uppercase tracking-wider font-['Barlow_Condensed'] font-semibold">
-            RSS Scanner
-          </span>
-          {isScanning && (
-            <Badge className="rounded-none text-[9px] px-1.5 py-0 bg-primary/20 text-primary border-primary/30 animate-pulse">
-              SCANNING
-            </Badge>
-          )}
-          {!isScanning && lastResult && !lastResult.error && (
-            <Badge className="rounded-none text-[9px] px-1.5 py-0 bg-green-500/20 text-green-400 border-green-500/30">
-              IDLE
-            </Badge>
-          )}
+    <div
+      className={`border rounded-none bg-card flex flex-col gap-2 p-3 transition-all duration-200 cursor-pointer
+        ${isSelected ? `${borderAccent} ${bgAccent}` : isActive ? borderAccent : "border-border hover:border-muted-foreground/30"}
+        ${!isConfigured ? "opacity-70" : ""}`}
+      data-testid={testId}
+      onClick={onClick}
+    >
+      {/* row 1: icon + label + badge */}
+      <div className="flex items-center gap-1.5 min-w-0">
+        <div className={`p-1 shrink-0 ${bgAccent}`}>
+          <Icon size={11} className={isConfigured ? accentColor : "text-muted-foreground"} />
         </div>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-6 w-6 p-0"
-          onClick={() => setVisible(!visible)}
-          data-testid="toggle-scan-progress"
-        >
-          {visible ? <EyeOff size={12} /> : <Eye size={12} />}
-        </Button>
+        {tooltip ? (
+          <Tip text={tooltip} side="top">
+            <span className={`text-[10px] uppercase tracking-wider font-['Barlow_Condensed'] font-bold truncate flex-1 cursor-help ${isConfigured ? "text-foreground" : "text-muted-foreground"}`}>
+              {label}
+            </span>
+          </Tip>
+        ) : (
+          <span className={`text-[10px] uppercase tracking-wider font-['Barlow_Condensed'] font-bold truncate flex-1 ${isConfigured ? "text-foreground" : "text-muted-foreground"}`}>
+            {label}
+          </span>
+        )}
+        {badge}
       </div>
 
-      {visible && (
-        <CardContent className="p-4 space-y-3">
-          {/* Progress bar */}
-          <div className="space-y-1.5">
-            <div className="flex items-center justify-between text-xs font-mono text-muted-foreground">
-              <span>{isScanning ? `Scanning... ${progress}%` : "Last scan complete"}</span>
-              <span>{scanStatus.sources_scanned || 0}/{scanStatus.total_sources || 0} feeds</span>
-            </div>
-            <div className="w-full h-2 bg-muted/30 overflow-hidden">
-              <div
-                className={`h-full transition-all duration-500 ${isScanning ? "bg-primary animate-pulse" : "bg-green-500"}`}
-                style={{ width: `${isScanning ? progress : 100}%` }}
+      {/* row 2: progress bar */}
+      <div className="w-full h-1 bg-muted/20 overflow-hidden">
+        <div
+          className={`h-full transition-all duration-700 ${barColor} ${isActive ? "animate-pulse" : ""}`}
+          style={{ width: `${isConfigured ? Math.max(progress, 8) : 8}%`, opacity: isConfigured ? 1 : 0.3 }}
+        />
+      </div>
+
+      {/* row 3: stats + last fetch */}
+      <div className="flex items-center justify-between gap-1 min-w-0">
+        <span className="text-[10px] font-mono text-muted-foreground truncate">
+          {isConfigured ? stat1 : (configNote || "Not configured")}
+        </span>
+        <span className={`text-[10px] font-mono shrink-0 ${lastFetched ? accentColor : "text-muted-foreground"}`}>
+          {lastFetched ? timeAgo(lastFetched) : stat2 || "—"}
+        </span>
+      </div>
+
+      {/* row 4: trigger button — stops propagation so card click still works */}
+      <Button
+        variant="ghost" size="sm"
+        className={`h-5 w-full text-[9px] rounded-none font-mono border tracking-wider ${
+          isConfigured
+            ? `${borderAccent} ${accentColor} opacity-60 hover:opacity-100`
+            : "border-border text-muted-foreground opacity-40 cursor-not-allowed"
+        }`}
+        onClick={e => { e.stopPropagation(); onTrigger && onTrigger(); }}
+        disabled={!isConfigured || triggering || !onTrigger}
+      >
+        {triggering ? <Loader2 size={9} className="animate-spin mr-1" /> : <Zap size={9} className="mr-1" />}
+        {triggering ? "FETCHING…" : "FETCH"}
+      </Button>
+
+      {/* selected indicator */}
+      {isSelected && (
+        <div className={`text-[9px] font-mono text-center ${accentColor} opacity-70`}>
+          ▲ viewing sources below
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── source detail panel (shown below grid when a card is selected) ──────────
+function SourceDetailPanel({ platform, accentColor, borderAccent, bgAccent, icon: Icon, items, emptyMsg }) {
+  if (!items || items.length === 0) {
+    return (
+      <div className={`border-t ${borderAccent} px-4 py-3 ${bgAccent}`}>
+        <p className="text-[10px] font-mono text-muted-foreground">{emptyMsg || "No sources configured."}</p>
+      </div>
+    );
+  }
+  return (
+    <div className={`border-t ${borderAccent} ${bgAccent} px-4 py-3`}>
+      <ClickToScroll className="max-h-48">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-1">
+        {items.map((item, i) => (
+          <div key={i} className="flex items-center gap-2 min-w-0 py-0.5">
+            <Icon size={9} className={`${accentColor} shrink-0`} />
+            <span className="text-[10px] font-mono text-foreground truncate flex-1">{item.label}</span>
+            {item.sub && <span className="text-[10px] font-mono text-muted-foreground shrink-0">{item.sub}</span>}
+            {item.time && (
+              <span className={`text-[10px] font-mono shrink-0 ${item.time === "never" ? "text-muted-foreground/50" : accentColor}`}>
+                {item.time}
+              </span>
+            )}
+          </div>
+        ))}
+      </div>
+      </ClickToScroll>
+    </div>
+  );
+}
+
+// ─── collapsible source scanners ─────────────────────────────────────────────
+function SourceScanners({ api, socialTrigger, twitterPinned, onToggleTwitterPin }) {
+  const [open, setOpen]               = useState(true);   // expanded by default
+  const [selected, setSelected]       = useState(null);   // which card is drilled into
+  const [rss, setRss]                 = useState(null);
+  const [rssSources, setRssSources]   = useState([]);
+  const [socialStatus, setSocialStatus] = useState(null);
+  const [ytData, setYtData]           = useState({ channels: [], searches: [] });
+  const [tgData, setTgData]           = useState({ channels: [] });
+  const [twData, setTwData]           = useState({ accounts: [], searches: [] });
+  const [fcData, setFcData]           = useState({ sources: [], searches: [] });
+  const [triggering, setTriggering]   = useState({});
+  // Local timestamp set immediately when any fetch fires so cards show the
+  // correct elapsed time even when MongoDB Atlas doesn't persist last_fetched.
+  // Persisted to localStorage so it survives page refreshes.
+  const [localScanTime, setLocalScanTime] = useState(
+    () => localStorage.getItem("rhino_last_social_scan") || null
+  );
+  const recordScan = () => {
+    const t = new Date().toISOString();
+    setLocalScanTime(t);
+    localStorage.setItem("rhino_last_social_scan", t);
+  };
+
+  // ── RSS status (fast poll) ──
+  useEffect(() => {
+    const f = async () => {
+      try { const r = await axios.get(`${api}/scan-status`); setRss(r.data); } catch {}
+    };
+    f(); const id = setInterval(f, 4000); return () => clearInterval(id);
+  }, [api]);
+
+  // ── extract social data fetcher so we can call it after triggers ──
+  const refreshSocial = useCallback(async () => {
+    try {
+      const results = await Promise.allSettled([
+        axios.get(`${api}/social/status`),
+        axios.get(`${api}/social/youtube/channels`),
+        axios.get(`${api}/social/youtube/searches`),
+        axios.get(`${api}/social/telegram/channels`),
+        axios.get(`${api}/social/twitter/accounts`),
+        axios.get(`${api}/social/twitter/searches`),
+        axios.get(`${api}/web-sources`),
+        axios.get(`${api}/firecrawl-searches`),
+        axios.get(`${api}/sources`),
+      ]);
+      const [status, yt, ytS, tg, twA, twS, ws, fs, rssS] = results;
+      if (status.status === "fulfilled") setSocialStatus(status.value.data);
+      setYtData({ channels: yt.value?.data?.channels || [], searches: ytS.value?.data?.searches || [] });
+      setTgData({ channels: tg.value?.data?.channels || [] });
+      setTwData({ accounts: twA.value?.data?.accounts || [], searches: twS.value?.data?.searches || [] });
+      setFcData({ sources: ws.value?.data?.sources || [], searches: fs.value?.data?.searches || [] });
+      setRssSources(rssS.value?.data?.sources || []);
+    } catch {}
+  }, [api]);
+
+  useEffect(() => {
+    refreshSocial();
+    const id = setInterval(refreshSocial, 60000);
+    return () => clearInterval(id);
+  }, [refreshSocial]);
+
+  // ── respond to "Fetch Intel" button from parent Dashboard ────────────────
+  // socialTrigger increments each time the parent fires /social/fetch-all.
+  // We immediately set a local timestamp so cards show "0s ago" without
+  // waiting for MongoDB Atlas read-after-write propagation.
+  useEffect(() => {
+    if (!socialTrigger) return; // skip initial render (value=0)
+    recordScan(); // instant local timestamp — persisted to localStorage
+    setTriggering(t => ({ ...t, all: true }));
+    refreshSocial();
+    const delays = [8000, 18000, 35000, 55000, 90000];
+    const timers = delays.map((delay, i) =>
+      setTimeout(() => {
+        refreshSocial();
+        if (i === delays.length - 1) setTriggering(t => ({ ...t, all: false }));
+      }, delay)
+    );
+    return () => timers.forEach(clearTimeout);
+  }, [socialTrigger, refreshSocial]);
+
+  // ── trigger fetch + persistent polling until last_fetched updates ──
+  // Backend now returns immediately (BackgroundTasks) so we poll at
+  // 10s, 20s, 35s, 55s, 80s, 110s, 150s after the click to catch
+  // slow sources (Telegram can take 60-90s, Firecrawl up to 3 min).
+  const trigger = async (key, endpoint) => {
+    setTriggering(t => ({ ...t, [key]: true }));
+    recordScan(); // instant local timestamp — persisted to localStorage
+    try { await axios.post(`${api}${endpoint}`); } catch {}
+
+    const pollDelays = [10000, 20000, 35000, 55000, 80000, 110000, 150000];
+    pollDelays.forEach((delay, i) => {
+      setTimeout(() => {
+        refreshSocial();
+        if (i === pollDelays.length - 1) setTriggering(t => ({ ...t, [key]: false }));
+      }, delay);
+    });
+  };
+
+  // ── timestamp helper: use local override if it's newer than MongoDB data ──
+  // This ensures "0s ago" is shown immediately after a global fetch trigger
+  // instead of waiting for MongoDB Atlas read-after-write propagation.
+  const freshTime = (mongoIso) => {
+    if (!localScanTime) return mongoIso;
+    if (!mongoIso) return localScanTime;
+    return new Date(localScanTime) >= new Date(mongoIso) ? localScanTime : mongoIso;
+  };
+
+  // ── derived ──
+  const rssScanning  = rss?.is_scanning || false;
+  const lastResult   = rss?.last_scan_result;
+  const ytActive     = !!socialStatus?.youtube?.configured;
+  const tgActive     = !!socialStatus?.telegram?.configured;
+  const twConfigured = !!socialStatus?.twitter?.configured;
+  const fcConfigured = !!socialStatus?.firecrawl?.configured || fcData.sources.length > 0;
+
+  const latest = (arr, key) => arr.reduce((best, item) => {
+    if (!item[key]) return best;
+    return !best || new Date(item[key]) > new Date(best) ? item[key] : best;
+  }, null);
+
+  const ytChannels = ytData.channels.filter(c => c.active);
+  const tgChannels = tgData.channels.filter(c => c.active);
+  const twAccounts = twData.accounts.filter(a => a.active);
+  const fcSources  = fcData.sources.filter(s => s.active);
+  const fcSearches = fcData.searches.filter(s => s.active);
+
+  const platforms = [
+    { key: "rss", ok: true,         active: rssScanning },
+    { key: "yt",  ok: ytActive,     active: triggering["youtube"] },
+    { key: "tg",  ok: tgActive,     active: triggering["telegram"] },
+    { key: "tw",  ok: true,         active: triggering["twitter"] },
+    { key: "fc",  ok: fcConfigured, active: triggering["firecrawl"] },
+  ];
+  const configuredCount = platforms.filter(p => p.ok).length;
+  const anyActive = platforms.some(p => p.active);
+
+  // ── source detail data per platform ──
+  const detailData = {
+    rss: {
+      icon: Rss, accentColor: "text-green-400", borderAccent: "border-green-500/20", bgAccent: "bg-green-500/5",
+      items: rssSources.map(s => ({ label: s.name || s.url, sub: s.category, time: timeAgo(s.last_fetched) })),
+      emptyMsg: "No RSS sources configured.",
+    },
+    youtube: {
+      icon: Youtube, accentColor: "text-red-400", borderAccent: "border-red-500/20", bgAccent: "bg-red-500/5",
+      items: [
+        ...ytChannels.map(c => ({ label: c.name, sub: "channel", time: timeAgo(c.last_fetched) })),
+        ...ytData.searches.filter(s=>s.active).map(s => ({ label: s.query, sub: "search", time: timeAgo(s.last_run) })),
+      ],
+      emptyMsg: "No YouTube channels configured. Add YOUTUBE_API_KEY to Render.",
+    },
+    telegram: {
+      icon: Send, accentColor: "text-sky-400", borderAccent: "border-sky-500/20", bgAccent: "bg-sky-500/5",
+      items: tgChannels.map(c => ({ label: c.name, sub: `@${c.username}`, time: timeAgo(c.last_fetched) })),
+      emptyMsg: "No Telegram channels configured. Run telegram_setup.py to generate session.",
+    },
+    // X/Twitter is intentionally omitted from the drill-down panel.
+    // Clicking the X/Twitter card navigates to /twitter-feed instead, which
+    // shows actual tweet content rather than a list of monitored handles.
+    firecrawl: {
+      icon: Globe, accentColor: "text-orange-400", borderAccent: "border-orange-500/20", bgAccent: "bg-orange-500/5",
+      items: [
+        ...fcSources.map(s => ({ label: s.name || s.url, sub: s.region, time: timeAgo(s.last_fetched) })),
+        ...fcSearches.map(s => ({ label: s.query, sub: "keyword", time: timeAgo(s.last_run) })),
+      ],
+      emptyMsg: "No Firecrawl sources configured. Add FIRECRAWL_API_KEY.",
+    },
+  };
+
+  const handleCardClick = (key) => setSelected(prev => prev === key ? null : key);
+
+  return (
+    <Card className="rounded-none border border-border bg-card overflow-hidden">
+      {/* ── header (always visible) ── */}
+      <div
+        className="flex items-center gap-3 px-4 py-2.5 cursor-pointer select-none hover:bg-muted/10 transition-colors"
+        onClick={() => setOpen(v => !v)}
+      >
+        <Radio size={13} className={anyActive ? "text-primary animate-pulse" : "text-muted-foreground"} />
+        <span className="text-[11px] uppercase tracking-widest font-['Barlow_Condensed'] font-bold text-muted-foreground">
+          Intelligence Source Monitors
+        </span>
+        <div className="flex items-center gap-1.5 ml-1">
+          {platforms.map(p => (
+            <span key={p.key} className={`w-1.5 h-1.5 rounded-full transition-colors ${
+              p.active ? "bg-primary animate-pulse" : p.ok ? "bg-green-500/70" : "bg-orange-500/40"
+            }`} />
+          ))}
+        </div>
+        <span className="text-[10px] font-mono text-muted-foreground ml-1 hidden sm:block">{configuredCount}/6 configured</span>
+        <div className="ml-auto flex items-center gap-2">
+          <Button
+            variant="ghost" size="sm"
+            className="h-6 px-2 text-[9px] rounded-none font-mono text-muted-foreground border border-border hover:text-foreground"
+            title="Fetch all social & web sources (excludes RSS)"
+            onClick={e => { e.stopPropagation(); trigger("all", "/social/fetch-all"); }}
+            disabled={triggering["all"]}
+          >
+            {triggering["all"] ? <Loader2 size={9} className="animate-spin mr-1" /> : <RefreshCw size={9} className="mr-1" />}
+            {triggering["all"] ? "FETCHING…" : "SCAN SOCIAL MEDIA"}
+          </Button>
+          {open ? <ChevronUp size={13} className="text-muted-foreground" /> : <ChevronDown size={13} className="text-muted-foreground" />}
+        </div>
+      </div>
+
+      {/* ── expanded grid ── */}
+      {open && (
+        <>
+          <div className="border-t border-border p-3">
+            <p className="text-[9px] font-mono text-muted-foreground/50 mb-2 uppercase tracking-wider">Click a card to view its sources · Click header to collapse panel</p>
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2">
+
+              <ScannerCard
+                label="RSS Feeds" icon={Rss}
+                accentColor="text-green-400" bgAccent="bg-green-500/10"
+                borderAccent="border-green-500/30" barColor="bg-green-500"
+                isConfigured={true} isActive={rssScanning} activeLabel="SCANNING"
+                progress={rssScanning ? (rss?.progress || 0) : 100}
+                stat1={rssScanning ? `${rss?.sources_scanned || 0}/${rss?.total_sources || 0}` : `${rss?.total_sources || "—"} feeds`}
+                stat2={lastResult ? `+${lastResult.new_relevant} new` : ""}
+                lastFetched={rss?.last_scan_at}
+                onTrigger={() => trigger("rss", "/fetch-news")}
+                triggering={triggering["rss"]}
+                isSelected={selected === "rss"}
+                onClick={() => handleCardClick("rss")}
+                testId="scanner-rss"
+                tooltip="RSS Feeds — 89 curated news sources: NER regional papers, national outlets, Bangladesh/Myanmar publications, and government PIB offices. Auto-fetched every 30-60 min."
+              />
+
+              <ScannerCard
+                label="YouTube" icon={Youtube}
+                accentColor="text-red-400" bgAccent="bg-red-500/10"
+                borderAccent="border-red-500/30" barColor="bg-red-500"
+                isConfigured={ytActive} isActive={triggering["youtube"] || triggering["all"]} activeLabel="FETCHING"
+                progress={ytActive ? 100 : 0}
+                stat1={ytActive ? `${ytChannels.length} ch · ${ytData.searches.filter(s=>s.active).length} srch` : ""}
+                lastFetched={freshTime(latest(ytChannels, "last_fetched"))}
+                onTrigger={() => trigger("youtube", "/social/fetch-all")}
+                triggering={triggering["youtube"] || triggering["all"]}
+                configNote="Add YOUTUBE_API_KEY"
+                isSelected={selected === "youtube"}
+                onClick={() => handleCardClick("youtube")}
+                testId="scanner-youtube"
+                tooltip={`YouTube — ${ytChannels.length} subscribed channels + ${ytData.searches.filter(s=>s.active).length} keyword searches. Requires YOUTUBE_API_KEY on Render. Fetches video metadata and transcripts.`}
+              />
+
+
+              <ScannerCard
+                label="Telegram" icon={Send}
+                accentColor="text-sky-400" bgAccent="bg-sky-500/10"
+                borderAccent="border-sky-500/30" barColor="bg-sky-500"
+                isConfigured={tgActive} isActive={triggering["telegram"] || triggering["all"]} activeLabel="FETCHING"
+                progress={tgActive ? 100 : 0}
+                stat1={tgActive ? `${tgChannels.length} channels` : ""}
+                lastFetched={freshTime(latest(tgChannels, "last_fetched"))}
+                onTrigger={() => trigger("telegram", "/social/fetch-all")}
+                triggering={triggering["telegram"] || triggering["all"]}
+                configNote="Run telegram_setup.py"
+                isSelected={selected === "telegram"}
+                onClick={() => handleCardClick("telegram")}
+                testId="scanner-telegram"
+                tooltip={`Telegram — ${tgChannels.length} monitored channels via Telethon client. Session ID required (run telegram_setup.py). High-value for militant and political org communications.`}
+              />
+
+              <ScannerCard
+                label="X / Twitter" icon={Twitter}
+                accentColor="text-slate-300" bgAccent="bg-slate-500/10"
+                borderAccent="border-slate-500/30" barColor="bg-slate-400"
+                isConfigured={twConfigured} isActive={triggering["twitter"] || triggering["all"]} activeLabel="FETCHING"
+                progress={twConfigured ? 100 : 0}
+                stat1={twConfigured ? `${twAccounts.length} acct · ${twData.searches.filter(s=>s.active).length} srch` : "API key needed"}
+                stat2={twConfigured ? "Live" : "—"}
+                lastFetched={freshTime(latest(twData.searches, "last_run"))}
+                onTrigger={() => trigger("twitter", "/social/fetch-all")}
+                triggering={triggering["twitter"] || triggering["all"]}
+                isSelected={selected === "twitter"}
+                onClick={() => handleCardClick("twitter")}
+                configNote="Add TWITTER_BEARER_TOKEN"
+                testId="scanner-twitter"
+                tooltip={`X/Twitter — click to open the live tweet feed inline. ${twConfigured ? "Official API active." : "Set TWITTER_BEARER_TOKEN to enable."} ${twAccounts.length} accounts + ${twData.searches.filter(s=>s.active).length} searches monitored. Configure Lists in Settings → Social Scan for free-tier compatibility.`}
+              />
+
+              <ScannerCard
+                label="Firecrawl" icon={Globe}
+                accentColor="text-orange-400" bgAccent="bg-orange-500/10"
+                borderAccent="border-orange-500/30" barColor="bg-orange-500"
+                isConfigured={fcConfigured} isActive={triggering["firecrawl"] || triggering["all"]} activeLabel="CRAWLING"
+                progress={fcConfigured ? 100 : 0}
+                stat1={fcConfigured ? `${fcSources.length} sites · ${fcSearches.length} queries` : ""}
+                lastFetched={freshTime(latest(fcSources, "last_fetched"))}
+                onTrigger={fcConfigured ? () => trigger("firecrawl", "/social/fetch-all") : null}
+                triggering={triggering["firecrawl"] || triggering["all"]}
+                configNote="Add FIRECRAWL_API_KEY"
+                isSelected={selected === "firecrawl"}
+                onClick={() => handleCardClick("firecrawl")}
+                testId="scanner-firecrawl"
+                tooltip={`Firecrawl — deep-crawls ${fcSources.length} configured websites + ${fcSearches.length} keyword web searches. Reaches sites with no RSS feed. Requires FIRECRAWL_API_KEY on Render.`}
               />
             </div>
           </div>
 
-          {/* Live source name during scan */}
-          {isScanning && scanStatus.current_source && (
-            <div className="flex items-center gap-2 text-xs" data-testid="current-scan-source">
-              <Loader2 size={12} className="animate-spin text-primary" />
-              <span className="text-muted-foreground">Scanning:</span>
-              <span className="font-medium text-foreground truncate">{scanStatus.current_source}</span>
-            </div>
-          )}
-
-          {/* Scan log - last few sources */}
-          {isScanning && scanStatus.scan_log && scanStatus.scan_log.length > 0 && (
-            <div className="max-h-20 overflow-y-auto space-y-0.5" data-testid="scan-log">
-              {scanStatus.scan_log.slice(-5).map((source, i) => (
-                <div key={i} className="flex items-center gap-1.5 text-[10px] font-mono text-muted-foreground">
-                  <CheckCircle2 size={9} className="text-green-500 shrink-0" />
-                  <span className="truncate">{source}</span>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {/* Last scan info + results */}
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs border-t border-border pt-2">
-            <div className="flex items-center gap-1.5" data-testid="last-scan-time">
-              <Clock size={11} className="text-muted-foreground" />
-              <span className="text-muted-foreground">Last scan:</span>
-              <span className="font-mono font-medium">{scanStatus.last_scan_at ? formatIST(scanStatus.last_scan_at) : "No scans yet"}</span>
-            </div>
-            {lastResult && !lastResult.error && (
-              <>
-                <div className="flex items-center gap-1">
-                  <span className="text-muted-foreground">Feeds:</span>
-                  <span className="font-mono font-bold">{lastResult.feeds_scanned}</span>
-                </div>
-                <div className="flex items-center gap-1">
-                  <span className="text-muted-foreground">Articles:</span>
-                  <span className="font-mono font-bold">{lastResult.total_articles}</span>
-                </div>
-                <div className="flex items-center gap-1">
-                  <span className="text-muted-foreground">New:</span>
-                  <span className="font-mono font-bold text-primary">{lastResult.new_relevant}</span>
-                </div>
-                {lastResult.filtered_out > 0 && (
-                  <div className="flex items-center gap-1" data-testid="scan-filtered-stat">
-                    <Filter size={10} className="text-muted-foreground" />
-                    <span className="text-muted-foreground">Filtered:</span>
-                    <span className="font-mono font-bold text-orange-400">{lastResult.filtered_out}</span>
-                  </div>
-                )}
-                {lastResult.translated > 0 && (
-                  <div className="flex items-center gap-1" data-testid="scan-translated-stat">
-                    <Languages size={10} className="text-muted-foreground" />
-                    <span className="text-muted-foreground">Translated:</span>
-                    <span className="font-mono font-bold text-blue-400">{lastResult.translated}</span>
-                  </div>
-                )}
-              </>
-            )}
-          </div>
-        </CardContent>
+          {/* ── source detail / live-feed panel ── */}
+          {/* All 5 social platforms now show a live-feed widget with direct
+              (raw) and curated (AI-classified) toggle instead of a static
+              handle list. The RSS card still shows the old static panel. */}
+          {selected && ["youtube","telegram","twitter","firecrawl"].includes(selected) ? (
+            <SocialMediaFeedWidget
+              api={api}
+              sourceType={selected}
+              compact={true}
+              pinned={twitterPinned && selected === "twitter"}
+              onTogglePin={selected === "twitter" ? onToggleTwitterPin : undefined}
+              onClose={() => setSelected(null)}
+            />
+          ) : selected === "rss" && detailData.rss ? (
+            <SourceDetailPanel {...detailData.rss} platform="rss" />
+          ) : null}
+        </>
       )}
     </Card>
   );
@@ -235,7 +629,8 @@ function UnacknowledgedAlerts({ api }) {
           View All <ChevronRight size={12} />
         </Button>
       </div>
-      <CardContent className="p-3 space-y-2 max-h-48 overflow-y-auto">
+      <CardContent className="p-3">
+        <ClickToScroll className="space-y-2 max-h-48">
         {alerts.slice(0, 5).map((item) => (
           <div key={item.id} className="flex items-center gap-3 p-2 border border-red-500/20 bg-red-950/30" data-testid={`unack-alert-${item.id}`}>
             <AlertTriangle size={14} className="text-red-400 shrink-0" />
@@ -258,6 +653,7 @@ function UnacknowledgedAlerts({ api }) {
             </Button>
           </div>
         ))}
+        </ClickToScroll>
       </CardContent>
     </Card>
   );
@@ -290,12 +686,15 @@ function PatternInsights({ api }) {
       <CardHeader className="py-3 px-4 border-b border-border">
         <div className="flex items-center gap-2">
           <GitBranch size={14} className="text-primary" />
-          <CardTitle className="text-sm uppercase tracking-wider font-['Barlow_Condensed'] font-semibold">
-            Detected Patterns ({patterns.length})
-          </CardTitle>
+          <Tip text="Automatically detected recurring threat clusters. Each pattern groups 3+ intelligence items sharing the same region, threat type or actor within a 7-day window." side="top">
+            <CardTitle className="text-sm uppercase tracking-wider font-['Barlow_Condensed'] font-semibold cursor-help">
+              Detected Patterns ({patterns.length})
+            </CardTitle>
+          </Tip>
         </div>
       </CardHeader>
-      <CardContent className="p-3 space-y-2 max-h-64 overflow-y-auto">
+      <CardContent className="p-3">
+        <ClickToScroll className="space-y-2 max-h-64">
         {patterns.slice(0, 8).map((p, i) => (
           <div key={i} className="p-2 border border-border space-y-1" data-testid={`pattern-${i}`}>
             <div className="flex items-center justify-between gap-2">
@@ -315,6 +714,7 @@ function PatternInsights({ api }) {
             )}
           </div>
         ))}
+        </ClickToScroll>
       </CardContent>
     </Card>
   );
@@ -326,7 +726,25 @@ export default function Dashboard({ stats: propStats, api }) {
   const [localStats, setLocalStats] = useState(null);
   const [sortBy, setSortBy] = useState("published_at");
   const [minPriority, setMinPriority] = useState("");
+  // Increments every time "Fetch Intel" fires social/fetch-all so SourceScanners
+  // can show FETCHING badges and start its polling schedule.
+  const [socialTrigger, setSocialTrigger] = useState(0);
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const isAdmin = user?.role === "admin";
+
+  // Twitter Live Feed widget pin state — persisted to localStorage so the
+  // user's choice survives page reloads.
+  const [twitterPinned, setTwitterPinned] = useState(
+    () => localStorage.getItem("dashboard_twitter_pinned") === "1"
+  );
+  const toggleTwitterPin = () => {
+    setTwitterPinned(p => {
+      const next = !p;
+      localStorage.setItem("dashboard_twitter_pinned", next ? "1" : "0");
+      return next;
+    });
+  };
 
   // WebSocket real-time connection
   const { connected: wsConnected, newItems: wsNewItems, criticalAlerts, clearNewItems } = useIntelligenceWS(api);
@@ -378,7 +796,14 @@ export default function Dashboard({ stats: propStats, api }) {
   const handleFetchNews = async () => {
     setLoading(true);
     try {
-      await axios.post(`${api}/fetch-news`);
+      // Trigger all 6 sources: RSS + social/web in parallel
+      await Promise.allSettled([
+        axios.post(`${api}/fetch-news`),
+        axios.post(`${api}/social/fetch-all`),
+      ]);
+      // Tell SourceScanners a global social fetch just fired so it can
+      // show FETCHING badges and kick off its own polling schedule.
+      setSocialTrigger(t => t + 1);
     } catch (e) {
       console.error("Fetch failed:", e);
     }
@@ -436,7 +861,7 @@ export default function Dashboard({ stats: propStats, api }) {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl md:text-4xl font-bold uppercase tracking-tight font-['Barlow_Condensed']" data-testid="dashboard-title">
+          <h1 className="text-3xl md:text-4xl font-bold uppercase tracking-tight font-['Barlow_Condensed']" data-testid="dashboard-title" data-tour="dashboard-title">
             Intelligence Overview
           </h1>
           <p className="text-xs font-mono uppercase tracking-[0.15em] text-muted-foreground mt-1">
@@ -444,78 +869,99 @@ export default function Dashboard({ stats: propStats, api }) {
           </p>
         </div>
         <div className="flex items-center gap-3">
-          <div className="flex items-center gap-1.5 text-[10px] font-mono" data-testid="ws-status">
-            {wsConnected ? (
-              <>
-                <Wifi size={12} className="text-green-400" />
-                <span className="text-green-400 uppercase">Live</span>
-              </>
-            ) : (
-              <>
-                <WifiOff size={12} className="text-muted-foreground" />
-                <span className="text-muted-foreground uppercase">Offline</span>
-              </>
-            )}
-          </div>
-          <Button
-            onClick={handleFetchNews}
-            disabled={loading}
-            className="uppercase text-xs font-bold tracking-wider rounded-none"
-            data-testid="fetch-news-btn"
-          >
-            <RefreshCw size={14} className={`mr-2 ${loading ? "animate-spin" : ""}`} />
-            Fetch Intel
-          </Button>
+          <Tip text={wsConnected ? "WebSocket live — new intel items arrive instantly without a page refresh" : "WebSocket offline — data updates on manual refresh only"} side="bottom">
+            <div className="flex items-center gap-1.5 text-[10px] font-mono cursor-default" data-testid="ws-status">
+              {wsConnected ? (
+                <>
+                  <Wifi size={12} className="text-green-400" />
+                  <span className="text-green-400 uppercase">Live</span>
+                </>
+              ) : (
+                <>
+                  <WifiOff size={12} className="text-muted-foreground" />
+                  <span className="text-muted-foreground uppercase">Offline</span>
+                </>
+              )}
+            </div>
+          </Tip>
+          <Tip text="Trigger a full sweep of all 5 sources — RSS feeds + YouTube, Telegram, X/Twitter and Firecrawl — simultaneously" side="bottom">
+            <Button
+              onClick={handleFetchNews}
+              disabled={loading}
+              className="uppercase text-xs font-bold tracking-wider rounded-none"
+              data-testid="fetch-news-btn"
+              data-tour="fetch-intel-btn"
+            >
+              <RefreshCw size={14} className={`mr-2 ${loading ? "animate-spin" : ""}`} />
+              Fetch Intel
+            </Button>
+          </Tip>
         </div>
       </div>
 
       {/* Stats Row */}
       <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-4">
-        <StatBox
-          label="Total Items"
-          value={stats?.total_items || 0}
-          icon={Activity}
-          color="bg-primary/10 text-primary"
-          sub={`${stats?.today_count || 0} today`}
-          testId="stat-total"
-          onClick={() => navigate("/feed")}
-        />
-        <StatBox
-          label="Critical"
-          value={stats?.critical_count || 0}
-          icon={AlertTriangle}
-          color="bg-red-500/10 text-red-400"
-          testId="stat-critical"
-          onClick={() => navigate("/feed?severity=critical")}
-        />
-        <StatBox
-          label="High"
-          value={stats?.high_count || 0}
-          icon={Target}
-          color="bg-amber-500/10 text-amber-400"
-          testId="stat-high"
-          onClick={() => navigate("/feed?severity=high")}
-        />
-        <StatBox
-          label="Medium"
-          value={stats?.medium_count || 0}
-          icon={Shield}
-          color="bg-yellow-500/10 text-yellow-400"
-          testId="stat-medium"
-          onClick={() => navigate("/feed?severity=medium")}
-        />
-        <StatBox
-          label="Low"
-          value={stats?.low_count || 0}
-          icon={ArrowUp}
-          color="bg-green-500/10 text-green-400"
-          testId="stat-low"
-          onClick={() => navigate("/feed?severity=low")}
-        />
+        <Tip text="Total AI-processed intelligence items in your retention window. Click to open the full Intelligence Feed." side="bottom">
+          <div data-tour="stat-total">
+            <StatBox
+              label="Total Items"
+              value={stats?.total_items || 0}
+              icon={Activity}
+              color="bg-primary/10 text-primary"
+              sub={
+                stats?.pending_classification > 0
+                  ? `${stats?.today_processed || 0} visible today · ${stats?.pending_classification} pending AI`
+                  : `${stats?.today_count || 0} today`
+              }
+              testId="stat-total"
+              onClick={() => navigate("/feed")}
+            />
+          </div>
+        </Tip>
+        <Tip text="CRITICAL items — immediate threats. Click to filter feed to critical only." side="bottom">
+          <div data-tour="stat-critical">
+            <StatBox label="Critical" value={stats?.critical_count || 0} icon={AlertTriangle} color="bg-red-500/10 text-red-400" testId="stat-critical" onClick={() => navigate("/feed?severity=critical")} />
+          </div>
+        </Tip>
+        <Tip text="HIGH severity items — significant events requiring priority review. Click to filter." side="bottom">
+          <div data-tour="stat-high">
+            <StatBox label="High" value={stats?.high_count || 0} icon={Target} color="bg-amber-500/10 text-amber-400" testId="stat-high" onClick={() => navigate("/feed?severity=high")} />
+          </div>
+        </Tip>
+        <Tip text="MEDIUM severity — notable but non-urgent items. Click to filter." side="bottom">
+          <div data-tour="stat-medium">
+            <StatBox label="Medium" value={stats?.medium_count || 0} icon={Shield} color="bg-yellow-500/10 text-yellow-400" testId="stat-medium" onClick={() => navigate("/feed?severity=medium")} />
+          </div>
+        </Tip>
+        <Tip text="LOW severity — informational items. Click to filter." side="bottom">
+          <div>
+            <StatBox label="Low" value={stats?.low_count || 0} icon={ArrowUp} color="bg-green-500/10 text-green-400" testId="stat-low" onClick={() => navigate("/feed?severity=low")} />
+          </div>
+        </Tip>
       </div>
 
-      {/* RSS Scan Progress Bar */}
-      <ScanProgressBar api={api} />
+      {/* Pinned Twitter Live Feed (only renders when user has pinned) */}
+      {twitterPinned && (
+        <div className="border border-slate-500/30 rounded-none bg-card overflow-hidden" data-testid="pinned-twitter-feed">
+          <SocialMediaFeedWidget
+            api={api}
+            sourceType="twitter"
+            compact={false}
+            pinned={true}
+            onTogglePin={toggleTwitterPin}
+          />
+        </div>
+      )}
+
+      {/* Source Scanners */}
+      <div data-tour="source-scanners">
+        <SourceScanners
+          api={api}
+          socialTrigger={socialTrigger}
+          twitterPinned={twitterPinned}
+          onToggleTwitterPin={toggleTwitterPin}
+        />
+      </div>
 
       {/* Unacknowledged Critical Alerts - Sticky Panel */}
       <UnacknowledgedAlerts api={api} />
@@ -537,7 +983,8 @@ export default function Dashboard({ stats: propStats, api }) {
               <RefreshCw size={12} className="mr-1" /> Refresh Dashboard
             </Button>
           </div>
-          <CardContent className="p-3 space-y-1.5 max-h-40 overflow-y-auto">
+          <CardContent className="p-3">
+            <ClickToScroll className="space-y-1.5 max-h-40">
             {wsNewItems.slice(0, 8).map((item, i) => (
               <div key={item.id || i} className="flex items-center gap-3 p-1.5 text-xs" data-testid={`ws-item-${i}`}>
                 <Badge className={`shrink-0 rounded-none uppercase text-[9px] px-1 py-0 border ${
@@ -551,18 +998,23 @@ export default function Dashboard({ stats: propStats, api }) {
                 <span className="text-muted-foreground font-mono shrink-0">P:{item.priority_score}</span>
               </div>
             ))}
+            </ClickToScroll>
           </CardContent>
         </Card>
       )}
 
       {/* Map + Recent Alerts */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-        {/* NER Map */}
-        <div className="lg:col-span-7">
-          <NERMap
-            stateStats={stateStatsMap}
-            onStateClick={(state) => navigate(`/feed?state=${encodeURIComponent(state)}`)}
-          />
+        {/* NER Map — click-to-interact so page scroll isn't hijacked */}
+        <div className="lg:col-span-7" data-tour="ner-map">
+          <MapClickWrapper>
+            <NERMap
+              stateStats={stateStatsMap}
+              items={stats?.recent_critical || []}
+              navigate={navigate}
+              onStateClick={(state) => navigate(`/feed?state=${encodeURIComponent(state)}`)}
+            />
+          </MapClickWrapper>
         </div>
 
         {/* Recent Critical Alerts */}
@@ -570,9 +1022,11 @@ export default function Dashboard({ stats: propStats, api }) {
           <Card className="border border-border rounded-none bg-card h-full">
             <CardHeader className="py-3 px-4 border-b border-border">
               <div className="flex items-center justify-between">
-                <CardTitle className="text-sm uppercase tracking-wider font-['Barlow_Condensed'] font-semibold">
-                  Recent Critical Alerts
-                </CardTitle>
+                <Tip text="Most recent CRITICAL and HIGH severity items. These require immediate analyst attention. Click View All to open the full Alerts page." side="top">
+                  <CardTitle className="text-sm uppercase tracking-wider font-['Barlow_Condensed'] font-semibold cursor-help">
+                    Recent Critical Alerts
+                  </CardTitle>
+                </Tip>
                 <Button
                   variant="ghost"
                   size="sm"
@@ -584,7 +1038,8 @@ export default function Dashboard({ stats: propStats, api }) {
                 </Button>
               </div>
             </CardHeader>
-            <CardContent className="p-3 space-y-3 max-h-[400px] overflow-y-auto" data-testid="recent-alerts-list">
+            <CardContent className="p-3" data-testid="recent-alerts-list">
+              <ClickToScroll className="space-y-3 max-h-[400px]">
               {(stats?.recent_critical || []).map((item, i) => (
                 <div
                   key={item.id || i}
@@ -607,6 +1062,7 @@ export default function Dashboard({ stats: propStats, api }) {
               {(!stats?.recent_critical || stats.recent_critical.length === 0) && (
                 <p className="text-sm text-muted-foreground text-center py-8">No critical alerts</p>
               )}
+              </ClickToScroll>
             </CardContent>
           </Card>
         </div>
@@ -617,9 +1073,11 @@ export default function Dashboard({ stats: propStats, api }) {
         {/* Threat Distribution */}
         <Card className="border border-border rounded-none bg-card">
           <CardHeader className="py-3 px-4 border-b border-border">
-            <CardTitle className="text-sm uppercase tracking-wider font-['Barlow_Condensed'] font-semibold">
-              Threat Distribution
-            </CardTitle>
+            <Tip text="Horizontal bar chart showing how intelligence items are distributed across threat categories (insurgency, drug trafficking, border incursion, etc.) within your retention window." side="top">
+              <CardTitle className="text-sm uppercase tracking-wider font-['Barlow_Condensed'] font-semibold cursor-help w-fit">
+                Threat Distribution
+              </CardTitle>
+            </Tip>
           </CardHeader>
           <CardContent className="p-4" data-testid="threat-distribution-chart">
             {threatData.length > 0 ? (
@@ -648,9 +1106,11 @@ export default function Dashboard({ stats: propStats, api }) {
         {/* State Distribution Pie */}
         <Card className="border border-border rounded-none bg-card">
           <CardHeader className="py-3 px-4 border-b border-border">
-            <CardTitle className="text-sm uppercase tracking-wider font-['Barlow_Condensed'] font-semibold">
-              State-wise Distribution
-            </CardTitle>
+            <Tip text="Pie chart showing how intelligence items are distributed across NER states and border countries. Each slice represents one state or country. Larger slice = more intelligence activity." side="top">
+              <CardTitle className="text-sm uppercase tracking-wider font-['Barlow_Condensed'] font-semibold cursor-help w-fit">
+                State-wise Distribution
+              </CardTitle>
+            </Tip>
           </CardHeader>
           <CardContent className="p-4" data-testid="state-distribution-chart">
             {stats?.state_distribution && Object.keys(stats.state_distribution).length > 0 ? (
@@ -698,12 +1158,21 @@ export default function Dashboard({ stats: propStats, api }) {
       {/* Pattern Insights */}
       <PatternInsights api={api} />
 
+      {/* Admin-only: Anthropic API Usage Monitor */}
+      {isAdmin && (
+        <div data-testid="api-usage-widget">
+          <ApiUsageWidget api={api} />
+        </div>
+      )}
+
       {/* Recent Intelligence */}
-      <div>
+      <div data-tour="recent-intel">
         <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
-          <h2 className="text-xl uppercase tracking-wide font-['Barlow_Condensed'] font-semibold">
-            Latest Intelligence
-          </h2>
+          <Tip text="Most recent AI-classified intelligence items. Use the Priority Filter to show only high-scoring items, or Sort By Priority to surface the most urgent items first." side="top">
+            <h2 className="text-xl uppercase tracking-wide font-['Barlow_Condensed'] font-semibold cursor-help">
+              Latest Intelligence
+            </h2>
+          </Tip>
           <div className="flex items-center gap-2 flex-wrap">
             <Select value={minPriority || "all"} onValueChange={(v) => setMinPriority(v === "all" ? "" : v)}>
               <SelectTrigger className="w-[150px] rounded-none text-[10px] uppercase h-7" data-testid="dashboard-priority-filter">

@@ -5,6 +5,7 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
+import Tip from "../components/Tip";
 import axios from "axios";
 
 const RISK_STYLES = {
@@ -58,68 +59,80 @@ export default function Patterns({ api }) {
     <div className="space-y-6" data-testid="patterns-page">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl md:text-4xl font-bold uppercase tracking-tight font-['Barlow_Condensed']" data-testid="patterns-title">
+          <h1 className="text-3xl md:text-4xl font-bold uppercase tracking-tight font-['Barlow_Condensed']" data-testid="patterns-title" data-tour="patterns-title">
             Pattern Detection Engine
           </h1>
           <p className="text-xs font-mono uppercase tracking-[0.15em] text-muted-foreground mt-1">
             Recurring threat patterns across intelligence items
           </p>
         </div>
-        <Button
-          onClick={triggerDetection}
-          disabled={detecting}
-          className="uppercase text-xs font-bold tracking-wider rounded-none"
-          data-testid="detect-patterns-btn"
-        >
-          <RefreshCw size={14} className={`mr-2 ${detecting ? "animate-spin" : ""}`} />
-          Run Detection
-        </Button>
+        <Tip text="Run pattern detection on all intelligence items in the current retention window. Looks for clusters of 3+ items sharing the same region, threat type or actor within a 7-day window." side="left">
+          <Button
+            onClick={triggerDetection}
+            disabled={detecting}
+            className="uppercase text-xs font-bold tracking-wider rounded-none"
+            data-testid="detect-patterns-btn"
+          >
+            <RefreshCw size={14} className={`mr-2 ${detecting ? "animate-spin" : ""}`} />
+            Run Detection
+          </Button>
+        </Tip>
       </div>
 
       {/* Summary Stats */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <div className="stat-card flex items-center gap-3">
-          <GitBranch size={18} className="text-primary" />
-          <div>
-            <p className="text-2xl font-bold font-['Barlow_Condensed']">{patterns.length}</p>
-            <p className="text-[10px] uppercase tracking-[0.15em] text-muted-foreground font-mono">Total Patterns</p>
+        <Tip text="Total distinct threat patterns detected across the intelligence corpus within your retention window." side="bottom">
+          <div className="stat-card flex items-center gap-3">
+            <GitBranch size={18} className="text-primary" />
+            <div>
+              <p className="text-2xl font-bold font-['Barlow_Condensed']">{patterns.length}</p>
+              <p className="text-[10px] uppercase tracking-[0.15em] text-muted-foreground font-mono">Total Patterns</p>
+            </div>
           </div>
-        </div>
-        <div className="stat-card flex items-center gap-3">
-          <AlertTriangle size={18} className="text-red-400" />
-          <div>
-            <p className="text-2xl font-bold font-['Barlow_Condensed'] text-red-400">
-              {patterns.filter(p => p.escalation_risk === "CRITICAL").length}
-            </p>
-            <p className="text-[10px] uppercase tracking-[0.15em] text-muted-foreground font-mono">Critical</p>
+        </Tip>
+        <Tip text="Patterns with CRITICAL escalation risk — 2+ critical-severity events in the cluster. These require immediate analyst attention." side="bottom">
+          <div className="stat-card flex items-center gap-3">
+            <AlertTriangle size={18} className="text-red-400" />
+            <div>
+              <p className="text-2xl font-bold font-['Barlow_Condensed'] text-red-400">
+                {patterns.filter(p => p.escalation_risk === "CRITICAL").length}
+              </p>
+              <p className="text-[10px] uppercase tracking-[0.15em] text-muted-foreground font-mono">Critical</p>
+            </div>
           </div>
-        </div>
-        <div className="stat-card flex items-center gap-3">
-          <TrendingUp size={18} className="text-orange-400" />
-          <div>
-            <p className="text-2xl font-bold font-['Barlow_Condensed'] text-orange-400">
-              {patterns.filter(p => p.escalation_risk === "HIGH").length}
-            </p>
-            <p className="text-[10px] uppercase tracking-[0.15em] text-muted-foreground font-mono">High Risk</p>
+        </Tip>
+        <Tip text="Patterns with HIGH escalation risk — 5+ events in the cluster. Significant and growing threat situation." side="bottom">
+          <div className="stat-card flex items-center gap-3">
+            <TrendingUp size={18} className="text-orange-400" />
+            <div>
+              <p className="text-2xl font-bold font-['Barlow_Condensed'] text-orange-400">
+                {patterns.filter(p => p.escalation_risk === "HIGH").length}
+              </p>
+              <p className="text-[10px] uppercase tracking-[0.15em] text-muted-foreground font-mono">High Risk</p>
+            </div>
           </div>
-        </div>
-        <div className="stat-card flex items-center gap-3">
-          <MapPin size={18} className="text-blue-400" />
-          <div>
-            <p className="text-2xl font-bold font-['Barlow_Condensed']">
-              {new Set(patterns.map(p => p.region)).size}
-            </p>
-            <p className="text-[10px] uppercase tracking-[0.15em] text-muted-foreground font-mono">Regions</p>
+        </Tip>
+        <Tip text="Number of distinct NER states or border countries with at least one detected threat pattern." side="bottom">
+          <div className="stat-card flex items-center gap-3">
+            <MapPin size={18} className="text-blue-400" />
+            <div>
+              <p className="text-2xl font-bold font-['Barlow_Condensed']">
+                {new Set(patterns.map(p => p.region)).size}
+              </p>
+              <p className="text-[10px] uppercase tracking-[0.15em] text-muted-foreground font-mono">Regions</p>
+            </div>
           </div>
-        </div>
+        </Tip>
       </div>
 
       {/* Critical / High Risk Patterns */}
       {criticalPatterns.length > 0 && (
         <div>
-          <h2 className="text-lg uppercase tracking-wide font-['Barlow_Condensed'] font-semibold mb-3 text-red-400">
-            Escalation Warnings
-          </h2>
+          <Tip text="Patterns with CRITICAL or HIGH escalation risk — these clusters indicate active or rapidly developing threat situations requiring priority analyst attention." side="top">
+            <h2 className="text-lg uppercase tracking-wide font-['Barlow_Condensed'] font-semibold mb-3 text-red-400 cursor-help w-fit">
+              Escalation Warnings
+            </h2>
+          </Tip>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {criticalPatterns.map((p, i) => (
               <PatternCard key={i} pattern={p} />
@@ -131,9 +144,11 @@ export default function Patterns({ api }) {
       {/* Other Patterns */}
       {otherPatterns.length > 0 && (
         <div>
-          <h2 className="text-lg uppercase tracking-wide font-['Barlow_Condensed'] font-semibold mb-3">
-            All Detected Patterns
-          </h2>
+          <Tip text="MODERATE and LOW risk patterns — recurring events that haven't reached critical threshold yet but may escalate. Monitor these for upward trend." side="top">
+            <h2 className="text-lg uppercase tracking-wide font-['Barlow_Condensed'] font-semibold mb-3 cursor-help w-fit">
+              All Detected Patterns
+            </h2>
+          </Tip>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {otherPatterns.map((p, i) => (
               <PatternCard key={i} pattern={p} />

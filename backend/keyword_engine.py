@@ -45,11 +45,78 @@ SEED_KEYWORDS = {
         "Tawang standoff", "Siliguri corridor", "Chicken Neck vulnerability",
     ],
     "cross_border": [
+        # ── Existing NER-relevant cross-border seeds ───────────────────────
         "India Bangladesh border issue", "Myanmar insurgent camps",
         "Rohingya infiltration India", "BGB BSF coordination",
         "China PLA activity Arunachal", "Pakistan ISI northeast",
         "Myanmar junta resistance", "Chin refugee Mizoram",
         "Arakan Army India border", "Bangladesh India water dispute",
+
+        # ── Bangladesh — events with NER impact ────────────────────────────
+        # Each phrase pairs a BD entity/topic with an NER-relevant anchor
+        # (border, infiltration, smuggling, India relations, NER state names,
+        # insurgent groups operating across the BD border). Pure domestic-BD
+        # politics is intentionally excluded — those don't help NER analysts.
+
+        # Indo-Bangladesh diplomacy & political ties
+        "India Bangladesh diplomatic relations",
+        "Bangladesh Sheikh Hasina India visit",
+        "BNP rally India relations",
+        "Awami League India bilateral",
+        "Indo-Bangla connectivity Northeast",
+
+        # China–Bangladesh nexus (strategic concern for NER)
+        "China Bangladesh strategic investment",
+        "China loan Bangladesh debt trap",
+        "Bangladesh military exercise China",
+        "BNS submarine Chinese supply",
+        "Belt Road Bangladesh Chittagong",
+
+        # Bangladesh armed forces / paramilitary at NER border
+        "BGB border firing infiltrator",
+        "BSF BGB joint patrol",
+        "Bangladesh Rifles Tripura border",
+        "Bangladesh Coast Guard smuggling seizure",
+
+        # Border crime & smuggling impacting NER
+        "Tripura Bangladesh cattle smuggling",
+        "Meghalaya Dawki coal smuggling",
+        "Bangladesh fake currency NER seizure",
+        "Yaba pills Bangladesh border",
+        "Bangladesh phensedyl smuggling Assam",
+        "human trafficking Bangladesh India border",
+        "arms smuggling Bangladesh NSCN",
+
+        # Insurgency in BD-NER border belt
+        "ULFA Bangladesh hideout",
+        "NSCN Bangladesh refuge",
+        "JMB Ansar al Islam India border",
+        "HuJI Bangladesh terror Northeast",
+        "Chittagong Hill Tracts insurgency Tripura",
+
+        # Refugee / minority movement
+        "Hindu minority attack Bangladesh",
+        "Rohingya Bangladesh repatriation Myanmar",
+        "Cox Bazar refugee crisis spillover",
+        "Bangladesh Hindu Tripura refugee",
+
+        # Political stability with cross-border spillover
+        "Bangladesh election violence border",
+        "Hefazat Islamists Bangladesh",
+        "Bangladesh political unrest infiltration",
+        "Khaleda Zia BNP protest border",
+
+        # Economic stability impacting NER trade
+        "Bangladesh forex crisis trade",
+        "Bangladesh garment workers protest",
+        "Bangladesh economic slowdown Northeast trade",
+
+        # Water / energy / infrastructure shared with NER
+        "Teesta water sharing dispute",
+        "Ganges Farakka treaty",
+        "Bangladesh Maitree power import",
+        "Bangladesh Padma Bridge trade impact",
+        "Bangladesh Northeast India transit",
     ],
 }
 
@@ -60,7 +127,7 @@ _keyword_cache = {
     "ttl_seconds": 1800,  # 30 min cache
 }
 
-MAX_KEYWORDS = 300
+MAX_KEYWORDS = 500
 
 
 def _time_decay_score(published_at: str, base_score: float, half_life_days: int = 7) -> float:
@@ -588,6 +655,46 @@ def get_dynamic_keywords_for_matching(keywords: list) -> list:
     Returns list of (keyword, weight) tuples sorted by weight descending.
     """
     return [(kw["keyword"].lower(), kw["score"] / 100.0) for kw in keywords if kw["score"] > 20]
+
+
+async def get_top_keywords_for_search(db, limit: int = 10, min_score: int = 40) -> list:
+    """
+    Return top-scored keyword strings from db.keyword_store, suitable for use
+    as search queries on YouTube, Twitter, Firecrawl.
+
+    Falls back to SEED_KEYWORDS if the bank is empty or all below threshold —
+    so social media searches always have *something* to search for, even on
+    a fresh install before the keyword engine has run.
+
+    Args:
+      limit:     max number of queries to return
+      min_score: skip keywords scored below this (range 0-100)
+    """
+    keywords = []
+    try:
+        cursor = db.keyword_store.find(
+            {"score": {"$gte": min_score}},
+            {"_id": 0, "keyword": 1, "score": 1, "category": 1},
+        ).sort("score", -1).limit(limit * 2)  # over-fetch, then dedupe
+        async for doc in cursor:
+            kw = (doc.get("keyword") or "").strip()
+            if kw and 3 <= len(kw) <= 80 and kw.lower() not in {k.lower() for k in keywords}:
+                keywords.append(kw)
+            if len(keywords) >= limit:
+                break
+    except Exception as e:
+        logger.error(f"get_top_keywords_for_search: keyword_store query failed: {e}")
+
+    if not keywords:
+        logger.warning("Keyword bank empty — falling back to SEED_KEYWORDS for searches")
+        # Build a balanced fallback: 5 primary + 3 geo + 2 cross-border
+        keywords = (
+            SEED_KEYWORDS["primary"][:5]
+            + SEED_KEYWORDS["geo"][:3]
+            + SEED_KEYWORDS["cross_border"][:2]
+        )
+
+    return keywords[:limit]
 
 
 def score_article_against_keywords(article: dict, keyword_weights: list) -> float:

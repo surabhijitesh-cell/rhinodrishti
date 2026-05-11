@@ -23,7 +23,8 @@ const STATUS_COLORS = {
 
 export default function TrainingSummary({ api }) {
   const { user } = useAuth();
-  const isViewer = user?.role === "viewer";
+  const isViewer  = user?.role === "viewer";
+  const isAnalyst = user?.role === "analyst";
   const [stats, setStats] = useState(null);
   const [profile, setProfile] = useState(null);
   const [queue, setQueue] = useState([]);
@@ -182,7 +183,7 @@ export default function TrainingSummary({ api }) {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl md:text-4xl font-bold uppercase tracking-tight font-['Barlow_Condensed']" data-testid="training-title">
+          <h1 className="text-3xl md:text-4xl font-bold uppercase tracking-tight font-['Barlow_Condensed']" data-testid="training-title" data-tour="training-title">
             Training & Feedback
           </h1>
           <p className="text-xs font-mono uppercase tracking-[0.15em] text-muted-foreground mt-1">
@@ -617,8 +618,8 @@ export default function TrainingSummary({ api }) {
           </CardContent>
         </Card>
 
-        {/* Scoring Formula */}
-        <Card className="border border-border rounded-none bg-card" data-testid="scoring-formula-card">
+        {/* Scoring Formula — admin only */}
+        {!isAnalyst && <Card className="border border-border rounded-none bg-card" data-testid="scoring-formula-card">
           <CardHeader className="py-3 px-4 border-b border-border">
             <CardTitle className="text-sm uppercase tracking-wider font-['Barlow_Condensed'] font-semibold flex items-center gap-2">
               <ShieldAlert size={16} className="text-amber-400" />
@@ -644,11 +645,11 @@ export default function TrainingSummary({ api }) {
               ))}
             </div>
           </CardContent>
-        </Card>
+        </Card>}
       </div>
 
       {/* ===== ACTIVE FEEDBACK BIAS (AI PIPELINE INTEGRATION) ===== */}
-      <Card className="border border-border rounded-none bg-card border-l-4 border-l-primary" data-testid="feedback-bias-card">
+      {!isAnalyst && <Card className="border border-border rounded-none bg-card border-l-4 border-l-primary" data-testid="feedback-bias-card">
         <CardHeader className="py-3 px-4 border-b border-border">
           <CardTitle className="text-sm uppercase tracking-wider font-['Barlow_Condensed'] font-semibold flex items-center gap-2">
             <Zap size={16} className="text-primary" />
@@ -777,10 +778,10 @@ export default function TrainingSummary({ api }) {
             </div>
           )}
         </CardContent>
-      </Card>
+      </Card>}
 
       {/* ===== TRAINING ACTIVITY LOG ===== */}
-      <Card className="border border-border rounded-none bg-card" data-testid="activity-log-card">
+      {!isAnalyst && <Card className="border border-border rounded-none bg-card" data-testid="activity-log-card">
         <CardHeader className="py-3 px-4 border-b border-border flex flex-row items-center justify-between">
           <CardTitle className="text-sm uppercase tracking-wider font-['Barlow_Condensed'] font-semibold flex items-center gap-2">
             <Activity size={16} className="text-cyan-400" />
@@ -869,7 +870,7 @@ export default function TrainingSummary({ api }) {
             </div>
           )}
         </CardContent>
-      </Card>
+      </Card>}
     </div>
   );
 }

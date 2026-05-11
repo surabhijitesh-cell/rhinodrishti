@@ -5,6 +5,7 @@ import {
   Handshake, Swords, Landmark, BarChart3, Trash2
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
+import Tip from "../components/Tip";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import axios from "axios";
@@ -178,10 +179,12 @@ function CountrySection({ title, flag, data, isLoading, onDelete }) {
             {items.length}
           </Badge>
         </CardTitle>
-        <Badge variant="outline" className={`rounded-none text-[10px] px-2.5 py-0.5 uppercase tracking-wider flex items-center gap-1.5 ${postureConf.color}`}>
-          <PostureIcon size={12} />
-          {postureConf.label}
-        </Badge>
+        <Tip text={`Overall threat posture for this border — DETERIORATING: active escalation, ELEVATED: heightened alert, WATCHFUL: monitoring required, STABLE: no immediate concern.`} side="left">
+          <Badge variant="outline" className={`rounded-none text-[10px] px-2.5 py-0.5 uppercase tracking-wider flex items-center gap-1.5 ${postureConf.color} cursor-help`}>
+            <PostureIcon size={12} />
+            {postureConf.label}
+          </Badge>
+        </Tip>
       </CardHeader>
       <CardContent className="p-0">
         {isLoading ? (
@@ -267,7 +270,7 @@ export default function CrossBorderWatch({ api }) {
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h1 className="text-2xl font-bold uppercase tracking-wider font-['Barlow_Condensed']" data-testid="cb-title">
+          <h1 className="text-2xl font-bold uppercase tracking-wider font-['Barlow_Condensed']" data-testid="cb-title" data-tour="cross-border-title">
             Cross-Border Watch
           </h1>
           <p className="text-xs text-muted-foreground font-mono uppercase tracking-wider mt-0.5">
@@ -300,9 +303,11 @@ export default function CrossBorderWatch({ api }) {
           {data.watchpoints?.length > 0 && (
             <Card className="border border-border rounded-none bg-card">
               <CardHeader className="py-2 px-4 border-b border-border">
-                <CardTitle className="text-xs uppercase tracking-wider font-['Barlow_Condensed'] font-semibold flex items-center gap-2">
+                <Tip text="Active intelligence watchpoints — specific situations or actors requiring heightened monitoring. Updated by the AI based on cross-border signal patterns." side="top">
+                <CardTitle className="text-xs uppercase tracking-wider font-['Barlow_Condensed'] font-semibold flex items-center gap-2 cursor-help w-fit">
                   <Eye size={14} className="text-amber-400" /> Watchpoints
                 </CardTitle>
+              </Tip>
               </CardHeader>
               <CardContent className="p-3">
                 <ul className="space-y-1.5" data-testid="watchpoints-list">
@@ -319,9 +324,11 @@ export default function CrossBorderWatch({ api }) {
           {Object.keys(data.signal_distribution || {}).length > 0 && (
             <Card className="border border-border rounded-none bg-card">
               <CardHeader className="py-2 px-4 border-b border-border">
-                <CardTitle className="text-xs uppercase tracking-wider font-['Barlow_Condensed'] font-semibold flex items-center gap-2">
-                  <TrendingUp size={14} className="text-cyan-400" /> Signal Distribution
-                </CardTitle>
+                <Tip text="Breakdown of cross-border intelligence signals by category — shows which types of events (diplomatic, defence, political, economic) are generating the most items." side="top">
+                  <CardTitle className="text-xs uppercase tracking-wider font-['Barlow_Condensed'] font-semibold flex items-center gap-2 cursor-help w-fit">
+                    <TrendingUp size={14} className="text-cyan-400" /> Signal Distribution
+                  </CardTitle>
+                </Tip>
               </CardHeader>
               <CardContent className="p-3">
                 <div className="flex flex-wrap gap-1.5" data-testid="signal-distribution">

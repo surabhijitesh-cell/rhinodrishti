@@ -9,6 +9,8 @@
 1. [Authentication & Access Control](#1-authentication--access-control)
 2. [Getting Started](#2-getting-started)
 3. [Dashboard](#3-dashboard)
+   - 3.1 [Intelligence Source Monitor Panel](#31-intelligence-source-monitor-panel)
+   - 3.2 [Tooltips & Guided Walkthrough](#32-tooltips--guided-walkthrough)
 4. [Intelligence Feed](#4-intelligence-feed)
 5. [Cross-Border Intelligence](#5-cross-border-intelligence)
 6. [Daily Brief](#6-daily-brief)
@@ -23,8 +25,11 @@
 15. [Platform Updates & Notifications](#15-platform-updates--notifications)
 16. [User Management](#16-user-management)
 17. [Settings](#17-settings)
-18. [How the AI Pipeline Works](#18-how-the-ai-pipeline-works)
-19. [Glossary](#19-glossary)
+    - 17.1 [Local Database Storage Card](#171-local-database-storage-card)
+    - 17.2 [Source Effectiveness Card](#172-source-effectiveness-card)
+18. [Local Database Setup Wizard](#18-local-database-setup-wizard)
+19. [How the AI Pipeline Works](#19-how-the-ai-pipeline-works)
+20. [Glossary](#20-glossary)
 
 ---
 
@@ -120,11 +125,50 @@ The Dashboard is your command center showing the current intelligence landscape 
 - **Low**: Items of LOW security significance
 - Click any stat card to filter the Intelligence Feed by that severity level
 
-### RSS Scanner Panel
-Shows real-time progress when a fetch cycle is running:
-- Source being scanned
-- Progress bar (X of 72 sources)
-- Articles found, filtered, and translated
+### Intelligence Source Monitor Panel
+
+The collapsible panel below the stat cards shows real-time status for all **6 intelligence source types**. It is open by default — click the header row to collapse it.
+
+**Two fetch buttons in the panel header:**
+- **FETCH INTEL** (top-right of Dashboard header) — triggers ALL 6 sources simultaneously (RSS + all 5 social/web sources via `Promise.allSettled` — one failing never blocks the others)
+- **SCAN SOCIAL MEDIA** (inside the panel header) — triggers the 5 non-RSS sources only (YouTube, Facebook, Telegram, X/Twitter, Firecrawl)
+
+Each of the 6 source cards shows:
+- **Status badge**: SCANNING / FETCHING / CRAWLING (animated) | IDLE | SETUP (not yet configured)
+- **Progress bar**: Shows fill level based on number of active sources
+- **Stats**: Channel count, page count, or article count depending on source type
+- **Last fetched**: Time elapsed since most recent successful fetch
+- **FETCH button**: Manual per-source trigger (disabled if source is not configured)
+- **Drill-down**: Click a card to expand the panel below, listing every individual site, channel or account being monitored for that source
+
+**Source types:**
+| Source | Color | What it monitors |
+|--------|-------|-----------------|
+| **RSS Feeds** | Green | 89 curated news feeds (regional NER, national, Bangladesh, Myanmar, government PIBs) |
+| **YouTube** | Red | Subscribed channels and keyword searches — requires `YOUTUBE_API_KEY` |
+| **Facebook** | Blue | Configured Facebook pages — requires Facebook App credentials |
+| **Telegram** | Sky | Monitored Telegram channels via Telethon session — requires `telegram_setup.py` |
+| **X / Twitter** | Slate | Twitter accounts and keyword searches — via official API or Nitter fallback |
+| **Firecrawl** | Orange | Deep-crawls websites without RSS, plus keyword web searches — requires `FIRECRAWL_API_KEY` |
+
+See Section 18 for Render and Tailscale configuration details.
+
+### 3.1 Intelligence Source Monitor Panel
+
+*(See the full description in the sub-section above)*
+
+### 3.2 Tooltips & Guided Walkthrough
+
+**Tooltips** appear on every button, label, stat card, chart heading, source scanner card, and intelligence card parameter throughout the platform. Hover your cursor over any item to see a contextual explanation (auto-dismisses after 3 seconds).
+
+**Guided Page Walkthrough:**
+- Each page has a built-in step-by-step tour powered by **Joyride** — it spotlights key UI elements and provides a short brief on what each section does
+- The tour **auto-starts automatically** the first time any user visits each page (after a 1-second delay so the page can finish loading)
+- Once seen, the tour does NOT auto-repeat. It tracks whether you've seen each page's tour via browser localStorage (keyed to your username)
+- **Re-trigger the tour at any time** by clicking the **? (Help Circle)** button in the top-right bar of any page
+- **Admin only**: The **↺ (Reset Tours)** button next to the ? button clears the seen-state for all pages and immediately restarts the tour for the current page — useful for demonstrating the platform to new analysts
+
+---
 
 ### NER Threat Map
 Visual map of India's Northeast showing threat concentration by state. Hover over states to see item counts and severity breakdown.
@@ -832,6 +876,37 @@ Click the **Trash** icon to permanently delete a user. You cannot delete your ow
 
 The Settings page uses a **side-by-side card layout** for quick access to all configuration options without excessive scrolling.
 
+### 17.1 Local Database Storage Card
+
+The first card on the Settings page shows where the platform is currently storing intelligence data:
+
+| Mode | Indicator | Meaning |
+|------|-----------|---------|
+| **MongoDB Atlas** | Cloud icon (blue) | Data stored on Atlas cloud — default for Render deployments |
+| **Local — Tailscale** | Shield icon (green) | Data stored on local hard disk, connected via Tailscale VPN tunnel |
+| **Local — Direct** | Server icon (amber) | Data stored on local machine on same network |
+
+The card displays:
+- Current database mode (Atlas / Local via Tailscale / Local Direct)
+- Total documents stored
+- Database size on disk
+- Migration log (last 5 migration events)
+- **Setup Wizard button** — click to see the step-by-step instructions for migrating to local storage (see Section 18)
+
+### 17.2 Source Effectiveness Card
+
+Shows which non-RSS intelligence sources are producing actionable intelligence. Located below the Bias Impact Report.
+
+Each source row shows:
+- **Source name** with type icon (YouTube / Facebook / Telegram / Twitter / Firecrawl)
+- **Item count** — total intelligence items produced by this source in the retention window
+- **Severity bar** — horizontal bar showing proportion of Critical (red), High (orange), Medium (amber), Low (green) items
+- **AI processing rate** — percentage of items that completed AI classification
+- **Latest catch** — title and severity of the most recent item from this source
+- **High-value score** — combined count of Critical + High items (the most operationally useful output)
+
+Use this card to assess whether a configured source is actually contributing to the intelligence picture. A source with 0 items may need re-configuration.
+
 ### News Retention Window
 Controls how far back the system looks when displaying intelligence items.
 
@@ -898,47 +973,125 @@ Each row shows a rated article with:
 
 ---
 
-## 18. How the AI Pipeline Works
+## 18. Local Database Setup Wizard
+
+Rhino Drishti can store collected intelligence on a **local 1 TB hard disk** at your intelligence collection centre instead of MongoDB Atlas. The frontend (Vercel) and backend (Render) remain in the cloud — only the database moves on-premises.
+
+### Architecture
+
+```
+┌─────────────────────────────────────┐
+│  CLOUD (unchanged)                  │
+│  Frontend: Vercel                   │
+│  Backend:  Render                   │
+└───────────────────┬─────────────────┘
+                    │ MongoDB driver connection
+                    │ (encrypted WireGuard tunnel)
+                    ▼
+┌─────────────────────────────────────┐
+│  ON-PREMISES (your Windows 11 PC)   │
+│  MongoDB 7.0 Community              │
+│  Tailscale Agent                    │
+│  1 TB local storage                 │
+└─────────────────────────────────────┘
+```
+
+**Why Tailscale?** Tailscale uses WireGuard — a modern, audited VPN protocol. It creates a private overlay network between your Render backend and local machine without opening firewall ports, requiring a static IP, or complex NAT configuration. It is free for up to 3 devices.
+
+### Setup Steps (Automated via PowerShell Wizard)
+
+The wizard at `local-setup/setup-wizard.ps1` automates the entire installation. Run it in an elevated PowerShell terminal on your Windows 11 machine.
+
+**The wizard performs:**
+1. Checks for and installs **MongoDB 7.0 Community** (via winget)
+2. Configures MongoDB to listen on `0.0.0.0:27017` with authentication enabled
+3. Creates the `rhinodrishti_admin` and `rhinodrishti_user` database users
+4. Installs **Tailscale** (via winget) and authenticates it to your Tailscale account
+5. Sets Windows Firewall rules to allow MongoDB traffic only from Tailscale IP range (`100.x.x.x`)
+6. Optionally runs `migrate_atlas_to_local.py` to copy all existing intelligence data from Atlas to local storage
+
+**After setup:**
+1. Note your machine's Tailscale IP (e.g., `100.x.x.x`)
+2. Update the `MONGO_URL` environment variable on Render to: `mongodb://rhinodrishti_user:PASSWORD@100.x.x.x:27017/rhinodrishti?authSource=rhinodrishti`
+3. Redeploy the Render service
+4. The Settings page Local Database Card will switch from "Atlas" to "Local — Tailscale"
+
+### Prerequisites
+- Windows 11 machine with 1 TB+ storage
+- Administrator PowerShell access
+- Tailscale account (free at tailscale.com)
+- Existing MongoDB Atlas credentials (for migration)
+
+### One-Button Migration
+When migration is enabled in the wizard, `migrate_atlas_to_local.py`:
+1. Connects to MongoDB Atlas
+2. Reads all collections (`intelligence`, `users`, `settings`, `keywords`, etc.)
+3. Writes them to local MongoDB in batch mode
+4. Verifies document counts match before declaring success
+
+The migration script is located at `local-setup/migrate_atlas_to_local.py`. Run independently with: `python migrate_atlas_to_local.py --atlas-url "<ATLAS_URL>" --local-url "mongodb://localhost:27017"`
+
+---
+
+## 19. How the AI Pipeline Works
 
 ### Data Flow
 ```
-RSS Sources (89) + Elite Web Scraping + Manual Uploads
-        |
-        v
-    Deduplication (URL + title similarity)
-        |
-        v
+┌─────── 6 INTELLIGENCE SOURCES (parallel ingest) ───────┐
+│  RSS Feeds (89)    YouTube    Facebook                  │
+│  Telegram          X/Twitter  Firecrawl Web Crawler     │
+└──────────────────────────────┬──────────────────────────┘
+                               │
+                               v
+           Manual Uploads (PDF, DOCX, URL, images)
+                               │
+                               v
+    Deduplication (URL + title similarity + entity overlap)
+                               │
+                               v
     Hard Filter (reject sports, entertainment, lifestyle)
-        |
-        v
+                               │
+                               v
     Dynamic Keyword Matching (weighted relevance scoring)
-        |
-        v
+                               │
+                               v
     Language Detection & Translation
     (Bengali, Assamese, Hindi, Burmese/Myanmar, Thai,
-     Chinese, Arabic, Japanese, Korean -> English)
-        |
-        v
+     Chinese, Arabic, Japanese, Korean → English)
+                               │
+                               v
     Level 1 Sifter (pre-filter for border instability, militant activity)
-        |
-        v
+                               │
+                               v
     Level 2 Deep Analyst (10-step Claude AI classification + feedback bias injection)
-        |
-        v
+                               │
+                               v
     Vector Embedding (OpenAI text-embedding-3-small)
-        |
-        v
+                               │
+                               v
     Adaptive Keyword Feedback (boost/decay keyword scores)
-        |
-        v
+                               │
+                               v
     Analyst Feedback Integration (rating-based bias adjustment)
-        |
-        v
+                               │
+                               v
     WebSocket Broadcast (real-time push to connected clients)
-        |
-        v
+                               │
+                               v
     Pattern Detection (sliding-window cluster analysis)
 ```
+
+### Social Media & Web Source Configuration
+
+| Source | Env Variables Required | What you get |
+|--------|----------------------|--------------|
+| **YouTube** | `YOUTUBE_API_KEY` | Video transcripts and metadata from subscribed channels and keyword searches |
+| **Facebook** | `FACEBOOK_APP_ID`, `FACEBOOK_APP_SECRET` | Posts from monitored pages |
+| **Telegram** | Telethon session file (run `telegram_setup.py`) | Messages from monitored channels including private/restricted channels |
+| **X/Twitter** | Optional: `TWITTER_BEARER_TOKEN` | Account tweets and keyword searches (falls back to Nitter scraping without API key) |
+| **Firecrawl** | `FIRECRAWL_API_KEY` | Deep-crawled website content and keyword-triggered web searches |
+
+All source configurations are managed from the **Settings > Intelligence Source Monitors** panel on the Dashboard.
 
 ### RSS Source Breakdown (89 Sources)
 
@@ -1001,7 +1154,7 @@ The AI operates as a Senior Military Intelligence Analyst and performs:
 
 ---
 
-## 19. Glossary
+## 20. Glossary
 
 | Term | Definition |
 |------|-----------|
@@ -1046,8 +1199,21 @@ The AI operates as a Senior Military Intelligence Analyst and performs:
 | **Training Session** | Log entry created when "Train Rhino Drishti" is clicked, capturing volume breakdown and AI impact |
 | **Upweight / Downweight** | Bias adjustments applied to article scores — upweight boosts priority, downweight reduces it |
 | **Vector Embedding** | Mathematical representation of text meaning, enabling semantic similarity search |
+| **C-Score** | Confidence Score (0-100%) — AI's certainty in its own classification. ≥90 = high confidence (green), ≥70 = moderate (blue), <70 = uncertain (verify manually) |
+| **P-Score** | Priority Score (0-100) — AI-computed urgency combining severity, source credibility and strategic relevance. ≥80 = critical (red), ≥60 = elevated (orange), <60 = routine |
+| **Firecrawl** | Web crawling service that deep-crawls websites without RSS feeds and performs keyword-triggered web searches. Requires `FIRECRAWL_API_KEY` |
+| **Tailscale** | WireGuard-based VPN mesh network used to securely connect the Render backend to a local MongoDB database without opening firewall ports |
+| **Joyride** | react-joyride library powering the guided page walkthrough — spotlights UI elements and shows contextual explanations |
+| **Guided Tour** | Step-by-step page walkthrough that auto-starts on first visit per page. Re-trigger via the ? button; admin can reset all tours |
+| **Source Effectiveness** | Settings card showing intelligence yield per non-RSS source — item count, severity distribution, AI processing rate and latest catch |
+| **Local Database** | On-premises MongoDB 7.0 installation on a local hard disk, connected to the Render backend via Tailscale VPN tunnel |
+| **Nitter** | Open-source Twitter/X front-end used as a fallback scraper when no official Twitter Bearer Token is configured |
+| **Telethon** | Python Telegram client library used to read messages from Telegram channels. Requires a user session file generated by `telegram_setup.py` |
+| **Attention Level** | AI-assigned operational attention required: MONITOR (routine), ELEVATED (increased vigilance), IMMEDIATE_ACTION (urgent response needed) |
+| **SCAN SOCIAL MEDIA** | Dashboard button that triggers all 5 non-RSS sources simultaneously (YouTube, Facebook, Telegram, Twitter, Firecrawl) |
+| **Tip / Tooltip** | Hover-activated contextual explanation that appears for 3 seconds over any button, label, parameter or section heading |
 
 ---
 
-*Rhino Drishti v10.0 — Elite OSINT Intelligence Platform with Feedback-Driven AI, Reports & Auto-Translation*
-*Handbook updated: 24 April 2026*
+*Rhino Drishti v11.0 — Elite OSINT Intelligence Platform — 6-Source Ingest, Local DB Wizard, Guided Tours & Comprehensive Tooltips*
+*Handbook updated: 28 April 2026*

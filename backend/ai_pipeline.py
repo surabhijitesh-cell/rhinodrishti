@@ -13,7 +13,8 @@ from llm_client import get_client, MODEL
 
 CLASSIFICATION_PROMPT = """You are a SENIOR MILITARY INTELLIGENCE ANALYST specializing in:
 
-- India's North Eastern Region (Assam, Meghalaya, Mizoram, Manipur, Arunachal Pradesh, Tripura)
+- India's North Eastern Region (Assam, Meghalaya, Mizoram, Manipur, Arunachal Pradesh, Tripura, Nagaland, Sikkim)
+- West Bengal — especially the Siliguri Corridor (Chicken's Neck) connecting NER to mainland India
 - Bangladesh and Myanmar security dynamics
 - China (PLA) and Pakistan influence in South Asia
 - Hybrid warfare, information warfare, and cross-border threats
@@ -55,6 +56,13 @@ C. CROSS-BORDER & FOREIGN INFLUENCE:
 - PLA or Pakistan links with Bangladesh/Myanmar
 - Diplomatic or military engagements impacting India
 
+G. SILIGURI CORRIDOR / WEST BENGAL (HIGH PRIORITY):
+- Any activity in or affecting the Siliguri Corridor (Chicken's Neck), Jalpaiguri, Alipurduar, Cooch Behar, Darjeeling, Siliguri
+- Threats to the narrow land corridor connecting NE India to mainland India
+- Infrastructure (highways, railways, bridges) in the Terai / Dooars belt
+- Cross-border activity with Nepal, Bhutan, or Bangladesh near West Bengal
+- Chinese activities near Bhutan or Nepal that could affect corridor security
+
 D. SOCIETAL INSTABILITY / EARLY WARNING:
 - Tribal unrest or mobilization
 - Anti-minority incidents (especially anti-Hindu in Bangladesh)
@@ -81,11 +89,15 @@ Assign an INTELLIGENCE PRIORITY SCORE (0–100):
 40–59 → MEDIUM (Situational awareness)
 <40 → LOW (Background noise)
 
+IMPORTANT: The "severity" field in your JSON output MUST match the priority_score band above.
+If priority_score >= 80, severity MUST be "critical". No exceptions.
+
 Boost score if:
 + Cross-border involvement (+10)
 + China / Pakistan presence (+15)
 + Military movement (+10)
 + Pattern or trend (not isolated event) (+5)
++ Siliguri Corridor / Chicken's Neck directly involved (+15)
 
 --------------------------------------------------
 STEP 3: CLASSIFICATION (MULTI-LABEL)
@@ -119,7 +131,7 @@ STEP 4: CONTEXTUAL INTELLIGENCE EXTRACTION
 
 Extract:
 
-1. REGION(S) affected (multi-select from: Assam, Meghalaya, Mizoram, Manipur, Arunachal Pradesh, Tripura, Bangladesh, Myanmar, Multiple)
+1. REGION(S) affected (multi-select from: Assam, Meghalaya, Mizoram, Manipur, Arunachal Pradesh, Tripura, Nagaland, Sikkim, West Bengal / Siliguri Corridor, Bangladesh, Myanmar, Multiple)
 2. CROSS-BORDER: Yes/No
 3. COUNTRIES involved (India, Bangladesh, Myanmar, China, Pakistan, USA, etc.)
 4. ACTORS involved (Army, BSF, BGB, Assam Rifles, PLA, insurgent groups, tribes, political parties etc.)
@@ -271,11 +283,22 @@ Respond ONLY in valid JSON:
 }"""
 
 
-async def classify_and_analyze_article(article: dict) -> dict:
+async def classify_and_analyze_article(article, source_hint: str = "") -> dict:
     """Classify and analyze a news article using Claude Haiku 4.5 with enhanced military intelligence prompt.
-    Dynamically injects analyst feedback bias when available."""
-    title = article.get("title", "")
-    content = article.get("raw_content", "") or article.get("description", "") or title
+    Dynamically injects analyst feedback bias when available.
+
+    Accepts two calling conventions for backward-compatibility:
+      classify_and_analyze_article(article_dict)        — preferred
+      classify_and_analyze_article(text_str, src_name)  — legacy (fetchers pass raw text)
+    """
+    if isinstance(article, str):
+        # Legacy calling pattern: (raw_text, source_name)
+        # Used by telegram_fetcher, youtube_fetcher, twitter_fetcher, etc.
+        title = source_hint or ""
+        content = article
+    else:
+        title = article.get("title", "")
+        content = article.get("raw_content", "") or article.get("description", "") or title
 
     article_text = f"Title: {title}\nContent: {content[:2000]}"
 
@@ -300,7 +323,15 @@ async def classify_and_analyze_article(article: dict) -> dict:
             max_tokens=1024,
             system=system_blocks,
             messages=[{"role": "user", "content": f"Analyze this article:\n\n{article_text}"}],
+            extra_headers={"anthropic-beta": "prompt-caching-2024-07-31"},
         )
+
+        # Track token usage and cost
+        try:
+            from usage_tracker import track_usage
+            await track_usage(response.usage, MODEL)
+        except Exception as e:
+            logger.warning(f"track_usage (classify) failed: {e}")
 
         # Parse JSON from response
         response_text = response.content[0].text
@@ -317,17 +348,19 @@ async def classify_and_analyze_article(article: dict) -> dict:
         display_title = analysis.get("title_english", title) or title
         priority_score = analysis.get("priority_score", 30)
         
-        # Determine severity from priority_score if not directly provided
-        severity = analysis.get("severity", "")
-        if not severity or severity not in ["critical", "high", "medium", "low"]:
-            if priority_score >= 80:
-                severity = "critical"
-            elif priority_score >= 60:
-                severity = "high"
-            elif priority_score >= 40:
-                severity = "medium"
-            else:
-                severity = "low"
+        # Severity always derived from priority_score — never trust AI's severity
+        # field directly, because the AI frequently outputs severity="high" even
+        # when it sets priority_score=100, creating inconsistent classifications.
+        # priority_score is the authoritative numeric measure; severity is just
+        # its categorical label.
+        if priority_score >= 80:
+            severity = "critical"
+        elif priority_score >= 60:
+            severity = "high"
+        elif priority_score >= 40:
+            severity = "medium"
+        else:
+            severity = "low"
         
         # Get primary region from regions array
         regions = analysis.get("regions", [])
@@ -384,26 +417,10 @@ async def classify_and_analyze_article(article: dict) -> dict:
 
     except Exception as e:
         logger.error(f"AI classification failed: {e}")
-        # Return article with basic classification
-        return {
-            "title": title,
-            "source": article.get("source", "Unknown"),
-            "source_url": article.get("source_url", ""),
-            "published_at": article.get("published_at", ""),
-            "raw_content": content[:5000],
-            "ai_summary": content[:200],
-            "why_it_matters": "Requires manual review.",
-            "potential_impact": "Assessment pending.",
-            "attention_level": "Monitor",
-            "state": "",
-            "threat_category": "",
-            "severity": "low",
-            "is_cross_border": False,
-            "countries_involved": [],
-            "is_relevant": True,
-            "processed": False,
-            "tags": ["unprocessed"]
-        }
+        # Re-raise so _classify_with_retry_v2 can retry with back-off.
+        # Callers that need a fallback (fetch_and_process_news) get None after
+        # all retries are exhausted, and handle it via _make_raw_doc.
+        raise
 
 
 async def generate_daily_brief_ai(items: list, date: str) -> dict:
@@ -434,7 +451,14 @@ async def generate_daily_brief_ai(items: list, date: str) -> dict:
                     "content": f"Generate a Daily Intelligence Brief for {date} based on these intelligence items:\n\n{items_summary}",
                 }
             ],
+            extra_headers={"anthropic-beta": "prompt-caching-2024-07-31"},
         )
+
+        try:
+            from usage_tracker import track_usage
+            await track_usage(response.usage, MODEL)
+        except Exception as e:
+            logger.warning(f"track_usage (brief) failed: {e}")
 
         response_text = response.content[0].text
         json_start = response_text.find('{')

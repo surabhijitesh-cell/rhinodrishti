@@ -6,6 +6,7 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Button } from "../components/ui/button";
 import { Badge } from "../components/ui/badge";
+import Tip from "../components/Tip";
 import axios from "axios";
 
 class BriefErrorBoundary extends Component {
@@ -120,12 +121,27 @@ export default function DailyBrief({ api }) {
       );
     }
     // Object format with title, summary, source_url, and analysis fields
+    // brief items store date as `timestamp` (build_brief_item) or `published_at`
+    const briefItemDate = (() => {
+      const raw = item.timestamp || item.published_at;
+      if (!raw) return null;
+      try {
+        const d = new Date(raw);
+        return d.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
+      } catch { return null; }
+    })();
+
     return (
       <li key={index} className="border-b border-border/50 pb-4 last:border-0 last:pb-0">
         <div className="flex items-start gap-2">
           <span className="text-primary font-mono text-xs mt-1 shrink-0">{String(index + 1).padStart(2, '0')}.</span>
           <div className="flex-1 space-y-1.5">
-            <p className="text-sm font-medium">{safeStr(item.title)}</p>
+            <div className="flex items-start justify-between gap-2 flex-wrap">
+              <p className="text-sm font-medium flex-1">{safeStr(item.title)}</p>
+              {briefItemDate && (
+                <span className="text-[10px] font-mono text-muted-foreground shrink-0">{briefItemDate}</span>
+              )}
+            </div>
             {item.summary && (
               <p className="text-xs text-muted-foreground leading-relaxed">{safeStr(item.summary)}</p>
             )}
@@ -215,7 +231,7 @@ export default function DailyBrief({ api }) {
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-4">
         <div>
-          <h1 className="text-3xl md:text-4xl font-bold uppercase tracking-tight font-['Barlow_Condensed']" data-testid="brief-title">
+          <h1 className="text-3xl md:text-4xl font-bold uppercase tracking-tight font-['Barlow_Condensed']" data-testid="brief-title" data-tour="brief-title">
             Daily Intelligence Brief
           </h1>
           <div className="flex items-center gap-2 mt-1">
@@ -235,25 +251,31 @@ export default function DailyBrief({ api }) {
         </div>
         <div className="flex items-center gap-2">
           {brief && (
-            <Button
-              variant="outline"
-              onClick={downloadPDF}
-              className="uppercase text-xs font-bold tracking-wider rounded-none"
-              data-testid="download-pdf-btn"
-            >
-              <Download size={14} className="mr-2" />
-              Export PDF
-            </Button>
+            <Tip text="Download this brief as a formatted PDF with RESTRICTED classification headers — suitable for distribution within authorized channels." side="bottom">
+              <Button
+                variant="outline"
+                onClick={downloadPDF}
+                className="uppercase text-xs font-bold tracking-wider rounded-none"
+                data-testid="download-pdf-btn"
+                data-tour="brief-export"
+              >
+                <Download size={14} className="mr-2" />
+                Export PDF
+              </Button>
+            </Tip>
           )}
-          <Button
-            onClick={generateBrief}
-            disabled={generating}
-            className="uppercase text-xs font-bold tracking-wider rounded-none"
-            data-testid="generate-brief-btn"
-          >
-            <RefreshCw size={14} className={`mr-2 ${generating ? "animate-spin" : ""}`} />
-            {generating ? "Generating..." : "Regenerate Brief"}
-          </Button>
+          <Tip text="Generate a fresh brief using all intelligence collected since the last brief. Runs in the background — takes ~30 seconds to complete." side="bottom">
+            <Button
+              onClick={generateBrief}
+              disabled={generating}
+              className="uppercase text-xs font-bold tracking-wider rounded-none"
+              data-testid="generate-brief-btn"
+              data-tour="brief-generate"
+            >
+              <RefreshCw size={14} className={`mr-2 ${generating ? "animate-spin" : ""}`} />
+              {generating ? "Generating..." : "Regenerate Brief"}
+            </Button>
+          </Tip>
         </div>
       </div>
 
@@ -262,10 +284,12 @@ export default function DailyBrief({ api }) {
           {/* Analyst Summary */}
           <Card className="border border-border rounded-none bg-card border-l-4 border-l-primary">
             <CardHeader className="py-3 px-4 border-b border-border">
-              <CardTitle className="text-sm uppercase tracking-wider font-['Barlow_Condensed'] font-semibold flex items-center gap-2">
-                <Shield size={16} className="text-primary" />
-                Analyst Assessment
-              </CardTitle>
+              <Tip text="AI-generated strategic overview summarizing the day's most significant developments, key trends and items requiring immediate attention." side="top">
+                <CardTitle className="text-sm uppercase tracking-wider font-['Barlow_Condensed'] font-semibold flex items-center gap-2 cursor-help w-fit">
+                  <Shield size={16} className="text-primary" />
+                  Analyst Assessment
+                </CardTitle>
+              </Tip>
             </CardHeader>
             <CardContent className="p-4" data-testid="analyst-summary">
               <p className="text-sm leading-relaxed">{safeStr(brief.analyst_summary)}</p>
@@ -275,10 +299,12 @@ export default function DailyBrief({ api }) {
           {/* NER Key Developments */}
           <Card className="border border-border rounded-none bg-card">
             <CardHeader className="py-3 px-4 border-b border-border">
-              <CardTitle className="text-sm uppercase tracking-wider font-['Barlow_Condensed'] font-semibold flex items-center gap-2">
-                <AlertTriangle size={16} className="text-amber-400" />
-                NER Key Developments
-              </CardTitle>
+              <Tip text="Top intelligence items strictly from Northeast Indian states (Assam, Manipur, Mizoram, Meghalaya, Nagaland, Tripura, Arunachal Pradesh, Sikkim). No international items appear here." side="top">
+                <CardTitle className="text-sm uppercase tracking-wider font-['Barlow_Condensed'] font-semibold flex items-center gap-2 cursor-help w-fit">
+                  <AlertTriangle size={16} className="text-amber-400" />
+                  NER Key Developments
+                </CardTitle>
+              </Tip>
             </CardHeader>
             <CardContent className="p-4" data-testid="key-developments">
               {brief.key_developments && brief.key_developments.length > 0 ? (
@@ -295,10 +321,12 @@ export default function DailyBrief({ api }) {
           {brief.national_news && brief.national_news.length > 0 && (
             <Card className="border border-border rounded-none bg-card">
               <CardHeader className="py-3 px-4 border-b border-border">
-                <CardTitle className="text-sm uppercase tracking-wider font-['Barlow_Condensed'] font-semibold flex items-center gap-2">
-                  <Newspaper size={16} className="text-blue-400" />
-                  National News ({brief.national_news.length})
-                </CardTitle>
+                <Tip text="Relevant national-level developments affecting NER security — from Indian news sources covering MHA, defence ministry, central government and national security events." side="top">
+                  <CardTitle className="text-sm uppercase tracking-wider font-['Barlow_Condensed'] font-semibold flex items-center gap-2 cursor-help w-fit">
+                    <Newspaper size={16} className="text-blue-400" />
+                    National News ({brief.national_news.length})
+                  </CardTitle>
+                </Tip>
               </CardHeader>
               <CardContent className="p-4" data-testid="national-news">
                 <ul className="space-y-3">
@@ -313,10 +341,12 @@ export default function DailyBrief({ api }) {
             (brief.cross_border_myanmar && brief.cross_border_myanmar.length > 0)) && (
             <Card className="border border-border rounded-none bg-card border-l-4 border-l-red-500" data-testid="cross-border-section">
               <CardHeader className="py-3 px-4 border-b border-border">
-                <CardTitle className="text-sm uppercase tracking-wider font-['Barlow_Condensed'] font-semibold flex items-center gap-2">
-                  <Shield size={16} className="text-red-400" />
-                  Cross-Border Intelligence ({(brief.cross_border_bangladesh?.length || 0) + (brief.cross_border_myanmar?.length || 0)})
-                </CardTitle>
+                <Tip text="Intelligence from Bangladesh and Myanmar with direct India-facing implications. Grouped by country and categorized as Diplomatic, Defence, Internal Politics or Economics." side="top">
+                  <CardTitle className="text-sm uppercase tracking-wider font-['Barlow_Condensed'] font-semibold flex items-center gap-2 cursor-help w-fit">
+                    <Shield size={16} className="text-red-400" />
+                    Cross-Border Intelligence ({(brief.cross_border_bangladesh?.length || 0) + (brief.cross_border_myanmar?.length || 0)})
+                  </CardTitle>
+                </Tip>
               </CardHeader>
               <CardContent className="p-4 space-y-4" data-testid="cross-border-content">
                 {brief.cross_border_bangladesh && brief.cross_border_bangladesh.length > 0 && (
@@ -389,10 +419,12 @@ export default function DailyBrief({ api }) {
           {brief.international_news && brief.international_news.length > 0 && (
             <Card className="border border-border rounded-none bg-card">
               <CardHeader className="py-3 px-4 border-b border-border">
-                <CardTitle className="text-sm uppercase tracking-wider font-['Barlow_Condensed'] font-semibold flex items-center gap-2">
-                  <Globe size={16} className="text-green-400" />
-                  International News ({brief.international_news.length})
-                </CardTitle>
+                <Tip text="Strategic international items from sources like BBC, Al Jazeera and Reuters with direct or indirect relevance to NER security, India-China-Pakistan dynamics or regional geopolitics." side="top">
+                  <CardTitle className="text-sm uppercase tracking-wider font-['Barlow_Condensed'] font-semibold flex items-center gap-2 cursor-help w-fit">
+                    <Globe size={16} className="text-green-400" />
+                    International News ({brief.international_news.length})
+                  </CardTitle>
+                </Tip>
               </CardHeader>
               <CardContent className="p-4" data-testid="international-news">
                 <ul className="space-y-3">
@@ -406,10 +438,12 @@ export default function DailyBrief({ api }) {
           {brief.pattern_insights && brief.pattern_insights.length > 0 && (
             <Card className="border border-border rounded-none bg-card border-l-4 border-l-orange-500">
               <CardHeader className="py-3 px-4 border-b border-border">
-                <CardTitle className="text-sm uppercase tracking-wider font-['Barlow_Condensed'] font-semibold flex items-center gap-2">
-                  <GitBranch size={16} className="text-orange-400" />
-                  Pattern Detection - Escalation Warnings ({brief.pattern_insights.length})
-                </CardTitle>
+                <Tip text="Escalation warnings from the Pattern Detection Engine — recurring threat clusters detected in the past 7 days with CRITICAL or HIGH escalation risk." side="top">
+                  <CardTitle className="text-sm uppercase tracking-wider font-['Barlow_Condensed'] font-semibold flex items-center gap-2 cursor-help w-fit">
+                    <GitBranch size={16} className="text-orange-400" />
+                    Pattern Detection - Escalation Warnings ({brief.pattern_insights.length})
+                  </CardTitle>
+                </Tip>
               </CardHeader>
               <CardContent className="p-4" data-testid="pattern-insights">
                 <ul className="space-y-3">

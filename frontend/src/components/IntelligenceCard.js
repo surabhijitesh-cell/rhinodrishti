@@ -1,12 +1,15 @@
 import { useState } from "react";
+import axios from "axios";
+import { toast } from "sonner";
 import {
   Target, MapPin, Users, Package, Shield, AlertTriangle,
   Wifi, Building, Clock, ExternalLink, ChevronDown, ChevronUp,
-  Flag, TrendingUp, Radar, Layers, Trash2
+  Flag, TrendingUp, Radar, Layers, Trash2, RefreshCw,
 } from "lucide-react";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import FeedbackWidget from "./FeedbackWidget";
+import Tip from "./Tip";
 
 const THREAT_ICONS = {
   "Insurgency": Target,
@@ -55,27 +58,85 @@ function formatTime(isoStr) {
     const diff = now - d;
     const hours = Math.floor(diff / 3600000);
     const days = Math.floor(diff / 86400000);
-    if (hours < 1) return "Just now";
-    if (hours < 24) return `${hours}h ago`;
-    if (days < 7) return `${days}d ago`;
-    return d.toLocaleDateString("en-IN", { day: "numeric", month: "short" });
+    const abs = d.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: days > 300 ? "numeric" : undefined });
+    if (hours < 1) return `Just now · ${abs}`;
+    if (hours < 24) return `${hours}h ago · ${abs}`;
+    if (days < 7)   return `${days}d ago · ${abs}`;
+    return abs;
   } catch {
     return "";
   }
+}
+
+// ── Fading helpers ────────────────────────────────────────────────────────────
+// Map visibility_band → CSS opacity so the card itself dims as the item ages.
+const FADE_OPACITY = {
+  full:     "opacity-100",
+  fading:   "opacity-80",
+  dim:      "opacity-55",
+  archived: "opacity-30",
+};
+
+function FadingBadge({ item }) {
+  const v = item.visibility_score;
+  const band = item.visibility_band;
+  if (v == null || band == null) return null;
+
+  const label = band === "full"     ? `V${Math.round(v)}`
+              : band === "fading"   ? `V${Math.round(v)} ↘`
+              : band === "dim"      ? `V${Math.round(v)} ↓↓`
+              : `V${Math.round(v)} ⌛`;
+
+  const colour = band === "full"   ? "text-green-400"
+               : band === "fading" ? "text-yellow-400"
+               : band === "dim"    ? "text-orange-400"
+               : "text-red-400/60";
+
+  return (
+    <Tip
+      text={
+        `Visibility Score ${Math.round(v)}/100 — computed by the Drishti fading formula: ` +
+        `V = P₀ × e^(−t/τ) × W_cb × W_fb × W_traj × W_flag.  ` +
+        `P₀=${item.priority_score} (birth priority), τ=${
+          {critical:1440,high:720,medium:336,low:72}[item.severity] ?? 336
+        }h (${item.severity} half-life), ` +
+        `cross-border boost ${item.is_cross_border ? '+25%' : '—'}, ` +
+        `trajectory ${item.threat_trajectory || '—'}.  ` +
+        `Threshold: ≥50 full, 30–50 fading, 15–30 dim, <15 archived.`
+      }
+      side="left"
+    >
+      <span className={`text-[10px] font-mono cursor-default ${colour}`}>{label}</span>
+    </Tip>
+  );
 }
 
 export default function IntelligenceCard({ item, compact = false, api, feedbackData, onDelete }) {
   const [expanded, setExpanded] = useState(false);
   const [sourcesExpanded, setSourcesExpanded] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [reprocessing, setReprocessing] = useState(false);
+
+  const handleReprocess = async (e) => {
+    e.stopPropagation();
+    setReprocessing(true);
+    try {
+      await axios.post(`${api}/intelligence/${item.id}/reprocess`);
+      toast.success("Queued for re-classification — severity will update within 30s");
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Re-queue failed");
+    }
+    setTimeout(() => setReprocessing(false), 5000);
+  };
   const ThreatIcon = THREAT_ICONS[item.threat_category] || THREAT_ICONS[item.tags?.[0]] || AlertTriangle;
   const severityClass = SEVERITY_CLASSES[item.severity] || "severity-low";
   const borderClass = CARD_BORDER_CLASSES[item.severity] || "intel-card-low";
   const priorityScore = item.priority_score || 0;
+  const fadeOpacity = FADE_OPACITY[item.visibility_band] || "opacity-100";
 
   return (
     <div
-      className={`intel-card ${borderClass} p-4 animate-slide-in ${item.severity === "critical" ? "glow-critical" : ""}`}
+      className={`intel-card ${borderClass} p-4 animate-slide-in ${item.severity === "critical" ? "glow-critical" : ""} ${fadeOpacity} transition-opacity duration-500`}
       data-testid={`intel-card-${item.id}`}
     >
       {/* Header */}
@@ -92,64 +153,123 @@ export default function IntelligenceCard({ item, compact = false, api, feedbackD
               <Clock size={10} />
               <span>{formatTime(item.published_at)}</span>
               {item.cluster_size > 1 && (
-                <button
-                  onClick={(e) => { e.stopPropagation(); setSourcesExpanded(!sourcesExpanded); }}
-                  className="inline-flex items-center gap-1 ml-1 px-1.5 py-0.5 bg-blue-500/15 border border-blue-500/30 text-blue-400 hover:bg-blue-500/25 transition-colors cursor-pointer rounded-sm"
-                  data-testid="cluster-sources-badge"
-                >
-                  <Layers size={10} />
-                  <span className="text-[10px] font-semibold">{item.cluster_size} sources</span>
-                </button>
+                <Tip text={`${item.cluster_size} independent sources reported this same event. The AI fused them into one card to reduce noise. Click to see all source titles and links.`} side="bottom">
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setSourcesExpanded(!sourcesExpanded); }}
+                    className="inline-flex items-center gap-1 ml-1 px-1.5 py-0.5 bg-blue-500/15 border border-blue-500/30 text-blue-400 hover:bg-blue-500/25 transition-colors cursor-pointer rounded-sm"
+                    data-testid="cluster-sources-badge"
+                  >
+                    <Layers size={10} />
+                    <span className="text-[10px] font-semibold">{item.cluster_size} sources</span>
+                  </button>
+                </Tip>
               )}
             </div>
           </div>
         </div>
         <div className="flex flex-col items-end gap-1 shrink-0">
-          <Badge
-            className={`${severityClass} rounded-none uppercase tracking-widest text-[10px] px-2 py-0.5 border`}
-            data-testid="card-severity"
+          {/* Severity badge */}
+          <Tip
+            text={
+              item.severity === "critical" ? "CRITICAL — Immediate threat requiring urgent analyst action" :
+              item.severity === "high"     ? "HIGH — Significant event warranting priority review" :
+              item.severity === "medium"   ? "MEDIUM — Notable but non-urgent; monitor closely" :
+                                            "LOW — Informational; relevant background context"
+            }
+            side="left"
           >
-            {item.severity}
-          </Badge>
-          {priorityScore > 0 && (
-            <span className={`text-[10px] font-mono ${priorityScore >= 80 ? 'text-red-400' : priorityScore >= 60 ? 'text-orange-400' : 'text-muted-foreground'}`}>
-              P{priorityScore}
-            </span>
-          )}
-          {item.confidence_score && (
-            <span className={`text-[10px] font-mono ${item.confidence_score >= 90 ? 'text-green-400' : item.confidence_score >= 70 ? 'text-blue-400' : 'text-muted-foreground'}`}>
-              C{item.confidence_score}%
-            </span>
-          )}
-          {item.threat_trajectory && item.threat_trajectory !== "INDETERMINATE" && (
-            <Badge variant="outline" className={`rounded-none text-[9px] px-1 py-0 ${
-              item.threat_trajectory === "ESCALATING" ? "text-red-400 border-red-500/30" :
-              item.threat_trajectory === "DE-ESCALATING" ? "text-green-400 border-green-500/30" :
-              item.threat_trajectory === "NEW_THREAT" ? "text-amber-400 border-amber-500/30" :
-              "text-muted-foreground border-border"
-            }`} data-testid="card-trajectory">
-              {item.threat_trajectory === "ESCALATING" ? "ESC" :
-               item.threat_trajectory === "DE-ESCALATING" ? "DE-ESC" :
-               item.threat_trajectory === "NEW_THREAT" ? "NEW" :
-               item.threat_trajectory === "STABLE" ? "STABLE" : ""}
-            </Badge>
-          )}
-          {onDelete && (
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                if (window.confirm("Delete this intelligence item? This cannot be undone.")) {
-                  setDeleting(true);
-                  onDelete(item.id);
-                }
-              }}
-              disabled={deleting}
-              className="p-1 text-muted-foreground/40 hover:text-red-400 transition-colors mt-0.5"
-              title="Delete item"
-              data-testid={`delete-intel-${item.id}`}
+            <Badge
+              className={`${severityClass} rounded-none uppercase tracking-widest text-[10px] px-2 py-0.5 border cursor-default`}
+              data-testid="card-severity"
             >
-              <Trash2 size={12} />
-            </button>
+              {item.severity}
+            </Badge>
+          </Tip>
+
+          {/* Priority score */}
+          {priorityScore > 0 && (
+            <Tip
+              text={`Priority Score ${priorityScore}/100 — AI-computed urgency combining severity, source credibility and strategic relevance. ≥80 critical (red), ≥60 elevated (orange), <60 routine.`}
+              side="left"
+            >
+              <span className={`text-[10px] font-mono cursor-default ${priorityScore >= 80 ? 'text-red-400' : priorityScore >= 60 ? 'text-orange-400' : 'text-muted-foreground'}`}>
+                P{priorityScore}
+              </span>
+            </Tip>
+          )}
+
+          {/* Confidence score */}
+          {item.confidence_score && (
+            <Tip
+              text={`Confidence Score ${item.confidence_score}% — AI's certainty in its classification. ≥90 high confidence (green), ≥70 moderate (blue), <70 uncertain — verify manually.`}
+              side="left"
+            >
+              <span className={`text-[10px] font-mono cursor-default ${item.confidence_score >= 90 ? 'text-green-400' : item.confidence_score >= 70 ? 'text-blue-400' : 'text-muted-foreground'}`}>
+                C{item.confidence_score}%
+              </span>
+            </Tip>
+          )}
+
+          {/* Fading / Visibility score */}
+          <FadingBadge item={item} />
+
+          {/* Threat trajectory */}
+          {item.threat_trajectory && item.threat_trajectory !== "INDETERMINATE" && (
+            <Tip
+              text={
+                item.threat_trajectory === "ESCALATING"    ? "ESC — Threat is ESCALATING: recent reporting shows increasing severity or frequency" :
+                item.threat_trajectory === "DE-ESCALATING" ? "DE-ESC — Threat is DE-ESCALATING: situation appears to be cooling or resolving" :
+                item.threat_trajectory === "NEW_THREAT"    ? "NEW — First-time or newly identified threat pattern with no prior baseline" :
+                                                             "STABLE — Threat level holding steady with no significant change detected"
+              }
+              side="left"
+            >
+              <Badge variant="outline" className={`rounded-none text-[9px] px-1 py-0 cursor-default ${
+                item.threat_trajectory === "ESCALATING"    ? "text-red-400 border-red-500/30" :
+                item.threat_trajectory === "DE-ESCALATING" ? "text-green-400 border-green-500/30" :
+                item.threat_trajectory === "NEW_THREAT"    ? "text-amber-400 border-amber-500/30" :
+                "text-muted-foreground border-border"
+              }`} data-testid="card-trajectory">
+                {item.threat_trajectory === "ESCALATING"    ? "ESC" :
+                 item.threat_trajectory === "DE-ESCALATING" ? "DE-ESC" :
+                 item.threat_trajectory === "NEW_THREAT"    ? "NEW" :
+                 item.threat_trajectory === "STABLE"        ? "STABLE" : ""}
+              </Badge>
+            </Tip>
+          )}
+
+          {/* Reprocess */}
+          {api && (
+            <Tip text="Re-run AI classification on this item (e.g. after severity rule changes)" side="left">
+              <button
+                onClick={handleReprocess}
+                disabled={reprocessing}
+                className="p-1 text-muted-foreground/40 hover:text-violet-400 transition-colors mt-0.5"
+                data-testid={`reprocess-intel-${item.id}`}
+              >
+                <RefreshCw size={12} className={reprocessing ? "animate-spin text-violet-400" : ""} />
+              </button>
+            </Tip>
+          )}
+
+          {/* Delete */}
+          {onDelete && (
+            <Tip text="Permanently delete this intelligence item" side="left">
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (window.confirm("Delete this intelligence item? This cannot be undone.")) {
+                    setDeleting(true);
+                    onDelete(item.id);
+                  }
+                }}
+                disabled={deleting}
+                className="p-1 text-muted-foreground/40 hover:text-red-400 transition-colors mt-0.5"
+                data-testid={`delete-intel-${item.id}`}
+              >
+                <Trash2 size={12} />
+              </button>
+            </Tip>
           )}
         </div>
       </div>
@@ -196,41 +316,62 @@ export default function IntelligenceCard({ item, compact = false, api, feedbackD
       {/* Tags - Enhanced with multi-label support */}
       <div className="flex flex-wrap gap-1.5 mb-2">
         {item.state && (
-          <Badge variant="outline" className="rounded-none text-[10px] uppercase tracking-wider px-1.5 py-0" data-testid="card-state">
-            {item.state}
-          </Badge>
+          <Tip text={`Geographic region: ${item.state}. Click the NER map on the Dashboard to filter all intelligence by this state.`} side="bottom">
+            <Badge variant="outline" className="rounded-none text-[10px] uppercase tracking-wider px-1.5 py-0 cursor-default" data-testid="card-state">
+              {item.state}
+            </Badge>
+          </Tip>
         )}
         {/* Show multiple tags if available */}
         {item.tags && item.tags.length > 0 ? (
           item.tags.slice(0, 3).map((tag, idx) => (
-            <Badge key={idx} variant="outline" className="rounded-none text-[10px] uppercase tracking-wider px-1.5 py-0">
-              {tag}
-            </Badge>
+            <Tip key={idx} text={`AI-assigned tag: "${tag}". Tags classify the nature of the intelligence item for filtering and pattern detection.`} side="bottom">
+              <Badge variant="outline" className="rounded-none text-[10px] uppercase tracking-wider px-1.5 py-0 cursor-default">
+                {tag}
+              </Badge>
+            </Tip>
           ))
         ) : item.threat_category && (
-          <Badge variant="outline" className="rounded-none text-[10px] uppercase tracking-wider px-1.5 py-0" data-testid="card-threat">
-            {item.threat_category}
-          </Badge>
+          <Tip text={`Threat category: ${item.threat_category}. AI-classified primary threat type used for filtering, pattern analysis and daily brief generation.`} side="bottom">
+            <Badge variant="outline" className="rounded-none text-[10px] uppercase tracking-wider px-1.5 py-0 cursor-default" data-testid="card-threat">
+              {item.threat_category}
+            </Badge>
+          </Tip>
         )}
         {item.is_cross_border && (
-          <Badge variant="outline" className="rounded-none text-[10px] uppercase tracking-wider px-1.5 py-0 text-amber-400 border-amber-500/30">
-            Cross-Border
-          </Badge>
+          <Tip text="Cross-border indicator — the AI detected explicit references to movement, activity or actors crossing an international border. See the Cross-Border Watch page for full context." side="bottom">
+            <Badge variant="outline" className="rounded-none text-[10px] uppercase tracking-wider px-1.5 py-0 text-amber-400 border-amber-500/30 cursor-default">
+              Cross-Border
+            </Badge>
+          </Tip>
         )}
         {/* Special Flags */}
-        {item.special_flags && item.special_flags.map((flag, idx) => (
-          <Badge key={idx} className="rounded-none text-[10px] uppercase tracking-wider px-1.5 py-0 bg-red-500/20 text-red-400 border-red-500/30">
-            {SPECIAL_FLAG_LABELS[flag] || flag}
-          </Badge>
-        ))}
+        {item.special_flags && item.special_flags.map((flag, idx) => {
+          const flagTooltips = {
+            "PLA_PAKISTAN_PRESENCE":  "PLA/Pakistan Presence — AI detected indicators of Chinese PLA or Pakistani actors in the reporting area. High strategic significance.",
+            "COORDINATED_NARRATIVE":  "Information Warfare — AI detected signs of coordinated or inorganic narrative amplification. Treat source credibility with extra scrutiny.",
+            "DEMOGRAPHIC_TREND":      "Demographic Shift — item relates to population movement, migration or demographic change with long-term strategic implications.",
+            "DUAL_USE_INFRA":         "Dual-Use Infrastructure — civilian infrastructure with potential military or strategic utility detected in this item.",
+            "PATTERN_DETECTED":       "Pattern Alert — this item matches a recurring threat pattern previously identified by the Pattern Detection Engine.",
+          };
+          return (
+            <Tip key={idx} text={flagTooltips[flag] || `Special flag: ${flag}`} side="bottom">
+              <Badge className="rounded-none text-[10px] uppercase tracking-wider px-1.5 py-0 bg-red-500/20 text-red-400 border-red-500/30 cursor-default">
+                {SPECIAL_FLAG_LABELS[flag] || flag}
+              </Badge>
+            </Tip>
+          );
+        })}
       </div>
 
       {/* Actors involved */}
       {item.actors && item.actors.length > 0 && (
-        <div className="flex items-center gap-1 mb-2 text-xs text-muted-foreground">
-          <Users size={10} />
-          <span>Actors: {item.actors.slice(0, 3).join(", ")}</span>
-        </div>
+        <Tip text={`Named actors identified by the AI: individuals, groups or organisations explicitly mentioned or implied as key participants in this event.`} side="top">
+          <div className="flex items-center gap-1 mb-2 text-xs text-muted-foreground cursor-default">
+            <Users size={10} />
+            <span>Actors: {item.actors.slice(0, 3).join(", ")}</span>
+          </div>
+        </Tip>
       )}
 
       {/* Summary */}
@@ -242,25 +383,29 @@ export default function IntelligenceCard({ item, compact = false, api, feedbackD
 
       {/* Early Warning Signal */}
       {item.early_warning_signal && item.early_warning_signal !== "None identified" && (
-        <div className="flex items-start gap-1.5 mb-2 p-2 bg-amber-500/10 border border-amber-500/20 rounded">
-          <TrendingUp size={12} className="text-amber-400 mt-0.5 shrink-0" />
-          <p className="text-xs text-amber-300">{item.early_warning_signal}</p>
-        </div>
+        <Tip text="Early Warning Signal — AI-detected precursor indicator suggesting this event may be the leading edge of a larger or escalating threat pattern. Treat as an actionable flag." side="top">
+          <div className="flex items-start gap-1.5 mb-2 p-2 bg-amber-500/10 border border-amber-500/20 rounded cursor-default">
+            <TrendingUp size={12} className="text-amber-400 mt-0.5 shrink-0" />
+            <p className="text-xs text-amber-300">{item.early_warning_signal}</p>
+          </div>
+        </Tip>
       )}
 
       {/* Expandable section */}
       {!compact && (
         <>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="text-xs uppercase tracking-wider text-muted-foreground p-0 h-auto hover:text-primary"
-            onClick={() => setExpanded(!expanded)}
-            data-testid="card-expand-btn"
-          >
-            {expanded ? <ChevronUp size={14} className="mr-1" /> : <ChevronDown size={14} className="mr-1" />}
-            {expanded ? "Less" : "Analysis"}
-          </Button>
+          <Tip text="Expand to see AI analysis: why this matters, potential impact, named entities (persons, organisations, locations), countries involved, and a link to the original source." side="top">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-xs uppercase tracking-wider text-muted-foreground p-0 h-auto hover:text-primary"
+              onClick={() => setExpanded(!expanded)}
+              data-testid="card-expand-btn"
+            >
+              {expanded ? <ChevronUp size={14} className="mr-1" /> : <ChevronDown size={14} className="mr-1" />}
+              {expanded ? "Less" : "Analysis"}
+            </Button>
+          </Tip>
 
           {expanded && (
             <div className="mt-3 space-y-3 border-t border-border pt-3 animate-slide-in">
@@ -305,13 +450,15 @@ export default function IntelligenceCard({ item, compact = false, api, feedbackD
                 </div>
               )}
               {item.attention_level && (
-                <div className="flex items-center gap-2">
-                  <p className="text-[10px] uppercase tracking-widest text-muted-foreground font-mono">Attention:</p>
-                  <span className={`text-sm font-semibold ${
-                    item.attention_level.includes("Immediate") ? "text-red-400" :
-                    item.attention_level.includes("Priority") ? "text-orange-400" : "text-primary"
-                  }`} data-testid="card-attention">{item.attention_level}</span>
-                </div>
+                <Tip text="Attention Level — AI-recommended analyst response urgency: Immediate Action (act now), Priority Review (within hours), Routine Monitoring (next scheduled review), or Background Context (file for reference)." side="top">
+                  <div className="flex items-center gap-2 cursor-default">
+                    <p className="text-[10px] uppercase tracking-widest text-muted-foreground font-mono">Attention:</p>
+                    <span className={`text-sm font-semibold ${
+                      item.attention_level.includes("Immediate") ? "text-red-400" :
+                      item.attention_level.includes("Priority") ? "text-orange-400" : "text-primary"
+                    }`} data-testid="card-attention">{item.attention_level}</span>
+                  </div>
+                </Tip>
               )}
               {item.source_url && (
                 <a

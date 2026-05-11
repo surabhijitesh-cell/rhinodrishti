@@ -13,6 +13,8 @@ import anthropic
 _client: anthropic.AsyncAnthropic | None = None
 
 # Model used everywhere in the app — change here to upgrade globally
+# claude-3-haiku-20240307 returned 404 (deprecated/removed from Anthropic API by 2026).
+# Reverted to claude-haiku-4-5-20251001 — confirmed working (usage CSV 2026-05-07).
 MODEL = "claude-haiku-4-5-20251001"
 
 

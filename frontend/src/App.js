@@ -24,6 +24,9 @@ import UserManagement from "./pages/UserManagement";
 import UpdatesPage from "./pages/UpdatesPage";
 import ReportsPage from "./pages/ReportsPage";
 import { Toaster } from "./components/ui/sonner";
+import { TooltipProvider } from "./components/ui/tooltip";
+import { TourProvider } from "./contexts/TourContext";
+import AppTour from "./components/AppTour";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
@@ -94,14 +97,19 @@ function AppRoutes() {
 function App() {
   return (
     <ThemeProvider>
-      <BrowserRouter>
-        <AuthProvider api={API}>
-          <UpdateNotificationProvider api={API}>
-            <AppRoutes />
-          </UpdateNotificationProvider>
-        </AuthProvider>
-      </BrowserRouter>
-      <Toaster position="top-center" />
+      <TooltipProvider delayDuration={200}>
+        <BrowserRouter>
+          <AuthProvider api={API}>
+            <UpdateNotificationProvider api={API}>
+              <TourProvider>
+                <AppRoutes />
+                <AppTour />
+              </TourProvider>
+            </UpdateNotificationProvider>
+          </AuthProvider>
+        </BrowserRouter>
+        <Toaster position="top-center" />
+      </TooltipProvider>
     </ThemeProvider>
   );
 }
