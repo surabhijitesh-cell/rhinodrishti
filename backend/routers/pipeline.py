@@ -561,6 +561,10 @@ async def analyze_unprocessed_items():
     MAX_HAIKU_PER_CYCLE = 25
     INTER_ARTICLE_DELAY = 2.5
 
+    cycle_started_at = datetime.now(timezone.utc)
+    stage05_skipped = 0
+    stage1_failopen = 0
+
     from intelligence_filter import hard_filter
 
     # Sort NEWEST first so today's news is always classified before old backlog items.
@@ -630,6 +634,7 @@ async def analyze_unprocessed_items():
             logger.info(f"  Stage 0.5 embedding filter: {stage05_rejected} rejected, {len(survivors)} survive")
         except Exception as e:
             logger.warning(f"Stage 0.5 batch failed, skipping: {e}")
+            stage05_skipped = len(survivors)  # entire stage skipped
 
     # ============================================================
     # STAGE 1: Gemini Flash-Lite binary relevance (~10x cheaper than Haiku)
@@ -660,6 +665,7 @@ async def analyze_unprocessed_items():
             logger.info(f"  Stage 1 Gemini filter: {stage1_rejected} rejected, {len(survivors)} survive")
         except Exception as e:
             logger.warning(f"Stage 1 batch failed, skipping to Haiku: {e}")
+            stage1_failopen = len(survivors)  # entire stage failed open
 
     # Prioritize high-tier guesses so Haiku quota goes to the best candidates first
     tier_rank = {"critical": 0, "high": 1, "medium": 2, "low": 3, "none": 4}
@@ -727,6 +733,24 @@ async def analyze_unprocessed_items():
     logger.info(f"  Stage 2 Haiku:      {success} relevant | {not_relevant} not relevant")
     logger.info(f"  Remaining unprocessed: {remaining}")
     logger.info(f"  Rate limit hits: {rate_limit_hits}")
+
+    try:
+        from filter_metrics import record_cycle
+        await record_cycle(
+            source="analyze_unprocessed_items",
+            started_at=cycle_started_at,
+            items_scanned=len(unprocessed),
+            stage0_rejected=stage0_rejected,
+            stage05_rejected=stage05_rejected,
+            stage05_skipped=stage05_skipped,
+            stage1_rejected=stage1_rejected,
+            stage1_failopen=stage1_failopen,
+            haiku_relevant=success,
+            haiku_not_relevant=not_relevant,
+            haiku_failed=(len(survivors) - success - not_relevant) if survivors else 0,
+        )
+    except Exception as e:
+        logger.warning(f"filter_metrics record_cycle failed: {e}")
 
 
 # Scheduler wrappers

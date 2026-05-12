@@ -23,6 +23,7 @@ import CrossBorderWatch from "./pages/CrossBorderWatch";
 import UserManagement from "./pages/UserManagement";
 import UpdatesPage from "./pages/UpdatesPage";
 import ReportsPage from "./pages/ReportsPage";
+import AdminMonitoring from "./pages/AdminMonitoring";
 import { Toaster } from "./components/ui/sonner";
 import { TooltipProvider } from "./components/ui/tooltip";
 import { TourProvider } from "./contexts/TourContext";
@@ -85,6 +86,7 @@ function AppRoutes() {
                 <Route path="/user-management" element={<UserManagement api={API} />} />
                 <Route path="/updates" element={<UpdatesPage api={API} />} />
                 <Route path="/reports" element={<ReportsPage api={API} />} />
+                <Route path="/admin" element={<AdminMonitoring api={API} />} />
               </Routes>
             </Layout>
           </ProtectedRoute>

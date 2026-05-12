@@ -130,6 +130,20 @@ async def cheap_filter(article: dict, timeout: float = 8.0) -> dict:
             response_format={"type": "json_object"},
             timeout=timeout,
         )
+
+        # Track usage
+        try:
+            usage = resp.usage
+            if usage:
+                from usage_tracker import track_usage_generic
+                await track_usage_generic(
+                    input_tokens=getattr(usage, "prompt_tokens", 0) or 0,
+                    output_tokens=getattr(usage, "completion_tokens", 0) or 0,
+                    model=GEMINI_MODEL,
+                )
+        except Exception:
+            pass
+
         raw = resp.choices[0].message.content or ""
         data = json.loads(raw)
         return {

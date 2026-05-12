@@ -68,6 +68,10 @@ const ALL_NAV_ITEMS = [
     tooltip: "Admin only — create, deactivate and reset passwords for Analyst and Viewer accounts.",
   },
   {
+    path: "/admin", label: "API & Pipeline Monitor", icon: Activity, roles: ["admin"],
+    tooltip: "Admin only — live API spend (Anthropic + Gemini + OpenAI) and filter cascade funnel stats.",
+  },
+  {
     path: "/settings", label: "Settings", icon: Settings, roles: ["admin"],
     tooltip: "Admin only — configure retention window, feedback bias, RSS feeds and local database setup.",
   },

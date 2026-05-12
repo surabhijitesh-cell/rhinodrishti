@@ -1158,12 +1158,7 @@ export default function Dashboard({ stats: propStats, api }) {
       {/* Pattern Insights */}
       <PatternInsights api={api} />
 
-      {/* Admin-only: Anthropic API Usage Monitor */}
-      {isAdmin && (
-        <div data-testid="api-usage-widget">
-          <ApiUsageWidget api={api} />
-        </div>
-      )}
+      {/* Admin monitoring moved to /admin page (API & Pipeline Monitor in nav) */}
 
       {/* Recent Intelligence */}
       <div data-tour="recent-intel">

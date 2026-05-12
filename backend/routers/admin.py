@@ -1,9 +1,17 @@
 """
 Admin-only endpoints for Rhino Drishti.
 
-GET  /api/admin/api-usage          — daily usage + cost for last 7 days
-GET  /api/admin/api-usage/today    — today's cost + alert status
-POST /api/admin/api-usage/threshold — set daily cost alert threshold (USD)
+GET  /api/admin/api-usage              — daily usage + cost for last N days (all providers)
+GET  /api/admin/api-usage/today        — today's cost + per-provider breakdown + alert
+GET  /api/admin/api-usage/providers    — today's cost grouped by provider
+POST /api/admin/api-usage/threshold    — set daily cost alert threshold (USD)
+POST /api/admin/api-usage/threshold/provider — set per-provider sub-alert (USD)
+GET  /api/admin/api-usage/forex        — current USD→INR rate
+
+GET  /api/admin/filter-cascade/today       — today's funnel totals + savings
+GET  /api/admin/filter-cascade/daily       — daily cascade history
+GET  /api/admin/filter-cascade/recent      — last N cycle docs (table)
+GET  /api/admin/filter-cascade/health      — health status (stage1 failopen, centroid)
 """
 
 from fastapi import APIRouter, HTTPException
@@ -14,74 +22,25 @@ from shared import db
 router = APIRouter()
 
 DEFAULT_ALERT_THRESHOLD_USD = 15.0
+DEFAULT_PROVIDER_THRESHOLDS = {
+    "anthropic": 1.50,
+    "gemini": 0.30,
+    "openai": 0.20,
+}
 
 
 class ThresholdBody(BaseModel):
     threshold_usd: float
 
 
+class ProviderThresholdBody(BaseModel):
+    provider: str
+    threshold_usd: float
+
+
 async def _get_threshold() -> float:
     doc = await db.admin_settings.find_one({"key": "api_alert_threshold"})
     return doc["value"] if doc else DEFAULT_ALERT_THRESHOLD_USD
-
-
-@router.get("/admin/api-usage")
-async def get_api_usage(days: int = 7):
-    try:
-        from usage_tracker import get_daily_summary, USD_TO_INR
-        daily = await get_daily_summary(days)
-        threshold_usd = await _get_threshold()
-        return {
-            "daily": daily,
-            "threshold_usd": threshold_usd,
-            "threshold_inr": round(threshold_usd * USD_TO_INR, 2),
-            "usd_to_inr": USD_TO_INR,
-        }
-    except Exception as e:
-        return {"daily": [], "threshold_usd": DEFAULT_ALERT_THRESHOLD_USD,
-                "threshold_inr": 1260.0, "usd_to_inr": 84.0, "error": str(e)}
-
-
-@router.get("/admin/api-usage/today")
-async def get_today_usage():
-    try:
-        from usage_tracker import get_today_cost_usd, USD_TO_INR
-        threshold_usd = await _get_threshold()
-        today_usd = await get_today_cost_usd()
-        today_inr = round(today_usd * USD_TO_INR, 2)
-        alert = today_usd >= threshold_usd
-
-        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        hourly_raw = await db.api_usage.find(
-            {"date": today},
-            {"_id": 0, "hour": 1, "cost_usd": 1, "call_count": 1,
-             "input_tokens": 1, "output_tokens": 1,
-             "cache_read_tokens": 1, "cache_write_tokens": 1},
-        ).sort("hour", 1).to_list(24)
-
-        hourly = [
-            {**h, "cost_inr": round(h["cost_usd"] * USD_TO_INR, 2)}
-            for h in hourly_raw
-        ]
-
-        return {
-            "date": today,
-            "today_usd": today_usd,
-            "today_inr": today_inr,
-            "threshold_usd": threshold_usd,
-            "threshold_inr": round(threshold_usd * USD_TO_INR, 2),
-            "alert": alert,
-            "pct_of_limit": round((today_usd / threshold_usd) * 100, 1) if threshold_usd else 0,
-            "hourly": hourly,
-        }
-    except Exception as e:
-        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        return {
-            "date": today, "today_usd": 0.0, "today_inr": 0.0,
-            "threshold_usd": DEFAULT_ALERT_THRESHOLD_USD,
-            "threshold_inr": 1260.0, "alert": False,
-            "pct_of_limit": 0, "hourly": [], "error": str(e),
-        }
 
 
 @router.get("/admin/api-usage/debug")
@@ -128,8 +87,179 @@ async def set_threshold(body: ThresholdBody):
                   "updated_at": datetime.now(timezone.utc).isoformat()}},
         upsert=True,
     )
-    from usage_tracker import USD_TO_INR
+    from usage_tracker import get_usd_to_inr_sync
+    rate = get_usd_to_inr_sync()
     return {
         "threshold_usd": body.threshold_usd,
-        "threshold_inr": round(body.threshold_usd * USD_TO_INR, 2),
+        "threshold_inr": round(body.threshold_usd * rate, 2),
     }
+
+
+@router.post("/admin/api-usage/threshold/provider")
+async def set_provider_threshold(body: ProviderThresholdBody):
+    if body.threshold_usd < 0:
+        raise HTTPException(status_code=422, detail="threshold_usd must be >= 0")
+    key = f"api_alert_threshold_provider_{body.provider}"
+    await db.admin_settings.update_one(
+        {"key": key},
+        {"$set": {"key": key, "value": body.threshold_usd,
+                  "updated_at": datetime.now(timezone.utc).isoformat()}},
+        upsert=True,
+    )
+    from usage_tracker import get_usd_to_inr_sync
+    rate = get_usd_to_inr_sync()
+    return {"provider": body.provider, "threshold_usd": body.threshold_usd,
+            "threshold_inr": round(body.threshold_usd * rate, 2)}
+
+
+@router.get("/admin/api-usage/forex")
+async def get_forex():
+    from usage_tracker import get_usd_to_inr
+    rate = await get_usd_to_inr()
+    return {"usd_to_inr": rate, "source": "exchangerate-api.com", "ttl_hours": 6}
+
+
+@router.get("/admin/api-usage/providers")
+async def get_today_providers():
+    """Today's cost broken down by provider, with sub-alert status."""
+    try:
+        from usage_tracker import get_today_cost_by_provider, get_usd_to_inr_sync
+        rate = get_usd_to_inr_sync()
+        by_provider = await get_today_cost_by_provider()
+
+        result = {}
+        for provider, defaults in DEFAULT_PROVIDER_THRESHOLDS.items():
+            key = f"api_alert_threshold_provider_{provider}"
+            doc = await db.admin_settings.find_one({"key": key})
+            threshold = doc["value"] if doc else defaults
+            data = by_provider.get(provider, {"cost_usd": 0.0, "call_count": 0,
+                                              "input_tokens": 0, "output_tokens": 0})
+            cost = data["cost_usd"]
+            result[provider] = {
+                **data,
+                "cost_inr": round(cost * rate, 2),
+                "threshold_usd": threshold,
+                "threshold_inr": round(threshold * rate, 2),
+                "pct_of_limit": round(cost / threshold * 100, 1) if threshold else 0,
+                "alert": cost >= threshold,
+            }
+        return {"providers": result, "usd_to_inr": rate}
+    except Exception as e:
+        return {"providers": {}, "error": str(e)}
+
+
+# ── Enhanced existing endpoints ────────────────────────────────────────────────
+
+@router.get("/admin/api-usage")
+async def get_api_usage(days: int = 7):
+    try:
+        from usage_tracker import get_daily_summary, get_daily_summary_by_provider, get_usd_to_inr_sync
+        daily = await get_daily_summary(days)
+        by_provider = await get_daily_summary_by_provider(days)
+        threshold_usd = await _get_threshold()
+        rate = get_usd_to_inr_sync()
+        return {
+            "daily": daily,
+            "by_provider": by_provider,
+            "threshold_usd": threshold_usd,
+            "threshold_inr": round(threshold_usd * rate, 2),
+            "usd_to_inr": rate,
+        }
+    except Exception as e:
+        return {"daily": [], "by_provider": [], "threshold_usd": DEFAULT_ALERT_THRESHOLD_USD,
+                "threshold_inr": 1260.0, "usd_to_inr": 84.0, "error": str(e)}
+
+
+@router.get("/admin/api-usage/today")
+async def get_today_usage():
+    try:
+        from usage_tracker import (get_today_cost_usd, get_today_cost_by_provider,
+                                   get_today_hourly_by_provider, get_usd_to_inr_sync)
+        threshold_usd = await _get_threshold()
+        rate = get_usd_to_inr_sync()
+
+        today_usd = await get_today_cost_usd()
+        today_inr = round(today_usd * rate, 2)
+        alert = today_usd >= threshold_usd
+
+        by_provider = await get_today_cost_by_provider()
+        hourly = await get_today_hourly_by_provider()
+
+        # Per-provider sub-alert status
+        for provider in by_provider:
+            key = f"api_alert_threshold_provider_{provider}"
+            doc = await db.admin_settings.find_one({"key": key})
+            thr = doc["value"] if doc else DEFAULT_PROVIDER_THRESHOLDS.get(provider, 999)
+            cost = by_provider[provider]["cost_usd"]
+            by_provider[provider]["cost_inr"] = round(cost * rate, 2)
+            by_provider[provider]["threshold_usd"] = thr
+            by_provider[provider]["alert"] = cost >= thr
+
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        return {
+            "date": today,
+            "today_usd": today_usd,
+            "today_inr": today_inr,
+            "threshold_usd": threshold_usd,
+            "threshold_inr": round(threshold_usd * rate, 2),
+            "alert": alert,
+            "pct_of_limit": round((today_usd / threshold_usd) * 100, 1) if threshold_usd else 0,
+            "by_provider": by_provider,
+            "hourly": hourly,
+            "usd_to_inr": rate,
+        }
+    except Exception as e:
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        return {"date": today, "today_usd": 0.0, "today_inr": 0.0,
+                "threshold_usd": DEFAULT_ALERT_THRESHOLD_USD,
+                "threshold_inr": 1260.0, "alert": False,
+                "pct_of_limit": 0, "by_provider": {}, "hourly": [], "error": str(e)}
+
+
+# ── Filter cascade endpoints ───────────────────────────────────────────────────
+
+@router.get("/admin/filter-cascade/today")
+async def filter_cascade_today():
+    try:
+        from filter_metrics import get_today_totals, get_cascade_health
+        from usage_tracker import get_usd_to_inr_sync
+        totals = await get_today_totals()
+        health = await get_cascade_health()
+        rate = get_usd_to_inr_sync()
+        saved_inr = round(totals.get("est_cost_saved_usd", 0) * rate, 2)
+        return {**totals, "est_cost_saved_inr": saved_inr, "health": health,
+                "usd_to_inr": rate}
+    except Exception as e:
+        return {"cycles": 0, "error": str(e)}
+
+
+@router.get("/admin/filter-cascade/daily")
+async def filter_cascade_daily(days: int = 7):
+    try:
+        from filter_metrics import get_daily_cascade
+        from usage_tracker import get_usd_to_inr_sync
+        rate = get_usd_to_inr_sync()
+        rows = await get_daily_cascade(days)
+        for r in rows:
+            r["est_cost_saved_inr"] = round(r.get("est_cost_saved_usd", 0) * rate, 2)
+        return {"daily": rows, "usd_to_inr": rate}
+    except Exception as e:
+        return {"daily": [], "error": str(e)}
+
+
+@router.get("/admin/filter-cascade/recent")
+async def filter_cascade_recent(limit: int = 20):
+    try:
+        from filter_metrics import get_recent_cycles
+        return {"cycles": await get_recent_cycles(limit)}
+    except Exception as e:
+        return {"cycles": [], "error": str(e)}
+
+
+@router.get("/admin/filter-cascade/health")
+async def filter_cascade_health():
+    try:
+        from filter_metrics import get_cascade_health
+        return await get_cascade_health()
+    except Exception as e:
+        return {"status": "unknown", "error": str(e)}

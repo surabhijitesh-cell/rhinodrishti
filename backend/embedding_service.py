@@ -37,7 +37,19 @@ async def generate_embedding(text: str) -> Optional[List[float]]:
             model=EMBEDDING_MODEL,
             dimensions=EMBEDDING_DIMENSIONS,
         )
-        
+
+        # Track embedding cost
+        try:
+            total_tok = getattr(response.usage, "total_tokens", 0) or 0
+            from usage_tracker import track_usage_generic
+            await track_usage_generic(
+                input_tokens=total_tok,
+                output_tokens=0,
+                model=EMBEDDING_MODEL,
+            )
+        except Exception:
+            pass
+
         embedding = response.data[0].embedding
         return embedding
     except Exception as e:
