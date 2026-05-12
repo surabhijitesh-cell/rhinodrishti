@@ -267,13 +267,19 @@ def hard_filter(article: dict) -> tuple:
         if geo in text:
             return True, f"geo_relevant:{geo}"
 
-    # RULE 5: National/international with no signals -> reject
+    # RULE 5: NER sources accepted by default (only after passing reject check)
+    if source_region in ("ner", "ner "):
+        return True, "ner_source"
+
+    # RULE 6: National/international with no signals -> reject
     if source_region in ("india", "international"):
         return False, "no_relevance_signal"
 
-    # RULE 6: NER sources accepted by default (only after passing reject check)
-    if source_region in ("ner", "ner "):
-        return True, "ner_source"
+    # RULE 7: Unknown/empty region (bulk backlog items without region metadata).
+    # Fail-open: pass to Stage 1 Gemini which can judge relevance semantically.
+    # Only pure-reject items (sports/entertainment) are already dead at RULE 1.
+    if not source_region:
+        return True, "no_region_failopen"
 
     return False, "no_match"
 

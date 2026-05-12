@@ -13,6 +13,31 @@ from shared import (
 router = APIRouter()
 
 
+@router.post("/repair/reset-stage0-filtered")
+async def reset_stage0_filtered(background_tasks: BackgroundTasks):
+    """
+    Recovery endpoint: resets all stage0_filtered items to processed=False
+    so they are re-evaluated in the next analyze_unprocessed_items cycle
+    (now with the fixed fail-open rule for empty region).
+    Safe to call multiple times — only touches items with tag 'stage0_filtered'.
+    """
+    background_tasks.add_task(_reset_stage0_filtered)
+    return {"message": "Stage-0 filter recovery started in background"}
+
+
+async def _reset_stage0_filtered():
+    result = await intelligence_col.update_many(
+        {"tags": "stage0_filtered"},
+        {"$set": {
+            "processed": False,
+            "severity": "low",
+            "filter_reason": None,
+        },
+         "$pull": {"tags": "stage0_filtered"}},
+    )
+    logger.info(f"Stage-0 repair: reset {result.modified_count} items to unprocessed")
+
+
 @router.post("/scrape-elite")
 async def trigger_elite_scrape(background_tasks: BackgroundTasks):
     background_tasks.add_task(_run_elite_scrape)
@@ -480,11 +505,14 @@ async def _classify_with_retry_v2(article, max_retries=4):
 
 
 def _make_raw_doc(article):
+    region = article.get("region", "")
     return {
         "id": str(uuid.uuid4()),
         "title": article.get("title", ""),
         "source": article.get("source", "Unknown"),
         "source_url": article.get("source_url", ""),
+        "source_type": article.get("source_type", ""),
+        "region": region,  # preserve so hard_filter can use it on retry
         "published_at": article.get("published_at", datetime.now(timezone.utc).isoformat()),
         "fetched_at": datetime.now(timezone.utc).isoformat(),
         "raw_content": article.get("raw_content", "")[:5000],
@@ -495,8 +523,8 @@ def _make_raw_doc(article):
         "state": "",
         "threat_category": "",
         "severity": "low",
-        "is_cross_border": article.get("region", "") in ("Bangladesh", "Myanmar"),
-        "countries_involved": [article["region"]] if article.get("region") in ("Bangladesh", "Myanmar") else [],
+        "is_cross_border": region in ("Bangladesh", "Myanmar"),
+        "countries_involved": [region] if region in ("Bangladesh", "Myanmar") else [],
         "processed": False,
         "tags": ["unprocessed"]
     }
