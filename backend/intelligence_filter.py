@@ -55,33 +55,163 @@ REJECT_SUBSTRING = [
 ]
 
 HARD_ACCEPT_KEYWORDS = [
-    # Military/Security
+    # ============================================================
+    # A. INSURGENCY / MILITANCY
+    # ============================================================
+    'insurgent', 'insurgency', 'militant', 'militancy', 'separatist', 'rebel', 'extremist',
+    'ulfa', 'nscn', 'pla', 'prepak', 'unlf', 'kcp', 'hnlc', 'gnla', 'ndfb', 'klo',
+    'nlft', 'kuki militant', 'meitei armed', 'cadre', 'underground outfit',
+    'ambush', 'encounter', 'gunfight', 'firing', 'ied', 'landmine', 'bomb blast',
+    'grenade', 'explosive recovered', 'arms cache', 'arms recovery',
+    'ceasefire', 'surrender', 'recruitment drive', 'extortion', 'abduct', 'kidnap',
+    'terror', 'terrorist', 'terror attack', 'sleeper cell',
+
+    # ============================================================
+    # B. MILITARY / SECURITY FORCES
+    # ============================================================
     'military', 'army', 'navy', 'air force', 'defence', 'defense', 'weapon', 'ammunition',
     'missile', 'artillery', 'tank', 'warship', 'fighter jet', 'helicopter gunship',
-    'bsf', 'crpf', 'assam rifles', 'itbp', 'ssb', 'nsg', 'marcos', 'para sf',
-    'bgb', 'border guard', 'tatmadaw',
-    # Insurgency/Conflict
-    'insurgent', 'militant', 'separatist', 'ulfa', 'nscn', 'hnlc', 'nlft',
-    'ambush', 'encounter', 'gunfight', 'firing', 'ied', 'bomb blast', 'grenade',
-    'ceasefire', 'surrender', 'arms cache', 'arms recovery', 'explosives recovered',
-    # Border/Cross-border
+    'bsf', 'crpf', 'assam rifles', 'itbp', 'ssb', 'nsg', 'marcos', 'para sf', 'cobra',
+    'bgb', 'border guard bangladesh', 'tatmadaw', 'myanmar army', 'pla army',
+    'security forces', 'paramilitary', 'special forces',
+
+    # ============================================================
+    # C. BORDER / CROSS-BORDER
+    # ============================================================
     'border', 'infiltration', 'cross-border', 'smuggling', 'trafficking', 'narcotics',
-    'illegal immigration', 'deportation', 'rohingya', 'refugee',
-    # Strategic
-    'nuclear', 'submarine', 'aircraft carrier', 'radar', 'surveillance', 'drone', 'uav',
-    'cyber attack', 'espionage', 'intelligence agency', 'diplomatic', 'sanctions',
-    # NER specific
-    'northeast india', 'north east india', 'manipur', 'assam', 'meghalaya',
-    'mizoram', 'tripura', 'arunachal', 'nagaland',
+    'drug bust', 'heroin', 'yaba', 'methamphetamine', 'opium', 'poppy cultivation',
+    'arms haul', 'weapon seizure', 'illegal immigration', 'illegal immigrant',
+    'deportation', 'rohingya', 'refugee', 'fencing', 'border outpost',
+    'chinese incursion', 'lac', 'doklam', 'tawang sector', 'bum la',
+    'chin state', 'kachin', 'arakan', 'pdf myanmar', 'junta',
+
+    # ============================================================
+    # D. COMMUNAL / ETHNIC TENSION
+    # ============================================================
+    'communal', 'communal tension', 'riot', 'mob lynch', 'lynching', 'curfew',
+    'section 144', 'prohibitory order', 'ethnic clash', 'tribal clash',
+    'kuki', 'meitei', 'naga', 'bodo', 'karbi', 'dimasa', 'hmar', 'zomi',
+    'inter-community', 'land dispute', 'ilp', 'inner line permit', 'caa', 'nrc',
+    'illegal settler', 'mob attack',
+
+    # ============================================================
+    # E. POLITICAL UNREST
+    # ============================================================
+    'protest', 'bandh', 'hartal', 'blockade', 'agitation', 'rally',
+    'gherao', 'dharna', 'self-immolation', 'sit-in', 'stone pelting',
+    'lathi charge', 'tear gas', 'police firing', 'election violence',
+    'booth capture', 'no-confidence', 'defection', 'coalition crisis',
+    'governor rule', "president's rule",
+
+    # ============================================================
+    # F. NATURAL DISASTERS
+    # ============================================================
+    'earthquake', 'tremor', 'seismic', 'landslide', 'landslip', 'mudslide',
+    'flood', 'flash flood', 'deluge', 'inundation', 'inundated', 'cloudburst',
+    'cyclone', 'storm surge', 'hailstorm', 'thunderstorm', 'lightning strike',
+    'avalanche', 'glacial lake', 'glof', 'glacial lake outburst',
+    'river breach', 'embankment breach', 'erosion', 'displacement',
+    'relief camp', 'evacuation', 'disaster',
+
+    # ============================================================
+    # G. EXTREME WEATHER
+    # ============================================================
+    'heatwave', 'cold wave', 'drought', 'monsoon failure', 'excess rain',
+    'deficit rain', 'snowfall heavy', 'hailstorm', 'squall', 'depression weather',
+    'low pressure', 'imd warning', 'red alert', 'orange alert',
+    "nor'wester", 'kalbaisakhi', 'extreme weather',
+
+    # ============================================================
+    # H. INFRASTRUCTURE IMPACT
+    # ============================================================
+    'bridge collapse', 'road cave', 'tunnel collapse', 'highway block',
+    'nh-37', 'nh-44', 'nh-2', 'national highway block',
+    'railway derail', 'train derail', 'track damage', 'station closed',
+    'airport closure', 'flight cancel', 'power outage', 'blackout',
+    'grid failure', 'water supply', 'pipeline burst',
+    'internet shutdown', 'mobile network down', 'tower attack',
+    'dam release', 'hydroelectric', 'subansiri dam', 'tipaimukh',
+    'siliguri corridor', "chicken's neck",
+
+    # ============================================================
+    # I. FINANCIAL / ECONOMIC
+    # ============================================================
+    'gst evasion', 'revenue loss', 'budget cut', 'bank fraud', 'scam crore',
+    'ponzi', 'chit fund', 'npa', 'loan default', 'msme crisis',
+    'industrial shutdown', 'factory close', 'mass layoff',
+    'oil refinery', 'numaligarh', 'digboi', 'tea garden', 'tea industry',
+    'plantation crisis', 'gi tag', 'export ban', 'fuel price hike',
+    'illegal mining', 'coal mining', 'sand mafia', 'stone quarry',
+
+    # ============================================================
+    # J. HEALTH / BIOSECURITY
+    # ============================================================
+    'outbreak', 'epidemic', 'pandemic', 'h5n1', 'bird flu', 'swine flu',
+    'encephalitis', 'malaria outbreak', 'dengue', 'cholera', 'measles',
+    'african swine fever', 'asf outbreak', 'foot and mouth', 'anthrax',
+    'zoonotic', 'quarantine', 'hospital overflow', 'health emergency',
+
+    # ============================================================
+    # K. CYBER / INFO OPS
+    # ============================================================
+    'cyber attack', 'cyberattack', 'ransomware', 'data breach', 'phishing',
+    'deepfake', 'disinformation', 'fake news', 'propaganda', 'misinformation',
+    'social media ban', 'vpn ban', 'dark web', 'crypto fraud', 'cyber espionage',
+    'espionage', 'intelligence agency',
+
+    # ============================================================
+    # L. WILDLIFE / ENVIRONMENT (NER-specific security)
+    # ============================================================
+    'poaching', 'rhino poach', 'tiger poach', 'elephant poach',
+    'man-animal conflict', 'illegal logging', 'timber smuggling',
+    'kaziranga', 'manas national', 'namdapha', 'dampa sanctuary',
+    'oil spill', 'gas leak', 'baghjan', 'river dolphin',
+
+    # ============================================================
+    # M. CHINA / GEOPOLITICAL
+    # ============================================================
+    'china', 'pla china', 'beijing', 'xi jinping', 'tibet', 'lhasa',
+    'cpec', 'bri belt road', 'arunachal claim', 'zangnan', 'galwan',
+    'pangong', 'g20', 'quad', 'act east', 'kaladan', 'trilateral highway',
+    'bangladesh pm', 'hasina', 'yunus', 'myanmar coup', 'min aung hlaing',
+    'asean', 'bimstec',
+
+    # ============================================================
+    # N. STRATEGIC / GENERAL SECURITY
+    # ============================================================
+    'nuclear', 'submarine', 'aircraft carrier', 'radar', 'surveillance',
+    'drone', 'uav', 'diplomatic', 'sanctions', 'treaty',
+
+    # ============================================================
+    # O. NER GEOGRAPHIC (broad accept)
+    # ============================================================
+    'northeast india', 'north east india', 'north-east india',
+    'manipur', 'assam', 'meghalaya', 'mizoram', 'tripura',
+    'arunachal', 'nagaland', 'sikkim', 'west bengal',
 ]
 
 GEO_RELEVANT = [
-    'assam', 'meghalaya', 'mizoram', 'manipur', 'arunachal', 'tripura', 'nagaland', 'sikkim',
-    'northeast india', 'guwahati', 'imphal', 'shillong', 'itanagar', 'agartala', 'aizawl',
-    'dimapur', 'kohima', 'tinsukia', 'dibrugarh', 'silchar', 'tezpur', 'kokrajhar',
-    'churachandpur', 'moreh', 'dawki', 'tawang', 'changlang',
-    'bangladesh', 'dhaka', 'chittagong', 'sylhet', 'myanmar', 'naypyidaw', 'rakhine',
+    # NER states
+    'assam', 'meghalaya', 'mizoram', 'manipur', 'arunachal', 'tripura',
+    'nagaland', 'sikkim', 'west bengal',
+    'northeast india', 'north east india', 'north-east india', 'ner ',
+    # NER cities
+    'guwahati', 'imphal', 'shillong', 'itanagar', 'agartala', 'aizawl', 'gangtok',
+    'dispur', 'dimapur', 'kohima', 'tinsukia', 'dibrugarh', 'silchar', 'tezpur',
+    'kokrajhar', 'jorhat', 'churachandpur', 'moreh', 'dawki', 'tawang', 'changlang',
+    'tura', 'cherrapunji', 'lunglei', 'champhai',
+    # West Bengal / Siliguri corridor
+    'siliguri', 'jalpaiguri', 'cooch behar', 'alipurduar', 'darjeeling',
+    'kalimpong', 'kurseong', "chicken's neck", 'siliguri corridor', 'terai',
+    # Bhutan
+    'bhutan', 'thimphu', 'phuentsholing',
+    # Bangladesh
+    'bangladesh', 'dhaka', 'chittagong', 'sylhet', "cox's bazar", 'rangpur',
+    # Myanmar
+    'myanmar', 'naypyidaw', 'yangon', 'mandalay', 'rakhine', 'sittwe',
     'chin state', 'sagaing', 'kachin',
+    # Tibet/China border zones
+    'tibet', 'lhasa',
 ]
 
 # Pre-compile word-boundary patterns for efficiency

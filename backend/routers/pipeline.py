@@ -42,6 +42,26 @@ async def trigger_analysis(background_tasks: BackgroundTasks):
     return {"message": "Analysis triggered"}
 
 
+@router.get("/pipeline/filter-stats")
+async def filter_stats():
+    """Diagnostics for the 4-stage filter chain."""
+    from relevance_filter import get_filter_stats
+    stage0_filtered = await intelligence_col.count_documents({"tags": "stage0_filtered"})
+    stage05_filtered = await intelligence_col.count_documents({"tags": "stage05_filtered"})
+    stage1_filtered = await intelligence_col.count_documents({"tags": "stage1_filtered"})
+    haiku_processed = await intelligence_col.count_documents({
+        "processed": True,
+        "tags": {"$nin": ["stage0_filtered", "stage05_filtered", "stage1_filtered"]},
+    })
+    return {
+        "stage0_keyword_filtered": stage0_filtered,
+        "stage05_embedding_filtered": stage05_filtered,
+        "stage1_gemini_filtered": stage1_filtered,
+        "stage2_haiku_processed": haiku_processed,
+        "stage05_centroid": get_filter_stats(),
+    }
+
+
 @router.get("/pipeline/status")
 async def pipeline_status():
     total = await intelligence_col.count_documents({})
@@ -535,28 +555,129 @@ async def bulk_scrape_all_feeds():
 
 
 async def analyze_unprocessed_items():
-    MAX_RETRY_PER_CYCLE = 25  # 25 items/15min = 100/hr — keeps up with normal ingestion without burning tokens
+    # Stage 0 keyword prefilter is free → can scan many more items per cycle.
+    # Haiku only fires on items that pass Stage 0 + (future) Stage 1.
+    MAX_SCAN_PER_CYCLE = 200
+    MAX_HAIKU_PER_CYCLE = 25
     INTER_ARTICLE_DELAY = 2.5
+
+    from intelligence_filter import hard_filter
 
     # Sort NEWEST first so today's news is always classified before old backlog items.
     # Without this sort, MongoDB returns items in insertion order (oldest first),
     # meaning a 3000-item backlog would hide all fresh articles for days.
     unprocessed = await intelligence_col.find(
         {"processed": False}, {"_id": 0}
-    ).sort("published_at", -1).limit(MAX_RETRY_PER_CYCLE).to_list(MAX_RETRY_PER_CYCLE)
+    ).sort("published_at", -1).limit(MAX_SCAN_PER_CYCLE).to_list(MAX_SCAN_PER_CYCLE)
 
     if not unprocessed:
         logger.info("No unprocessed items to retry.")
         return
 
     total_unprocessed = await intelligence_col.count_documents({"processed": False})
-    logger.info(f"=== AI Processing Cycle: {len(unprocessed)}/{total_unprocessed} unprocessed items ===")
+    logger.info(f"=== AI Processing Cycle: scanning {len(unprocessed)}/{total_unprocessed} unprocessed items ===")
 
+    # ============================================================
+    # STAGE 0: Keyword pre-filter (FREE — no AI tokens)
+    # ============================================================
+    survivors = []
+    stage0_rejected = 0
+    for item in unprocessed:
+        passed, reason = hard_filter(item)
+        if not passed:
+            await intelligence_col.update_one(
+                {"id": item["id"]},
+                {"$set": {
+                    "processed": True,
+                    "tags": ["stage0_filtered"],
+                    "filter_reason": reason,
+                    "severity": "filtered_out",
+                }}
+            )
+            stage0_rejected += 1
+        else:
+            survivors.append(item)
+
+    logger.info(f"  Stage 0 keyword filter: {stage0_rejected} rejected, {len(survivors)} survive")
+
+    # ============================================================
+    # STAGE 0.5: Embedding semantic relevance (centroid of past hi-sev items)
+    # Fail-open: items proceed on any failure / missing reference set.
+    # ============================================================
+    stage05_rejected = 0
+    if survivors:
+        try:
+            from relevance_filter import batch_relevance
+            sim_results = await batch_relevance(survivors, db, concurrency=5)
+            stage05_survivors = []
+            for item, res in zip(survivors, sim_results):
+                if res.get("relevant", True):
+                    item["_stage05_sim"] = res.get("similarity", 0.0)
+                    stage05_survivors.append(item)
+                else:
+                    await intelligence_col.update_one(
+                        {"id": item["id"]},
+                        {"$set": {
+                            "processed": True,
+                            "tags": ["stage05_filtered"],
+                            "filter_reason": res.get("reason", "low_similarity"),
+                            "severity": "filtered_out",
+                            "stage05_similarity": res.get("similarity", 0.0),
+                        }}
+                    )
+                    stage05_rejected += 1
+            survivors = stage05_survivors
+            logger.info(f"  Stage 0.5 embedding filter: {stage05_rejected} rejected, {len(survivors)} survive")
+        except Exception as e:
+            logger.warning(f"Stage 0.5 batch failed, skipping: {e}")
+
+    # ============================================================
+    # STAGE 1: Gemini Flash-Lite binary relevance (~10x cheaper than Haiku)
+    # Fail-open: items proceed to Haiku on any Gemini error.
+    # ============================================================
+    stage1_rejected = 0
+    if survivors:
+        try:
+            from cheap_classifier import cheap_filter_batch
+            stage1_results = await cheap_filter_batch(survivors, concurrency=5)
+            stage1_survivors = []
+            for item, res in zip(survivors, stage1_results):
+                if res.get("relevant", True):
+                    item["_stage1_tier"] = res.get("tier_guess", "low")
+                    stage1_survivors.append(item)
+                else:
+                    await intelligence_col.update_one(
+                        {"id": item["id"]},
+                        {"$set": {
+                            "processed": True,
+                            "tags": ["stage1_filtered"],
+                            "filter_reason": res.get("reason", "stage1"),
+                            "severity": "filtered_out",
+                        }}
+                    )
+                    stage1_rejected += 1
+            survivors = stage1_survivors
+            logger.info(f"  Stage 1 Gemini filter: {stage1_rejected} rejected, {len(survivors)} survive")
+        except Exception as e:
+            logger.warning(f"Stage 1 batch failed, skipping to Haiku: {e}")
+
+    # Prioritize high-tier guesses so Haiku quota goes to the best candidates first
+    tier_rank = {"critical": 0, "high": 1, "medium": 2, "low": 3, "none": 4}
+    survivors.sort(key=lambda it: tier_rank.get(it.get("_stage1_tier", "low"), 3))
+
+    # Cap Haiku workload per cycle to protect token quota
+    if len(survivors) > MAX_HAIKU_PER_CYCLE:
+        logger.info(f"  Capping Haiku batch: {len(survivors)} → {MAX_HAIKU_PER_CYCLE} this cycle")
+        survivors = survivors[:MAX_HAIKU_PER_CYCLE]
+
+    # ============================================================
+    # STAGE 2: Haiku full classification on Stage-1 survivors
+    # ============================================================
     success = 0
     not_relevant = 0
     rate_limit_hits = 0
 
-    for idx, item in enumerate(unprocessed):
+    for idx, item in enumerate(survivors):
         await asyncio.sleep(INTER_ARTICLE_DELAY)
         result, was_rate_limited = await _classify_with_retry_v2(item, max_retries=3)
 
@@ -596,11 +717,14 @@ async def analyze_unprocessed_items():
             not_relevant += 1
 
         if (idx + 1) % 5 == 0:
-            logger.info(f"  Progress: {idx + 1}/{len(unprocessed)} | Success: {success} | Not relevant: {not_relevant}")
+            logger.info(f"  Progress: {idx + 1}/{len(survivors)} | Success: {success} | Not relevant: {not_relevant}")
 
-    remaining = total_unprocessed - success - not_relevant
+    remaining = total_unprocessed - success - not_relevant - stage0_rejected - stage05_rejected - stage1_rejected
     logger.info("=== AI Processing Complete ===")
-    logger.info(f"  Processed: {success} relevant | {not_relevant} not relevant")
+    logger.info(f"  Stage 0 filtered:   {stage0_rejected} (keyword — free)")
+    logger.info(f"  Stage 0.5 filtered: {stage05_rejected} (embeddings — ~free)")
+    logger.info(f"  Stage 1 filtered:   {stage1_rejected} (Gemini Flash-Lite — cheap)")
+    logger.info(f"  Stage 2 Haiku:      {success} relevant | {not_relevant} not relevant")
     logger.info(f"  Remaining unprocessed: {remaining}")
     logger.info(f"  Rate limit hits: {rate_limit_hits}")
 
