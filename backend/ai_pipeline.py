@@ -362,8 +362,29 @@ async def classify_and_analyze_article(article, source_hint: str = "") -> dict:
         else:
             severity = "low"
         
-        # Get primary region from regions array
-        regions = analysis.get("regions", [])
+        # Get primary region from regions array — normalise to canonical map names
+        _REGION_ALIASES = {
+            "west bengal / siliguri corridor": "West Bengal",
+            "west bengal/siliguri corridor": "West Bengal",
+            "siliguri corridor": "West Bengal",
+            "multiple": "",
+        }
+        _CANONICAL_REGIONS = {
+            "assam", "meghalaya", "mizoram", "manipur", "arunachal pradesh",
+            "tripura", "nagaland", "sikkim", "west bengal", "bangladesh", "myanmar",
+        }
+        def _normalise_region(r):
+            r_low = (r or "").strip().lower()
+            if r_low in _REGION_ALIASES:
+                return _REGION_ALIASES[r_low]
+            if r_low in _CANONICAL_REGIONS:
+                return r.strip()
+            # Partial match — e.g. "Nagaland (Dimapur)" → "Nagaland"
+            for canon in _CANONICAL_REGIONS:
+                if canon in r_low:
+                    return canon.title()
+            return r.strip()
+        regions = [_normalise_region(r) for r in analysis.get("regions", []) if r and r.lower() != "multiple"]
         primary_region = regions[0] if regions else ""
         
         # Get tags - use as multi-label classification

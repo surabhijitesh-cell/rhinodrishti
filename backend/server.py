@@ -136,6 +136,24 @@ async def _deferred_init(item_count: int):
         logger.info("Empty database — triggering initial fetch…")
         await fetch_and_process_news()
 
+    # One-time stage-0 filter repair: items that were incorrectly rejected by the
+    # old hard_filter (empty source_region fell through to no_match instead of
+    # fail-open RULE 7). Reset them to unprocessed so the fixed filter re-evaluates.
+    try:
+        r = await intelligence_col.update_many(
+            {"tags": "stage0_filtered"},
+            {
+                "$set": {"processed": False, "severity": "low", "filter_reason": None},
+                "$pull": {"tags": "stage0_filtered"},
+            },
+        )
+        if r.modified_count:
+            logger.info(f"Startup repair: reset {r.modified_count} stage0-filtered items → unprocessed")
+            from shared import invalidate_stats_cache
+            invalidate_stats_cache()
+    except Exception as e:
+        logger.warning(f"Stage-0 repair failed: {e}")
+
     # One-time archive repair (update_many on 23k docs can take 5-10 s)
     try:
         from datetime import timedelta

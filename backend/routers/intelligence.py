@@ -251,7 +251,7 @@ async def get_intelligence(
         # NOTE: low-severity items are intentionally NOT excluded here — the caller
         # can apply a severity filter if needed.  Excluding them globally caused
         # recent low-severity items to be invisible even minutes after ingestion.
-        "tags": {"$nin": ["not_relevant", "unprocessed"]},
+        "tags": {"$nin": ["not_relevant", "unprocessed", "stage0_filtered", "stage05_filtered", "stage1_filtered"]},
         # Hide acknowledged critical/high alerts from the default feed so they
         # don't clog the "latest" view after an analyst has actioned them.
         "acknowledged": {"$ne": True},
