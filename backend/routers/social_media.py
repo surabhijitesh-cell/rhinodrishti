@@ -762,17 +762,20 @@ async def fetch_all_social_now(background_tasks: BackgroundTasks):
     # Filter uses $ne False rather than == True so documents where the active
     # field is missing or stored as a non-bool truthy value are also matched.
     try:
+        # NOTE: web_sources and firecrawl_searches are intentionally NOT pre-stamped here.
+        # fetch_web_sources() and run_keyword_searches() skip sources where last_fetched < 2h.
+        # Pre-stamping them would cause all sources to be skipped immediately after — the actual
+        # scraping would never happen. Those collections get their timestamps stamped by the
+        # fetcher functions themselves after successful scraping.
         results = await asyncio.gather(
             db.youtube_channels.update_many({"active": {"$ne": False}}, {"$set": {"last_fetched": now}}),
             db.facebook_pages.update_many({"active": {"$ne": False}},   {"$set": {"last_fetched": now}}),
             db.telegram_channels.update_many({"active": {"$ne": False}}, {"$set": {"last_fetched": now}}),
             db.twitter_searches.update_many({"active": {"$ne": False}},  {"$set": {"last_run": now}}),
             db.twitter_lists.update_many({"active": {"$ne": False}},     {"$set": {"last_fetched": now}}),
-            db.web_sources.update_many({"active": {"$ne": False}},       {"$set": {"last_fetched": now}}),
-            db.firecrawl_searches.update_many({"active": {"$ne": False}}, {"$set": {"last_run": now}}),
         )
         counts = [r.modified_count for r in results]
-        labels = ["yt_ch", "fb_pg", "tg_ch", "tw_srch", "tw_lists", "web_src", "fc_srch"]
+        labels = ["yt_ch", "fb_pg", "tg_ch", "tw_srch", "tw_lists"]
         logger.info(f"fetch-all: timestamps written — {dict(zip(labels, counts))}")
     except Exception as e:
         logger.error(f"fetch-all: instant timestamp update failed: {e}")
@@ -794,7 +797,7 @@ async def fetch_all_social_now(background_tasks: BackgroundTasks):
                 fetch_youtube_searches(db),
                 fetch_facebook_pages(db),
                 fetch_telegram_channels(db),
-                fetch_web_sources(db),
+                fetch_web_sources(db, force=True),
                 run_keyword_searches(db),
             ]
             labels = [

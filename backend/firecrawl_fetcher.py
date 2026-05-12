@@ -354,10 +354,12 @@ def search_sync(query: str, num_results: int = 5) -> list:
 # Scheduled job helpers (called from server.py)
 # ─────────────────────────────────────────────────────────────────────────────
 
-async def fetch_web_sources(db) -> int:
+async def fetch_web_sources(db, force: bool = False) -> int:
     """
     Scheduled job: scrape all active web_sources documents and push results
     through the existing AI classification pipeline.
+
+    force=True: bypass the 2-hour cooldown (used for on-demand triggers).
     """
     import asyncio
     from ai_pipeline import classify_and_analyze_article
@@ -372,11 +374,12 @@ async def fetch_web_sources(db) -> int:
         if not url:
             continue
 
-        # Skip if scraped within the last 2 hours
+        # Skip if scraped recently — 30 min cooldown for on-demand, 2h for scheduled
+        cooldown = 1800 if force else 7200
         last_fetched = source.get("last_fetched")
-        if last_fetched:
+        if last_fetched and not force:
             age = (datetime.now(timezone.utc) - last_fetched).total_seconds()
-            if age < 7200:
+            if age < cooldown:
                 continue
 
         # Firecrawl SDK is synchronous — run in thread pool
