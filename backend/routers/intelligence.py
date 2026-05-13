@@ -22,15 +22,27 @@ async def get_dashboard_stats():
     retention_cutoff = (now - timedelta(days=retention_days)).isoformat()
     base_filter = {"published_at": {"$gte": retention_cutoff}, "processed": True}
 
-    total = await intelligence_col.count_documents(base_filter)
-    critical = await intelligence_col.count_documents({**base_filter, "severity": "critical"})
-    high = await intelligence_col.count_documents({**base_filter, "severity": "high"})
-    medium = await intelligence_col.count_documents({**base_filter, "severity": "medium"})
-    low = await intelligence_col.count_documents({**base_filter, "severity": "low"})
+    # Visibility filter mirrors what the /intelligence feed actually shows.
+    # base_filter alone over-counts — it includes cluster-duplicate secondaries
+    # (is_cluster_primary=False), archived items, and acknowledged items, all of
+    # which are hidden in the feed.  Using the same filters makes the severity
+    # badge numbers match what users can actually see.
+    visibility_filter = {
+        **base_filter,
+        "is_cluster_primary": {"$ne": False},
+        "tags": {"$nin": ["not_relevant", "stage0_filtered", "stage05_filtered", "stage1_filtered"]},
+        "is_archived": {"$ne": True},
+    }
+
+    total = await intelligence_col.count_documents(visibility_filter)
+    critical = await intelligence_col.count_documents({**visibility_filter, "severity": "critical"})
+    high = await intelligence_col.count_documents({**visibility_filter, "severity": "high"})
+    medium = await intelligence_col.count_documents({**visibility_filter, "severity": "medium"})
+    low = await intelligence_col.count_documents({**visibility_filter, "severity": "low"})
 
     state_dist = {}
     async for doc in intelligence_col.aggregate([
-        {"$match": base_filter},
+        {"$match": visibility_filter},
         {"$group": {"_id": "$state", "count": {"$sum": 1}}},
         {"$sort": {"count": -1}}
     ]):
@@ -39,7 +51,7 @@ async def get_dashboard_stats():
 
     threat_dist = {}
     async for doc in intelligence_col.aggregate([
-        {"$match": base_filter},
+        {"$match": visibility_filter},
         {"$group": {"_id": "$threat_category", "count": {"$sum": 1}}},
         {"$sort": {"count": -1}}
     ]):
@@ -48,12 +60,10 @@ async def get_dashboard_stats():
 
     recent_critical = await intelligence_col.find(
         {
-            **base_filter,
+            **visibility_filter,
             "severity": {"$in": ["critical", "high"]},
             # Don't surface already-acknowledged alerts in the dashboard panel
             "acknowledged": {"$ne": True},
-            "is_archived": {"$ne": True},
-            "tags": {"$nin": ["not_relevant", "unprocessed"]},
         },
         {"_id": 0}
     ).sort("published_at", -1).limit(50).to_list(50)
@@ -72,7 +82,7 @@ async def get_dashboard_stats():
 
     trend_data = []
     async for doc in intelligence_col.aggregate([
-        {"$match": base_filter},
+        {"$match": visibility_filter},
         {"$group": {
             "_id": {"$substr": ["$published_at", 0, 10]},
             "count": {"$sum": 1},

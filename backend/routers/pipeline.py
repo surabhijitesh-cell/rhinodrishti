@@ -213,13 +213,19 @@ async def fetch_and_process_news(source_filter: str = None):
                     return True
             return False
 
-        recent_db_items = await intelligence_col.find(
-            {"processed": True},
-            {"title": 1, "source_url": 1, "_id": 0}
-        ).sort("fetched_at", -1).limit(500).to_list(500)
+        # URL dedup: check ALL items (processed + unprocessed) so we don't
+        # re-insert articles that failed classification and sit as processed=False.
+        # `distinct` is efficient (index scan) and returns every stored URL.
+        all_stored_urls = await intelligence_col.distinct("source_url")
+        existing_urls = set(u for u in all_stored_urls if u)
 
-        existing_urls = set(item.get("source_url", "") for item in recent_db_items)
-        existing_titles = [normalize_for_dedup(item.get("title", "")) for item in recent_db_items]
+        # Title fuzzy dedup: only compare against recent PROCESSED items
+        # (unprocessed may lack clean titles; limit keeps memory sane).
+        recent_processed = await intelligence_col.find(
+            {"processed": True},
+            {"title": 1, "_id": 0}
+        ).sort("fetched_at", -1).limit(500).to_list(500)
+        existing_titles = [normalize_for_dedup(item.get("title", "")) for item in recent_processed]
 
         new_articles = []
         url_dupes = 0
