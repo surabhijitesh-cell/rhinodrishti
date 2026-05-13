@@ -2,6 +2,7 @@
 from fastapi import APIRouter, BackgroundTasks
 from datetime import datetime, timezone, timedelta
 import asyncio
+import json
 import os
 import uuid
 from shared import (
@@ -487,6 +488,13 @@ async def _classify_with_retry_v2(article, max_retries=4):
             wait = 5 * (2 ** attempt)
             logger.warning(f"  [Attempt {attempt + 1}/{max_retries}] Timeout for: "
                            f"{article.get('title', '')[:40]}... retrying in {wait}s")
+            await asyncio.sleep(wait)
+
+        except json.JSONDecodeError as je:
+            # JSON parse failures are NOT rate limits — fast retry, no backoff penalty.
+            wait = 2
+            logger.warning(f"  [Attempt {attempt + 1}/{max_retries}] JSON parse error ({str(je)[:60]}) for: "
+                           f"{article.get('title', '')[:40]}... fast retry in {wait}s")
             await asyncio.sleep(wait)
 
         except Exception as e:
