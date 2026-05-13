@@ -182,10 +182,15 @@ async def get_cascade_health() -> dict:
     # Stage 1 key present?
     stage1_key_present = bool(__import__("os").environ.get("GEMINI_API_KEY", ""))
 
+    # Threshold rationale:
+    # - Circuit-breaker fail-opens (quota cooldown) are expected and not true failures.
+    # - failing:  >50% → Stage 1 essentially non-functional
+    # - degraded: >20% → persistent errors beyond normal quota blips
+    # - healthy:  ≤20%
     status = "healthy"
-    if failopen_rate > 30 or not stage1_key_present:
+    if failopen_rate > 50 or not stage1_key_present:
         status = "failing"
-    elif failopen_rate > 5:
+    elif failopen_rate > 20:
         status = "degraded"
 
     import time
