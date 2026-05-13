@@ -177,6 +177,21 @@ async def _deferred_init(item_count: int):
     except Exception as e:
         logger.warning(f"Deferred cluster repair failed: {e}")
 
+    # Severity/priority_score consistency repair (idempotent — no-op after first run)
+    # Old code stored AI's raw severity field; AI contradicted its own score frequently.
+    # New code derives severity from priority_score, but existing DB items need backfill.
+    try:
+        from routers.intelligence import repair_severity_mismatch
+        result = await repair_severity_mismatch()
+        if result["fixed_total"]:
+            logger.info(
+                f"Startup severity repair: {result['fixed_total']} items corrected "
+                f"(critical+{result['fixed_critical']}, high+{result['fixed_high']}, "
+                f"medium+{result['fixed_medium']}, low+{result['fixed_low']})"
+            )
+    except Exception as e:
+        logger.warning(f"Startup severity repair failed: {e}")
+
 
 @app.on_event("startup")
 async def startup():

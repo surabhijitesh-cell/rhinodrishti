@@ -519,6 +519,63 @@ async def debug_data_health():
     }
 
 
+@router.post("/intelligence/repair-severity")
+async def repair_severity_mismatch():
+    """
+    Idempotent repair: re-derives `severity` from stored `priority_score` for all
+    processed items where the AI's raw severity field contradicts the score band.
+
+    Old classification code trusted the AI's severity field directly. The AI
+    frequently returned e.g. priority_score=88, severity="high" — contradicting
+    both the prompt instruction and the score. This causes items to show the wrong
+    badge (HIGH instead of CRITICAL) until re-classified.
+
+    Bands:
+      ≥80  → critical
+      60–79 → high
+      40–59 → medium
+      <40   → low
+
+    Skips: unprocessed items, filtered_out items, items with no/zero priority_score.
+    Safe to call multiple times — second call returns fixed_total=0.
+    """
+    base = {
+        "processed": True,
+        "severity": {"$ne": "filtered_out"},
+        "priority_score": {"$exists": True, "$gt": 0},
+    }
+    r0 = await intelligence_col.update_many(
+        {**base, "priority_score": {"$gte": 80}, "severity": {"$ne": "critical"}},
+        {"$set": {"severity": "critical"}}
+    )
+    r1 = await intelligence_col.update_many(
+        {**base, "priority_score": {"$gte": 60, "$lt": 80}, "severity": {"$ne": "high"}},
+        {"$set": {"severity": "high"}}
+    )
+    r2 = await intelligence_col.update_many(
+        {**base, "priority_score": {"$gte": 40, "$lt": 60}, "severity": {"$ne": "medium"}},
+        {"$set": {"severity": "medium"}}
+    )
+    r3 = await intelligence_col.update_many(
+        {**base, "priority_score": {"$gt": 0, "$lt": 40}, "severity": {"$ne": "low"}},
+        {"$set": {"severity": "low"}}
+    )
+    fixed = r0.modified_count + r1.modified_count + r2.modified_count + r3.modified_count
+    invalidate_stats_cache()
+    logger.info(
+        f"Severity repair: {fixed} items fixed "
+        f"(critical+{r0.modified_count}, high+{r1.modified_count}, "
+        f"medium+{r2.modified_count}, low+{r3.modified_count})"
+    )
+    return {
+        "fixed_total": fixed,
+        "fixed_critical": r0.modified_count,
+        "fixed_high": r1.modified_count,
+        "fixed_medium": r2.modified_count,
+        "fixed_low": r3.modified_count,
+    }
+
+
 @router.post("/fading/repair-fresh")
 async def repair_fresh_archived():
     """One-shot repair: un-archive any item younger than 7 days that was incorrectly
