@@ -33,6 +33,11 @@ GEMINI_MODEL = "gemini-2.5-flash-lite"
 
 _client: Optional[AsyncOpenAI] = None
 
+# Circuit breaker: epoch-second timestamp after which Gemini calls resume.
+# Set to now+300 when a quota-exhausted 429 is detected; all calls within
+# the cooldown window return fail_open immediately without hitting the API.
+_quota_paused_until: float = 0.0
+
 
 def _get_client() -> Optional[AsyncOpenAI]:
     global _client
@@ -41,7 +46,10 @@ def _get_client() -> Optional[AsyncOpenAI]:
     api_key = os.environ.get("GEMINI_API_KEY", "")
     if not api_key:
         return None
-    _client = AsyncOpenAI(api_key=api_key, base_url=GEMINI_BASE_URL)
+    # max_retries=1: the SDK's built-in retry loop floods logs with dozens of
+    # "Retrying request" lines when quota is exhausted. One retry is enough;
+    # our own circuit breaker handles persistent quota failures at batch level.
+    _client = AsyncOpenAI(api_key=api_key, base_url=GEMINI_BASE_URL, max_retries=1)
     return _client
 
 
@@ -96,11 +104,18 @@ async def cheap_filter(article: dict, timeout: float = 8.0) -> dict:
     Fail-open: on any error (no API key, timeout, malformed response) returns
     relevant=True so the item proceeds to Haiku. Never silently drop news.
     """
+    import time
+
     fail_open = {
         "relevant": True,
         "tier_guess": "low",
         "reason": "stage1_unavailable",
     }
+
+    # Circuit breaker: skip calls during quota cooldown window
+    global _quota_paused_until
+    if time.time() < _quota_paused_until:
+        return {**fail_open, "reason": "stage1_quota_cooldown"}
 
     client = _get_client()
     if client is None:
@@ -155,7 +170,15 @@ async def cheap_filter(article: dict, timeout: float = 8.0) -> dict:
         logger.warning(f"Stage 1 Gemini returned non-JSON: {e}")
         return fail_open
     except Exception as e:
-        logger.warning(f"Stage 1 Gemini call failed: {type(e).__name__}: {str(e)[:100]}")
+        import time
+        err_str = str(e)
+        # Detect quota exhaustion (429) — activate circuit breaker for 5 min
+        if "429" in err_str or "quota" in err_str.lower() or "rate" in err_str.lower():
+            global _quota_paused_until
+            _quota_paused_until = time.time() + 300
+            logger.warning("Stage 1 Gemini quota exhausted — skipping for 5 min")
+        else:
+            logger.warning(f"Stage 1 Gemini call failed: {type(e).__name__}: {str(e)[:80]}")
         return fail_open
 
 

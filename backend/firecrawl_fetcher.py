@@ -375,6 +375,9 @@ async def fetch_web_sources(db) -> int:
         # Skip if scraped within the last 2 hours
         last_fetched = source.get("last_fetched")
         if last_fetched:
+            # MongoDB can return naive datetimes — normalise to UTC-aware
+            if last_fetched.tzinfo is None:
+                last_fetched = last_fetched.replace(tzinfo=timezone.utc)
             age = (datetime.now(timezone.utc) - last_fetched).total_seconds()
             if age < 7200:
                 continue

@@ -469,7 +469,10 @@ async def _classify_with_retry_v2(article, max_retries=4):
     """
     from ai_pipeline import classify_and_analyze_article
 
-    RATE_LIMIT_INDICATORS = ['rate', '429', 'limit', 'quota', 'too many', 'throttle']
+    # NOTE: 'limit' removed — it's a substring of 'delimiter' (as in JSON parse
+    # errors like "Expecting ',' delimiter") which caused JSON failures to be
+    # treated as rate limits, triggering 15-second back-offs instead of fast retry.
+    RATE_LIMIT_INDICATORS = ['rate', '429', 'quota', 'too many', 'throttle', 'overloaded', 'ratelimit']
     was_rate_limited = False
 
     for attempt in range(max_retries):
