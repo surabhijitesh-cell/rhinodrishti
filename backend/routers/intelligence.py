@@ -11,6 +11,38 @@ from shared import (
 router = APIRouter()
 
 
+@router.get("/intelligence/map-timeline")
+async def get_map_timeline(hours: int = 24, limit: int = 500):
+    """
+    Return critical/high/medium items within the requested time window,
+    with only the fields the map timeline needs.
+
+    Used by the NERMap timeline scrubber — fetches a wider time range
+    than dashboard/stats `recent_critical` (which caps at 50).
+    """
+    hours = max(1, min(hours, 24 * 90))   # clamp 1h … 90 days
+    limit = max(50, min(limit, 1000))
+
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+    items = await intelligence_col.find(
+        {
+            "is_cluster_primary": {"$ne": False},
+            "is_archived": {"$ne": True},
+            "processed": True,
+            "tags": {"$nin": ["not_relevant", "stage0_filtered",
+                              "stage05_filtered", "stage1_filtered"]},
+            "severity": {"$in": ["critical", "high", "medium"]},
+            "published_at": {"$gte": cutoff},
+        },
+        {
+            "_id": 0, "id": 1, "title": 1, "severity": 1,
+            "published_at": 1, "state": 1, "entities": 1,
+            "priority_score": 1, "threat_category": 1,
+        },
+    ).sort("published_at", -1).limit(limit).to_list(limit)
+    return {"items": items, "hours": hours, "count": len(items)}
+
+
 @router.get("/dashboard/stats")
 async def get_dashboard_stats():
     now = datetime.now(timezone.utc)

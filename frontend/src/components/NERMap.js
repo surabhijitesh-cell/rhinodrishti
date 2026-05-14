@@ -196,20 +196,25 @@ function stateSeverity(stats) {
 }
 
 // ─── Pulsating marker HTML ─────────────────────────────────────────────────────
-function pulseMarkerHtml(severity, count) {
+function pulseMarkerHtml(severity, count, opacity = 1.0) {
   const cfg = {
     critical: { outer: 22, inner: 10, color: "#ef4444", rings: 3, dur: 1.8 },
     high:     { outer: 18, inner:  8, color: "#f59e0b", rings: 2, dur: 2.2 },
     medium:   { outer: 12, inner:  6, color: "#06b6d4", rings: 1, dur: 3.0 },
   }[severity] || { outer: 10, inner: 5, color: "#6b7280", rings: 0, dur: 3 };
 
-  const rings = Array.from({ length: cfg.rings }, (_, i) => `
+  // When opacity < 1 (item is outside active timeline window) — kill rings,
+  // softer body. Still visible for "ghosting" context but visually de-emphasized.
+  const isActive = opacity >= 0.95;
+  const ringsCount = isActive ? cfg.rings : 0;
+
+  const rings = Array.from({ length: ringsCount }, (_, i) => `
     <div class="map-pulse-ring" style="
       position:absolute; border-radius:50%;
       width:${cfg.outer}px; height:${cfg.outer}px;
       top:0; left:0;
       border: 2px solid ${cfg.color};
-      animation: map-pulse ${cfg.dur}s ${i * (cfg.dur / cfg.rings)}s ease-out infinite;
+      animation: map-pulse ${cfg.dur}s ${i * (cfg.dur / ringsCount)}s ease-out infinite;
       opacity:0;
     "></div>
   `).join("");
@@ -223,7 +228,10 @@ function pulseMarkerHtml(severity, count) {
       ">${count}</span>`
     : "";
 
-  return `<div style="position:relative; width:${cfg.outer}px; height:${cfg.outer}px;">
+  const bodyOpacity = Math.max(0.1, Math.min(1, opacity));
+  const ghostFilter = !isActive ? `filter: grayscale(${(1-opacity)*0.7});` : "";
+
+  return `<div style="position:relative; width:${cfg.outer}px; height:${cfg.outer}px; opacity:${bodyOpacity}; ${ghostFilter} transition: opacity 0.4s ease;">
     ${rings}
     <div style="
       position:absolute; top:50%; left:50%;
@@ -231,8 +239,8 @@ function pulseMarkerHtml(severity, count) {
       width:${cfg.inner}px; height:${cfg.inner}px;
       background:${cfg.color};
       border-radius:50%;
-      border:2px solid #fff;
-      box-shadow:0 0 6px 2px ${cfg.color}88;
+      border:2px solid ${isActive ? "#fff" : "rgba(255,255,255,0.35)"};
+      box-shadow:${isActive ? `0 0 6px 2px ${cfg.color}88` : "none"};
     "></div>
     ${label}
   </div>`;
@@ -507,6 +515,9 @@ const InteractiveNERMap = memo(function InteractiveNERMap({
       const sev = item.severity;
       if (!["critical","high","medium"].includes(sev)) return;
 
+      // Per-item opacity injected by the timeline (1.0 = in active window, <1 = ghost)
+      const itemOpacity = typeof item._opacity === "number" ? item._opacity : 1.0;
+
       // Collect candidate location names: named entities + state name
       const candidates = [
         ...(item.entities?.locations || []),
@@ -530,13 +541,16 @@ const InteractiveNERMap = memo(function InteractiveNERMap({
 
       matched.forEach((locKey) => {
         if (!locationSev[locKey]) {
-          locationSev[locKey] = { sev: "medium", count: 0, titles: [], state: item.state };
+          locationSev[locKey] = { sev: "medium", count: 0, titles: [], state: item.state, opacity: 0 };
         }
         const existing = locationSev[locKey];
         // Escalate severity (critical > high > medium)
         const rank = { critical: 3, high: 2, medium: 1 };
         if ((rank[sev] || 0) > (rank[existing.sev] || 0)) existing.sev = sev;
         existing.count++;
+        // A location's marker opacity = MAX opacity of any item there.
+        // If any item at that location is in the active window, the marker is bright.
+        if (itemOpacity > existing.opacity) existing.opacity = itemOpacity;
         if (existing.titles.length < 3) existing.titles.push(item.title || "");
       });
     });
@@ -545,12 +559,13 @@ const InteractiveNERMap = memo(function InteractiveNERMap({
     Object.entries(locationSev).forEach(([locKey, info]) => {
       const coords = LOCATION_COORDS[locKey];
       if (!coords) return;
-      const { sev, count, titles, state } = info;
+      const { sev, count, titles, state, opacity } = info;
       const sz = { critical: 22, high: 18, medium: 12 }[sev] || 12;
+      const effOpacity = typeof opacity === "number" ? opacity : 1.0;
 
       const icon = L.divIcon({
         className: "",
-        html: pulseMarkerHtml(sev, count > 1 ? count : 0),
+        html: pulseMarkerHtml(sev, count > 1 ? count : 0, effOpacity),
         iconSize: [sz, sz],
         iconAnchor: [sz / 2, sz / 2],
       });

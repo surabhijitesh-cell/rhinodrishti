@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import {
@@ -17,6 +17,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue
 } from "../components/ui/select";
 import NERMap from "../components/NERMap";
+import MapTimelineSlider, { computeItemOpacity } from "../components/MapTimelineSlider";
 import IntelligenceCard from "../components/IntelligenceCard";
 import { useIntelligenceWS } from "../hooks/useIntelligenceWS";
 import SocialMediaFeedWidget from "../components/SocialMediaFeedWidget";
@@ -743,6 +744,58 @@ export default function Dashboard({ stats: propStats, api }) {
     });
   };
 
+  // ── Map timeline state ──────────────────────────────────────────────────────
+  // Wider time-window items for the temporal map (fetched from /intelligence/map-timeline).
+  // The active window is controlled by MapTimelineSlider; items outside the active
+  // window are still rendered on the map but faded ("historical ghosting").
+  const [timelineItems, setTimelineItems] = useState([]);
+  const [timelineRangeHours, setTimelineRangeHours] = useState(24);
+  // Store window edges as ms-numbers (primitive) so React state equality treats
+  // identical windows as unchanged — avoids needless re-renders of the heavy map.
+  const [timelineWindowMs, setTimelineWindowMs] = useState(null);
+  // ^ { ws, we, rs, re }  (start/end of active window + slider range, all ms)
+
+  // Fetch timeline items whenever the range changes
+  useEffect(() => {
+    let cancelled = false;
+    axios.get(`${api}/intelligence/map-timeline?hours=${timelineRangeHours}&limit=500`)
+      .then((r) => { if (!cancelled) setTimelineItems(r.data.items || []); })
+      .catch(() => { if (!cancelled) setTimelineItems([]); });
+    return () => { cancelled = true; };
+  }, [api, timelineRangeHours]);
+
+  // Stable callback for slider so MapTimelineSlider's effects don't loop
+  const handleTimelineWindow = useCallback((windowStart, windowEnd, rangeStart, rangeEnd) => {
+    const ws = windowStart.getTime(), we = windowEnd.getTime();
+    const rs = rangeStart.getTime(),  re = rangeEnd.getTime();
+    setTimelineWindowMs((prev) => {
+      // Skip update if the window only moved <2s (live tick noise)
+      if (prev && Math.abs(prev.ws - ws) < 2000 && Math.abs(prev.we - we) < 2000
+              && prev.rs === rs && prev.re === re) {
+        return prev;
+      }
+      return { ws, we, rs, re };
+    });
+  }, []);
+  const handleTimelineRange = useCallback((h) => setTimelineRangeHours(h), []);
+
+  // Compute opacity-tagged items once per [timelineItems, timelineWindowMs] change
+  const mapItems = useMemo(() => {
+    const base = timelineItems.length ? timelineItems : (stats?.recent_critical || []);
+    if (!timelineWindowMs) return base;
+    const { ws, we, rs, re } = timelineWindowMs;
+    const windowStart = new Date(ws), windowEnd = new Date(we);
+    const rangeStart  = new Date(rs), rangeEnd  = new Date(re);
+    const out = [];
+    for (const it of base) {
+      const d = new Date(it.published_at);
+      const op = computeItemOpacity(d, windowStart, windowEnd, rangeStart, rangeEnd);
+      if (op > 0) out.push({ ...it, _opacity: op });
+    }
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [timelineItems, timelineWindowMs, stats?.recent_critical]);
+
   // WebSocket real-time connection
   const { connected: wsConnected, newItems: wsNewItems, criticalAlerts, clearNewItems } = useIntelligenceWS(api);
 
@@ -1002,15 +1055,26 @@ export default function Dashboard({ stats: propStats, api }) {
 
       {/* Map + Recent Alerts */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-        {/* NER Map — click-to-interact so page scroll isn't hijacked */}
+        {/* NER Map + Temporal Timeline ────────────────────────────────── */}
         <div className="lg:col-span-7" data-tour="ner-map">
           <MapClickWrapper>
-            <NERMap
-              stateStats={stateStatsMap}
-              items={stats?.recent_critical || []}
-              navigate={navigate}
-              onStateClick={(state) => navigate(`/feed?state=${encodeURIComponent(state)}`)}
-            />
+            <div className="flex flex-col">
+              <div style={{ minHeight: 380, position: "relative" }}>
+                <NERMap
+                  stateStats={stateStatsMap}
+                  items={mapItems}
+                  navigate={navigate}
+                  onStateClick={(state) => navigate(`/feed?state=${encodeURIComponent(state)}`)}
+                />
+              </div>
+              <MapTimelineSlider
+                items={timelineItems}
+                defaultRangeHours={24}
+                defaultWindowHours={3}
+                onRangeChange={handleTimelineRange}
+                onWindowChange={handleTimelineWindow}
+              />
+            </div>
           </MapClickWrapper>
         </div>
 
