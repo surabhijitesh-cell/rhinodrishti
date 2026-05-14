@@ -870,31 +870,44 @@ export default function Dashboard({ stats: propStats, api }) {
 
   const trendData = stats?.trend_7d || [];
 
-  const stateStatsMap = {};
-  if (stats?.state_distribution) {
-    Object.entries(stats.state_distribution).forEach(([state, count]) => {
-      stateStatsMap[state] = {
-        count,
-        critical: stats.recent_critical?.filter((i) => i.state === state && i.severity === "critical").length || 0,
-        high: stats.recent_critical?.filter((i) => i.state === state && i.severity === "high").length || 0,
-      };
-    });
-  }
-  // Ensure Bangladesh/Myanmar always appear on map even if not yet in state_distribution
-  ["Bangladesh", "Myanmar"].forEach((region) => {
-    if (!stateStatsMap[region]) {
-      const crossBorderItems = stats?.recent_critical?.filter(
-        (i) => i.countries_involved?.includes(region) || i.state === region
-      ) || [];
-      if (crossBorderItems.length > 0) {
-        stateStatsMap[region] = {
-          count: crossBorderItems.length,
-          critical: crossBorderItems.filter((i) => i.severity === "critical").length,
-          high: crossBorderItems.filter((i) => i.severity === "high").length,
+  // Memoized stateStatsMap — otherwise every Dashboard re-render (timeline
+  // tick, scrub, WS update) creates a fresh object reference, which causes
+  // NERMap's polygon useEffect to fire, remove + re-fetch + re-add all state
+  // polygons. That looked like the state-boundary layer "becoming opaque" when
+  // scrubbing the timeline. State coloring is timeline-INDEPENDENT.
+  const stateStatsMap = useMemo(() => {
+    const m = {};
+    if (stats?.state_distribution) {
+      Object.entries(stats.state_distribution).forEach(([state, count]) => {
+        m[state] = {
+          count,
+          critical: stats.recent_critical?.filter((i) => i.state === state && i.severity === "critical").length || 0,
+          high: stats.recent_critical?.filter((i) => i.state === state && i.severity === "high").length || 0,
         };
-      }
+      });
     }
-  });
+    ["Bangladesh", "Myanmar"].forEach((region) => {
+      if (!m[region]) {
+        const crossBorderItems = stats?.recent_critical?.filter(
+          (i) => i.countries_involved?.includes(region) || i.state === region
+        ) || [];
+        if (crossBorderItems.length > 0) {
+          m[region] = {
+            count: crossBorderItems.length,
+            critical: crossBorderItems.filter((i) => i.severity === "critical").length,
+            high: crossBorderItems.filter((i) => i.severity === "high").length,
+          };
+        }
+      }
+    });
+    return m;
+  }, [stats?.state_distribution, stats?.recent_critical]);
+
+  // Stable onStateClick — prevents NERMap polygon re-render every tick
+  const handleStateClick = useCallback(
+    (state) => navigate(`/feed?state=${encodeURIComponent(state)}`),
+    [navigate]
+  );
 
   const PIE_COLORS = ["#ef4444", "#f59e0b", "#eab308", "#a3e635", "#3b82f6", "#8b5cf6", "#06b6d4", "#6366f1"];
 
@@ -1065,7 +1078,7 @@ export default function Dashboard({ stats: propStats, api }) {
                   stateStats={stateStatsMap}
                   items={mapItems}
                   navigate={navigate}
-                  onStateClick={(state) => navigate(`/feed?state=${encodeURIComponent(state)}`)}
+                  onStateClick={handleStateClick}
                 />
               </div>
               <MapTimelineSlider
