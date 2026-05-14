@@ -318,12 +318,16 @@ async def classify_and_analyze_article(article, source_hint: str = "") -> dict:
             system_blocks.append({"type": "text", "text": bias_context})
 
         client = get_client()
+        # NOTE: extra_headers={"anthropic-beta": "prompt-caching-2024-07-31"} intentionally
+        # removed. That header is for pre-2025 Anthropic models only. claude-haiku-4-5-20251001
+        # (Oct 2025) has prompt caching built-in — the old beta header caused it to be
+        # silently ignored, producing 0 cache reads/writes for 3 days and ~$15/day overspend.
+        # cache_control: {"type": "ephemeral"} on system_blocks[0] is sufficient.
         response = await client.messages.create(
             model=MODEL,
             max_tokens=2048,
             system=system_blocks,
             messages=[{"role": "user", "content": f"Analyze this article:\n\n{article_text}"}],
-            extra_headers={"anthropic-beta": "prompt-caching-2024-07-31"},
         )
 
         # Track token usage and cost

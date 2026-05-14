@@ -26,8 +26,10 @@ from embedding_service import generate_embedding, cosine_similarity
 
 logger = logging.getLogger(__name__)
 
-# Tuning knobs
-MIN_SIM_THRESHOLD = float(os.environ.get("STAGE05_MIN_SIM", "0.25"))
+# Tuning knobs — can be overridden by env var OR at runtime via set_min_sim_threshold()
+# 0.35 chosen as conservative safe floor: items scoring below 0.35 vs a
+# security-content centroid are almost never genuine NER security news.
+MIN_SIM_THRESHOLD = float(os.environ.get("STAGE05_MIN_SIM", "0.35"))
 REF_REFRESH_SECONDS = 6 * 3600  # rebuild centroid every 6h
 REF_MIN_ITEMS = 20              # need at least this many ref items to enable filter
 REF_MAX_ITEMS = 200              # cap reference set size
@@ -148,3 +150,15 @@ def get_filter_stats() -> dict:
         "last_built_at": _centroid_built_at,
         "refresh_interval_seconds": REF_REFRESH_SECONDS,
     }
+
+
+def set_min_sim_threshold(val: float) -> float:
+    """
+    Runtime override of the similarity threshold.
+    Called by the admin filter-settings endpoint when user applies new values.
+    Returns the clamped value actually set.
+    """
+    global MIN_SIM_THRESHOLD
+    MIN_SIM_THRESHOLD = max(0.10, min(0.70, float(val)))
+    logger.info(f"Stage 0.5 min_sim_threshold set to {MIN_SIM_THRESHOLD}")
+    return MIN_SIM_THRESHOLD

@@ -89,6 +89,16 @@ MODEL_PRICING: dict[str, dict] = {
         "cache_write": 3.75, "cache_read": 0.30,
     },
     # Gemini
+    "gemini-2.5-flash": {
+        "provider": "gemini",
+        "input": 0.15, "output": 0.60,
+        "cache_write": 0.0, "cache_read": 0.0,
+    },
+    "gemini-2.0-flash": {
+        "provider": "gemini",
+        "input": 0.10, "output": 0.40,
+        "cache_write": 0.0, "cache_read": 0.0,
+    },
     "gemini-2.5-flash-lite": {
         "provider": "gemini",
         "input": 0.10, "output": 0.40,

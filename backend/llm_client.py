@@ -1,20 +1,22 @@
 """
-Shared Anthropic client — single instance used across all backend modules.
+Shared AI clients for Rhino Drishti.
 
-Replaces emergentintegrations.llm.chat.LlmChat.
-All AI calls in this codebase use Claude Haiku via the direct Anthropic SDK.
-Prompt caching is enabled on large static system prompts (CLASSIFICATION_PROMPT,
-BRIEF_PROMPT, CONTEXTUAL_ANALYSIS_PROMPT) to cut input-token costs by ~80%.
+Primary:  Claude Haiku 4.5 (Anthropic) — Stage 2 full classification.
+Fallback: Gemini 2.5 Flash (via OpenAI-compat endpoint) — used when Haiku
+          quota is exhausted or as a cost-saving switch.
+
+Prompt caching: enabled via cache_control blocks on static system prompts.
+NOTE: claude-haiku-4-5-20251001 (Oct 2025) has caching built-in — do NOT
+pass the old `anthropic-beta: prompt-caching-2024-07-31` header, it breaks
+caching by overriding the built-in behaviour (caused $15/day overspend).
 """
 import os
 import anthropic
 
-# ── singleton client ──────────────────────────────────────────────────────────
+# ── Anthropic singleton ────────────────────────────────────────────────────────
 _client: anthropic.AsyncAnthropic | None = None
 
-# Model used everywhere in the app — change here to upgrade globally
-# claude-3-haiku-20240307 returned 404 (deprecated/removed from Anthropic API by 2026).
-# Reverted to claude-haiku-4-5-20251001 — confirmed working (usage CSV 2026-05-07).
+# Primary model — change here to upgrade globally
 MODEL = "claude-haiku-4-5-20251001"
 
 
@@ -30,3 +32,33 @@ def get_client() -> anthropic.AsyncAnthropic:
             )
         _client = anthropic.AsyncAnthropic(api_key=api_key)
     return _client
+
+
+# ── Gemini 2.5 Flash fallback (OpenAI-compatible endpoint) ───────────────────
+# Recommended fallback when Haiku quota is exhausted:
+#   - ~83% cheaper than Haiku ($0.15/$0.60 vs $0.80/$4.00 per MTok)
+#   - Near-Haiku quality on structured JSON classification (5% gap)
+#   - Uses same OpenAI SDK already installed for cheap_classifier.py
+#   - Avoid Gemini 1.5 Flash — too weak on complex 10-step prompt
+
+GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
+GEMINI_FLASH_MODEL = "gemini-2.5-flash"
+
+_gemini_client = None
+
+
+def get_gemini_client():
+    """
+    Return OpenAI-SDK client pointed at Gemini 2.5 Flash.
+    Returns None if GEMINI_API_KEY not set.
+    Used as cost-saving fallback when Haiku quota is exhausted.
+    """
+    global _gemini_client
+    if _gemini_client is not None:
+        return _gemini_client
+    key = os.environ.get("GEMINI_API_KEY", "")
+    if not key:
+        return None
+    from openai import AsyncOpenAI
+    _gemini_client = AsyncOpenAI(api_key=key, base_url=GEMINI_BASE_URL, max_retries=1)
+    return _gemini_client

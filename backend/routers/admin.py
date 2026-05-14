@@ -12,10 +12,14 @@ GET  /api/admin/filter-cascade/today       — today's funnel totals + savings
 GET  /api/admin/filter-cascade/daily       — daily cascade history
 GET  /api/admin/filter-cascade/recent      — last N cycle docs (table)
 GET  /api/admin/filter-cascade/health      — health status (stage1 failopen, centroid)
+
+GET  /api/admin/filter-settings            — current filter threshold settings
+POST /api/admin/filter-settings            — update thresholds (applied to pipeline ≤5 min)
 """
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
+from typing import Optional
 from datetime import datetime, timezone
 from shared import db
 
@@ -263,3 +267,87 @@ async def filter_cascade_health():
         return await get_cascade_health()
     except Exception as e:
         return {"status": "unknown", "error": str(e)}
+
+
+# ── Filter threshold settings ─────────────────────────────────────────────────
+
+FILTER_SETTINGS_KEY = "filter_thresholds"
+FILTER_DEFAULTS = {
+    "stage05_min_sim":  0.35,
+    "stage05_enabled":  True,
+    "stage1_enabled":   True,
+    "stage2_max_scan":  200,
+    "stage2_max_haiku": 25,
+}
+
+
+class FilterSettingsBody(BaseModel):
+    stage05_min_sim:  Optional[float] = None   # 0.10 – 0.70
+    stage05_enabled:  Optional[bool]  = None
+    stage1_enabled:   Optional[bool]  = None
+    stage2_max_scan:  Optional[int]   = None   # 50 – 500
+    stage2_max_haiku: Optional[int]   = None   # 5 – 50
+
+
+@router.get("/admin/filter-settings")
+async def get_filter_settings():
+    """Return current filter threshold settings (DB-backed, falls back to defaults)."""
+    doc = await db.admin_settings.find_one({"key": FILTER_SETTINGS_KEY}, {"_id": 0})
+    if not doc:
+        return {**FILTER_DEFAULTS, "key": FILTER_SETTINGS_KEY, "source": "defaults"}
+    return {**FILTER_DEFAULTS, **{k: v for k, v in doc.items() if k != "_id"},
+            "source": "database"}
+
+
+@router.post("/admin/filter-settings")
+async def set_filter_settings(body: FilterSettingsBody):
+    """
+    Persist new filter thresholds to DB and apply them to live pipeline immediately.
+    Pipeline reads from DB with a 5-min in-memory cache — changes take effect within 5 min.
+    Stage 0.5 threshold is also applied in-process instantly via set_min_sim_threshold().
+    """
+    # Read current
+    doc = await db.admin_settings.find_one({"key": FILTER_SETTINGS_KEY}) or {}
+    current = {**FILTER_DEFAULTS, **{k: v for k, v in doc.items() if k not in ("_id", "key")}}
+
+    # Apply partial updates with clamping
+    updates = {}
+    if body.stage05_min_sim is not None:
+        updates["stage05_min_sim"] = max(0.10, min(0.70, body.stage05_min_sim))
+    if body.stage05_enabled is not None:
+        updates["stage05_enabled"] = body.stage05_enabled
+    if body.stage1_enabled is not None:
+        updates["stage1_enabled"] = body.stage1_enabled
+    if body.stage2_max_scan is not None:
+        updates["stage2_max_scan"] = max(50, min(500, body.stage2_max_scan))
+    if body.stage2_max_haiku is not None:
+        updates["stage2_max_haiku"] = max(5, min(50, body.stage2_max_haiku))
+
+    new_settings = {**current, **updates}
+
+    await db.admin_settings.update_one(
+        {"key": FILTER_SETTINGS_KEY},
+        {"$set": {
+            "key": FILTER_SETTINGS_KEY,
+            **new_settings,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }},
+        upsert=True,
+    )
+
+    # Apply Stage 0.5 threshold in-process immediately (no wait for cache TTL)
+    if "stage05_min_sim" in updates:
+        try:
+            from relevance_filter import set_min_sim_threshold
+            set_min_sim_threshold(updates["stage05_min_sim"])
+        except Exception as e:
+            pass  # non-fatal — DB value picked up by next pipeline cycle
+
+    # Invalidate pipeline settings cache so next cycle reads new values
+    try:
+        from routers.pipeline import invalidate_pipeline_settings_cache
+        invalidate_pipeline_settings_cache()
+    except Exception:
+        pass
+
+    return {"message": "Filter settings updated", "settings": new_settings}

@@ -4,12 +4,54 @@ from datetime import datetime, timezone, timedelta
 import asyncio
 import json
 import os
+import time
 import uuid
 from shared import (
     db, intelligence_col, sources_col,
     scan_status, ws_manager, IntelligenceItem,
     logger, invalidate_stats_cache, has_non_latin_chars,
 )
+
+# ── DB-backed pipeline settings cache (5-min TTL) ─────────────────────────────
+# Admin can update via POST /admin/filter-settings; changes apply within 5 min.
+_pipeline_settings_cache: dict = {}
+_pipeline_settings_fetched_at: float = 0.0
+_PIPELINE_SETTINGS_TTL = 300  # 5 minutes
+
+PIPELINE_SETTING_DEFAULTS = {
+    "stage05_min_sim":  0.35,
+    "stage05_enabled":  True,
+    "stage1_enabled":   True,
+    "stage2_max_scan":  200,
+    "stage2_max_haiku": 25,
+}
+
+
+async def _get_pipeline_settings() -> dict:
+    """Load filter settings from DB (cached 5 min). Falls back to hardcoded defaults."""
+    global _pipeline_settings_cache, _pipeline_settings_fetched_at
+    now = time.time()
+    if _pipeline_settings_cache and (now - _pipeline_settings_fetched_at) < _PIPELINE_SETTINGS_TTL:
+        return _pipeline_settings_cache
+    try:
+        doc = await db.admin_settings.find_one({"key": "filter_thresholds"})
+        if doc:
+            _pipeline_settings_cache = {**PIPELINE_SETTING_DEFAULTS,
+                                         **{k: v for k, v in doc.items()
+                                            if k not in ("_id", "key", "updated_at")}}
+        else:
+            _pipeline_settings_cache = dict(PIPELINE_SETTING_DEFAULTS)
+    except Exception as e:
+        logger.warning(f"Failed to load pipeline settings from DB: {e}")
+        _pipeline_settings_cache = dict(PIPELINE_SETTING_DEFAULTS)
+    _pipeline_settings_fetched_at = now
+    return _pipeline_settings_cache
+
+
+def invalidate_pipeline_settings_cache():
+    """Called by admin filter-settings endpoint to force immediate reload."""
+    global _pipeline_settings_fetched_at
+    _pipeline_settings_fetched_at = 0.0
 
 router = APIRouter()
 
@@ -600,10 +642,12 @@ async def bulk_scrape_all_feeds():
 
 
 async def analyze_unprocessed_items():
-    # Stage 0 keyword prefilter is free → can scan many more items per cycle.
-    # Haiku only fires on items that pass Stage 0 + (future) Stage 1.
-    MAX_SCAN_PER_CYCLE = 200
-    MAX_HAIKU_PER_CYCLE = 25
+    # Load thresholds from DB (admin-configurable, 5-min cache)
+    settings = await _get_pipeline_settings()
+    MAX_SCAN_PER_CYCLE  = settings["stage2_max_scan"]
+    MAX_HAIKU_PER_CYCLE = settings["stage2_max_haiku"]
+    STAGE05_ENABLED     = settings["stage05_enabled"]
+    STAGE1_ENABLED      = settings["stage1_enabled"]
     INTER_ARTICLE_DELAY = 2.5
 
     cycle_started_at = datetime.now(timezone.utc)
@@ -654,7 +698,7 @@ async def analyze_unprocessed_items():
     # Fail-open: items proceed on any failure / missing reference set.
     # ============================================================
     stage05_rejected = 0
-    if survivors:
+    if survivors and STAGE05_ENABLED:
         try:
             from relevance_filter import batch_relevance
             sim_results = await batch_relevance(survivors, db, concurrency=5)
@@ -686,7 +730,7 @@ async def analyze_unprocessed_items():
     # Fail-open: items proceed to Haiku on any Gemini error.
     # ============================================================
     stage1_rejected = 0
-    if survivors:
+    if survivors and STAGE1_ENABLED:
         try:
             from cheap_classifier import cheap_filter_batch
             stage1_results = await cheap_filter_batch(survivors, concurrency=5)

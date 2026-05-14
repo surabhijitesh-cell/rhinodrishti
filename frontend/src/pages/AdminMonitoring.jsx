@@ -10,6 +10,7 @@ import { useAuth } from "../contexts/AuthContext";
 import { Navigate } from "react-router-dom";
 import ApiUsageWidget from "../components/ApiUsageWidget";
 import FilterCascadeWidget from "../components/FilterCascadeWidget";
+import FilterThresholdSimulator from "../components/FilterThresholdSimulator";
 import { Shield } from "lucide-react";
 
 export default function AdminMonitoring({ api }) {
@@ -40,6 +41,9 @@ export default function AdminMonitoring({ api }) {
         <ApiUsageWidget api={api} />
         <FilterCascadeWidget api={api} />
       </div>
+
+      {/* ── Filter Threshold Simulator ── */}
+      <FilterThresholdSimulator api={api} />
 
     </div>
   );
