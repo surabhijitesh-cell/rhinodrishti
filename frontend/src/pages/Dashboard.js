@@ -744,6 +744,9 @@ export default function Dashboard({ stats: propStats, api }) {
     });
   };
 
+  // stats reference is used by the timeline mapItems memo below — declare it early
+  const stats = propStats || localStats;
+
   // ── Map timeline state ──────────────────────────────────────────────────────
   // Wider time-window items for the temporal map (fetched from /intelligence/map-timeline).
   // The active window is controlled by MapTimelineSlider; items outside the active
@@ -798,8 +801,6 @@ export default function Dashboard({ stats: propStats, api }) {
 
   // WebSocket real-time connection
   const { connected: wsConnected, newItems: wsNewItems, criticalAlerts, clearNewItems } = useIntelligenceWS(api);
-
-  const stats = propStats || localStats;
 
   useEffect(() => {
     fetchRecent();
