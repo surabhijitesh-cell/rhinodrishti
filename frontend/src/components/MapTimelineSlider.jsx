@@ -134,6 +134,60 @@ function bucketRgba(b, alpha) {
   return `rgba(${Math.round(r)},${Math.round(g)},${Math.round(bl)},${alpha})`;
 }
 
+// ── Axis graduation tick generator ────────────────────────────────────────────
+// 24h  → every 6h   → "24h ago" … "now"
+// 7d   → each calendar midnight → "14 May", "13 May" …
+// 30d  → every 5 calendar days  → "14 May", "09 May" …
+function generateTicks(rangeStart, rangeEnd, rangeHours) {
+  const rs = rangeStart.getTime();
+  const re = rangeEnd.getTime();
+  const total = re - rs;
+  if (total <= 0) return [];
+  const ticks = [];
+
+  if (rangeHours <= 24) {
+    const stepH = 6;
+    for (let h = rangeHours; h >= 0; h -= stepH) {
+      const t = re - h * 3600 * 1000;
+      ticks.push({
+        pos: clamp((t - rs) / total, 0, 1),
+        label: h === 0 ? "now" : `${h}h ago`,
+      });
+    }
+  } else if (rangeHours <= 168) {
+    // 7d: one tick per calendar midnight
+    const d = new Date(rangeEnd);
+    d.setHours(0, 0, 0, 0);
+    while (d.getTime() >= rs - 1) {
+      const pos = (d.getTime() - rs) / total;
+      if (pos >= -0.01 && pos <= 1.01)
+        ticks.push({
+          pos: clamp(pos, 0, 1),
+          label: d.toLocaleDateString("en-IN", { day: "numeric", month: "short" }),
+        });
+      d.setDate(d.getDate() - 1);
+    }
+    ticks.reverse();
+  } else {
+    // 30d: every 5 calendar days
+    const d = new Date(rangeEnd);
+    d.setHours(0, 0, 0, 0);
+    let count = 0;
+    while (d.getTime() >= rs - 1 && count < 12) {
+      const pos = (d.getTime() - rs) / total;
+      if (pos >= -0.01 && pos <= 1.01)
+        ticks.push({
+          pos: clamp(pos, 0, 1),
+          label: d.toLocaleDateString("en-IN", { day: "numeric", month: "short" }),
+        });
+      d.setDate(d.getDate() - 5);
+      count++;
+    }
+    ticks.reverse();
+  }
+  return ticks;
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 export default function MapTimelineSlider({
   items = [],          // raw items from /intelligence/map-timeline
@@ -179,6 +233,12 @@ export default function MapTimelineSlider({
   const rangeStart = useMemo(() => new Date(now.getTime() - ms(rangeHours)), [now, rangeHours]);
 
   const effectiveWindowHours = Math.min(windowHours, rangeHours);
+
+  // ── Axis graduation ticks ──────────────────────────────────────────────────
+  const ticks = useMemo(
+    () => generateTicks(rangeStart, rangeEnd, rangeHours),
+    [rangeStart, rangeEnd, rangeHours]
+  );
 
   // On first item-load (per range), auto-snap scrubber so the active window
   // covers the most recent item. This guarantees pulsing markers on load.
@@ -412,12 +472,12 @@ export default function MapTimelineSlider({
               );
             })}
 
-            {/* Tick marks (5 evenly spaced) */}
-            {[0, 0.25, 0.5, 0.75, 1].map((p) => (
+            {/* Graduation tick lines */}
+            {ticks.map((tk, i) => (
               <div
-                key={p}
-                className="absolute top-0 bottom-0 w-px bg-white/8"
-                style={{ left: `${p * 100}%` }}
+                key={i}
+                className="absolute top-0 bottom-0 w-px bg-white/15"
+                style={{ left: `${tk.pos * 100}%` }}
               />
             ))}
 
@@ -538,11 +598,26 @@ export default function MapTimelineSlider({
           )}
         </div>
 
-        {/* Track labels */}
-        <div className="flex justify-between text-[9px] text-white/40 mt-1 uppercase tracking-wider">
-          <span>{fmtTime(rangeStart)}</span>
-          <span className="text-white/55">{fmtRel(windowEnd, now)}</span>
-          <span>{fmtTime(rangeEnd)}{mode === "live" ? " (live)" : ""}</span>
+        {/* Graduation labels — positioned under each tick */}
+        <div className="relative mt-1 h-4 select-none">
+          {ticks.map((tk, i) => {
+            const xform =
+              tk.pos < 0.07 ? "translateX(0)"
+              : tk.pos > 0.93 ? "translateX(-100%)"
+              : "translateX(-50%)";
+            const isNow = tk.label === "now";
+            return (
+              <span
+                key={i}
+                className={`absolute text-[9px] uppercase tracking-wider whitespace-nowrap ${
+                  isNow ? "text-lime-400/70" : "text-white/35"
+                }`}
+                style={{ left: `${tk.pos * 100}%`, transform: xform, top: 0 }}
+              >
+                {tk.label}
+              </span>
+            );
+          })}
         </div>
       </div>
     </div>
