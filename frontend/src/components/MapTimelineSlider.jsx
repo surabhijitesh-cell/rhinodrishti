@@ -22,7 +22,7 @@
  */
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import {
-  Play, Pause, SkipBack, SkipForward, Clock, Radio,
+  Play, Pause, SkipBack, SkipForward, Clock, Radio, Maximize2, Minimize2,
 } from "lucide-react";
 
 // ── Range presets (entire slider span) ─────────────────────────────────────────
@@ -135,57 +135,86 @@ function bucketRgba(b, alpha) {
 }
 
 // ── Axis graduation tick generator ────────────────────────────────────────────
-// 24h  → every 6h   → "24h ago" … "now"
-// 7d   → each calendar midnight → "14 May", "13 May" …
-// 30d  → every 5 calendar days  → "14 May", "09 May" …
-function generateTicks(rangeStart, rangeEnd, rangeHours) {
+// Returns { major: [{pos, label}], minor: [{pos}] }
+//
+// Compact:   24h → 6h step | 7d → midnight | 30d → 5-day step
+// Fullscreen: 24h → 2h step + 1h minor | 7d → midnight + 6h minor | 30d → 2-day + 1-day minor
+function generateTicks(rangeStart, rangeEnd, rangeHours, isFullscreen = false) {
   const rs = rangeStart.getTime();
   const re = rangeEnd.getTime();
   const total = re - rs;
-  if (total <= 0) return [];
-  const ticks = [];
+  if (total <= 0) return { major: [], minor: [] };
+
+  const major = [];
+  const minor = [];
+
+  const pushMajor = (t, label) => {
+    const pos = (t - rs) / total;
+    if (pos >= -0.01 && pos <= 1.01) major.push({ pos: clamp(pos, 0, 1), label });
+  };
 
   if (rangeHours <= 24) {
-    const stepH = 6;
-    for (let h = rangeHours; h >= 0; h -= stepH) {
-      const t = re - h * 3600 * 1000;
-      ticks.push({
-        pos: clamp((t - rs) / total, 0, 1),
-        label: h === 0 ? "now" : `${h}h ago`,
-      });
+    // Major: every 2h (fullscreen) or 6h (compact)
+    const majorStep = isFullscreen ? 2 : 6;
+    for (let h = rangeHours; h >= 0; h -= majorStep) {
+      pushMajor(re - h * 3600 * 1000, h === 0 ? "now" : `${h}h ago`);
     }
+    // Minor: every 1h in fullscreen, skip positions already covered by major
+    if (isFullscreen) {
+      const majorSet = new Set(major.map((m) => Math.round(m.pos * 10000)));
+      for (let h = rangeHours; h >= 0; h -= 1) {
+        const pos = clamp((re - h * 3600 * 1000 - rs) / total, 0, 1);
+        if (!majorSet.has(Math.round(pos * 10000))) minor.push({ pos });
+      }
+    }
+
   } else if (rangeHours <= 168) {
-    // 7d: one tick per calendar midnight
+    // Major: every calendar midnight
     const d = new Date(rangeEnd);
     d.setHours(0, 0, 0, 0);
     while (d.getTime() >= rs - 1) {
-      const pos = (d.getTime() - rs) / total;
-      if (pos >= -0.01 && pos <= 1.01)
-        ticks.push({
-          pos: clamp(pos, 0, 1),
-          label: d.toLocaleDateString("en-IN", { day: "numeric", month: "short" }),
-        });
+      pushMajor(d.getTime(),
+        d.toLocaleDateString("en-IN", { day: "numeric", month: "short" }));
       d.setDate(d.getDate() - 1);
     }
-    ticks.reverse();
+    major.reverse();
+    // Minor: every 6h in fullscreen
+    if (isFullscreen) {
+      const majorSet = new Set(major.map((m) => Math.round(m.pos * 10000)));
+      for (let h = 0; h <= rangeHours; h += 6) {
+        const pos = clamp(h * 3600 * 1000 / total, 0, 1);
+        if (!majorSet.has(Math.round(pos * 10000))) minor.push({ pos });
+      }
+    }
+
   } else {
-    // 30d: every 5 calendar days
+    // Major: every 2 days (fullscreen) or 5 days (compact)
+    const stepDays = isFullscreen ? 2 : 5;
     const d = new Date(rangeEnd);
     d.setHours(0, 0, 0, 0);
     let count = 0;
-    while (d.getTime() >= rs - 1 && count < 12) {
-      const pos = (d.getTime() - rs) / total;
-      if (pos >= -0.01 && pos <= 1.01)
-        ticks.push({
-          pos: clamp(pos, 0, 1),
-          label: d.toLocaleDateString("en-IN", { day: "numeric", month: "short" }),
-        });
-      d.setDate(d.getDate() - 5);
+    while (d.getTime() >= rs - 1 && count < 35) {
+      pushMajor(d.getTime(),
+        d.toLocaleDateString("en-IN", { day: "numeric", month: "short" }));
+      d.setDate(d.getDate() - stepDays);
       count++;
     }
-    ticks.reverse();
+    major.reverse();
+    // Minor: every 1 day in fullscreen
+    if (isFullscreen) {
+      const majorSet = new Set(major.map((m) => Math.round(m.pos * 10000)));
+      const d2 = new Date(rangeEnd);
+      d2.setHours(0, 0, 0, 0);
+      for (let day = 0; day <= 31; day++) {
+        const pos = clamp((d2.getTime() - rs) / total, 0, 1);
+        if (!majorSet.has(Math.round(pos * 10000)) && pos >= 0 && pos <= 1)
+          minor.push({ pos });
+        d2.setDate(d2.getDate() - 1);
+      }
+    }
   }
-  return ticks;
+
+  return { major, minor };
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
@@ -201,7 +230,8 @@ export default function MapTimelineSlider({
   const [windowHours, setWindowHours] = useState(defaultWindowHours);
   const [scrub,       setScrub]       = useState(1.0);   // 0 = oldest end, 1 = newest end (= now in live mode)
   const [mode,        setMode]        = useState("live");// "live" | "paused"
-  const [hoverInfo,   setHoverInfo]   = useState(null);
+  const [hoverInfo,     setHoverInfo]     = useState(null);
+  const [isFullscreen,  setIsFullscreen]  = useState(false);
   const initialAutoPositionedRef = useRef(false);
 
   // Tick — drives "live" mode so window-end stays anchored to wall-clock now
@@ -235,9 +265,9 @@ export default function MapTimelineSlider({
   const effectiveWindowHours = Math.min(windowHours, rangeHours);
 
   // ── Axis graduation ticks ──────────────────────────────────────────────────
-  const ticks = useMemo(
-    () => generateTicks(rangeStart, rangeEnd, rangeHours),
-    [rangeStart, rangeEnd, rangeHours]
+  const { major: ticks, minor: minorTicks } = useMemo(
+    () => generateTicks(rangeStart, rangeEnd, rangeHours, isFullscreen),
+    [rangeStart, rangeEnd, rangeHours, isFullscreen]
   );
 
   // On first item-load (per range), auto-snap scrubber so the active window
@@ -438,6 +468,18 @@ export default function MapTimelineSlider({
               return t >= windowStart.getTime() && t <= windowEnd.getTime();
             }).length} active
           </span>
+          <div className="text-white/30">|</div>
+          <button
+            onClick={() => setIsFullscreen((f) => !f)}
+            className={`p-1 border ${
+              isFullscreen
+                ? "border-lime-400/60 bg-lime-400/10 text-lime-300"
+                : "border-white/15 text-white/70 hover:text-white"
+            }`}
+            title={isFullscreen ? "Compact view" : "Expanded view"}
+          >
+            {isFullscreen ? <Minimize2 size={11} /> : <Maximize2 size={11} />}
+          </button>
         </div>
       </div>
 
@@ -447,7 +489,7 @@ export default function MapTimelineSlider({
           ref={trackRef}
           onMouseDown={onTrackMouseDown}
           onTouchStart={onTrackMouseDown}
-          className="relative h-10 bg-white/[0.04] border border-white/10 cursor-pointer select-none"
+          className={`relative ${isFullscreen ? "h-24" : "h-10"} bg-white/[0.04] border border-white/10 cursor-pointer select-none transition-all duration-200`}
           style={{ touchAction: "none", overflow: "visible" }}
         >
           {/* ── Clipped background layer: density + ticks + active window ── */}
@@ -472,11 +514,19 @@ export default function MapTimelineSlider({
               );
             })}
 
-            {/* Graduation tick lines */}
+            {/* Minor tick lines (fullscreen only — 1h / 6h / 1-day intervals) */}
+            {minorTicks.map((tk, i) => (
+              <div
+                key={`m${i}`}
+                className="absolute top-0 bottom-0 w-px bg-white/7 pointer-events-none"
+                style={{ left: `${tk.pos * 100}%` }}
+              />
+            ))}
+            {/* Major graduation tick lines */}
             {ticks.map((tk, i) => (
               <div
-                key={i}
-                className="absolute top-0 bottom-0 w-px bg-white/15"
+                key={`M${i}`}
+                className="absolute top-0 bottom-0 w-px bg-white/20 pointer-events-none"
                 style={{ left: `${tk.pos * 100}%` }}
               />
             ))}
@@ -498,8 +548,8 @@ export default function MapTimelineSlider({
             className="absolute pointer-events-none"
             style={{
               left: `${winLeftPct + winWidthPct}%`,
-              top: -16,
-              bottom: -16,
+              top: isFullscreen ? -20 : -16,
+              bottom: isFullscreen ? -20 : -16,
               width: 0,
               zIndex: 10,
             }}
