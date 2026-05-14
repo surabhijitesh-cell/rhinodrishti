@@ -251,32 +251,34 @@ async def startup():
                 logger.warning(f"Scheduled batch fusion failed: {e}")
         scheduler.add_job(_run_batch_fusion, 'interval', minutes=30, id='batch_fusion')
 
-        # Firecrawl jobs
-        async def _fetch_web_sources():
-            try:
-                n = await fetch_web_sources(db)
-                logger.info(f"Firecrawl web sources: {n} new items")
-            except Exception as e:
-                logger.warning(f"Firecrawl web sources job failed: {e}")
-
-        async def _run_keyword_searches():
-            try:
-                n = await run_keyword_searches(db)
-                logger.info(f"Firecrawl keyword searches: {n} new items")
-            except Exception as e:
-                logger.warning(f"Firecrawl keyword search job failed: {e}")
-
-        scheduler.add_job(_fetch_web_sources,    'interval', hours=3,   id='firecrawl_web_sources')
-        scheduler.add_job(_run_keyword_searches, 'interval', hours=6,   id='firecrawl_searches')
+        # Firecrawl jobs — DISABLED (insufficient credits; re-enable when plan upgraded)
+        # async def _fetch_web_sources():
+        #     try:
+        #         n = await fetch_web_sources(db)
+        #         logger.info(f"Firecrawl web sources: {n} new items")
+        #     except Exception as e:
+        #         logger.warning(f"Firecrawl web sources job failed: {e}")
+        #
+        # async def _run_keyword_searches():
+        #     try:
+        #         n = await run_keyword_searches(db)
+        #         logger.info(f"Firecrawl keyword searches: {n} new items")
+        #     except Exception as e:
+        #         logger.warning(f"Firecrawl keyword search job failed: {e}")
+        #
+        # scheduler.add_job(_fetch_web_sources,    'interval', hours=3,   id='firecrawl_web_sources')
+        # scheduler.add_job(_run_keyword_searches, 'interval', hours=6,   id='firecrawl_searches')
+        logger.info("Firecrawl scheduled jobs disabled — re-enable in server.py when credits restored")
 
         # Social media jobs
-        async def _fetch_twitter():
-            try:
-                a = await fetch_twitter_accounts(db)
-                s = await fetch_twitter_searches(db)
-                logger.info(f"Twitter: {a} account tweets, {s} search tweets")
-            except Exception as e:
-                logger.warning(f"Twitter job failed: {e}")
+        # Twitter — DISABLED (API costs; re-enable when needed)
+        # async def _fetch_twitter():
+        #     try:
+        #         a = await fetch_twitter_accounts(db)
+        #         s = await fetch_twitter_searches(db)
+        #         logger.info(f"Twitter: {a} account tweets, {s} search tweets")
+        #     except Exception as e:
+        #         logger.warning(f"Twitter job failed: {e}")
 
         async def _fetch_youtube():
             try:
@@ -293,7 +295,7 @@ async def startup():
             except Exception as e:
                 logger.warning(f"Telegram job failed: {e}")
 
-        scheduler.add_job(_fetch_twitter,  'interval', hours=2,  id='twitter_fetch')
+        # scheduler.add_job(_fetch_twitter,  'interval', hours=2,  id='twitter_fetch')  # DISABLED
         scheduler.add_job(_fetch_youtube,  'interval', hours=4,  id='youtube_fetch')
         scheduler.add_job(_fetch_telegram, 'interval', hours=1,  id='telegram_fetch')
 
@@ -323,7 +325,7 @@ async def startup():
         )
 
         scheduler.start()
-        logger.info("Scheduler: grassroots/60min, standard/30min, established/12hr, retry/15min, brief/0600 IST, embeddings/6hr, fusion/30min, firecrawl-web/3hr, firecrawl-search/6hr, twitter/2hr, youtube/4hr, telegram/1hr, fading/1hr")
+        logger.info("Scheduler: grassroots/60min, standard/30min, established/12hr, retry/15min, brief/0600 IST, embeddings/6hr, fusion/30min, youtube/4hr, telegram/1hr, fading/1hr [firecrawl+twitter DISABLED]")
     except Exception as e:
         logger.warning(f"Scheduler setup failed: {e}")
 

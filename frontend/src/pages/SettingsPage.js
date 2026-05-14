@@ -1117,8 +1117,9 @@ const SM_REGIONS_LIST = [
 const SM_TABS = [
   { id: "youtube",   label: "YouTube",   Icon: Youtube,  accent: "text-red-400"    },
   { id: "telegram",  label: "Telegram",  Icon: Radio,    accent: "text-sky-400"    },
-  { id: "twitter",   label: "X/Twitter", Icon: Twitter,  accent: "text-slate-300"  },
-  { id: "firecrawl", label: "Firecrawl", Icon: Activity, accent: "text-orange-400" },
+  // Twitter and Firecrawl disabled — insufficient API credits
+  // { id: "twitter",   label: "X/Twitter", Icon: Twitter,  accent: "text-slate-300"  },
+  // { id: "firecrawl", label: "Firecrawl", Icon: Activity, accent: "text-orange-400" },
 ];
 
 function useSocialStatus(api) {
@@ -1628,8 +1629,8 @@ function SocialScanManager({ api }) {
     switch (activeTab) {
       case "youtube":   return <YouTubeTab api={api} />;
       case "telegram":  return <TelegramTab api={api} />;
-      case "twitter":   return <TwitterTab api={api} />;
-      case "firecrawl": return <FirecrawlTab api={api} />;
+      // case "twitter":   return <TwitterTab api={api} />;    // disabled
+      // case "firecrawl": return <FirecrawlTab api={api} />;  // disabled
       default: return null;
     }
   };

@@ -567,13 +567,11 @@ function SourceScanners({ api, socialTrigger, twitterPinned, onToggleTwitterPin 
           {/* All 5 social platforms now show a live-feed widget with direct
               (raw) and curated (AI-classified) toggle instead of a static
               handle list. The RSS card still shows the old static panel. */}
-          {selected && ["youtube","telegram","twitter","firecrawl"].includes(selected) ? (
+          {selected && ["youtube","telegram"].includes(selected) ? (
             <SocialMediaFeedWidget
               api={api}
               sourceType={selected}
               compact={true}
-              pinned={twitterPinned && selected === "twitter"}
-              onTogglePin={selected === "twitter" ? onToggleTwitterPin : undefined}
               onClose={() => setSelected(null)}
             />
           ) : selected === "rss" && detailData.rss ? (
@@ -939,8 +937,8 @@ export default function Dashboard({ stats: propStats, api }) {
         </Tip>
       </div>
 
-      {/* Pinned Twitter Live Feed (only renders when user has pinned) */}
-      {twitterPinned && (
+      {/* Pinned Twitter Live Feed — disabled (Twitter API costs suspended) */}
+      {false && twitterPinned && (
         <div className="border border-slate-500/30 rounded-none bg-card overflow-hidden" data-testid="pinned-twitter-feed">
           <SocialMediaFeedWidget
             api={api}
