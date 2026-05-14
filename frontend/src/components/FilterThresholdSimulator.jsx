@@ -21,17 +21,19 @@ import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { SlidersHorizontal, AlertTriangle, CheckCircle2, RefreshCw, Info } from "lucide-react";
 
-// ── Cost constants (Haiku 4.5 pricing) ───────────────────────────────────────
-const HAIKU_INPUT_PER_M  = 0.80;   // USD per million input tokens
-const HAIKU_OUTPUT_PER_M = 4.00;   // USD per million output tokens
+// ── Cost constants (Gemini 2.5 Flash pricing — Stage 2 primary model) ────────
+// Stage 1: Gemini Flash-Lite  $0.10/$0.40 per MTok (cheap_classifier.py)
+// Stage 2: Gemini 2.5 Flash   $0.15/$0.60 per MTok (ai_pipeline.py) ← simulator models this
+const GEMINI_INPUT_PER_M  = 0.15;  // USD per million input tokens
+const GEMINI_OUTPUT_PER_M = 0.60;  // USD per million output tokens
 const AVG_INPUT_TOK_PER_CALL  = 1500;
 const AVG_OUTPUT_TOK_PER_CALL = 400;
 const CYCLES_PER_DAY = 96;         // every 15 min × 24h
 const INR_RATE = 84;
 
 const COST_PER_CALL_USD =
-  (AVG_INPUT_TOK_PER_CALL  / 1_000_000 * HAIKU_INPUT_PER_M) +
-  (AVG_OUTPUT_TOK_PER_CALL / 1_000_000 * HAIKU_OUTPUT_PER_M);
+  (AVG_INPUT_TOK_PER_CALL  / 1_000_000 * GEMINI_INPUT_PER_M) +
+  (AVG_OUTPUT_TOK_PER_CALL / 1_000_000 * GEMINI_OUTPUT_PER_M);
 
 // ── Simulation engine ─────────────────────────────────────────────────────────
 function simulateFunnel(settings, todayData, savedSettings) {
@@ -101,7 +103,7 @@ function buildChartData(scanned, sim) {
     { name: "After S0",   pass: sim.afterS0,   drop: scanned - sim.afterS0 },
     { name: "After S0.5", pass: sim.afterS05,  drop: sim.afterS0 - sim.afterS05 },
     { name: "After S1",   pass: sim.afterS1,   drop: sim.afterS05 - sim.afterS1 },
-    { name: "→ Haiku",    pass: sim.toHaiku,   drop: sim.afterS1 - sim.toHaiku },
+    { name: "→ Gemini",   pass: sim.toHaiku,   drop: sim.afterS1 - sim.toHaiku },
   ];
   return stages;
 }
@@ -179,7 +181,7 @@ function ConfirmModal({ sim, settings, onConfirm, onCancel, saving }) {
             <span className="text-foreground">{settings.stage2_max_scan}</span>
           </div>
           <div className="flex justify-between">
-            <span>Max Haiku/cycle</span>
+            <span>Max Gemini calls/cycle</span>
             <span className="text-foreground">{settings.stage2_max_haiku}</span>
           </div>
         </div>
@@ -195,7 +197,7 @@ function ConfirmModal({ sim, settings, onConfirm, onCancel, saving }) {
             Impact Assessment
           </p>
           <p className="text-[10px] font-mono">
-            Est. Haiku calls/day: <span className="font-bold">{Math.round(sim.haikuPerDay).toLocaleString()}</span>
+            Est. Gemini Flash calls/day: <span className="font-bold">{Math.round(sim.haikuPerDay).toLocaleString()}</span>
           </p>
           <p className="text-[10px] font-mono">
             Est. cost/day: <span className="font-bold text-emerald-400">₹{sim.costPerDayInr}</span>
@@ -207,7 +209,7 @@ function ConfirmModal({ sim, settings, onConfirm, onCancel, saving }) {
             Coverage risk: <span className={`font-bold ${sim.riskColor}`}>{sim.coverageRisk}</span>
           </p>
           <p className="text-[10px] font-mono text-muted-foreground">
-            ~{Math.round(sim.filterRate * 100)}% of items filtered before Haiku
+            ~{Math.round(sim.filterRate * 100)}% of items filtered before Gemini Flash
           </p>
         </div>
 
@@ -371,7 +373,7 @@ export default function FilterThresholdSimulator({ api }) {
 
               <div>
                 <p className="text-[9px] font-mono text-muted-foreground uppercase tracking-wider font-semibold mb-3">
-                  Stage 1 — Gemini Binary Filter
+                  Stage 1 — Gemini Flash-Lite binary filter
                 </p>
                 <ToggleRow
                   label="Enabled"
@@ -380,13 +382,13 @@ export default function FilterThresholdSimulator({ api }) {
                   warn={true}
                 />
                 <p className="text-[8px] font-mono text-muted-foreground/60 mt-1">
-                  Disabling Stage 1 sends all S0.5 survivors directly to Haiku — significantly increases cost.
+                  Disabling Stage 1 sends all S0.5 survivors directly to Gemini Flash — significantly increases cost.
                 </p>
               </div>
 
               <div>
                 <p className="text-[9px] font-mono text-muted-foreground uppercase tracking-wider font-semibold mb-3">
-                  Stage 2 — Haiku Capacity
+                  Stage 2 — Gemini 2.5 Flash capacity
                 </p>
                 <SliderRow
                   label="Max items scanned/cycle"
@@ -397,7 +399,7 @@ export default function FilterThresholdSimulator({ api }) {
                 />
                 <div className="mt-3">
                   <SliderRow
-                    label="Max Haiku calls/cycle"
+                    label="Max Gemini calls/cycle"
                     value={settings.stage2_max_haiku}
                     min={5} max={50} step={1}
                     onChange={update("stage2_max_haiku")}
@@ -494,7 +496,7 @@ export default function FilterThresholdSimulator({ api }) {
                   </p>
 
                   <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 text-[9px] font-mono">
-                    <span className="text-muted-foreground">Haiku calls</span>
+                    <span className="text-muted-foreground">Gemini Flash calls</span>
                     <span className="text-foreground font-bold">{Math.round(sim.haikuPerDay).toLocaleString()}</span>
 
                     <span className="text-muted-foreground">Est. cost</span>
@@ -508,7 +510,7 @@ export default function FilterThresholdSimulator({ api }) {
                     </span>
 
                     <span className="text-muted-foreground">Filter rate</span>
-                    <span className="text-foreground">{Math.round(sim.filterRate * 100)}% before Haiku</span>
+                    <span className="text-foreground">{Math.round(sim.filterRate * 100)}% before Gemini Flash</span>
 
                     <span className="text-muted-foreground">Coverage risk</span>
                     <span className={sim.riskColor}>{sim.coverageRisk.split(" —")[0]}</span>

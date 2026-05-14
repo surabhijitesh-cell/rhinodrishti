@@ -24,9 +24,9 @@ import { Input } from "./ui/input";
 const POLL_MS = 5 * 60 * 1000;
 
 const PROVIDER_META = {
-  anthropic: { label: "Anthropic Haiku", color: "bg-violet-500",   dot: "bg-violet-400"  },
-  gemini:    { label: "Gemini Flash-Lite", color: "bg-amber-500",    dot: "bg-amber-400"   },
-  openai:    { label: "OpenAI Embeddings", color: "bg-cyan-500",     dot: "bg-cyan-400"    },
+  anthropic: { label: "Anthropic (legacy)", color: "bg-violet-500",  dot: "bg-violet-400"  },
+  gemini:    { label: "Gemini Flash (S1+S2)", color: "bg-amber-500", dot: "bg-amber-400"   },
+  openai:    { label: "OpenAI Embeddings",  color: "bg-cyan-500",    dot: "bg-cyan-400"    },
 };
 
 function MiniBar({ value, max, color = "bg-emerald-500" }) {
