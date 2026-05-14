@@ -170,11 +170,9 @@ async def cheap_filter(article: dict, timeout: float = 8.0) -> dict:
         logger.warning(f"Stage 1 Gemini returned non-JSON: {e}")
         return fail_open
     except Exception as e:
-        import time
         err_str = str(e)
         # Detect quota exhaustion (429) — activate circuit breaker for 5 min
         if "429" in err_str or "quota" in err_str.lower() or "rate" in err_str.lower():
-            global _quota_paused_until
             _quota_paused_until = time.time() + 300
             logger.warning("Stage 1 Gemini quota exhausted — skipping for 5 min")
         else:
