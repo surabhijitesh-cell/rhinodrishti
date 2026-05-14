@@ -387,54 +387,91 @@ export default function MapTimelineSlider({
           ref={trackRef}
           onMouseDown={onTrackMouseDown}
           onTouchStart={onTrackMouseDown}
-          className="relative h-10 bg-white/[0.04] border border-white/10 cursor-pointer select-none overflow-hidden"
-          style={{ touchAction: "none" }}
+          className="relative h-10 bg-white/[0.04] border border-white/10 cursor-pointer select-none"
+          style={{ touchAction: "none", overflow: "visible" }}
         >
-          {/* ── Density shading — severity-blended color, alpha = density ── */}
-          {buckets.map((b, i) => {
-            if (b.total === 0) return null;
-            const densityFrac = b.total / maxBucketTotal;
-            const alpha = 0.15 + densityFrac * 0.55;   // 0.15 - 0.70 alpha
-            const bg = bucketRgba(b, alpha);
-            return (
+          {/* ── Clipped background layer: density + ticks + active window ── */}
+          <div className="absolute inset-0 overflow-hidden pointer-events-none">
+            {/* Density shading — severity-blended color, alpha = density */}
+            {buckets.map((b, i) => {
+              if (b.total === 0) return null;
+              const densityFrac = b.total / maxBucketTotal;
+              const alpha = 0.15 + densityFrac * 0.55;
+              const bg = bucketRgba(b, alpha);
+              return (
+                <div
+                  key={i}
+                  className="absolute top-0 bottom-0"
+                  style={{
+                    left: `${(i / buckets.length) * 100}%`,
+                    width: `${100 / buckets.length}%`,
+                    background: bg,
+                    filter: "blur(2px)",
+                  }}
+                />
+              );
+            })}
+
+            {/* Tick marks (5 evenly spaced) */}
+            {[0, 0.25, 0.5, 0.75, 1].map((p) => (
               <div
-                key={i}
-                className="absolute top-0 bottom-0 pointer-events-none"
-                style={{
-                  left: `${(i / buckets.length) * 100}%`,
-                  width: `${100 / buckets.length}%`,
-                  background: bg,
-                  filter: "blur(2px)",      // soft gradient feel
-                }}
+                key={p}
+                className="absolute top-0 bottom-0 w-px bg-white/8"
+                style={{ left: `${p * 100}%` }}
               />
-            );
-          })}
+            ))}
 
-          {/* Tick marks (5 evenly spaced) */}
-          {[0, 0.25, 0.5, 0.75, 1].map((p) => (
+            {/* Active window overlay */}
             <div
-              key={p}
-              className="absolute top-0 bottom-0 w-px bg-white/8 pointer-events-none"
-              style={{ left: `${p * 100}%` }}
+              className="absolute top-0 bottom-0 border-l border-r border-lime-400/70"
+              style={{
+                left: `${winLeftPct}%`,
+                width: `${winWidthPct}%`,
+                background: "rgba(163,230,53,0.08)",
+                boxShadow: "inset 0 0 0 1px rgba(163,230,53,0.15)",
+              }}
             />
-          ))}
+          </div>
 
-          {/* Active window overlay */}
+          {/* ── Prominent scrubber handle — overflows track top & bottom ── */}
           <div
-            className="absolute top-0 bottom-0 border-l border-r border-lime-400/70 pointer-events-none"
+            className="absolute pointer-events-none"
             style={{
-              left: `${winLeftPct}%`,
-              width: `${winWidthPct}%`,
-              background: "rgba(163,230,53,0.08)",
-              boxShadow: "inset 0 0 0 1px rgba(163,230,53,0.15)",
+              left: `${winLeftPct + winWidthPct}%`,
+              top: -16,
+              bottom: -16,
+              width: 0,
+              zIndex: 10,
             }}
-          />
-
-          {/* Window-end scrubber handle */}
-          <div
-            className="absolute top-[-3px] bottom-[-3px] w-[2px] bg-lime-300 pointer-events-none"
-            style={{ left: `${(winLeftPct + winWidthPct)}%`, boxShadow: "0 0 6px rgba(163,230,53,0.6)" }}
-          />
+          >
+            {/* Glowing vertical line spanning full handle height */}
+            <div
+              className="absolute bg-lime-300"
+              style={{
+                width: 3,
+                left: -1,
+                top: 0,
+                bottom: 0,
+                borderRadius: 2,
+                boxShadow: "0 0 8px rgba(163,230,53,0.8), 0 0 20px rgba(163,230,53,0.3)",
+              }}
+            />
+            {/* Diamond grip knob — centered on track height */}
+            <div
+              className="absolute bg-lime-300"
+              style={{
+                width: 18,
+                height: 18,
+                left: -8,
+                top: "50%",
+                marginTop: -9,
+                transform: "rotate(45deg)",
+                borderRadius: 2,
+                boxShadow: "0 0 14px rgba(163,230,53,1), 0 0 6px rgba(163,230,53,0.6)",
+                border: "1px solid rgba(255,255,255,0.3)",
+              }}
+            />
+          </div>
 
           {/* Event dots */}
           {dotItems.map((it) => {
