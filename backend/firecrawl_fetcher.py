@@ -267,7 +267,7 @@ def scrape_url_sync(url: str) -> Optional[dict]:
 
         markdown, metadata = _extract_from_result(result)
 
-        if not markdown or len(markdown.strip()) < 50:
+        if not markdown or len(markdown.strip()) < 20:
             logger.warning(f"Firecrawl thin content ({len(markdown)} chars) for {url}")
             return None
 
@@ -356,17 +356,23 @@ def search_sync(query: str, num_results: int = 5) -> list:
 
 async def fetch_web_sources(db) -> int:
     """
-    Scheduled job: scrape all active web_sources documents and push results
-    through the existing AI classification pipeline.
+    Scheduled job: scrape all active web_sources documents and queue results
+    for AI classification via the multi-stage filter pipeline.
+
+    Intentionally does NOT call Haiku inline — saves items with processed=False
+    so analyze_unprocessed_items() picks them up through the filter cascade.
+    This prevents Firecrawl scheduler from competing with the main pipeline for
+    Haiku quota and avoids rate-limit cascades.
     """
     import asyncio
-    from ai_pipeline import classify_and_analyze_article
 
     sources = await db.web_sources.find({"active": True}).to_list(length=200)
     if not sources:
         return 0
 
     saved = 0
+    skipped_age = 0
+    skipped_dup = 0
     for source in sources:
         url = source.get("url")
         if not url:
@@ -380,18 +386,19 @@ async def fetch_web_sources(db) -> int:
                 last_fetched = last_fetched.replace(tzinfo=timezone.utc)
             age = (datetime.now(timezone.utc) - last_fetched).total_seconds()
             if age < 7200:
+                skipped_age += 1
                 continue
 
         # Firecrawl SDK is synchronous — run in thread pool
         loop = asyncio.get_running_loop()
         raw = await loop.run_in_executor(None, scrape_url_sync, url)
         if not raw:
+            # scrape_url_sync already logged the error
+            await asyncio.sleep(2)
             continue
 
         # Dedup by MD5 hash of content — identical homepage snapshots are skipped,
         # but a changed homepage (new articles at top) always saves.
-        # Title-based dedup was wrong: homepage title never changes → blocked every
-        # subsequent fetch.  URL-based dedup also wrong: same reason.
         content_hash = hashlib.md5(raw["raw_content"].encode(errors="ignore")).hexdigest()
         existing = await db.intelligence_items.find_one({"content_hash": content_hash})
 
@@ -400,17 +407,14 @@ async def fetch_web_sources(db) -> int:
                 {"_id": source["_id"]},
                 {"$set": {"last_fetched": datetime.now(timezone.utc)}}
             )
+            skipped_dup += 1
+            await asyncio.sleep(2)
             continue
 
+        # Queue for filter pipeline — do NOT call Haiku inline here.
+        # analyze_unprocessed_items() will pick this up within 15 min.
         item = _base_item(raw)
-        try:
-            analysis = await classify_and_analyze_article(
-                raw["raw_content"][:4000], raw["title"]
-            )
-            item.update(analysis)
-        except Exception as e:
-            logger.error(f"AI analysis failed for {url}: {e}")
-            item["processed"] = False
+        item["processed"] = False   # override _base_item default → enters queue
 
         await db.intelligence_items.insert_one(item)
         await db.web_sources.update_one(
@@ -418,19 +422,27 @@ async def fetch_web_sources(db) -> int:
             {"$set": {"last_fetched": datetime.now(timezone.utc)}}
         )
         saved += 1
-        logger.info(f"Firecrawl saved: {raw['title'][:60]}")
+        logger.info(f"Firecrawl queued: {raw['title'][:60]}")
 
-    logger.info(f"fetch_web_sources: {saved} new items from {len(sources)} sources")
+        # Polite delay between Firecrawl API calls — avoids rate-limit on plan limits
+        await asyncio.sleep(2)
+
+    logger.info(
+        f"fetch_web_sources: {saved} queued, {skipped_dup} dup, "
+        f"{skipped_age} too-recent from {len(sources)} sources"
+    )
     return saved
 
 
 async def run_keyword_searches(db) -> int:
     """
     Scheduled job: run all active firecrawl_searches documents + top keyword
-    bank entries through Firecrawl search, then push results through AI.
+    bank entries through Firecrawl search, then queue results for AI pipeline.
+
+    Does NOT call Haiku inline — items saved with processed=False for the
+    filter cascade (analyze_unprocessed_items) to handle within 15 min.
     """
     import asyncio
-    from ai_pipeline import classify_and_analyze_article
     from keyword_engine import get_top_keywords_for_search
 
     # 1. Manual searches (user added via Settings UI)
@@ -466,19 +478,13 @@ async def run_keyword_searches(db) -> int:
             if existing:
                 continue
 
+            # Queue for filter pipeline — do NOT call Haiku inline here.
             item = _base_item(raw)
-            try:
-                analysis = await classify_and_analyze_article(
-                    raw["raw_content"][:4000], raw["title"]
-                )
-                item.update(analysis)
-            except Exception as e:
-                logger.error(f"AI analysis failed for search result {raw['source_url']}: {e}")
-                item["processed"] = False
+            item["processed"] = False   # enters analyze_unprocessed_items queue
 
             await db.intelligence_items.insert_one(item)
             saved += 1
-            logger.info(f"Firecrawl search saved: {raw['title'][:60]}")
+            logger.info(f"Firecrawl search queued: {raw['title'][:60]}")
 
         # Only stamp last_run on manually-configured searches
         if doc_id is not None:
@@ -487,7 +493,10 @@ async def run_keyword_searches(db) -> int:
                 {"$set": {"last_run": datetime.now(timezone.utc)}}
             )
 
-    logger.info(f"run_keyword_searches: {saved} new items from {len(queries)} queries")
+        # Brief pause between search queries
+        await asyncio.sleep(1)
+
+    logger.info(f"run_keyword_searches: {saved} queued from {len(queries)} queries")
     return saved
 
 

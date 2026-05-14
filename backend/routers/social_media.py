@@ -719,23 +719,38 @@ async def fetch_telegram_channel_now(item_id: str):
     if not ch:
         raise HTTPException(404, "Not found")
     from telegram_fetcher import fetch_channel_messages, _msg_to_intel_item
-    from ai_pipeline import classify_and_analyze_article
     username = ch["username"].lstrip("@")
     messages = await fetch_channel_messages(username, ch["name"], limit=20, since_hours=24)
     saved = 0
     for msg in messages:
         if await db.intelligence_items.find_one({"source_url": msg["url"]}):
             continue
+        # Queue for filter pipeline — do NOT call Haiku inline here
         item = _msg_to_intel_item(msg)
-        try:
-            analysis = await classify_and_analyze_article(msg["text"][:4000], f"Telegram: {ch['name']}")
-            item.update(analysis)
-        except Exception:
-            item["processed"] = False
+        item["processed"] = False
         await db.intelligence_items.insert_one(item)
         saved += 1
     await db.telegram_channels.update_one({"id": item_id}, {"$set": {"last_fetched": datetime.now(timezone.utc)}})
-    return {"saved": saved, "channel": ch["name"]}
+    return {"saved": saved, "queued": saved, "channel": ch["name"]}
+
+
+@router.post("/social/telegram/reconnect")
+async def telegram_reconnect():
+    """
+    Admin endpoint: reset the Telegram singleton client and force reconnect.
+    Use this after AuthKeyDuplicatedError (IP conflict) or after updating
+    TELEGRAM_SESSION_STRING in Render env vars.
+    Does NOT require a server restart.
+    """
+    from telegram_fetcher import _reset_client, _get_or_create_client, _is_configured
+    if not _is_configured():
+        raise HTTPException(400, "Telegram not configured — set env vars first")
+    await _reset_client()
+    try:
+        await _get_or_create_client()
+        return {"status": "reconnected", "message": "Telegram client reset and reconnected successfully"}
+    except RuntimeError as e:
+        raise HTTPException(502, f"Reconnect failed: {e}")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
