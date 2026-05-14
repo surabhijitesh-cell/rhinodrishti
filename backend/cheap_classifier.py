@@ -27,14 +27,19 @@ from openai import AsyncOpenAI
 
 logger = logging.getLogger(__name__)
 
-# Gemini's OpenAI-compatible endpoint
-GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
-GEMINI_MODEL = "gemini-2.5-flash-lite"
+# OpenRouter — globally available proxy for Gemini models.
+# Render's Oregon servers are geo-blocked by generativelanguage.googleapis.com
+# free-tier restrictions. OpenRouter bypasses this.
+OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+GEMINI_MODEL = "google/gemini-2.5-flash-lite-preview-06-17"
+
+# Short name for usage_tracker model key lookups
+GEMINI_MODEL_SHORT = "gemini-2.5-flash-lite"
 
 _client: Optional[AsyncOpenAI] = None
 
-# Circuit breaker: epoch-second timestamp after which Gemini calls resume.
-# Set to now+300 when a quota-exhausted 429 is detected; all calls within
+# Circuit breaker: epoch-second timestamp after which calls resume.
+# Set to now+300 when a quota/rate 429 is detected; all calls within
 # the cooldown window return fail_open immediately without hitting the API.
 _quota_paused_until: float = 0.0
 
@@ -43,13 +48,13 @@ def _get_client() -> Optional[AsyncOpenAI]:
     global _client
     if _client is not None:
         return _client
-    api_key = os.environ.get("GEMINI_API_KEY", "")
+    api_key = os.environ.get("OPENROUTER_API_KEY", "")
     if not api_key:
         return None
     # max_retries=1: the SDK's built-in retry loop floods logs with dozens of
     # "Retrying request" lines when quota is exhausted. One retry is enough;
     # our own circuit breaker handles persistent quota failures at batch level.
-    _client = AsyncOpenAI(api_key=api_key, base_url=GEMINI_BASE_URL, max_retries=1)
+    _client = AsyncOpenAI(api_key=api_key, base_url=OPENROUTER_BASE_URL, max_retries=1)
     return _client
 
 
@@ -205,7 +210,7 @@ async def cheap_filter(article: dict, timeout: float = 8.0) -> dict:
                 await track_usage_generic(
                     input_tokens=getattr(usage, "prompt_tokens", 0) or 0,
                     output_tokens=getattr(usage, "completion_tokens", 0) or 0,
-                    model=GEMINI_MODEL,
+                    model=GEMINI_MODEL_SHORT,  # short name maps to usage_tracker pricing
                 )
         except Exception:
             pass

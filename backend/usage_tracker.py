@@ -88,7 +88,7 @@ MODEL_PRICING: dict[str, dict] = {
         "input": 3.00, "output": 15.00,
         "cache_write": 3.75, "cache_read": 0.30,
     },
-    # Gemini
+    # Gemini — direct API keys
     "gemini-2.5-flash": {
         "provider": "gemini",
         "input": 0.15, "output": 0.60,
@@ -100,6 +100,17 @@ MODEL_PRICING: dict[str, dict] = {
         "cache_write": 0.0, "cache_read": 0.0,
     },
     "gemini-2.5-flash-lite": {
+        "provider": "gemini",
+        "input": 0.10, "output": 0.40,
+        "cache_write": 0.0, "cache_read": 0.0,
+    },
+    # Gemini via OpenRouter (prefixed model names)
+    "google/gemini-2.5-flash": {
+        "provider": "gemini",
+        "input": 0.15, "output": 0.60,
+        "cache_write": 0.0, "cache_read": 0.0,
+    },
+    "google/gemini-2.5-flash-lite-preview-06-17": {
         "provider": "gemini",
         "input": 0.10, "output": 0.40,
         "cache_write": 0.0, "cache_read": 0.0,
