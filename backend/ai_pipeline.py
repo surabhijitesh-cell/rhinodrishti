@@ -284,7 +284,7 @@ Respond ONLY in valid JSON:
 
 
 async def classify_and_analyze_article(article, source_hint: str = "") -> dict:
-    """Classify and analyze a news article using Claude Haiku 4.5 with enhanced military intelligence prompt.
+    """Classify and analyze a news article using Gemini 2.5 Flash with enhanced military intelligence prompt.
     Dynamically injects analyst feedback bias when available.
 
     Accepts two calling conventions for backward-compatibility:
@@ -305,40 +305,41 @@ async def classify_and_analyze_article(article, source_hint: str = "") -> dict:
     try:
         from feedback_bias import get_feedback_bias_context
 
-        # Build dynamic system blocks — static prompt is cached, bias context is not
+        # Build system prompt — prepend feedback bias if available.
+        # Gemini uses OpenAI-compat format: system is a message, not a separate param.
+        # No cache_control blocks needed (Gemini is cheap enough without caching).
         bias_context = await get_feedback_bias_context()
-        system_blocks = [
-            {
-                "type": "text",
-                "text": CLASSIFICATION_PROMPT,
-                "cache_control": {"type": "ephemeral"},  # cached — saves ~80% on repeat calls
-            }
-        ]
+        system_text = CLASSIFICATION_PROMPT
         if bias_context:
-            system_blocks.append({"type": "text", "text": bias_context})
+            system_text = system_text + "\n\n" + bias_context
 
         client = get_client()
-        # NOTE: extra_headers={"anthropic-beta": "prompt-caching-2024-07-31"} intentionally
-        # removed. That header is for pre-2025 Anthropic models only. claude-haiku-4-5-20251001
-        # (Oct 2025) has prompt caching built-in — the old beta header caused it to be
-        # silently ignored, producing 0 cache reads/writes for 3 days and ~$15/day overspend.
-        # cache_control: {"type": "ephemeral"} on system_blocks[0] is sufficient.
-        response = await client.messages.create(
+        response = await client.chat.completions.create(
             model=MODEL,
             max_tokens=2048,
-            system=system_blocks,
-            messages=[{"role": "user", "content": f"Analyze this article:\n\n{article_text}"}],
+            temperature=0.0,
+            response_format={"type": "json_object"},
+            messages=[
+                {"role": "system", "content": system_text},
+                {"role": "user", "content": f"Analyze this article:\n\n{article_text}"},
+            ],
         )
 
         # Track token usage and cost
         try:
-            from usage_tracker import track_usage
-            await track_usage(response.usage, MODEL)
+            from usage_tracker import track_usage_generic
+            usage = response.usage
+            if usage:
+                await track_usage_generic(
+                    input_tokens=getattr(usage, "prompt_tokens", 0) or 0,
+                    output_tokens=getattr(usage, "completion_tokens", 0) or 0,
+                    model=MODEL,
+                )
         except Exception as e:
             logger.warning(f"track_usage (classify) failed: {e}")
 
         # Parse JSON from response
-        response_text = response.content[0].text
+        response_text = response.choices[0].message.content or ""
         # Try to extract JSON from the response
         json_start = response_text.find('{')
         json_end = response_text.rfind('}') + 1
@@ -460,32 +461,33 @@ async def generate_daily_brief_ai(items: list, date: str) -> dict:
 
     try:
         client = get_client()
-        response = await client.messages.create(
+        response = await client.chat.completions.create(
             model=MODEL,
             max_tokens=1500,
-            system=[
-                {
-                    "type": "text",
-                    "text": BRIEF_PROMPT,
-                    "cache_control": {"type": "ephemeral"},
-                }
-            ],
+            temperature=0.0,
+            response_format={"type": "json_object"},
             messages=[
+                {"role": "system", "content": BRIEF_PROMPT},
                 {
                     "role": "user",
                     "content": f"Generate a Daily Intelligence Brief for {date} based on these intelligence items:\n\n{items_summary}",
-                }
+                },
             ],
-            extra_headers={"anthropic-beta": "prompt-caching-2024-07-31"},
         )
 
         try:
-            from usage_tracker import track_usage
-            await track_usage(response.usage, MODEL)
+            from usage_tracker import track_usage_generic
+            usage = response.usage
+            if usage:
+                await track_usage_generic(
+                    input_tokens=getattr(usage, "prompt_tokens", 0) or 0,
+                    output_tokens=getattr(usage, "completion_tokens", 0) or 0,
+                    model=MODEL,
+                )
         except Exception as e:
             logger.warning(f"track_usage (brief) failed: {e}")
 
-        response_text = response.content[0].text
+        response_text = response.choices[0].message.content or ""
         json_start = response_text.find('{')
         json_end = response_text.rfind('}') + 1
         if json_start >= 0 and json_end > json_start:
