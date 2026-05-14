@@ -22,7 +22,7 @@
  */
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import {
-  Play, Pause, SkipBack, SkipForward, Clock, Radio, Maximize2, Minimize2,
+  Play, Pause, SkipBack, SkipForward, Clock, Radio,
 } from "lucide-react";
 
 // ── Range presets (entire slider span) ─────────────────────────────────────────
@@ -154,13 +154,15 @@ function generateTicks(rangeStart, rangeEnd, rangeHours, isFullscreen = false) {
   };
 
   if (rangeHours <= 24) {
-    // Major: every 2h (fullscreen) or 6h (compact)
-    const majorStep = isFullscreen ? 2 : 6;
+    // Compact: major every 6h (verbose label) + minor every 1h
+    // Fullscreen: major every 1h (short label, wide track has space)
+    const majorStep = isFullscreen ? 1 : 6;
     for (let h = rangeHours; h >= 0; h -= majorStep) {
-      pushMajor(re - h * 3600 * 1000, h === 0 ? "now" : `${h}h ago`);
+      const label = h === 0 ? "now" : (isFullscreen ? `${h}h` : `${h}h ago`);
+      pushMajor(re - h * 3600 * 1000, label);
     }
-    // Minor: every 1h in fullscreen, skip positions already covered by major
-    if (isFullscreen) {
+    if (!isFullscreen) {
+      // Compact: unlabeled 1h minor gridlines between 6h majors
       const majorSet = new Set(major.map((m) => Math.round(m.pos * 10000)));
       for (let h = rangeHours; h >= 0; h -= 1) {
         const pos = clamp((re - h * 3600 * 1000 - rs) / total, 0, 1);
@@ -169,7 +171,7 @@ function generateTicks(rangeStart, rangeEnd, rangeHours, isFullscreen = false) {
     }
 
   } else if (rangeHours <= 168) {
-    // Major: every calendar midnight
+    // 7d: every calendar midnight in both modes
     const d = new Date(rangeEnd);
     d.setHours(0, 0, 0, 0);
     while (d.getTime() >= rs - 1) {
@@ -178,18 +180,10 @@ function generateTicks(rangeStart, rangeEnd, rangeHours, isFullscreen = false) {
       d.setDate(d.getDate() - 1);
     }
     major.reverse();
-    // Minor: every 6h in fullscreen
-    if (isFullscreen) {
-      const majorSet = new Set(major.map((m) => Math.round(m.pos * 10000)));
-      for (let h = 0; h <= rangeHours; h += 6) {
-        const pos = clamp(h * 3600 * 1000 / total, 0, 1);
-        if (!majorSet.has(Math.round(pos * 10000))) minor.push({ pos });
-      }
-    }
 
   } else {
-    // Major: every 2 days (fullscreen) or 5 days (compact)
-    const stepDays = isFullscreen ? 2 : 5;
+    // 30d: compact = every 5 days, fullscreen = every day
+    const stepDays = isFullscreen ? 1 : 5;
     const d = new Date(rangeEnd);
     d.setHours(0, 0, 0, 0);
     let count = 0;
@@ -200,18 +194,6 @@ function generateTicks(rangeStart, rangeEnd, rangeHours, isFullscreen = false) {
       count++;
     }
     major.reverse();
-    // Minor: every 1 day in fullscreen
-    if (isFullscreen) {
-      const majorSet = new Set(major.map((m) => Math.round(m.pos * 10000)));
-      const d2 = new Date(rangeEnd);
-      d2.setHours(0, 0, 0, 0);
-      for (let day = 0; day <= 31; day++) {
-        const pos = clamp((d2.getTime() - rs) / total, 0, 1);
-        if (!majorSet.has(Math.round(pos * 10000)) && pos >= 0 && pos <= 1)
-          minor.push({ pos });
-        d2.setDate(d2.getDate() - 1);
-      }
-    }
   }
 
   return { major, minor };
@@ -219,19 +201,19 @@ function generateTicks(rangeStart, rangeEnd, rangeHours, isFullscreen = false) {
 
 // ── Main component ────────────────────────────────────────────────────────────
 export default function MapTimelineSlider({
-  items = [],          // raw items from /intelligence/map-timeline
-  onWindowChange,      // (windowStart, windowEnd, rangeStart, rangeEnd) => void
-  onRangeChange,       // (hours) => triggers parent to refetch with new range
+  items = [],           // raw items from /intelligence/map-timeline
+  onWindowChange,       // (windowStart, windowEnd, rangeStart, rangeEnd) => void
+  onRangeChange,        // (hours) => triggers parent to refetch with new range
   defaultRangeHours = 24,
   defaultWindowHours = 3,
+  isFullscreen = false, // true when parent map widget is in fullscreen mode
 }) {
   // ── State ───────────────────────────────────────────────────────────────────
   const [rangeHours,  setRangeHours]  = useState(defaultRangeHours);
   const [windowHours, setWindowHours] = useState(defaultWindowHours);
   const [scrub,       setScrub]       = useState(1.0);   // 0 = oldest end, 1 = newest end (= now in live mode)
   const [mode,        setMode]        = useState("live");// "live" | "paused"
-  const [hoverInfo,     setHoverInfo]     = useState(null);
-  const [isFullscreen,  setIsFullscreen]  = useState(false);
+  const [hoverInfo,   setHoverInfo]   = useState(null);
   const initialAutoPositionedRef = useRef(false);
 
   // Tick — drives "live" mode so window-end stays anchored to wall-clock now
@@ -468,18 +450,6 @@ export default function MapTimelineSlider({
               return t >= windowStart.getTime() && t <= windowEnd.getTime();
             }).length} active
           </span>
-          <div className="text-white/30">|</div>
-          <button
-            onClick={() => setIsFullscreen((f) => !f)}
-            className={`p-1 border ${
-              isFullscreen
-                ? "border-lime-400/60 bg-lime-400/10 text-lime-300"
-                : "border-white/15 text-white/70 hover:text-white"
-            }`}
-            title={isFullscreen ? "Compact view" : "Expanded view"}
-          >
-            {isFullscreen ? <Minimize2 size={11} /> : <Maximize2 size={11} />}
-          </button>
         </div>
       </div>
 
@@ -489,7 +459,7 @@ export default function MapTimelineSlider({
           ref={trackRef}
           onMouseDown={onTrackMouseDown}
           onTouchStart={onTrackMouseDown}
-          className={`relative ${isFullscreen ? "h-24" : "h-10"} bg-white/[0.04] border border-white/10 cursor-pointer select-none transition-all duration-200`}
+          className="relative h-10 bg-white/[0.04] border border-white/10 cursor-pointer select-none"
           style={{ touchAction: "none", overflow: "visible" }}
         >
           {/* ── Clipped background layer: density + ticks + active window ── */}
@@ -548,8 +518,8 @@ export default function MapTimelineSlider({
             className="absolute pointer-events-none"
             style={{
               left: `${winLeftPct + winWidthPct}%`,
-              top: isFullscreen ? -20 : -16,
-              bottom: isFullscreen ? -20 : -16,
+              top: -16,
+              bottom: -16,
               width: 0,
               zIndex: 10,
             }}

@@ -7,7 +7,7 @@ import {
   Rss, Eye, EyeOff, Clock, CheckCircle2, Loader2,
   Filter, Languages, BellRing, GitBranch, Check, Wifi, WifiOff,
   ArrowUpDown, Youtube, Send, Twitter, ChevronDown, ChevronUp,
-  Play, Zap, Radio, Globe
+  Play, Zap, Radio, Globe, Maximize2, Minimize2,
 } from "lucide-react";
 import Tip from "../components/Tip";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
@@ -753,6 +753,7 @@ export default function Dashboard({ stats: propStats, api }) {
   // window are still rendered on the map but faded ("historical ghosting").
   const [timelineItems, setTimelineItems] = useState([]);
   const [timelineRangeHours, setTimelineRangeHours] = useState(24);
+  const [isMapFullscreen, setIsMapFullscreen] = useState(false);
   // Store window edges as ms-numbers (primitive) so React state equality treats
   // identical windows as unchanged — avoids needless re-renders of the heavy map.
   const [timelineWindowMs, setTimelineWindowMs] = useState(null);
@@ -1070,16 +1071,36 @@ export default function Dashboard({ stats: propStats, api }) {
       {/* Map + Recent Alerts */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
         {/* NER Map + Temporal Timeline ────────────────────────────────── */}
-        <div className="lg:col-span-7" data-tour="ner-map">
-          <MapClickWrapper>
-            <div className="flex flex-col">
-              <div style={{ minHeight: 380, position: "relative" }}>
+        <div
+          className={isMapFullscreen
+            ? "fixed inset-0 z-[100] bg-black flex flex-col"
+            : "lg:col-span-7"}
+          data-tour="ner-map"
+        >
+          {isMapFullscreen ? (
+            /* ── Fullscreen mode: no click-wrapper, map fills viewport ── */
+            <div className="flex flex-col h-full">
+              <div style={{ flex: 1, minHeight: 0, position: "relative" }}>
                 <NERMap
                   stateStats={stateStatsMap}
                   items={mapItems}
                   navigate={navigate}
                   onStateClick={handleStateClick}
                 />
+                <button
+                  onClick={() => setIsMapFullscreen(false)}
+                  title="Exit fullscreen"
+                  style={{
+                    position: "absolute", top: 10, right: 10, zIndex: 1200,
+                    background: "rgba(0,0,0,0.72)", border: "1px solid rgba(255,255,255,0.22)",
+                    color: "rgba(255,255,255,0.85)", padding: "5px 7px",
+                    cursor: "pointer", display: "flex", alignItems: "center",
+                    gap: 4, fontFamily: "ui-monospace,monospace",
+                    fontSize: 9, textTransform: "uppercase", letterSpacing: "0.12em",
+                  }}
+                >
+                  <Minimize2 size={12} /> Exit
+                </button>
               </div>
               <MapTimelineSlider
                 items={timelineItems}
@@ -1087,9 +1108,46 @@ export default function Dashboard({ stats: propStats, api }) {
                 defaultWindowHours={3}
                 onRangeChange={handleTimelineRange}
                 onWindowChange={handleTimelineWindow}
+                isFullscreen={true}
               />
             </div>
-          </MapClickWrapper>
+          ) : (
+            /* ── Normal mode: click-wrapper + compact timeline ── */
+            <MapClickWrapper>
+              <div className="flex flex-col">
+                <div style={{ minHeight: 380, position: "relative" }}>
+                  <NERMap
+                    stateStats={stateStatsMap}
+                    items={mapItems}
+                    navigate={navigate}
+                    onStateClick={handleStateClick}
+                  />
+                  <button
+                    onClick={() => setIsMapFullscreen(true)}
+                    title="Fullscreen map"
+                    style={{
+                      position: "absolute", top: 10, right: 10, zIndex: 1200,
+                      background: "rgba(0,0,0,0.72)", border: "1px solid rgba(255,255,255,0.22)",
+                      color: "rgba(255,255,255,0.85)", padding: "5px 7px",
+                      cursor: "pointer", display: "flex", alignItems: "center",
+                      gap: 4, fontFamily: "ui-monospace,monospace",
+                      fontSize: 9, textTransform: "uppercase", letterSpacing: "0.12em",
+                    }}
+                  >
+                    <Maximize2 size={12} /> Map
+                  </button>
+                </div>
+                <MapTimelineSlider
+                  items={timelineItems}
+                  defaultRangeHours={24}
+                  defaultWindowHours={3}
+                  onRangeChange={handleTimelineRange}
+                  onWindowChange={handleTimelineWindow}
+                  isFullscreen={false}
+                />
+              </div>
+            </MapClickWrapper>
+          )}
         </div>
 
         {/* Recent Critical Alerts */}
