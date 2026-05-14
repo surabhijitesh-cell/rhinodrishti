@@ -6,8 +6,8 @@ import {
   ChevronRight, RefreshCw, Target, ArrowUp,
   Rss, Eye, EyeOff, Clock, CheckCircle2, Loader2,
   Filter, Languages, BellRing, GitBranch, Check, Wifi, WifiOff,
-  ArrowUpDown, Youtube, Send, Twitter, ChevronDown, ChevronUp,
-  Play, Zap, Radio, Globe, Maximize2, Minimize2,
+  ArrowUpDown, Youtube, Send, ChevronDown, ChevronUp,
+  Play, Zap, Radio, Maximize2, Minimize2,
 } from "lucide-react";
 import Tip from "../components/Tip";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
@@ -263,7 +263,7 @@ function SourceDetailPanel({ platform, accentColor, borderAccent, bgAccent, icon
 }
 
 // ─── collapsible source scanners ─────────────────────────────────────────────
-function SourceScanners({ api, socialTrigger, twitterPinned, onToggleTwitterPin }) {
+function SourceScanners({ api, socialTrigger }) {
   const [open, setOpen]               = useState(true);   // expanded by default
   const [selected, setSelected]       = useState(null);   // which card is drilled into
   const [rss, setRss]                 = useState(null);
@@ -271,8 +271,6 @@ function SourceScanners({ api, socialTrigger, twitterPinned, onToggleTwitterPin 
   const [socialStatus, setSocialStatus] = useState(null);
   const [ytData, setYtData]           = useState({ channels: [], searches: [] });
   const [tgData, setTgData]           = useState({ channels: [] });
-  const [twData, setTwData]           = useState({ accounts: [], searches: [] });
-  const [fcData, setFcData]           = useState({ sources: [], searches: [] });
   const [triggering, setTriggering]   = useState({});
   // Local timestamp set immediately when any fetch fires so cards show the
   // correct elapsed time even when MongoDB Atlas doesn't persist last_fetched.
@@ -302,18 +300,12 @@ function SourceScanners({ api, socialTrigger, twitterPinned, onToggleTwitterPin 
         axios.get(`${api}/social/youtube/channels`),
         axios.get(`${api}/social/youtube/searches`),
         axios.get(`${api}/social/telegram/channels`),
-        axios.get(`${api}/social/twitter/accounts`),
-        axios.get(`${api}/social/twitter/searches`),
-        axios.get(`${api}/web-sources`),
-        axios.get(`${api}/firecrawl-searches`),
         axios.get(`${api}/sources`),
       ]);
-      const [status, yt, ytS, tg, twA, twS, ws, fs, rssS] = results;
+      const [status, yt, ytS, tg, rssS] = results;
       if (status.status === "fulfilled") setSocialStatus(status.value.data);
       setYtData({ channels: yt.value?.data?.channels || [], searches: ytS.value?.data?.searches || [] });
       setTgData({ channels: tg.value?.data?.channels || [] });
-      setTwData({ accounts: twA.value?.data?.accounts || [], searches: twS.value?.data?.searches || [] });
-      setFcData({ sources: ws.value?.data?.sources || [], searches: fs.value?.data?.searches || [] });
       setRssSources(rssS.value?.data?.sources || []);
     } catch {}
   }, [api]);
@@ -375,8 +367,6 @@ function SourceScanners({ api, socialTrigger, twitterPinned, onToggleTwitterPin 
   const lastResult   = rss?.last_scan_result;
   const ytActive     = !!socialStatus?.youtube?.configured;
   const tgActive     = !!socialStatus?.telegram?.configured;
-  const twConfigured = !!socialStatus?.twitter?.configured;
-  const fcConfigured = !!socialStatus?.firecrawl?.configured || fcData.sources.length > 0;
 
   const latest = (arr, key) => arr.reduce((best, item) => {
     if (!item[key]) return best;
@@ -385,16 +375,11 @@ function SourceScanners({ api, socialTrigger, twitterPinned, onToggleTwitterPin 
 
   const ytChannels = ytData.channels.filter(c => c.active);
   const tgChannels = tgData.channels.filter(c => c.active);
-  const twAccounts = twData.accounts.filter(a => a.active);
-  const fcSources  = fcData.sources.filter(s => s.active);
-  const fcSearches = fcData.searches.filter(s => s.active);
 
   const platforms = [
-    { key: "rss", ok: true,         active: rssScanning },
-    { key: "yt",  ok: ytActive,     active: triggering["youtube"] },
-    { key: "tg",  ok: tgActive,     active: triggering["telegram"] },
-    { key: "tw",  ok: true,         active: triggering["twitter"] },
-    { key: "fc",  ok: fcConfigured, active: triggering["firecrawl"] },
+    { key: "rss", ok: true,     active: rssScanning },
+    { key: "yt",  ok: ytActive, active: triggering["youtube"] },
+    { key: "tg",  ok: tgActive, active: triggering["telegram"] },
   ];
   const configuredCount = platforms.filter(p => p.ok).length;
   const anyActive = platforms.some(p => p.active);
@@ -419,17 +404,6 @@ function SourceScanners({ api, socialTrigger, twitterPinned, onToggleTwitterPin 
       items: tgChannels.map(c => ({ label: c.name, sub: `@${c.username}`, time: timeAgo(c.last_fetched) })),
       emptyMsg: "No Telegram channels configured. Run telegram_setup.py to generate session.",
     },
-    // X/Twitter is intentionally omitted from the drill-down panel.
-    // Clicking the X/Twitter card navigates to /twitter-feed instead, which
-    // shows actual tweet content rather than a list of monitored handles.
-    firecrawl: {
-      icon: Globe, accentColor: "text-orange-400", borderAccent: "border-orange-500/20", bgAccent: "bg-orange-500/5",
-      items: [
-        ...fcSources.map(s => ({ label: s.name || s.url, sub: s.region, time: timeAgo(s.last_fetched) })),
-        ...fcSearches.map(s => ({ label: s.query, sub: "keyword", time: timeAgo(s.last_run) })),
-      ],
-      emptyMsg: "No Firecrawl sources configured. Add FIRECRAWL_API_KEY.",
-    },
   };
 
   const handleCardClick = (key) => setSelected(prev => prev === key ? null : key);
@@ -452,7 +426,7 @@ function SourceScanners({ api, socialTrigger, twitterPinned, onToggleTwitterPin 
             }`} />
           ))}
         </div>
-        <span className="text-[10px] font-mono text-muted-foreground ml-1 hidden sm:block">{configuredCount}/6 configured</span>
+        <span className="text-[10px] font-mono text-muted-foreground ml-1 hidden sm:block">{configuredCount}/3 configured</span>
         <div className="ml-auto flex items-center gap-2">
           <Button
             variant="ghost" size="sm"
@@ -473,7 +447,7 @@ function SourceScanners({ api, socialTrigger, twitterPinned, onToggleTwitterPin 
         <>
           <div className="border-t border-border p-3">
             <p className="text-[9px] font-mono text-muted-foreground/50 mb-2 uppercase tracking-wider">Click a card to view its sources · Click header to collapse panel</p>
-            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
 
               <ScannerCard
                 label="RSS Feeds" icon={Rss}
@@ -527,40 +501,6 @@ function SourceScanners({ api, socialTrigger, twitterPinned, onToggleTwitterPin 
                 tooltip={`Telegram — ${tgChannels.length} monitored channels via Telethon client. Session ID required (run telegram_setup.py). High-value for militant and political org communications.`}
               />
 
-              <ScannerCard
-                label="X / Twitter" icon={Twitter}
-                accentColor="text-slate-300" bgAccent="bg-slate-500/10"
-                borderAccent="border-slate-500/30" barColor="bg-slate-400"
-                isConfigured={twConfigured} isActive={triggering["twitter"] || triggering["all"]} activeLabel="FETCHING"
-                progress={twConfigured ? 100 : 0}
-                stat1={twConfigured ? `${twAccounts.length} acct · ${twData.searches.filter(s=>s.active).length} srch` : "API key needed"}
-                stat2={twConfigured ? "Live" : "—"}
-                lastFetched={freshTime(latest(twData.searches, "last_run"))}
-                onTrigger={() => trigger("twitter", "/social/fetch-all")}
-                triggering={triggering["twitter"] || triggering["all"]}
-                isSelected={selected === "twitter"}
-                onClick={() => handleCardClick("twitter")}
-                configNote="Add TWITTER_BEARER_TOKEN"
-                testId="scanner-twitter"
-                tooltip={`X/Twitter — click to open the live tweet feed inline. ${twConfigured ? "Official API active." : "Set TWITTER_BEARER_TOKEN to enable."} ${twAccounts.length} accounts + ${twData.searches.filter(s=>s.active).length} searches monitored. Configure Lists in Settings → Social Scan for free-tier compatibility.`}
-              />
-
-              <ScannerCard
-                label="Firecrawl" icon={Globe}
-                accentColor="text-orange-400" bgAccent="bg-orange-500/10"
-                borderAccent="border-orange-500/30" barColor="bg-orange-500"
-                isConfigured={fcConfigured} isActive={triggering["firecrawl"] || triggering["all"]} activeLabel="CRAWLING"
-                progress={fcConfigured ? 100 : 0}
-                stat1={fcConfigured ? `${fcSources.length} sites · ${fcSearches.length} queries` : ""}
-                lastFetched={freshTime(latest(fcSources, "last_fetched"))}
-                onTrigger={fcConfigured ? () => trigger("firecrawl", "/social/fetch-all") : null}
-                triggering={triggering["firecrawl"] || triggering["all"]}
-                configNote="Add FIRECRAWL_API_KEY"
-                isSelected={selected === "firecrawl"}
-                onClick={() => handleCardClick("firecrawl")}
-                testId="scanner-firecrawl"
-                tooltip={`Firecrawl — deep-crawls ${fcSources.length} configured websites + ${fcSearches.length} keyword web searches. Reaches sites with no RSS feed. Requires FIRECRAWL_API_KEY on Render.`}
-              />
             </div>
           </div>
 
@@ -912,6 +852,26 @@ export default function Dashboard({ stats: propStats, api }) {
     return m;
   }, [stats?.state_distribution, stats?.recent_critical]);
 
+  // Timeline-driven state stats: only items in the ACTIVE window (opacity ≥ 0.95)
+  // Used to color state/country borders as the slider scrubs through time.
+  const windowStateStats = useMemo(() => {
+    const active = mapItems.filter(it => (it._opacity || 0) >= 0.95);
+    if (!active.length) return {};
+    const m = {};
+    active.forEach(item => {
+      const addRegion = (region) => {
+        if (!region) return;
+        if (!m[region]) m[region] = { count: 0, critical: 0, high: 0 };
+        m[region].count++;
+        if (item.severity === "critical") m[region].critical++;
+        if (item.severity === "high") m[region].high++;
+      };
+      addRegion(item.state);
+      (item.countries_involved || []).forEach(addRegion);
+    });
+    return m;
+  }, [mapItems]);
+
   // Stable onStateClick — prevents NERMap polygon re-render every tick
   const handleStateClick = useCallback(
     (state) => navigate(`/feed?state=${encodeURIComponent(state)}`),
@@ -957,7 +917,7 @@ export default function Dashboard({ stats: propStats, api }) {
               )}
             </div>
           </Tip>
-          <Tip text="Trigger a full sweep of all 5 sources — RSS feeds + YouTube, Telegram, X/Twitter and Firecrawl — simultaneously" side="bottom">
+          <Tip text="Trigger a full sweep of all 3 active sources — RSS feeds, YouTube and Telegram — simultaneously" side="bottom">
             <Button
               onClick={handleFetchNews}
               disabled={loading}
@@ -1031,8 +991,6 @@ export default function Dashboard({ stats: propStats, api }) {
         <SourceScanners
           api={api}
           socialTrigger={socialTrigger}
-          twitterPinned={twitterPinned}
-          onToggleTwitterPin={toggleTwitterPin}
         />
       </div>
 
@@ -1097,6 +1055,7 @@ export default function Dashboard({ stats: propStats, api }) {
             <div style={{ flex: 1, minHeight: 0, position: "relative" }}>
               <NERMap
                 stateStats={stateStatsMap}
+                windowStateStats={windowStateStats}
                 items={mapItems}
                 navigate={navigate}
                 onStateClick={handleStateClick}

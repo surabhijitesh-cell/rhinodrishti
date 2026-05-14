@@ -274,9 +274,14 @@ function injectCSS(css) {
   document.head.appendChild(el);
 }
 
+// ─── Module-level GeoJSON cache (avoid re-fetching on every slider scrub) ────
+let _nerGeoCache    = null;
+let _borderGeoCache = null;
+
 // ─── Main component ───────────────────────────────────────────────────────────
 const InteractiveNERMap = memo(function InteractiveNERMap({
   stateStats = {},
+  windowStateStats = {},   // per-state stats for items in the ACTIVE slider window
   items = [],
   onStateClick,
   navigate,          // pass useNavigate() from parent for "View in Feed" clicks
@@ -406,22 +411,34 @@ const InteractiveNERMap = memo(function InteractiveNERMap({
 
     async function loadLayers() {
       try {
-        const [nerRes, borderRes] = await Promise.all([
-          fetch("/ner-states.geojson"),
-          fetch("/border-countries.geojson"),
-        ]);
-        const nerGeo    = await nerRes.json();
-        const borderGeo = await borderRes.json();
+        // Use module-level cache — avoids re-fetching on every slider scrub
+        if (!_nerGeoCache || !_borderGeoCache) {
+          const [nerRes, borderRes] = await Promise.all([
+            fetch("/ner-states.geojson"),
+            fetch("/border-countries.geojson"),
+          ]);
+          _nerGeoCache    = await nerRes.json();
+          _borderGeoCache = await borderRes.json();
+        }
+        const nerGeo    = _nerGeoCache;
+        const borderGeo = _borderGeoCache;
 
         const NER_STATES    = ["Assam","Meghalaya","Mizoram","Manipur","Arunachal Pradesh","Tripura","Nagaland","Sikkim"];
         const NEIGHBOR      = ["West Bengal"];
         const BORDER_NAMES  = ["Bangladesh","Myanmar"];
 
-        function styleFor(name, isNER) {
-          const sev = isNER
-            ? stateSeverity(stateStats[name])
-            : stateSeverity(stateStats[name]);
-          const s = SEV[sev];
+        // Border color priority: windowStateStats (active slider window) > stateStats (all-time)
+        // This makes borders update live as the user scrubs through the timeline.
+        function resolvedSev(name) {
+          const ws = windowStateStats[name];
+          // If the window has any items for this region, use window severity
+          if (ws && ws.count > 0) return stateSeverity(ws);
+          // Otherwise fall back to overall stats (keeps historical context)
+          return stateSeverity(stateStats[name]);
+        }
+
+        function styleFor(name) {
+          const s = SEV[resolvedSev(name)];
           return {
             fillColor:   s.fill,
             color:       s.stroke,
@@ -437,7 +454,7 @@ const InteractiveNERMap = memo(function InteractiveNERMap({
         L.geoJSON(borderGeo, {
           style: (feat) => {
             const name = feat.properties.name;
-            return { ...styleFor(name, true), dashArray: "6 3" };
+            return { ...styleFor(name), dashArray: "6 3" };
           },
           onEachFeature: (feat, layer) => {
             const name = feat.properties.name;
@@ -460,7 +477,7 @@ const InteractiveNERMap = memo(function InteractiveNERMap({
             if (NEIGHBOR.includes(name)) {
               return { fillColor: "rgba(255,255,255,0.02)", color: "rgba(255,255,255,0.1)", weight: 0.4, fillOpacity: 1 };
             }
-            return styleFor(name, true);
+            return styleFor(name);
           },
           onEachFeature: (feat, layer) => {
             const name = feat.properties.ST_NM;
@@ -500,7 +517,7 @@ const InteractiveNERMap = memo(function InteractiveNERMap({
     }
 
     loadLayers();
-  }, [stateStats, onStateClick]);
+  }, [stateStats, windowStateStats, onStateClick]);
 
   // ── Re-draw intelligence item markers when items change ────────────────────
   useEffect(() => {
