@@ -14,7 +14,7 @@
  *   items       — raw intelligence items array (for exact-location markers)
  *   onStateClick — (stateName) => void
  */
-import { useEffect, useRef, useState, memo } from "react";
+import { useEffect, useRef, useState, memo, useCallback } from "react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 
@@ -188,6 +188,16 @@ const SEV = {
   none:     { fill: "rgba(255,255,255,0.0)",  stroke: "rgba(255,255,255,0.14)", strokeW: 0.6, glow: null },
 };
 
+// ─── Relationship line styles ─────────────────────────────────────────────────
+const REL_STYLE = {
+  same_incident: { color: "#f97316", weight: 2.5, dashArray: null,  opacity: 0.85, label: "Same Incident" },
+  same_actor:    { color: "#f59e0b", weight: 1.5, dashArray: "6 4", opacity: 0.75, label: "Same Actor" },
+  same_hotspot:  { color: "#06b6d4", weight: 1.5, dashArray: "4 4", opacity: 0.75, label: "Same Hotspot" },
+  same_pattern:  { color: "#ef4444", weight: 2.0, dashArray: null,  opacity: 0.80, label: "Same Pattern" },
+  semantic:      { color: "#a855f7", weight: 1.0, dashArray: "2 5", opacity: 0.55, label: "Semantic" },
+  user_drawn:    { color: "#a3e635", weight: 2.0, dashArray: null,  opacity: 0.90, label: "User Drawn" },
+};
+
 function stateSeverity(stats) {
   if (!stats || stats.count === 0) return "none";
   if (stats.critical > 0)         return "critical";
@@ -285,11 +295,25 @@ const InteractiveNERMap = memo(function InteractiveNERMap({
   items = [],
   onStateClick,
   navigate,          // pass useNavigate() from parent for "View in Feed" clicks
+  api = "",          // backend base URL e.g. "https://rhino-drishti-api.onrender.com/api"
 }) {
   const mapRef      = useRef(null);
   const leafletRef  = useRef(null);   // L.Map instance
   const markersRef  = useRef(null);   // L.LayerGroup for intel markers
   const geoLayerRef = useRef(null);   // L.GeoJSON state layer
+  const relLinesRef = useRef(null);   // L.LayerGroup for relationship polylines
+
+  // Relationship UI state
+  const [showRel, setShowRel]   = useState(false);
+  const [relCount, setRelCount] = useState(0);
+  const [relTypes, setRelTypes] = useState({
+    same_incident: true,
+    same_actor:    true,
+    same_hotspot:  true,
+    same_pattern:  true,
+    semantic:      false,  // off by default — too noisy
+    user_drawn:    true,
+  });
 
   // Keep a stable ref to navigate so the map init closure can call it later
   const navigateRef = useRef(navigate);
@@ -387,6 +411,9 @@ const InteractiveNERMap = memo(function InteractiveNERMap({
 
     // ── Marker layer group ─────────────────────────────────────────────────────
     markersRef.current = L.layerGroup().addTo(map);
+
+    // ── Relationship lines layer (below markers) ────────────────────────────────
+    relLinesRef.current = L.layerGroup().addTo(map);
 
     // ── Attribution ────────────────────────────────────────────────────────────
     L.control.attribution({ position: "bottomleft", prefix: false })
@@ -604,6 +631,102 @@ const InteractiveNERMap = memo(function InteractiveNERMap({
     });
   }, [items]);
 
+  // ── Draw relationship lines ────────────────────────────────────────────────
+  useEffect(() => {
+    const rl = relLinesRef.current;
+    if (!rl) return;
+    rl.clearLayers();
+    if (!showRel || !items.length) { setRelCount(0); return; }
+
+    // Build item id → first resolved coords
+    const itemCoords = {};
+    const itemTitle  = {};
+    items.forEach((item) => {
+      const id = item.id || item.item_id;
+      if (!id) return;
+      itemTitle[id] = item.title || id;
+      const candidates = [...(item.entities?.locations || []), item.state].filter(Boolean);
+      for (const loc of candidates) {
+        if (LOCATION_COORDS[loc]) { itemCoords[id] = LOCATION_COORDS[loc]; break; }
+        const k = Object.keys(LOCATION_COORDS).find(
+          (k) => loc.toLowerCase().includes(k.toLowerCase()) || k.toLowerCase().includes(loc.toLowerCase())
+        );
+        if (k) { itemCoords[id] = LOCATION_COORDS[k]; break; }
+      }
+    });
+
+    const ids = Object.keys(itemCoords);
+    if (ids.length < 2) return;
+
+    const enabledTypes = Object.entries(relTypes).filter(([, v]) => v).map(([k]) => k);
+    if (!enabledTypes.length) return;
+
+    // Fetch in chunks of 90 (API max 100)
+    const base = api || "";
+    const chunks = [];
+    for (let i = 0; i < ids.length; i += 90) chunks.push(ids.slice(i, i + 90));
+
+    Promise.all(
+      chunks.map((chunk) =>
+        fetch(`${base}/relationships?item_ids=${chunk.join(",")}&types=${enabledTypes.join(",")}`)
+          .then((r) => r.json())
+          .then((d) => d.edges || [])
+          .catch(() => [])
+      )
+    ).then((results) => {
+      const edges = results.flat();
+      setRelCount(edges.length);
+      let lineCount = 0;
+
+      // Sort by strength desc so strongest lines render (cap applies to weakest)
+      edges.sort((a, b) => (b.strength || 0) - (a.strength || 0));
+
+      edges.forEach((edge) => {
+        if (lineCount >= 250) return; // cap for performance
+        const fromCoords = itemCoords[edge.from_id];
+        const toCoords   = itemCoords[edge.to_id];
+        if (!fromCoords || !toCoords) return;
+        // Skip zero-length lines (same location → clutter without info)
+        if (fromCoords[0] === toCoords[0] && fromCoords[1] === toCoords[1]) return;
+
+        const style = REL_STYLE[edge.type] || REL_STYLE.semantic;
+        const lineOpacity = style.opacity * Math.max(0.3, edge.strength || 1);
+
+        const line = L.polyline([fromCoords, toCoords], {
+          color:     style.color,
+          weight:    style.weight,
+          dashArray: style.dashArray,
+          opacity:   lineOpacity,
+        });
+
+        const fromT = (itemTitle[edge.from_id] || "Item A").slice(0, 75);
+        const toT   = (itemTitle[edge.to_id]   || "Item B").slice(0, 75);
+        const pct   = Math.round((edge.strength || 0) * 100);
+        const expHtml = edge.ai_explanation
+          ? `<div style="margin-top:5px;padding-top:5px;border-top:1px solid rgba(255,255,255,0.1);color:#a3e635;font-size:9px;font-style:italic;line-height:1.4">${edge.ai_explanation}</div>`
+          : "";
+
+        line.bindPopup(
+          `<div class="map-pop">
+            <b style="color:${style.color}">${style.label}</b>
+            <span style="float:right;color:rgba(255,255,255,0.4);font-size:9px">${pct}%</span>
+            <div style="clear:both;margin-top:4px;color:#d4d4d4;font-size:10px;line-height:1.4">
+              ▲ ${fromT}${fromT.length >= 75 ? "…" : ""}
+            </div>
+            <div style="margin-top:2px;color:#d4d4d4;font-size:10px;line-height:1.4">
+              ▼ ${toT}${toT.length >= 75 ? "…" : ""}
+            </div>
+            ${expHtml}
+          </div>`,
+          { maxWidth: 280, className: "ner-popup" }
+        );
+
+        line.addTo(rl);
+        lineCount++;
+      });
+    });
+  }, [items, showRel, relTypes, api]);
+
   return (
     <div style={{ position: "relative", width: "100%", height: "100%" }} data-testid="ner-map">
       {/* Title overlay */}
@@ -619,6 +742,65 @@ const InteractiveNERMap = memo(function InteractiveNERMap({
         }}>
           NER + Border Threat Map
         </p>
+      </div>
+
+      {/* Relationship toggle + filter panel (top-right, below zoom control) */}
+      <div style={{ position: "absolute", top: 48, right: 8, zIndex: 1000, minWidth: 90 }}>
+        {/* Toggle button */}
+        <button
+          onClick={() => setShowRel((v) => !v)}
+          style={{
+            display: "block", width: "100%",
+            background: showRel ? "rgba(163,230,53,0.18)" : "rgba(0,0,0,0.65)",
+            border: `1px solid ${showRel ? "#a3e635" : "rgba(255,255,255,0.18)"}`,
+            color: showRel ? "#a3e635" : "rgba(255,255,255,0.55)",
+            fontFamily: "ui-monospace,monospace", fontSize: 9,
+            padding: "4px 6px", cursor: "pointer",
+            textTransform: "uppercase", letterSpacing: "0.1em",
+            backdropFilter: "blur(4px)",
+            marginBottom: 2,
+          }}
+        >
+          ⬡ LINKS{showRel && relCount > 0 ? ` (${relCount})` : ""}
+        </button>
+
+        {/* Filter panel — visible when showRel */}
+        {showRel && (
+          <div style={{
+            background: "rgba(0,0,0,0.78)", border: "1px solid rgba(255,255,255,0.1)",
+            padding: "6px 8px", backdropFilter: "blur(4px)",
+          }}>
+            {Object.entries(REL_STYLE).map(([type, style]) => (
+              <label
+                key={type}
+                style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 4, cursor: "pointer" }}
+              >
+                <input
+                  type="checkbox"
+                  checked={!!relTypes[type]}
+                  onChange={(e) => setRelTypes((prev) => ({ ...prev, [type]: e.target.checked }))}
+                  style={{ accentColor: style.color, width: 10, height: 10, flexShrink: 0 }}
+                />
+                {/* Line preview */}
+                <svg width="14" height="6" style={{ flexShrink: 0 }}>
+                  <line
+                    x1="0" y1="3" x2="14" y2="3"
+                    stroke={style.color}
+                    strokeWidth={Math.min(style.weight, 2)}
+                    strokeDasharray={style.dashArray || "none"}
+                  />
+                </svg>
+                <span style={{
+                  fontFamily: "ui-monospace,monospace", fontSize: 8,
+                  color: "rgba(255,255,255,0.65)", textTransform: "uppercase", letterSpacing: "0.05em",
+                  whiteSpace: "nowrap",
+                }}>
+                  {style.label}
+                </span>
+              </label>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Legend */}

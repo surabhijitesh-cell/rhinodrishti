@@ -1059,6 +1059,7 @@ export default function Dashboard({ stats: propStats, api }) {
                 items={mapItems}
                 navigate={navigate}
                 onStateClick={handleStateClick}
+                api={api}
               />
               <button
                 onClick={() => setMapFullscreen(false)}
@@ -1084,6 +1085,7 @@ export default function Dashboard({ stats: propStats, api }) {
                   items={mapItems}
                   navigate={navigate}
                   onStateClick={handleStateClick}
+                  api={api}
                 />
                 <button
                   onClick={() => setMapFullscreen(true)}
