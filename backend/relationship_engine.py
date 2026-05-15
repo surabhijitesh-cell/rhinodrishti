@@ -319,10 +319,18 @@ async def _compute_semantic() -> int:
     ).sort("published_at", -1).limit(MAX_ITEMS_SEMANTIC)
 
     docs = await cursor.to_list(length=MAX_ITEMS_SEMANTIC)
+
+    # Filter: must have id + embedding of consistent length (1536 for text-embedding-3-small)
+    EXPECTED_DIM = 1536
+    docs = [d for d in docs
+            if d.get("id") and d.get("embedding")
+            and len(d["embedding"]) == EXPECTED_DIM]
+
     if len(docs) < 2:
-        logger.info("  Pass 5 semantic: not enough items with embeddings, skip.")
+        logger.info("  Pass 5 semantic: not enough items with valid embeddings, skip.")
         return 0
 
+    logger.info(f"  Pass 5 semantic: loaded {len(docs)} items with embeddings")
     ids  = [d["id"]        for d in docs]
     vecs = np.array([d["embedding"] for d in docs], dtype=np.float32)
 
@@ -390,8 +398,9 @@ async def run_relationship_batch() -> dict:
         try:
             results[name] = await fn()
         except Exception as e:
-            logger.warning(f"  {name} pass failed: {e}")
-            results[name] = -1
+            err = f"FAILED: {type(e).__name__}: {str(e)[:120]}"
+            logger.warning(f"  {name} pass {err}")
+            results[name] = err
 
     elapsed = round(time.time() - t0, 1)
     total_edges = await relationships_col.count_documents({})
