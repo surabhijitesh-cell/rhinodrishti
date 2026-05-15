@@ -316,13 +316,14 @@ async def classify_and_analyze_article(article, source_hint: str = "") -> dict:
         client = get_client()
         response = await client.chat.completions.create(
             model=MODEL,
-            max_tokens=2048,
+            max_tokens=4096,  # bumped: Gemini 2.5 Flash thinking uses tokens before JSON
             temperature=0.0,
             response_format={"type": "json_object"},
             messages=[
                 {"role": "system", "content": system_text},
                 {"role": "user", "content": f"Analyze this article:\n\n{article_text}"},
             ],
+            extra_body={"include_reasoning": False},  # disable thinking — saves tokens + cost
         )
 
         # Track token usage and cost

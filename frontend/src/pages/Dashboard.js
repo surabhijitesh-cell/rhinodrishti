@@ -662,7 +662,7 @@ export default function Dashboard({ stats: propStats, api }) {
   const [recentItems, setRecentItems] = useState([]);
   const [loading, setLoading] = useState(false);
   const [localStats, setLocalStats] = useState(null);
-  const [sortBy, setSortBy] = useState("published_at");
+  const [sortBy, setSortBy] = useState("priority_score");
   const [minPriority, setMinPriority] = useState("");
   // Increments every time "Fetch Intel" fires social/fetch-all so SourceScanners
   // can show FETCHING badges and start its polling schedule.
