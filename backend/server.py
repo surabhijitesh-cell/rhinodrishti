@@ -34,6 +34,7 @@ from routers.reports import router as reports_router
 from routers.web_sources import router as web_sources_router
 from routers.social_media import router as social_media_router
 from routers.admin import router as admin_router
+from routers.relationships import router as relationships_router
 
 # Import scheduler functions
 from routers.pipeline import (
@@ -73,6 +74,7 @@ app.include_router(reports_router, prefix="/api")
 app.include_router(web_sources_router, prefix="/api")
 app.include_router(social_media_router, prefix="/api")
 app.include_router(admin_router, prefix="/api")
+app.include_router(relationships_router, prefix="/api")
 
 
 # ============================================================
@@ -324,8 +326,29 @@ async def startup():
             misfire_grace_time=3600,
         )
 
+        # Relationship batch — nightly at 03:00 UTC (08:30 IST), after daily brief
+        # Rebuilds KG + patterns first so all 5 relationship passes use fresh data.
+        async def _run_relationship_batch():
+            try:
+                from knowledge_graph import build_knowledge_graph
+                from pattern_engine import detect_patterns
+                await build_knowledge_graph(db)
+                await detect_patterns(db)
+                from relationship_engine import run_relationship_batch
+                summary = await run_relationship_batch()
+                logger.info(f"Relationship batch: {summary}")
+            except Exception as e:
+                logger.warning(f"Relationship batch failed: {e}")
+
+        scheduler.add_job(
+            _run_relationship_batch,
+            CronTrigger(hour=21, minute=30, timezone='UTC'),  # 03:00 IST (UTC+5:30)
+            id='relationship_batch',
+            misfire_grace_time=3600,
+        )
+
         scheduler.start()
-        logger.info("Scheduler: grassroots/60min, standard/30min, established/12hr, retry/15min, brief/0600 IST, embeddings/6hr, fusion/30min, youtube/4hr, telegram/1hr, fading/1hr [firecrawl+twitter DISABLED]")
+        logger.info("Scheduler: grassroots/60min, standard/30min, established/12hr, retry/15min, brief/0600 IST, embeddings/6hr, fusion/30min, youtube/4hr, telegram/1hr, fading/1hr, relationships/nightly [firecrawl+twitter DISABLED]")
     except Exception as e:
         logger.warning(f"Scheduler setup failed: {e}")
 
