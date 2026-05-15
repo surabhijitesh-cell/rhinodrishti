@@ -623,7 +623,7 @@ const InteractiveNERMap = memo(function InteractiveNERMap({
 
       {/* Legend */}
       <div style={{
-        position: "absolute", bottom: 24, right: 8, zIndex: 1000,
+        position: "absolute", bottom: 24, left: 8, zIndex: 1000,
         background: "rgba(0,0,0,0.65)", border: "1px solid rgba(255,255,255,0.1)",
         padding: "6px 8px", backdropFilter: "blur(4px)",
         pointerEvents: "none",

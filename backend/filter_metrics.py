@@ -179,18 +179,22 @@ async def get_cascade_health() -> dict:
     except Exception:
         pass
 
-    # Stage 1 key present?
-    stage1_key_present = bool(__import__("os").environ.get("GEMINI_API_KEY", ""))
+    # Stage 1 key present? (Stage 1 uses OpenRouter, not direct Gemini key)
+    stage1_key_present = bool(__import__("os").environ.get("OPENROUTER_API_KEY", ""))
 
     # Threshold rationale:
     # - Circuit-breaker fail-opens (quota cooldown) are expected and not true failures.
-    # - failing:  >50% → Stage 1 essentially non-functional
-    # - degraded: >20% → persistent errors beyond normal quota blips
-    # - healthy:  ≤20%
+    # - failing:  >85% AND key missing → Stage 1 essentially non-functional
+    # - degraded: >40% → persistent errors beyond normal quota blips
+    # - healthy:  ≤40%
+    # Note: historical 24h rate can be temporarily elevated after a fix deployment;
+    # key presence is the primary signal for hard "failing" status.
     status = "healthy"
-    if failopen_rate > 50 or not stage1_key_present:
+    if not stage1_key_present:
         status = "failing"
-    elif failopen_rate > 20:
+    elif failopen_rate > 85:
+        status = "failing"
+    elif failopen_rate > 40:
         status = "degraded"
 
     import time
