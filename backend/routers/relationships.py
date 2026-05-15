@@ -203,7 +203,7 @@ async def patch_edge(edge_id: str, body: PatchEdgeBody):
 # ── Admin: manual batch trigger ───────────────────────────────────────────────
 
 @router.post("/admin/relationships/compute")
-async def trigger_relationship_compute(rebuild_kg: bool = False):
+async def trigger_relationship_compute(rebuild_kg: bool = Query(False, description="Set true to rebuild Knowledge Graph + Pattern Engine before computing relationships")):
     """
     Admin: manually trigger relationship batch job.
     Runs synchronously — expect 10-60s depending on item count.
