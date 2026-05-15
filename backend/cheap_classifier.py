@@ -31,10 +31,10 @@ logger = logging.getLogger(__name__)
 # Render's Oregon servers are geo-blocked by generativelanguage.googleapis.com
 # free-tier restrictions. OpenRouter bypasses this.
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
-GEMINI_MODEL = "google/gemini-2.5-flash-lite-preview-06-17"
+GEMINI_MODEL = "google/gemini-2.0-flash-lite-001"
 
 # Short name for usage_tracker model key lookups
-GEMINI_MODEL_SHORT = "gemini-2.5-flash-lite"
+GEMINI_MODEL_SHORT = "gemini-2.0-flash-lite"
 
 _client: Optional[AsyncOpenAI] = None
 

@@ -115,6 +115,16 @@ MODEL_PRICING: dict[str, dict] = {
         "input": 0.10, "output": 0.40,
         "cache_write": 0.0, "cache_read": 0.0,
     },
+    "google/gemini-2.0-flash-lite-001": {
+        "provider": "gemini",
+        "input": 0.075, "output": 0.30,
+        "cache_write": 0.0, "cache_read": 0.0,
+    },
+    "gemini-2.0-flash-lite": {
+        "provider": "gemini",
+        "input": 0.075, "output": 0.30,
+        "cache_write": 0.0, "cache_read": 0.0,
+    },
     "gemini-2.0-flash-lite": {
         "provider": "gemini",
         "input": 0.075, "output": 0.30,
