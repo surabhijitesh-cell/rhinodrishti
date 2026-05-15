@@ -316,7 +316,7 @@ async def _compute_semantic() -> int:
             "embedding.0": {"$exists": True},  # non-empty array
         },
         {"id": 1, "embedding": 1, "_id": 0},
-    ).sort("published_at", -1).limit(MAX_ITEMS_SEMANTIC)
+    ).limit(MAX_ITEMS_SEMANTIC)  # no sort — avoids 32MB in-memory sort limit on Atlas free tier
 
     docs = await cursor.to_list(length=MAX_ITEMS_SEMANTIC)
 
