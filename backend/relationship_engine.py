@@ -313,7 +313,7 @@ async def _compute_semantic() -> int:
         {
             "processed": True,
             "tags": {"$nin": ["not_relevant"]},
-            "embedding": {"$exists": True, "$ne": None, "$not": {"$size": 0}},
+            "embedding.0": {"$exists": True},  # non-empty array
         },
         {"id": 1, "embedding": 1, "_id": 0},
     ).sort("published_at", -1).limit(MAX_ITEMS_SEMANTIC)
