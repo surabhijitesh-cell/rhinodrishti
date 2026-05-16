@@ -694,10 +694,13 @@ export default function Dashboard({ stats: propStats, api }) {
   // The active window is controlled by MapTimelineSlider; items outside the active
   // window are still rendered on the map but faded ("historical ghosting").
   const [timelineItems, setTimelineItems] = useState([]);
-  const [timelineRangeHours, setTimelineRangeHours] = useState(24);
+  // When arriving from KG "View on Map", default to 30d range + fullscreen
+  const [timelineRangeHours, setTimelineRangeHours] = useState(
+    () => focusActor ? 720 : 24
+  );
   // Fullscreen state — sessionStorage so navigation away + back restores it
   const [isMapFullscreen, setIsMapFullscreen] = useState(
-    () => sessionStorage.getItem("rd_map_fs") === "true"
+    () => focusActor ? true : sessionStorage.getItem("rd_map_fs") === "true"
   );
   const setMapFullscreen = useCallback((val) => {
     setIsMapFullscreen(val);
@@ -1113,8 +1116,8 @@ export default function Dashboard({ stats: propStats, api }) {
           {/* ── Single slider instance — state (range/scrub/mode) preserved across toggle ── */}
           <MapTimelineSlider
             items={timelineItems}
-            defaultRangeHours={24}
-            defaultWindowHours={3}
+            defaultRangeHours={focusActor ? 720 : 24}
+            defaultWindowHours={focusActor ? 72 : 3}
             onRangeChange={handleTimelineRange}
             onWindowChange={handleTimelineWindow}
             isFullscreen={isMapFullscreen}

@@ -188,6 +188,19 @@ const SEV = {
   none:     { fill: "rgba(255,255,255,0.0)",  stroke: "rgba(255,255,255,0.14)", strokeW: 0.6, glow: null },
 };
 
+// ─── Relationship: static "why" explanations per type ────────────────────────
+const REL_WHY = {
+  same_incident:    "Same cluster_id from fusion engine — both reports describe the same incident.",
+  same_actor:       "Same militant actor (Knowledge Graph alias-normalized) appears in both items.",
+  same_hotspot:     "Same actor operating at same location — recurring operational hotspot.",
+  same_pattern:     "Both match the same HIGH/CRITICAL escalation pattern from Pattern Engine.",
+  cascade_incident: "Escalating threat chain — earlier incident preceded or triggered the later one.",
+  semantic:         "High semantic similarity (≥72% cosine) in embedding space — related topics.",
+  user_drawn:       "Manually linked by an analyst.",
+};
+
+const NERMAP_LS_KEY = "nermap_rel_state";   // localStorage key for LINKS persist
+
 // ─── Relationship line styles ─────────────────────────────────────────────────
 const REL_STYLE = {
   same_incident:    { color: "#f97316", weight: 2.5, dashArray: null,  opacity: 0.85, label: "Same Incident" },
@@ -275,6 +288,23 @@ const MAP_CSS = `
   padding:4px 0; cursor:pointer; transition:background 0.15s;
 }
 .ner-view-btn:hover { background:rgba(163,230,53,0.12); }
+@keyframes nerRelDraw { to { stroke-dashoffset: 0; } }
+.ner-rel-del-btn {
+  display:inline-block; margin-top:6px;
+  background:transparent; border:1px solid rgba(239,68,68,0.4);
+  color:#ef4444; font:bold 9px/1 'JetBrains Mono',monospace;
+  text-transform:uppercase; letter-spacing:0.1em;
+  padding:3px 6px; cursor:pointer; transition:background 0.15s;
+}
+.ner-rel-del-btn:hover { background:rgba(239,68,68,0.15); }
+.ner-rel-exp-btn {
+  display:inline-block; margin-top:6px; margin-left:4px;
+  background:transparent; border:1px solid rgba(163,230,53,0.3);
+  color:#a3e635; font:bold 9px/1 'JetBrains Mono',monospace;
+  text-transform:uppercase; letter-spacing:0.1em;
+  padding:3px 6px; cursor:pointer; transition:background 0.15s;
+}
+.ner-rel-exp-btn:hover { background:rgba(163,230,53,0.12); }
 `;
 
 function injectCSS(css) {
@@ -305,18 +335,36 @@ const InteractiveNERMap = memo(function InteractiveNERMap({
   const geoLayerRef = useRef(null);   // L.GeoJSON state layer
   const relLinesRef = useRef(null);   // L.LayerGroup for relationship polylines
 
-  // Relationship UI state
-  const [showRel, setShowRel]   = useState(false);
-  const [relCount, setRelCount] = useState(0);
-  const [relTypes, setRelTypes] = useState({
+  // Relationship UI state — persisted to localStorage so LINKS state survives navigation
+  const REL_DEFAULTS = {
     same_incident:    true,
     same_actor:       true,
     same_hotspot:     true,
-    same_pattern:     false, // off by default — too noisy, low precision
+    same_pattern:     false,
     cascade_incident: true,
-    semantic:         false, // off by default — too noisy
+    semantic:         false,
     user_drawn:       true,
-  });
+  };
+  const _loadRelState = () => {
+    try {
+      const s = JSON.parse(localStorage.getItem(NERMAP_LS_KEY) || "{}");
+      return {
+        showRel:  s.showRel  ?? false,
+        relTypes: { ...REL_DEFAULTS, ...(s.relTypes || {}) },
+      };
+    } catch { return { showRel: false, relTypes: REL_DEFAULTS }; }
+  };
+  const _initState = _loadRelState();
+  const [showRel, setShowRel]   = useState(_initState.showRel);
+  const [relCount, setRelCount] = useState(0);
+  const [relTypes, setRelTypes] = useState(_initState.relTypes);
+
+  // Persist LINKS state whenever it changes
+  useEffect(() => {
+    try {
+      localStorage.setItem(NERMAP_LS_KEY, JSON.stringify({ showRel, relTypes }));
+    } catch {}
+  }, [showRel, relTypes]);
 
   // Keep a stable ref to navigate so the map init closure can call it later
   const navigateRef = useRef(navigate);
@@ -641,13 +689,17 @@ const InteractiveNERMap = memo(function InteractiveNERMap({
     rl.clearLayers();
     if (!showRel || !items.length) { setRelCount(0); return; }
 
-    // Build item id → first resolved coords
+    // Build item id → coords + title + timestamp
     const itemCoords = {};
     const itemTitle  = {};
+    const itemTime   = {};  // id → ms timestamp for animation ordering
     items.forEach((item) => {
       const id = item.id || item.item_id;
       if (!id) return;
       itemTitle[id] = item.title || id;
+      if (item.published_at) {
+        try { itemTime[id] = new Date(item.published_at).getTime(); } catch {}
+      }
       const candidates = [...(item.entities?.locations || []), item.state].filter(Boolean);
       for (const loc of candidates) {
         if (LOCATION_COORDS[loc]) { itemCoords[id] = LOCATION_COORDS[loc]; break; }
@@ -664,10 +716,34 @@ const InteractiveNERMap = memo(function InteractiveNERMap({
     const enabledTypes = Object.entries(relTypes).filter(([, v]) => v).map(([k]) => k);
     if (!enabledTypes.length) return;
 
-    // Fetch in chunks of 90 (API max 100)
     const base = api || "";
     const chunks = [];
     for (let i = 0; i < ids.length; i += 90) chunks.push(ids.slice(i, i + 90));
+
+    // Register global handlers for popup buttons (Leaflet popup HTML is a string)
+    window.__nerDelEdge = (fromId, toId, type, lineId) => {
+      const token = localStorage.getItem("token") || "";
+      fetch(`${base}/relationships/soft-delete?from_id=${fromId}&to_id=${toId}&type=${type}`, {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${token}` },
+      }).then(r => {
+        if (r.ok) {
+          const el = document.getElementById(`rel-line-${lineId}`);
+          if (el) el.closest(".leaflet-popup")?.remove();
+          rl.eachLayer(l => { if (l._nerId === lineId) rl.removeLayer(l); });
+        }
+      }).catch(() => {});
+    };
+    window.__nerExplainEdge = (fromId, toId, type, containerId) => {
+      const token = localStorage.getItem("token") || "";
+      const box = document.getElementById(containerId);
+      if (box) box.textContent = "Loading…";
+      fetch(`${base}/relationships/explain-by-pair?from_id=${fromId}&to_id=${toId}&type=${type}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      }).then(r => r.json()).then(d => {
+        if (box) box.textContent = d.explanation || "No explanation available.";
+      }).catch(() => { if (box) box.textContent = "Explanation unavailable."; });
+    };
 
     Promise.all(
       chunks.map((chunk) =>
@@ -679,64 +755,106 @@ const InteractiveNERMap = memo(function InteractiveNERMap({
     ).then((results) => {
       const edges = results.flat();
       setRelCount(edges.length);
-      let lineCount = 0;
 
-      // Sort by strength desc so strongest lines render (cap applies to weakest)
-      edges.sort((a, b) => (b.strength || 0) - (a.strength || 0));
+      // Sort: newest-to-oldest for animation reveal (latest node animates first)
+      edges.sort((a, b) => {
+        const tA = Math.max(itemTime[a.from_id] || 0, itemTime[a.to_id] || 0);
+        const tB = Math.max(itemTime[b.from_id] || 0, itemTime[b.to_id] || 0);
+        if (tB !== tA) return tB - tA;          // newest first
+        return (b.strength || 0) - (a.strength || 0); // strength tiebreak
+      });
+
+      let lineCount = 0;
+      const LINE_CAP = 150; // reduced from 250 — keep map readable
 
       edges.forEach((edge) => {
-        if (lineCount >= 250) return; // cap for performance
+        if (lineCount >= LINE_CAP) return;
         const fromCoords = itemCoords[edge.from_id];
         const toCoords   = itemCoords[edge.to_id];
         if (!fromCoords || !toCoords) return;
-        // Skip zero-length lines (same location → clutter without info)
         if (fromCoords[0] === toCoords[0] && fromCoords[1] === toCoords[1]) return;
 
         const style = REL_STYLE[edge.type] || REL_STYLE.semantic;
         const lineOpacity = style.opacity * Math.max(0.3, edge.strength || 1);
+        const nerId = `${edge.from_id}-${edge.to_id}-${edge.type}`;
 
         const line = L.polyline([fromCoords, toCoords], {
           color:     style.color,
           weight:    style.weight,
           dashArray: style.dashArray,
           opacity:   lineOpacity,
+          interactive: true,
+        });
+        line._nerId = nerId;
+
+        // Hover glow
+        line.on("mouseover", () => {
+          line.setStyle({ weight: style.weight + 3, opacity: 1 });
+          if (line._path) line._path.style.filter = `drop-shadow(0 0 7px ${style.color})`;
+        });
+        line.on("mouseout", () => {
+          line.setStyle({ weight: style.weight, opacity: lineOpacity });
+          if (line._path) line._path.style.filter = "none";
         });
 
-        // For cascade edges, use cascade_root_id to show correct direction
-        const rootId = edge.cascade_root_id;
+        // Popup: direction, why, meta, AI explain button, delete button
+        const rootId    = edge.cascade_root_id;
         const isCascade = edge.type === "cascade_incident" && rootId;
-        const rootId2  = isCascade ? rootId : edge.from_id;
-        const peakId   = isCascade
-          ? (rootId === edge.from_id ? edge.to_id : edge.from_id)
-          : edge.to_id;
+        const rootId2   = isCascade ? rootId : edge.from_id;
+        const peakId    = isCascade ? (rootId === edge.from_id ? edge.to_id : edge.from_id) : edge.to_id;
+        const fromT     = (itemTitle[rootId2] || "Item A").slice(0, 75);
+        const toT       = (itemTitle[peakId]  || "Item B").slice(0, 75);
+        const pct       = Math.round((edge.strength || 0) * 100);
+        const whyText   = REL_WHY[edge.type] || "";
+        const expBoxId  = `nerexp-${lineCount}`;
 
-        const fromT = (itemTitle[rootId2] || "Item A").slice(0, 75);
-        const toT   = (itemTitle[peakId]  || "Item B").slice(0, 75);
-        const pct   = Math.round((edge.strength || 0) * 100);
         const cascadeMeta = isCascade && edge.score_delta != null
           ? `<div style="margin-top:3px;color:#fb923c;font-size:9px">+${edge.score_delta} priority · Pass ${edge.cascade_pass || "?"}</div>`
           : "";
-        const expHtml = edge.ai_explanation
-          ? `<div style="margin-top:5px;padding-top:5px;border-top:1px solid rgba(255,255,255,0.1);color:#a3e635;font-size:9px;font-style:italic;line-height:1.4">${edge.ai_explanation}</div>`
-          : "";
+        const aiBlock = edge.ai_explanation
+          ? `<div id="${expBoxId}" style="margin-top:5px;padding-top:5px;border-top:1px solid rgba(255,255,255,0.1);color:#a3e635;font-size:9px;font-style:italic;line-height:1.4">${edge.ai_explanation}</div>`
+          : `<div id="${expBoxId}" style="margin-top:5px;color:#a3e635;font-size:9px;font-style:italic;display:none"></div>`;
+
+        const safeFrom = encodeURIComponent(edge.from_id);
+        const safeTo   = encodeURIComponent(edge.to_id);
+        const safeType = encodeURIComponent(edge.type);
+        const safeId   = encodeURIComponent(nerId);
 
         line.bindPopup(
-          `<div class="map-pop">
+          `<div class="map-pop" id="rel-line-${lineCount}">
             <b style="color:${style.color}">${style.label}</b>
             <span style="float:right;color:rgba(255,255,255,0.4);font-size:9px">${pct}%</span>
-            <div style="clear:both;margin-top:4px;color:#d4d4d4;font-size:10px;line-height:1.4">
+            <div style="clear:both;margin-top:4px;color:#9ca3af;font-size:9px;line-height:1.4;font-style:italic">${whyText}</div>
+            <div style="margin-top:5px;color:#d4d4d4;font-size:10px;line-height:1.4">
               ${isCascade ? "⬆" : "▲"} ${fromT}${fromT.length >= 75 ? "…" : ""}
             </div>
             <div style="margin-top:2px;color:#d4d4d4;font-size:10px;line-height:1.4">
               ${isCascade ? "🔺" : "▼"} ${toT}${toT.length >= 75 ? "…" : ""}
             </div>
             ${cascadeMeta}
-            ${expHtml}
+            ${aiBlock}
+            <div style="margin-top:6px;display:flex;gap:4px;flex-wrap:wrap">
+              ${!edge.ai_explanation ? `<button class="ner-rel-exp-btn" onclick="document.getElementById('${expBoxId}').style.display='block';window.__nerExplainEdge('${safeFrom}','${safeTo}','${safeType}','${expBoxId}')">AI Explain</button>` : ""}
+              <button class="ner-rel-del-btn" onclick="window.__nerDelEdge('${safeFrom}','${safeTo}','${safeType}','${safeId}')">✕ Inaccurate</button>
+            </div>
           </div>`,
-          { maxWidth: 280, className: "ner-popup" }
+          { maxWidth: 300, className: "ner-popup" }
         );
 
         line.addTo(rl);
+
+        // Stroke-dashoffset animation: line draws from start node to end node
+        requestAnimationFrame(() => {
+          if (line._path) {
+            try {
+              const len = line._path.getTotalLength();
+              line._path.style.strokeDasharray = `${len}`;
+              line._path.style.strokeDashoffset = `${len}`;
+              line._path.style.animation = `nerRelDraw 500ms ease-out ${lineCount * 55}ms forwards`;
+            } catch {}
+          }
+        });
+
         lineCount++;
       });
     });

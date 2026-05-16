@@ -1,12 +1,14 @@
 """
 Relationship endpoints for Rhino Drishti.
 
-GET  /api/relationships                — edges for a set of item_ids (NERMap use)
-GET  /api/relationships/stats          — edge counts by type (admin panel)
-POST /api/relationships                — create user-drawn edge
-PATCH /api/relationships/{edge_id}     — confirm or soft-delete an edge
-GET  /api/relationships/{edge_id}/explain — lazy AI explanation for an edge
-POST /api/admin/relationships/compute  — manual trigger of batch job (admin)
+GET  /api/relationships                   — edges for a set of item_ids (NERMap use)
+GET  /api/relationships/stats             — edge counts by type (admin panel)
+GET  /api/relationships/explain-by-pair   — lazy AI explanation by from_id+to_id+type
+PATCH /api/relationships/soft-delete      — soft-delete edge by from_id+to_id+type
+POST /api/relationships                   — create user-drawn edge
+PATCH /api/relationships/{edge_id}        — confirm or soft-delete an edge
+GET  /api/relationships/{edge_id}/explain — lazy AI explanation for an edge (by _id)
+POST /api/admin/relationships/compute     — manual trigger of batch job (admin)
 """
 
 from fastapi import APIRouter, HTTPException, Query
@@ -69,6 +71,79 @@ async def list_relationships(
 async def relationship_stats():
     """Edge counts by type — for admin dashboard."""
     return await get_edge_stats()
+
+
+@router.get("/relationships/explain-by-pair")
+async def explain_edge_by_pair(
+    from_id: str = Query(...),
+    to_id:   str = Query(...),
+    type:    str = Query(...),
+):
+    """
+    Lazy AI explanation — identified by from_id + to_id + type.
+    No ObjectId needed; safe to call from frontend with canonical pair data.
+    """
+    from relationship_engine import _pair_key
+    f, t = _pair_key(from_id, to_id)
+    edge = await relationships_col.find_one({"from_id": f, "to_id": t, "type": type})
+    if not edge:
+        raise HTTPException(404, "Edge not found")
+
+    if edge.get("ai_explanation"):
+        return {"explanation": edge["ai_explanation"], "cached": True}
+
+    # Build context and call AI (reuse logic from explain_edge)
+    from_item = await db.intelligence_items.find_one(
+        {"id": from_id}, {"title": 1, "state": 1, "threat_category": 1, "published_at": 1, "_id": 0}
+    )
+    to_item = await db.intelligence_items.find_one(
+        {"id": to_id}, {"title": 1, "state": 1, "threat_category": 1, "published_at": 1, "_id": 0}
+    )
+    if not from_item or not to_item:
+        raise HTTPException(404, "One or both items not found")
+
+    prompt = (
+        f"Two intelligence items are linked as '{type}':\n"
+        f"A: {from_item.get('title', 'Unknown')} [{from_item.get('state')}, {from_item.get('published_at', '')[:10]}]\n"
+        f"B: {to_item.get('title',   'Unknown')} [{to_item.get('state'),   to_item.get('published_at',   '')[:10]}]\n"
+        f"In 1-2 sentences, explain the strategic significance of this link for NER security analysts. "
+        f"Be specific about what the connection reveals."
+    )
+    try:
+        import google.generativeai as genai
+        import os
+        genai.configure(api_key=os.environ.get("GEMINI_API_KEY", ""))
+        model = genai.GenerativeModel("gemini-1.5-flash-latest")
+        resp = model.generate_content(prompt)
+        explanation = resp.text.strip()
+        await relationships_col.update_one(
+            {"from_id": f, "to_id": t, "type": type},
+            {"$set": {"ai_explanation": explanation}}
+        )
+        return {"explanation": explanation, "cached": False}
+    except Exception as e:
+        raise HTTPException(503, f"AI explanation failed: {e}")
+
+
+@router.patch("/relationships/soft-delete")
+async def soft_delete_by_pair(
+    from_id: str = Query(...),
+    to_id:   str = Query(...),
+    type:    str = Query(...),
+):
+    """
+    Soft-delete an edge by canonical pair (from_id + to_id + type).
+    Safer than ObjectId-based PATCH — no _id serialization needed.
+    """
+    from relationship_engine import _pair_key
+    f, t = _pair_key(from_id, to_id)
+    result = await relationships_col.update_one(
+        {"from_id": f, "to_id": t, "type": type},
+        {"$set": {"user_deleted": True, "updated_at": datetime.now(timezone.utc).isoformat()}}
+    )
+    if result.matched_count == 0:
+        raise HTTPException(404, "Edge not found")
+    return {"ok": True}
 
 
 @router.get("/relationships/{edge_id}/explain")
