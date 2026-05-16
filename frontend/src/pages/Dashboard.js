@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import {
   Shield, AlertTriangle, Activity, TrendingUp,
@@ -668,6 +668,8 @@ export default function Dashboard({ stats: propStats, api }) {
   // can show FETCHING badges and start its polling schedule.
   const [socialTrigger, setSocialTrigger] = useState(0);
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const focusActor = searchParams.get("focusActor") || null;
   const { user } = useAuth();
   const isAdmin = user?.role === "admin";
 
@@ -1060,6 +1062,7 @@ export default function Dashboard({ stats: propStats, api }) {
                 navigate={navigate}
                 onStateClick={handleStateClick}
                 api={api}
+                focusActor={focusActor}
               />
               <button
                 onClick={() => setMapFullscreen(false)}
@@ -1087,6 +1090,7 @@ export default function Dashboard({ stats: propStats, api }) {
                   navigate={navigate}
                   onStateClick={handleStateClick}
                   api={api}
+                  focusActor={focusActor}
                 />
                 <button
                   onClick={() => setMapFullscreen(true)}

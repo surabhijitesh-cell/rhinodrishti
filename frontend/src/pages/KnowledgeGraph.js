@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import { useNavigate } from "react-router-dom";
 import axios from "axios";
 import { Search, RefreshCw, Globe, Users, MapPin, ArrowRight, AlertTriangle, Network } from "lucide-react";
 import { Input } from "../components/ui/input";
@@ -12,7 +13,7 @@ const SEVERITY_COLORS = {
   low: "bg-green-700 text-white",
 };
 
-function ActorCard({ actor, onSelect }) {
+function ActorCard({ actor, onSelect, onViewMap }) {
   const maxSev = ["critical", "high", "medium", "low"].find(s => (actor.severity_counts || {})[s] > 0) || "low";
   const topLocations = Object.entries(actor.locations || {}).sort((a, b) => b[1] - a[1]).slice(0, 4);
   const topThreats = Object.entries(actor.threat_types || {}).sort((a, b) => b[1] - a[1]).slice(0, 3);
@@ -33,8 +34,19 @@ function ActorCard({ actor, onSelect }) {
           {actor.is_cross_border && <Badge className="text-[9px] px-1 py-0 rounded-none bg-blue-700 text-white">CROSS-BORDER</Badge>}
         </div>
       </div>
-      <div className="text-xs text-muted-foreground mb-2">
-        {actor.activity_count} activities across {actor.article_count} articles
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-xs text-muted-foreground">
+          {actor.activity_count} activities across {actor.article_count} articles
+        </span>
+        {actor.article_count >= 2 && (
+          <button
+            onClick={e => { e.stopPropagation(); onViewMap(actor); }}
+            className="text-[10px] font-mono text-primary/80 hover:text-primary border border-primary/30 hover:border-primary/60 px-1.5 py-0.5 transition-colors"
+            title="View actor locations on map"
+          >
+            📍 Map
+          </button>
+        )}
       </div>
       {topLocations.length > 0 && (
         <div className="flex flex-wrap gap-1 mb-2">
@@ -88,16 +100,26 @@ function LocationCard({ location }) {
   );
 }
 
-function ActorDetail({ actor, edges, onBack }) {
+function ActorDetail({ actor, edges, onBack, onViewMap }) {
   const relatedActors = Object.entries(actor.related_actors || {}).sort((a, b) => b[1] - a[1]).slice(0, 10);
   const locations = Object.entries(actor.locations || {}).sort((a, b) => b[1] - a[1]);
   const threats = Object.entries(actor.threat_types || {}).sort((a, b) => b[1] - a[1]);
 
   return (
     <div data-testid="actor-detail-view" className="space-y-4">
-      <button onClick={onBack} className="text-xs text-muted-foreground hover:text-primary font-mono flex items-center gap-1">
-        <ArrowRight size={12} className="rotate-180" /> Back to actors
-      </button>
+      <div className="flex items-center gap-3">
+        <button onClick={onBack} className="text-xs text-muted-foreground hover:text-primary font-mono flex items-center gap-1">
+          <ArrowRight size={12} className="rotate-180" /> Back to actors
+        </button>
+        {actor.article_count >= 2 && (
+          <button
+            onClick={() => onViewMap(actor)}
+            className="text-xs font-mono text-primary/80 hover:text-primary border border-primary/30 hover:border-primary/60 px-2 py-0.5 transition-colors"
+          >
+            📍 View on Map
+          </button>
+        )}
+      </div>
       <div className="bg-card/60 border border-border/50 p-5">
         <div className="flex items-center gap-3 mb-3">
           <Users size={20} className="text-primary" />
@@ -190,6 +212,7 @@ function ActorDetail({ actor, edges, onBack }) {
 }
 
 export default function KnowledgeGraph({ api }) {
+  const navigate = useNavigate();
   const [stats, setStats] = useState(null);
   const [actors, setActors] = useState([]);
   const [locations, setLocations] = useState([]);
@@ -201,6 +224,13 @@ export default function KnowledgeGraph({ api }) {
   const [actorEdges, setActorEdges] = useState([]);
   const [crossBorderOnly, setCrossBorderOnly] = useState(false);
   const [borderOnly, setBorderOnly] = useState(false);
+
+  const handleViewOnMap = useCallback((actor) => {
+    const params = new URLSearchParams({ focusActor: actor.name });
+    if (actor.first_seen) params.set("focusFrom", actor.first_seen.slice(0, 10));
+    if (actor.last_seen)  params.set("focusTo",   actor.last_seen.slice(0, 10));
+    navigate(`/?${params.toString()}`);
+  }, [navigate]);
 
   const fetchStats = useCallback(async () => {
     try {
@@ -271,7 +301,12 @@ export default function KnowledgeGraph({ api }) {
   if (selectedActor && actorDetail) {
     return (
       <div className="space-y-4 p-4 md:p-6" data-testid="knowledge-graph-page">
-        <ActorDetail actor={actorDetail} edges={actorEdges} onBack={() => { setSelectedActor(null); setActorDetail(null); }} />
+        <ActorDetail
+          actor={actorDetail}
+          edges={actorEdges}
+          onBack={() => { setSelectedActor(null); setActorDetail(null); }}
+          onViewMap={handleViewOnMap}
+        />
       </div>
     );
   }
@@ -387,7 +422,7 @@ export default function KnowledgeGraph({ api }) {
           {activeTab === "actors" && (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3" data-testid="actors-grid">
               {filteredActors.map(actor => (
-                <ActorCard key={actor.name} actor={actor} onSelect={fetchActorDetail} />
+                <ActorCard key={actor.name} actor={actor} onSelect={fetchActorDetail} onViewMap={handleViewOnMap} />
               ))}
               {filteredActors.length === 0 && (
                 <p className="text-xs text-muted-foreground font-mono col-span-3 text-center py-8">No actors found.</p>

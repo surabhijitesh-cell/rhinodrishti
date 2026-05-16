@@ -297,6 +297,7 @@ const InteractiveNERMap = memo(function InteractiveNERMap({
   onStateClick,
   navigate,          // pass useNavigate() from parent for "View in Feed" clicks
   api = "",          // backend base URL e.g. "https://rhino-drishti-api.onrender.com/api"
+  focusActor = null, // actor name to zoom+filter on mount (from KG "View on Map")
 }) {
   const mapRef      = useRef(null);
   const leafletRef  = useRef(null);   // L.Map instance
@@ -740,6 +741,41 @@ const InteractiveNERMap = memo(function InteractiveNERMap({
       });
     });
   }, [items, showRel, relTypes, api]);
+
+  // ── focusActor: zoom map + auto-enable LINKS filtered to same_actor ──────────
+  useEffect(() => {
+    if (!focusActor || !leafletRef.current) return;
+
+    // Auto-open LINKS and show only same_actor edges for this actor
+    setShowRel(true);
+    setRelTypes(prev => ({
+      ...prev,
+      same_incident:    false,
+      same_actor:       true,
+      same_hotspot:     false,
+      same_pattern:     false,
+      cascade_incident: false,
+      semantic:         false,
+      user_drawn:       false,
+    }));
+
+    // Fit map to items that mention this actor
+    const actorLower = focusActor.toLowerCase();
+    const matchCoords = items
+      .filter(item => {
+        const actors = item.actors || item.entities?.actors || [];
+        return actors.some(a => (a || "").toLowerCase().includes(actorLower));
+      })
+      .map(item => item.lat != null && item.lng != null ? [item.lat, item.lng] : null)
+      .filter(Boolean);
+
+    if (matchCoords.length > 0 && leafletRef.current) {
+      try {
+        const bounds = L.latLngBounds(matchCoords);
+        leafletRef.current.fitBounds(bounds, { padding: [60, 60], maxZoom: 9 });
+      } catch (_) {}
+    }
+  }, [focusActor, items]);
 
   return (
     <div style={{ position: "relative", width: "100%", height: "100%" }} data-testid="ner-map">
