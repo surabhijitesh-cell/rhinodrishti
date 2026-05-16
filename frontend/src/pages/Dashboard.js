@@ -1082,6 +1082,7 @@ export default function Dashboard({ stats: propStats, api }) {
               <div style={{ minHeight: 380, position: "relative" }}>
                 <NERMap
                   stateStats={stateStatsMap}
+                  windowStateStats={windowStateStats}
                   items={mapItems}
                   navigate={navigate}
                   onStateClick={handleStateClick}
