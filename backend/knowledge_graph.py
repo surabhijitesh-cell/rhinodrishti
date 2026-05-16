@@ -15,32 +15,127 @@ from collections import defaultdict
 logger = logging.getLogger(__name__)
 
 
+
+# ── Canonical militant group names ───────────────────────────────────────────
+# All variants → one canonical name. Lowercase keys for case-insensitive lookup.
+MILITANT_ALIASES: dict[str, str] = {
+    # ── ULFA (Assam) ──
+    "ulfa":                                     "ULFA-I",
+    "ulfa-i":                                   "ULFA-I",
+    "ulfa(i)":                                  "ULFA-I",
+    "ulfa (i)":                                 "ULFA-I",
+    "ulfa independent":                         "ULFA-I",
+    "united liberation front of asom":          "ULFA-I",
+    "united liberation front of assam":         "ULFA-I",
+    "ulfa pro-talk":                            "ULFA (Pro-Talk)",
+    "ulfa (pro-talk)":                          "ULFA (Pro-Talk)",
+    # ── NSCN (Nagaland) ──
+    "nscn":                                     "NSCN-IM",   # default to IM (dominant faction)
+    "nscn-im":                                  "NSCN-IM",
+    "nscn(im)":                                 "NSCN-IM",
+    "nscn (im)":                                "NSCN-IM",
+    "nscn isak muivah":                         "NSCN-IM",
+    "nscn isak-muivah":                         "NSCN-IM",
+    "national socialist council of nagaland im":"NSCN-IM",
+    "nscn-k":                                   "NSCN-K",
+    "nscn(k)":                                  "NSCN-K",
+    "nscn (k)":                                 "NSCN-K",
+    "nscn khaplang":                            "NSCN-K",
+    "national socialist council of nagaland k": "NSCN-K",
+    "nscn-kk":                                  "NSCN-KK",
+    "nscn-r":                                   "NSCN-R",
+    # ── PLA / Manipur groups ──
+    "pla":                                      "PLA Manipur",
+    "pla manipur":                              "PLA Manipur",
+    "people's liberation army":                 "PLA Manipur",
+    "people's liberation army manipur":         "PLA Manipur",
+    "arambai tenggol":                          "Arambai Tenggol",
+    "arambai":                                  "Arambai Tenggol",
+    "meitei leepun":                            "Meitei Leepun",
+    "prepak":                                   "PREPAK",
+    "people's revolutionary party of kangleipak":"PREPAK",
+    "unlf":                                     "UNLF",
+    "united national liberation front":         "UNLF",
+    "kcp":                                      "KCP",
+    "kangleipak communist party":               "KCP",
+    "pulf":                                     "PULF",
+    "people's united liberation front":         "PULF",
+    "mnpf":                                     "MNPF",
+    "meitei national people's front":           "MNPF",
+    "kuki militants":                           "Kuki militants",
+    "kuki-zo militants":                        "Kuki militants",
+    "kuki armed groups":                        "Kuki militants",
+    "kuki":                                     "Kuki militants",
+    # ── NDFB (Bodoland / Assam) ──
+    "ndfb":                                     "NDFB",
+    "ndfb-s":                                   "NDFB-S",
+    "ndfb songbijit":                           "NDFB-S",
+    "ndfb-rd":                                  "NDFB-RD",
+    "ndfb ranjan daimary":                      "NDFB-RD",
+    "ndfb-p":                                   "NDFB-P",
+    "national democratic front of bodoland":    "NDFB",
+    # ── Assam others ──
+    "kplt":                                     "KPLT",
+    "karbi people's liberation tigers":         "KPLT",
+    "klo":                                      "KLO",
+    "kamatapur liberation organisation":        "KLO",
+    "upds":                                     "UPDS",
+    "united people's democratic solidarity":    "UPDS",
+    # ── Meghalaya ──
+    "hnlc":                                     "HNLC",
+    "hynniewtrep national liberation council":  "HNLC",
+    "gnla":                                     "GNLA",
+    "garo national liberation army":            "GNLA",
+    # ── Tripura ──
+    "nlft":                                     "NLFT",
+    "national liberation front of tripura":     "NLFT",
+    "attf":                                     "ATTF",
+    "all tripura tiger force":                  "ATTF",
+    # ── Mizoram ──
+    "zrf":                                      "ZRF",
+    "zoram reunification front":                "ZRF",
+    # ── Myanmar armed groups ──
+    "arakan army":                              "Arakan Army",
+    "tatmadaw":                                 "Myanmar Military",
+    "myanmar military":                         "Myanmar Military",
+    "myanmar army":                             "Myanmar Military",
+    "tnla":                                     "TNLA",
+    "ta'ang national liberation army":          "TNLA",
+    "kia":                                      "KIA",
+    "kachin independence army":                 "KIA",
+    "pdf myanmar":                              "PDF Myanmar",
+    "people's defence force":                   "PDF Myanmar",
+    "chin national army":                       "Chin National Army",
+    "cna":                                      "Chin National Army",
+    "mndaa":                                    "MNDAA",
+    "myanmar national democratic alliance army":"MNDAA",
+    # ── Bangladesh armed groups ──
+    "arsa":                                     "ARSA",
+    "arakan rohingya salvation army":           "ARSA",
+    "jmb":                                      "JMB",
+    "jamaat-ul-mujahideen bangladesh":          "JMB",
+    "ansar al-islam":                           "Ansar al-Islam",
+    # ── Indian security forces (canonical display names) ──
+    "border security force":                    "BSF",
+    "central reserve police force":             "CRPF",
+    "assam rifles":                             "Assam Rifles",
+    "indian army":                              "Indian Army",
+    "national investigation agency":            "NIA",
+}
+
+
 def normalize_actor(name: str) -> str:
-    """Normalize actor names to merge duplicates."""
+    """Normalize actor names to merge duplicates. Checks comprehensive alias table first."""
     if not name:
         return ""
     name = name.strip()
-    # Remove parenthetical descriptions for matching
+    # Strip parenthetical suffix for lookup
     base = name.split("(")[0].strip()
-    # Common normalization
-    replacements = {
-        "Border Security Force": "BSF",
-        "Central Reserve Police Force": "CRPF",
-        "Indian Army": "Indian Army",
-        "Assam Rifles": "Assam Rifles",
-        "ULFA(I)": "ULFA(I)",
-        "ULFA (I)": "ULFA(I)",
-        "ULFA-I": "ULFA(I)",
-        "NSCN(IM)": "NSCN(IM)",
-        "NSCN (IM)": "NSCN(IM)",
-        "NSCN-IM": "NSCN(IM)",
-        "NSCN(K)": "NSCN(K)",
-        "NSCN (K)": "NSCN(K)",
-        "NSCN-K": "NSCN(K)",
-    }
-    for full, short in replacements.items():
-        if full.lower() == base.lower() or full.lower() == name.lower():
-            return short
+    # Check full name and base against alias table (case-insensitive)
+    for candidate in (name.lower(), base.lower()):
+        if candidate in MILITANT_ALIASES:
+            return MILITANT_ALIASES[candidate]
+    # Fallback: return base if meaningful, else full name
     return base if len(base) > 2 else name
 
 
@@ -186,9 +281,16 @@ async def build_knowledge_graph(db):
         
         else:
             # Fallback: build relationships from entities + actors fields
-            item_actors = item.get("actors", [])
+            item_actors = list(item.get("actors", []))
             entities = item.get("entities", {})
             item_locations = (entities.get("locations", []) if entities else [])
+
+            # Merge militant_groups (Stage 2 explicit extraction) into actors list.
+            # These are already exact-named (ULFA-I, NSCN-IM etc.) so take priority.
+            militant_groups = (entities.get("militant_groups", []) if entities else [])
+            for mg in militant_groups:
+                if mg and mg not in item_actors:
+                    item_actors.insert(0, mg)  # prepend: higher priority than generic actors
             
             # Add region/state as fallback location
             if not item_locations and state:

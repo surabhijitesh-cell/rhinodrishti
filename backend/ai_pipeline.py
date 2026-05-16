@@ -134,7 +134,13 @@ Extract:
 1. REGION(S) affected (multi-select from: Assam, Meghalaya, Mizoram, Manipur, Arunachal Pradesh, Tripura, Nagaland, Sikkim, West Bengal / Siliguri Corridor, Bangladesh, Myanmar, Multiple)
 2. CROSS-BORDER: Yes/No
 3. COUNTRIES involved (India, Bangladesh, Myanmar, China, Pakistan, USA, etc.)
-4. ACTORS involved (Army, BSF, BGB, Assam Rifles, PLA, insurgent groups, tribes, political parties etc.)
+4. ACTORS involved — list ALL parties. For non-state armed groups use EXACT organisation name:
+   VALID: "ULFA-I", "NSCN-IM", "NSCN-K", "PLA Manipur", "Arambai Tenggol", "Kuki militants",
+          "ZRF", "HNLC", "GNLA", "NLFT", "ATTF", "KPLT", "KLO", "NDFB-S", "NDFB-RD",
+          "Arakan Army", "TNLA", "KIA", "PDF Myanmar", "Chin National Army", "Myanmar Military",
+          "Meitei Leepun", "PREPAK", "UNLF", "KCP", "PULF", "MNPF", "ARSA", "JMB"
+   INVALID: "militants", "insurgents", "armed group", "extremists" alone — generic = useless for pattern tracking
+   If group clearly present but name not stated in article: "Unknown armed group [State]"
 
 --------------------------------------------------
 STEP 5: NAMED ENTITY EXTRACTION
@@ -144,6 +150,9 @@ Extract structured entities:
 - persons: Named individuals mentioned (officials, commanders, leaders)
 - organizations: Groups, agencies, parties (ULFA-I, BSF, BJP, BGB, etc.)
 - locations: Specific places, districts, towns, border posts mentioned
+- militant_groups: ONLY named non-state armed groups from the actors in this article.
+  Copy exact names from ACTORS list above. Use same naming rules — no generic labels.
+  Empty array [] if no non-state armed groups are mentioned.
 
 --------------------------------------------------
 STEP 6: INTELLIGENCE OUTPUT (CRISP & ACTIONABLE)
@@ -252,7 +261,8 @@ FINAL OUTPUT FORMAT (JSON ONLY)
   "entities": {
     "persons": ["name1", "name2"],
     "organizations": ["org1", "org2"],
-    "locations": ["loc1", "loc2"]
+    "locations": ["loc1", "loc2"],
+    "militant_groups": ["ULFA-I", "NSCN-IM"]
   },
   "intelligence_summary": "3 lines max",
   "why_it_matters": "2 lines max",

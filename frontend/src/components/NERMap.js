@@ -310,7 +310,7 @@ const InteractiveNERMap = memo(function InteractiveNERMap({
     same_incident: true,
     same_actor:    true,
     same_hotspot:  true,
-    same_pattern:  true,
+    same_pattern:  false, // off by default — too noisy, low precision
     semantic:      false,  // off by default — too noisy
     user_drawn:    true,
   });
