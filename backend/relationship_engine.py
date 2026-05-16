@@ -1,7 +1,7 @@
 """
 relationship_engine.py — Nightly batch job computing item-to-item relationships.
 
-Five relationship types, using ALL existing data sources:
+Six relationship types, using ALL existing data sources:
 
   1. same_incident  — items sharing cluster_id (fusion engine, strength=1.0)
   2. same_actor     — items sharing normalized actor/org in kg_actors.article_ids
@@ -11,6 +11,10 @@ Five relationship types, using ALL existing data sources:
                       (strength proportional to escalation_risk: CRITICAL=0.95,
                        HIGH=0.85, MODERATE=0.65, LOW=0.40)
   5. semantic       — cosine similarity on embedding vectors >= 0.72 threshold
+  6. cascade_incident — directed escalation chains: earlier incident → later incident
+                        in same state within 14 days, detected via:
+                        Pass A: both items have threat_trajectory=ESCALATING
+                        Pass B: same state+category, priority_score increases ≥15
 
 Data sources consumed:
   - intelligence_items  (cluster_id, published_at, state, threat_category,
@@ -52,9 +56,11 @@ patterns_col     = db.intelligence_patterns
 
 logger = logging.getLogger(__name__)
 
-SEMANTIC_THRESHOLD = 0.72   # cosine similarity floor for semantic edges
-MAX_ITEMS_SEMANTIC = 2000   # cap to avoid O(N²) blow-up
-BATCH_SIZE        = 500     # edges per bulk_write call
+SEMANTIC_THRESHOLD    = 0.72   # cosine similarity floor for semantic edges
+MAX_ITEMS_SEMANTIC    = 2000   # cap to avoid O(N²) blow-up
+BATCH_SIZE            = 500    # edges per bulk_write call
+CASCADE_WINDOW_DAYS   = 14     # max days between cascade-linked items
+CASCADE_MIN_DELTA_B   = 15     # Pass B: min priority_score increase to qualify
 
 # Escalation risk → edge strength mapping
 ESCALATION_STRENGTH = {
@@ -359,6 +365,108 @@ async def _compute_semantic() -> int:
     return new[0]
 
 
+# ── Pass 6: cascade_incident (directed escalation chains) ────────────────────
+
+async def _compute_cascade_incident() -> int:
+    """
+    Detect temporal escalation chains within the same state over a 14-day window.
+
+    Pass A: both items have threat_trajectory=ESCALATING → confident cascade link.
+    Pass B: same state + same threat_category, priority_score rises ≥15 → inferred chain.
+
+    Direction: from_id = earlier item (root), to_id = later item (peak).
+    Stored as canonical min/max pair; true root preserved in meta.cascade_root_id.
+    """
+    from collections import defaultdict
+
+    docs = await intelligence_col.find(
+        {
+            "processed": True,
+            "tags":        {"$nin": ["not_relevant"]},
+            "published_at": {"$exists": True, "$ne": ""},
+            "state":        {"$exists": True, "$ne": None},
+        },
+        {"id": 1, "state": 1, "threat_category": 1, "threat_trajectory": 1,
+         "priority_score": 1, "published_at": 1, "_id": 0}
+    ).to_list(length=5000)
+
+    # Parse and filter
+    parsed = []
+    for d in docs:
+        if not d.get("id") or not d.get("state"):
+            continue
+        raw_dt = d.get("published_at", "")
+        try:
+            dt = datetime.fromisoformat(str(raw_dt).replace("Z", "+00:00"))
+        except Exception:
+            continue
+        parsed.append({
+            "id":         d["id"],
+            "state":      d["state"],
+            "category":   d.get("threat_category") or "",
+            "trajectory": d.get("threat_trajectory") or "INDETERMINATE",
+            "score":      int(d.get("priority_score") or 0),
+            "dt":         dt,
+        })
+
+    # Sort ascending by time so inner loop can break early
+    parsed.sort(key=lambda x: x["dt"])
+
+    by_state: dict[str, list] = defaultdict(list)
+    for item in parsed:
+        by_state[item["state"]].append(item)
+
+    edges: list[dict] = []
+    new = [0]
+    window = timedelta(days=CASCADE_WINDOW_DAYS)
+
+    for state, items in by_state.items():
+        n = len(items)
+        for i in range(n):
+            a = items[i]
+            for j in range(i + 1, n):
+                b = items[j]
+                if b["dt"] - a["dt"] > window:
+                    break  # sorted ascending — no later j will qualify either
+
+                score_delta = b["score"] - a["score"]
+
+                # Pass A: both ESCALATING in same state
+                if a["trajectory"] == "ESCALATING" and b["trajectory"] == "ESCALATING":
+                    strength = min(0.92, 0.70 + max(0, score_delta) / 100)
+                    edges.append({
+                        "from_id": a["id"], "to_id": b["id"],
+                        "type": "cascade_incident", "strength": strength,
+                        "meta": {
+                            "cascade_root_id": a["id"],
+                            "cascade_pass":    "A",
+                            "score_delta":     score_delta,
+                            "cascade_state":   state,
+                        },
+                    })
+                    edges = await _flush(edges, new)
+
+                # Pass B: same category, score escalates ≥ threshold
+                elif (a["category"] and a["category"] == b["category"]
+                      and score_delta >= CASCADE_MIN_DELTA_B):
+                    strength = min(0.90, 0.50 + score_delta / 100)
+                    edges.append({
+                        "from_id": a["id"], "to_id": b["id"],
+                        "type": "cascade_incident", "strength": strength,
+                        "meta": {
+                            "cascade_root_id": a["id"],
+                            "cascade_pass":    "B",
+                            "score_delta":     score_delta,
+                            "cascade_state":   state,
+                        },
+                    })
+                    edges = await _flush(edges, new)
+
+    new[0] += await _bulk_upsert(edges)
+    logger.info(f"  Pass 6 cascade_incident: {new[0]} new edges")
+    return new[0]
+
+
 # ── Index setup ───────────────────────────────────────────────────────────────
 
 async def ensure_indexes() -> None:
@@ -389,11 +497,12 @@ async def run_relationship_batch() -> dict:
 
     results: dict[str, int] = {}
     for name, fn in [
-        ("same_incident", _compute_same_incident),
-        ("same_actor",    _compute_same_actor),
-        ("same_hotspot",  _compute_same_hotspot),
-        ("same_pattern",  _compute_same_pattern),
-        ("semantic",      _compute_semantic),
+        ("same_incident",    _compute_same_incident),
+        ("same_actor",       _compute_same_actor),
+        ("same_hotspot",     _compute_same_hotspot),
+        ("same_pattern",     _compute_same_pattern),
+        ("semantic",         _compute_semantic),
+        ("cascade_incident", _compute_cascade_incident),
     ]:
         try:
             results[name] = await fn()
@@ -433,7 +542,8 @@ async def get_edges_for_items(
         match,
         {"_id": 0, "from_id": 1, "to_id": 1, "type": 1, "strength": 1,
          "ai_explanation": 1, "user_confirmed": 1, "user_deleted": 1,
-         "pattern_key": 1, "escalation_risk": 1}
+         "pattern_key": 1, "escalation_risk": 1,
+         "cascade_root_id": 1, "cascade_pass": 1, "score_delta": 1}
     ).limit(1000).to_list(1000)
     return docs
 

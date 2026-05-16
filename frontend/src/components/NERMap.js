@@ -190,12 +190,13 @@ const SEV = {
 
 // ─── Relationship line styles ─────────────────────────────────────────────────
 const REL_STYLE = {
-  same_incident: { color: "#f97316", weight: 2.5, dashArray: null,  opacity: 0.85, label: "Same Incident" },
-  same_actor:    { color: "#f59e0b", weight: 1.5, dashArray: "6 4", opacity: 0.75, label: "Same Actor" },
-  same_hotspot:  { color: "#06b6d4", weight: 1.5, dashArray: "4 4", opacity: 0.75, label: "Same Hotspot" },
-  same_pattern:  { color: "#ef4444", weight: 2.0, dashArray: null,  opacity: 0.80, label: "Same Pattern" },
-  semantic:      { color: "#a855f7", weight: 1.0, dashArray: "2 5", opacity: 0.55, label: "Semantic" },
-  user_drawn:    { color: "#a3e635", weight: 2.0, dashArray: null,  opacity: 0.90, label: "User Drawn" },
+  same_incident:    { color: "#f97316", weight: 2.5, dashArray: null,  opacity: 0.85, label: "Same Incident" },
+  same_actor:       { color: "#f59e0b", weight: 1.5, dashArray: "6 4", opacity: 0.75, label: "Same Actor" },
+  same_hotspot:     { color: "#06b6d4", weight: 1.5, dashArray: "4 4", opacity: 0.75, label: "Same Hotspot" },
+  same_pattern:     { color: "#ef4444", weight: 2.0, dashArray: null,  opacity: 0.80, label: "Same Pattern" },
+  cascade_incident: { color: "#ea580c", weight: 2.5, dashArray: "8 3", opacity: 0.88, label: "Cascade ↑" },
+  semantic:         { color: "#a855f7", weight: 1.0, dashArray: "2 5", opacity: 0.55, label: "Semantic" },
+  user_drawn:       { color: "#a3e635", weight: 2.0, dashArray: null,  opacity: 0.90, label: "User Drawn" },
 };
 
 function stateSeverity(stats) {
@@ -307,12 +308,13 @@ const InteractiveNERMap = memo(function InteractiveNERMap({
   const [showRel, setShowRel]   = useState(false);
   const [relCount, setRelCount] = useState(0);
   const [relTypes, setRelTypes] = useState({
-    same_incident: true,
-    same_actor:    true,
-    same_hotspot:  true,
-    same_pattern:  false, // off by default — too noisy, low precision
-    semantic:      false,  // off by default — too noisy
-    user_drawn:    true,
+    same_incident:    true,
+    same_actor:       true,
+    same_hotspot:     true,
+    same_pattern:     false, // off by default — too noisy, low precision
+    cascade_incident: true,
+    semantic:         false, // off by default — too noisy
+    user_drawn:       true,
   });
 
   // Keep a stable ref to navigate so the map init closure can call it later
@@ -699,9 +701,20 @@ const InteractiveNERMap = memo(function InteractiveNERMap({
           opacity:   lineOpacity,
         });
 
-        const fromT = (itemTitle[edge.from_id] || "Item A").slice(0, 75);
-        const toT   = (itemTitle[edge.to_id]   || "Item B").slice(0, 75);
+        // For cascade edges, use cascade_root_id to show correct direction
+        const rootId = edge.cascade_root_id;
+        const isCascade = edge.type === "cascade_incident" && rootId;
+        const rootId2  = isCascade ? rootId : edge.from_id;
+        const peakId   = isCascade
+          ? (rootId === edge.from_id ? edge.to_id : edge.from_id)
+          : edge.to_id;
+
+        const fromT = (itemTitle[rootId2] || "Item A").slice(0, 75);
+        const toT   = (itemTitle[peakId]  || "Item B").slice(0, 75);
         const pct   = Math.round((edge.strength || 0) * 100);
+        const cascadeMeta = isCascade && edge.score_delta != null
+          ? `<div style="margin-top:3px;color:#fb923c;font-size:9px">+${edge.score_delta} priority · Pass ${edge.cascade_pass || "?"}</div>`
+          : "";
         const expHtml = edge.ai_explanation
           ? `<div style="margin-top:5px;padding-top:5px;border-top:1px solid rgba(255,255,255,0.1);color:#a3e635;font-size:9px;font-style:italic;line-height:1.4">${edge.ai_explanation}</div>`
           : "";
@@ -711,11 +724,12 @@ const InteractiveNERMap = memo(function InteractiveNERMap({
             <b style="color:${style.color}">${style.label}</b>
             <span style="float:right;color:rgba(255,255,255,0.4);font-size:9px">${pct}%</span>
             <div style="clear:both;margin-top:4px;color:#d4d4d4;font-size:10px;line-height:1.4">
-              ▲ ${fromT}${fromT.length >= 75 ? "…" : ""}
+              ${isCascade ? "⬆" : "▲"} ${fromT}${fromT.length >= 75 ? "…" : ""}
             </div>
             <div style="margin-top:2px;color:#d4d4d4;font-size:10px;line-height:1.4">
-              ▼ ${toT}${toT.length >= 75 ? "…" : ""}
+              ${isCascade ? "🔺" : "▼"} ${toT}${toT.length >= 75 ? "…" : ""}
             </div>
+            ${cascadeMeta}
             ${expHtml}
           </div>`,
           { maxWidth: 280, className: "ner-popup" }
