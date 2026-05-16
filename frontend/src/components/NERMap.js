@@ -745,7 +745,7 @@ const InteractiveNERMap = memo(function InteractiveNERMap({
       </div>
 
       {/* Relationship toggle + filter panel (top-right, below zoom control) */}
-      <div style={{ position: "absolute", top: 48, right: 8, zIndex: 1000, minWidth: 90 }}>
+      <div style={{ position: "absolute", top: 90, right: 8, zIndex: 1000, minWidth: 90 }}>
         {/* Toggle button */}
         <button
           onClick={() => setShowRel((v) => !v)}
