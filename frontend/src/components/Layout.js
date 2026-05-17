@@ -32,8 +32,8 @@ const ALL_NAV_ITEMS = [
     tooltip: "AI-generated daily intelligence summary compiled at 06:00 IST. Exportable as PDF.",
   },
   {
-    path: "/weekly-trends", label: "Weekly Trends", icon: TrendingUp, roles: ["admin", "analyst", "viewer"],
-    tooltip: "7-day severity trend charts, threat category breakdown and state-wise activity analysis.",
+    path: "/trends", label: "Trends", icon: TrendingUp, roles: ["admin", "analyst", "viewer"],
+    tooltip: "Multi-timeframe severity evolution, state-wise stability index, cross-border correlation and drill-down intelligence center.",
   },
   {
     path: "/patterns", label: "Patterns", icon: GitBranch, roles: ["admin", "analyst", "viewer"],

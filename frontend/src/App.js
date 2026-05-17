@@ -11,7 +11,7 @@ import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
 import IntelligenceFeed from "./pages/IntelligenceFeed";
 import DailyBrief from "./pages/DailyBrief";
-import WeeklyTrends from "./pages/WeeklyTrends";
+import Trends from "./pages/Trends";
 import DocumentUpload from "./pages/DocumentUpload";
 import Patterns from "./pages/Patterns";
 import SettingsPage from "./pages/SettingsPage";
@@ -74,7 +74,8 @@ function AppRoutes() {
                 <Route path="/feed" element={<IntelligenceFeed api={API} />} />
                 <Route path="/cross-border" element={<CrossBorderWatch api={API} />} />
                 <Route path="/daily-brief" element={<DailyBrief api={API} />} />
-                <Route path="/weekly-trends" element={<WeeklyTrends api={API} />} />
+                <Route path="/trends" element={<Trends api={API} />} />
+                <Route path="/weekly-trends" element={<Trends api={API} />} />
                 <Route path="/patterns" element={<Patterns api={API} />} />
                 <Route path="/knowledge-graph" element={<KnowledgeGraph api={API} />} />
                 <Route path="/settings" element={<SettingsPage api={API} />} />

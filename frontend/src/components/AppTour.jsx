@@ -140,18 +140,30 @@ const PAGE_STEPS = {
     },
   ],
 
-  "/weekly-trends": [
+  "/trends": [
     {
       target: "[data-tour='trends-title']",
-      title: "Weekly Trends",
-      content: "7-day rolling analysis of intelligence patterns. Charts show volume trends, severity distribution, and which threat categories and states are escalating or de-escalating.",
+      title: "Trends Intelligence Center",
+      content: "Multi-timeframe operational analysis (7d / 30d / 90d / 1y). Severity evolution per state, intelligence velocity, cross-border correlation, and Strategic Stability Index ranking.",
       placement: "bottom",
     },
     {
-      target: "[data-tour='trends-chart']",
-      title: "Trend Charts",
-      content: "Bar charts compare daily item counts. Red/orange bars indicate critical/high severity spikes. Use these to identify whether a situation is evolving or stabilising.",
+      target: "[data-tour='trends-range']",
+      title: "Timeframe Selector",
+      content: "Switch between week / month / quarter / year views. Charts adapt automatically to data availability.",
       placement: "bottom",
+    },
+    {
+      target: "[data-tour='trends-stability']",
+      title: "Strategic Stability Index",
+      content: "Composite 0-100 score per state. Lower = higher operational concern. Composed of severity load (40%), velocity (25%), actor spread (20%), and cross-border share (15%).",
+      placement: "top",
+    },
+    {
+      target: "[data-tour='trends-drilldown']",
+      title: "State Drill-Down",
+      content: "Click any state to highlight top critical/high severity locations, dominant actors, and category breakdown for that state.",
+      placement: "top",
     },
   ],
 
