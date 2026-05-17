@@ -121,15 +121,14 @@ async def kg_insurgent_actors(
     insurgent_canonical = _get_insurgent_canonical()
 
     def _include(name: str) -> bool:
-        # Known insurgent canonical name → always include
-        if insurgent_canonical and name in insurgent_canonical:
-            return True
-        # Govt/security keyword match → always exclude
+        # Govt/security keywords → always exclude, regardless of whitelist
         if _is_govt_actor(name):
             return False
-        # Unknown actor: include only if not a known-insurgent set was available
-        # (if set is empty, fallback to keyword-only filtering)
-        return not insurgent_canonical or True
+        # Whitelist available: only include known insurgent canonical names
+        if insurgent_canonical:
+            return name in insurgent_canonical
+        # Whitelist failed to load: keyword-only filtering (fallback)
+        return True
 
     actors = [d for d in docs if _include(d.get("name", ""))]
     return {"actors": actors, "count": len(actors)}
