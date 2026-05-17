@@ -5,6 +5,28 @@ from shared import db, logger
 
 router = APIRouter()
 
+# ── Govt/security actor filter ────────────────────────────────────────────────
+# Canonical names from MILITANT_ALIASES that are Indian security forces
+_GOVT_CANONICAL = {
+    "BSF", "CRPF", "Assam Rifles", "Indian Army", "NIA",
+    "Assam Police", "Manipur Police", "Nagaland Police",
+}
+# Substrings (lowercase) that flag any actor name as a government/security actor
+_GOVT_KEYWORDS = {
+    "police", "army", "military", "paramilitary", "security force",
+    "battalion", "regiment", "crpf", "bsf", "cisf", "ssb", "rpf", "irb",
+    "nia", "cbi", "raw", "nsg", "commandos", "constabulary",
+    "border security", "central reserve", "rapid action", "india reserve",
+    "jawans", "troopers", "unified command", "intelligence bureau",
+    "indian navy", "indian air", "coast guard", "marcos", "garud",
+}
+
+def _is_govt_actor(name: str) -> bool:
+    if name in _GOVT_CANONICAL:
+        return True
+    nl = name.lower()
+    return any(kw in nl for kw in _GOVT_KEYWORDS)
+
 
 @router.post("/knowledge-graph/build")
 async def build_kg(background_tasks: BackgroundTasks):
@@ -69,6 +91,25 @@ async def kg_actors(
 
     items = await db.kg_actors.find(query, {"_id": 0}).sort(sort_field, sort_dir).limit(limit).to_list(limit)
     return {"actors": items, "count": len(items)}
+
+
+@router.get("/knowledge-graph/insurgent-actors")
+async def kg_insurgent_actors(
+    min_articles: int = Query(3, ge=2, le=100,
+                              description="Minimum article count to qualify"),
+):
+    """
+    Non-government actors with >= min_articles mentions.
+    Excludes Indian security forces, police, military via keyword filter.
+    Returns name + article_count + article_ids for NERMap actor-filter dropdown.
+    """
+    docs = await db.kg_actors.find(
+        {"article_count": {"$gte": min_articles}},
+        {"_id": 0, "name": 1, "article_count": 1, "article_ids": 1}
+    ).sort("article_count", -1).to_list(300)
+
+    actors = [d for d in docs if not _is_govt_actor(d.get("name", ""))]
+    return {"actors": actors, "count": len(actors)}
 
 
 @router.get("/knowledge-graph/actors/{actor_name}")

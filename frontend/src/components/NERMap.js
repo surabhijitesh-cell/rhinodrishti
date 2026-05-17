@@ -366,6 +366,24 @@ const InteractiveNERMap = memo(function InteractiveNERMap({
     } catch {}
   }, [showRel, relTypes]);
 
+  // Actor-filter dropdown state (same_actor lane)
+  const [insurgentActors, setInsurgentActors]         = useState([]);  // [{name, article_count, article_ids}]
+  const [selectedActorFilter, setSelectedActorFilter] = useState(null); // actor name or null = all
+
+  // Fetch insurgent actor list once when same_actor is first enabled
+  useEffect(() => {
+    if (!relTypes.same_actor || !api || insurgentActors.length > 0) return;
+    fetch(`${api}/knowledge-graph/insurgent-actors?min_articles=3`)
+      .then(r => r.json())
+      .then(d => setInsurgentActors(d.actors || []))
+      .catch(() => {});
+  }, [relTypes.same_actor, api, insurgentActors.length]);
+
+  // Reset actor selection when same_actor unchecked
+  useEffect(() => {
+    if (!relTypes.same_actor) setSelectedActorFilter(null);
+  }, [relTypes.same_actor]);
+
   // Keep a stable ref to navigate so the map init closure can call it later
   const navigateRef = useRef(navigate);
   useEffect(() => { navigateRef.current = navigate; }, [navigate]);
@@ -753,7 +771,20 @@ const InteractiveNERMap = memo(function InteractiveNERMap({
           .catch(() => [])
       )
     ).then((results) => {
-      const edges = results.flat();
+      let edges = results.flat();
+
+      // For same_actor: apply actor-filter if user selected one
+      if (selectedActorFilter) {
+        const actorDoc = insurgentActors.find(a => a.name === selectedActorFilter);
+        const actorIdSet = new Set(actorDoc?.article_ids || []);
+        if (actorIdSet.size > 0) {
+          edges = edges.filter(e =>
+            e.type !== "same_actor" ||
+            (actorIdSet.has(e.from_id) && actorIdSet.has(e.to_id))
+          );
+        }
+      }
+
       setRelCount(edges.length);
 
       // Sort: newest-to-oldest for animation reveal (latest node animates first)
@@ -811,6 +842,9 @@ const InteractiveNERMap = memo(function InteractiveNERMap({
         const cascadeMeta = isCascade && edge.score_delta != null
           ? `<div style="margin-top:3px;color:#fb923c;font-size:9px">+${edge.score_delta} priority · Pass ${edge.cascade_pass || "?"}</div>`
           : "";
+        const actorMeta = edge.type === "same_actor" && selectedActorFilter
+          ? `<div style="margin-top:3px;color:#f59e0b;font-size:9px;font-weight:bold">▶ ${selectedActorFilter}</div>`
+          : "";
         const aiBlock = edge.ai_explanation
           ? `<div id="${expBoxId}" style="margin-top:5px;padding-top:5px;border-top:1px solid rgba(255,255,255,0.1);color:#a3e635;font-size:9px;font-style:italic;line-height:1.4">${edge.ai_explanation}</div>`
           : `<div id="${expBoxId}" style="margin-top:5px;color:#a3e635;font-size:9px;font-style:italic;display:none"></div>`;
@@ -831,6 +865,7 @@ const InteractiveNERMap = memo(function InteractiveNERMap({
             <div style="margin-top:2px;color:#d4d4d4;font-size:10px;line-height:1.4">
               ${isCascade ? "🔺" : "▼"} ${toT}${toT.length >= 75 ? "…" : ""}
             </div>
+            ${actorMeta}
             ${cascadeMeta}
             ${aiBlock}
             <div style="margin-top:6px;display:flex;gap:4px;flex-wrap:wrap">
@@ -858,7 +893,7 @@ const InteractiveNERMap = memo(function InteractiveNERMap({
         lineCount++;
       });
     });
-  }, [items, showRel, relTypes, api]);
+  }, [items, showRel, relTypes, api, selectedActorFilter, insurgentActors]);
 
   // ── focusActor: zoom map + auto-enable LINKS filtered to same_actor ──────────
   useEffect(() => {
@@ -939,33 +974,55 @@ const InteractiveNERMap = memo(function InteractiveNERMap({
             padding: "6px 8px", backdropFilter: "blur(4px)",
           }}>
             {Object.entries(REL_STYLE).map(([type, style]) => (
-              <label
-                key={type}
-                style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 4, cursor: "pointer" }}
-              >
-                <input
-                  type="checkbox"
-                  checked={!!relTypes[type]}
-                  onChange={(e) => setRelTypes((prev) => ({ ...prev, [type]: e.target.checked }))}
-                  style={{ accentColor: style.color, width: 10, height: 10, flexShrink: 0 }}
-                />
-                {/* Line preview */}
-                <svg width="14" height="6" style={{ flexShrink: 0 }}>
-                  <line
-                    x1="0" y1="3" x2="14" y2="3"
-                    stroke={style.color}
-                    strokeWidth={Math.min(style.weight, 2)}
-                    strokeDasharray={style.dashArray || "none"}
+              <div key={type}>
+                <label style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 2, cursor: "pointer" }}>
+                  <input
+                    type="checkbox"
+                    checked={!!relTypes[type]}
+                    onChange={(e) => setRelTypes((prev) => ({ ...prev, [type]: e.target.checked }))}
+                    style={{ accentColor: style.color, width: 10, height: 10, flexShrink: 0 }}
                   />
-                </svg>
-                <span style={{
-                  fontFamily: "ui-monospace,monospace", fontSize: 8,
-                  color: "rgba(255,255,255,0.65)", textTransform: "uppercase", letterSpacing: "0.05em",
-                  whiteSpace: "nowrap",
-                }}>
-                  {style.label}
-                </span>
-              </label>
+                  <svg width="14" height="6" style={{ flexShrink: 0 }}>
+                    <line
+                      x1="0" y1="3" x2="14" y2="3"
+                      stroke={style.color}
+                      strokeWidth={Math.min(style.weight, 2)}
+                      strokeDasharray={style.dashArray || "none"}
+                    />
+                  </svg>
+                  <span style={{
+                    fontFamily: "ui-monospace,monospace", fontSize: 8,
+                    color: "rgba(255,255,255,0.65)", textTransform: "uppercase", letterSpacing: "0.05em",
+                    whiteSpace: "nowrap",
+                  }}>
+                    {style.label}
+                  </span>
+                </label>
+
+                {/* Actor selector — only for same_actor when checked */}
+                {type === "same_actor" && relTypes.same_actor && (
+                  <div style={{ marginLeft: 14, marginBottom: 4 }}>
+                    <select
+                      value={selectedActorFilter || ""}
+                      onChange={e => setSelectedActorFilter(e.target.value || null)}
+                      style={{
+                        width: "100%", background: "rgba(0,0,0,0.7)",
+                        border: "1px solid rgba(245,158,11,0.35)",
+                        color: selectedActorFilter ? "#f59e0b" : "rgba(255,255,255,0.45)",
+                        fontFamily: "ui-monospace,monospace", fontSize: 8,
+                        padding: "2px 4px", outline: "none", cursor: "pointer",
+                      }}
+                    >
+                      <option value="">— all actors —</option>
+                      {insurgentActors.map(a => (
+                        <option key={a.name} value={a.name}>
+                          {a.name} ({a.article_count})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+              </div>
             ))}
           </div>
         )}
