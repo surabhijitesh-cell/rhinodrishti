@@ -370,6 +370,10 @@ const InteractiveNERMap = memo(function InteractiveNERMap({
   const [insurgentActors, setInsurgentActors]         = useState([]);  // [{name, article_count, article_ids}]
   const [selectedActorFilter, setSelectedActorFilter] = useState(null); // actor name or null = all
 
+  // Stable ref — render effect reads this without being re-triggered when list loads
+  const insurgentActorsRef = useRef([]);
+  useEffect(() => { insurgentActorsRef.current = insurgentActors; }, [insurgentActors]);
+
   // Fetch insurgent actor list once when same_actor is first enabled
   useEffect(() => {
     if (!relTypes.same_actor || !api || insurgentActors.length > 0) return;
@@ -384,19 +388,17 @@ const InteractiveNERMap = memo(function InteractiveNERMap({
     if (!relTypes.same_actor) setSelectedActorFilter(null);
   }, [relTypes.same_actor]);
 
-  // Actor-specific item coords (fetches 720h window to cover historical incidents)
-  const [actorItemCoords, setActorItemCoords] = useState({});
-  const [actorItemTitles, setActorItemTitles] = useState({});
+  // Actor-specific item data — single state object to avoid double re-render
+  const [actorItemData, setActorItemData] = useState({ coords: {}, titles: {} });
 
   useEffect(() => {
     if (!selectedActorFilter || !api) {
-      setActorItemCoords({});
-      setActorItemTitles({});
+      setActorItemData({ coords: {}, titles: {} });
       return;
     }
-    const actorDoc = insurgentActors.find(a => a.name === selectedActorFilter);
+    const actorLower = selectedActorFilter.toLowerCase();
+    const actorDoc   = insurgentActorsRef.current.find(a => a.name === selectedActorFilter);
     const actorIdSet = new Set(actorDoc?.article_ids || []);
-    if (actorIdSet.size === 0) return;
 
     const token = localStorage.getItem("token") || "";
     fetch(`${api}/intelligence/map-timeline?hours=8760&limit=1000`, {
@@ -409,7 +411,15 @@ const InteractiveNERMap = memo(function InteractiveNERMap({
         const titles = {};
         rawItems.forEach(item => {
           const id = item.id || item.item_id;
-          if (!id || !actorIdSet.has(id)) return;
+          if (!id) return;
+          // Match by article_ids (KG) OR by org name substring — dual fallback
+          const inIdSet      = actorIdSet.size > 0 && actorIdSet.has(id);
+          const orgs         = item.entities?.organizations || [];
+          const mentionsActor = orgs.some(org => {
+            const ol = (org || "").toLowerCase();
+            return ol.length > 3 && (ol.includes(actorLower) || actorLower.includes(ol));
+          });
+          if (!inIdSet && !mentionsActor) return;
           titles[id] = item.title || id;
           const candidates = [...(item.entities?.locations || []), item.state].filter(Boolean);
           for (const loc of candidates) {
@@ -420,11 +430,10 @@ const InteractiveNERMap = memo(function InteractiveNERMap({
             if (k) { coords[id] = LOCATION_COORDS[k]; break; }
           }
         });
-        setActorItemCoords(coords);
-        setActorItemTitles(titles);
+        setActorItemData({ coords, titles });
       })
       .catch(() => {});
-  }, [selectedActorFilter, api, insurgentActors]);
+  }, [selectedActorFilter, api]); // insurgentActors read via ref — no dep needed
 
   // Keep a stable ref to navigate so the map init closure can call it later
   const navigateRef = useRef(navigate);
@@ -751,8 +760,8 @@ const InteractiveNERMap = memo(function InteractiveNERMap({
 
     // Build item id → coords + title + timestamp
     // Merge in actor-specific coords (wider 1yr window) so actor lines always draw
-    const itemCoords = { ...actorItemCoords };
-    const itemTitle  = { ...actorItemTitles };
+    const itemCoords = { ...actorItemData.coords };
+    const itemTitle  = { ...actorItemData.titles };
     const itemTime   = {};  // id → ms timestamp for animation ordering
     items.forEach((item) => {
       const id = item.id || item.item_id;
@@ -816,13 +825,11 @@ const InteractiveNERMap = memo(function InteractiveNERMap({
     ).then((results) => {
       let edges = results.flat();
 
-      // For same_actor with selected actor: generate edges directly from article_ids
-      // (DB same_actor edges are sparse — pre-computed before KG rebuild).
-      // Generating client-side guarantees lines appear immediately for any actor.
+      // For same_actor with selected actor: generate edges from matched items
+      // (DB same_actor edges sparse; actorItemData has all matched items for this actor)
       if (selectedActorFilter && relTypes.same_actor) {
-        const actorDoc = insurgentActors.find(a => a.name === selectedActorFilter);
-        const actorIds = actorDoc?.article_ids || [];
-        const visibleActorIds = actorIds.filter(id => itemCoords[id]);
+        // All items matched by article_ids OR org name — coords already resolved
+        const visibleActorIds = Object.keys(actorItemData.coords).filter(id => itemCoords[id]);
 
         // Drop any existing same_actor edges (replaced by synthetic ones below)
         edges = edges.filter(e => e.type !== "same_actor");
@@ -955,7 +962,7 @@ const InteractiveNERMap = memo(function InteractiveNERMap({
         lineCount++;
       });
     });
-  }, [items, showRel, relTypes, api, selectedActorFilter, insurgentActors, actorItemCoords, actorItemTitles]);
+  }, [items, showRel, relTypes, api, selectedActorFilter, actorItemData]);
 
   // ── focusActor: zoom map + auto-enable LINKS filtered to same_actor ──────────
   useEffect(() => {
