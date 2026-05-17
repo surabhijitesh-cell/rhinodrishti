@@ -773,16 +773,31 @@ const InteractiveNERMap = memo(function InteractiveNERMap({
     ).then((results) => {
       let edges = results.flat();
 
-      // For same_actor: apply actor-filter if user selected one
-      if (selectedActorFilter) {
+      // For same_actor with selected actor: generate edges directly from article_ids
+      // (DB same_actor edges are sparse — pre-computed before KG rebuild).
+      // Generating client-side guarantees lines appear immediately for any actor.
+      if (selectedActorFilter && relTypes.same_actor) {
         const actorDoc = insurgentActors.find(a => a.name === selectedActorFilter);
-        const actorIdSet = new Set(actorDoc?.article_ids || []);
-        if (actorIdSet.size > 0) {
-          edges = edges.filter(e =>
-            e.type !== "same_actor" ||
-            (actorIdSet.has(e.from_id) && actorIdSet.has(e.to_id))
-          );
+        const actorIds = actorDoc?.article_ids || [];
+        const visibleActorIds = actorIds.filter(id => itemCoords[id]);
+
+        // Drop any existing same_actor edges (replaced by synthetic ones below)
+        edges = edges.filter(e => e.type !== "same_actor");
+
+        // Synthetic same_actor edges for all visible pairs of this actor's items
+        for (let i = 0; i < visibleActorIds.length; i++) {
+          for (let j = i + 1; j < visibleActorIds.length; j++) {
+            edges.push({
+              from_id: visibleActorIds[i],
+              to_id:   visibleActorIds[j],
+              type:    "same_actor",
+              strength: 0.80,
+            });
+          }
         }
+      } else if (!selectedActorFilter && relTypes.same_actor) {
+        // No actor selected: keep same_actor edges from API but only if DB has them
+        // (no extra filtering needed — show all)
       }
 
       setRelCount(edges.length);

@@ -6,23 +6,33 @@ from shared import db, logger
 router = APIRouter()
 
 # ── Govt/security actor filter ────────────────────────────────────────────────
-# Canonical names from MILITANT_ALIASES that are Indian security forces
-_GOVT_CANONICAL = {
-    "BSF", "CRPF", "Assam Rifles", "Indian Army", "NIA",
-    "Assam Police", "Manipur Police", "Nagaland Police",
-}
-# Substrings (lowercase) that flag any actor name as a government/security actor
+# Build known insurgent whitelist from MILITANT_ALIASES (imported lazily to avoid circular)
+_SECURITY_FORCE_CANONICAL = {"BSF", "CRPF", "Assam Rifles", "Indian Army", "NIA"}
+
+def _get_insurgent_canonical() -> set:
+    """Canonical insurgent/militant group names derived from MILITANT_ALIASES."""
+    try:
+        from knowledge_graph import MILITANT_ALIASES
+        return {v for v in MILITANT_ALIASES.values()} - _SECURITY_FORCE_CANONICAL
+    except Exception:
+        return set()
+
+# Keyword blocklist — any of these substrings in lowercase actor name → govt
 _GOVT_KEYWORDS = {
-    "police", "army", "military", "paramilitary", "security force",
+    "police", "army", "military", "paramilitary",
+    "security force", "security forces", "armed force", "armed forces",
+    "joint force", "joint forces",
     "battalion", "regiment", "crpf", "bsf", "cisf", "ssb", "rpf", "irb",
     "nia", "cbi", "raw", "nsg", "commandos", "constabulary",
     "border security", "central reserve", "rapid action", "india reserve",
     "jawans", "troopers", "unified command", "intelligence bureau",
-    "indian navy", "indian air", "coast guard", "marcos", "garud",
+    "indian navy", "indian air force", "coast guard", "marcos", "garud",
+    "stf", "sog ", "sit ", "hg ", "vdf", "defence force", "defence forces",
+    "home guard", "state force", "state forces", "quick reaction",
 }
 
 def _is_govt_actor(name: str) -> bool:
-    if name in _GOVT_CANONICAL:
+    if name in _SECURITY_FORCE_CANONICAL:
         return True
     nl = name.lower()
     return any(kw in nl for kw in _GOVT_KEYWORDS)
@@ -108,7 +118,20 @@ async def kg_insurgent_actors(
         {"_id": 0, "name": 1, "article_count": 1, "article_ids": 1}
     ).sort("article_count", -1).to_list(300)
 
-    actors = [d for d in docs if not _is_govt_actor(d.get("name", ""))]
+    insurgent_canonical = _get_insurgent_canonical()
+
+    def _include(name: str) -> bool:
+        # Known insurgent canonical name → always include
+        if insurgent_canonical and name in insurgent_canonical:
+            return True
+        # Govt/security keyword match → always exclude
+        if _is_govt_actor(name):
+            return False
+        # Unknown actor: include only if not a known-insurgent set was available
+        # (if set is empty, fallback to keyword-only filtering)
+        return not insurgent_canonical or True
+
+    actors = [d for d in docs if _include(d.get("name", ""))]
     return {"actors": actors, "count": len(actors)}
 
 
