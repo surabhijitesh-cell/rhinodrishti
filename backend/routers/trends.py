@@ -17,6 +17,11 @@ from shared import db, intelligence_col, NER_STATES, logger
 
 router = APIRouter()
 
+# Full NER state set including Nagaland + Sikkim (shared.NER_STATES omits these
+# because some queries use it as an exclusion list — keep that untouched, but
+# Trends + Stability Index must cover all 8 NER states).
+NER_STATES_FULL = list(dict.fromkeys(NER_STATES + ["Nagaland", "Sikkim"]))
+
 # ── Range parsing ─────────────────────────────────────────────────────────────
 _RANGE_HOURS = {"24h": 24, "7d": 24*7, "30d": 24*30, "90d": 24*90, "365d": 24*365}
 
@@ -121,12 +126,13 @@ async def get_trends(range: str = Query("7d", regex="^(24h|7d|30d|90d|365d)$")):
             if actor:
                 actor_freq[actor] += 1
 
-    # Build per-state daily series for multi-line chart
+    # Build per-state daily series for multi-line chart.
+    # Always include all NER states (zero-fill when no items) so the chart legend
+    # and stability ranking show every state.
     state_evolution = []
     all_buckets = sorted(daily_severity.keys())
-    for state, daily in state_daily.items():
-        if state not in NER_STATES:
-            continue
+    for state in NER_STATES_FULL:
+        daily = state_daily.get(state, {})
         series = [{"date": b, "count": daily.get(b, 0)} for b in all_buckets]
         state_evolution.append({"state": state, "series": series})
 
@@ -243,19 +249,21 @@ async def get_stability_index(
 
     state_metrics: Dict[str, Dict] = {}
 
+    # Pre-seed all NER states so every state shows a card even with zero items
+    for st in NER_STATES_FULL:
+        state_metrics[st] = {
+            "state": st, "total": 0, "sev_weight": 0,
+            "early_count": 0, "late_count": 0,
+            "actors": set(), "cross_border_count": 0,
+        }
+
     async for item in intelligence_col.find(
         {"published_at": {"$gte": cutoff}},
         {"published_at": 1, "severity": 1, "state": 1, "entities": 1, "_id": 0},
     ):
         state = item.get("state") or "Unknown"
-        if state not in NER_STATES:
+        if state not in NER_STATES_FULL:
             continue
-        if state not in state_metrics:
-            state_metrics[state] = {
-                "state": state, "total": 0, "sev_weight": 0,
-                "early_count": 0, "late_count": 0,
-                "actors": set(), "cross_border_count": 0,
-            }
         m = state_metrics[state]
         m["total"] += 1
         m["sev_weight"] += _SEV_WEIGHT.get(item.get("severity") or "low", 1)
