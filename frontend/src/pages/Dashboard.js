@@ -12,6 +12,7 @@ import {
 import Tip from "../components/Tip";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Badge } from "../components/ui/badge";
+import CustomAnalytics from "../components/dashboard/CustomAnalytics";
 import { Button } from "../components/ui/button";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue
@@ -1320,6 +1321,9 @@ export default function Dashboard({ stats: propStats, api }) {
           )}
         </div>
       </div>
+
+      {/* ── Custom Analytics Workspace (Sprint 2) ── */}
+      <CustomAnalytics api={api} />
     </div>
   );
 }

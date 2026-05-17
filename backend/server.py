@@ -21,6 +21,7 @@ from routers.intelligence import router as intelligence_router
 from routers.settings import router as settings_router
 from routers.briefs import router as briefs_router
 from routers.trends import router as trends_router
+from routers.analytics import router as analytics_router
 from routers.pipeline import router as pipeline_router
 from routers.documents import router as documents_router
 from routers.knowledge_graph_routes import router as kg_router
@@ -62,6 +63,7 @@ app.include_router(intelligence_router, prefix="/api")
 app.include_router(settings_router, prefix="/api")
 app.include_router(briefs_router, prefix="/api")
 app.include_router(trends_router, prefix="/api")
+app.include_router(analytics_router, prefix="/api")
 app.include_router(pipeline_router, prefix="/api")
 app.include_router(documents_router, prefix="/api")
 app.include_router(kg_router, prefix="/api")

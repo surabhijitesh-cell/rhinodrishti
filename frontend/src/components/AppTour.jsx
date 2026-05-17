@@ -75,6 +75,12 @@ const PAGE_STEPS = {
       content: "Access all platform modules here. The sidebar collapses to icons to save screen space. The red badge on Alerts shows unacknowledged critical/high items.",
       placement: "right",
     },
+    {
+      target: "[data-tour='custom-analytics']",
+      title: "Custom Analytics Workspace",
+      content: "Build your own intelligence view: pick widgets (heatmap, actor tracker, velocity, hotspots, etc.), filter by state / category / actor / severity / range, save Command Views (COIN, Cross-Border, Manipur Monitor…), and export any widget as PNG.",
+      placement: "top",
+    },
   ],
 
   "/feed": [
