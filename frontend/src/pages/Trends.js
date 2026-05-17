@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { TrendingUp, BarChart3, Activity, Shield, MapPin, Users, AlertTriangle } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import Tip from "../components/Tip";
@@ -47,6 +47,18 @@ export default function Trends({ api }) {
   const [selectedState, setSelectedState] = useState(null);
   const [drilldown, setDrilldown]       = useState(null);
   const [drilldownLoading, setDrilldownLoading] = useState(false);
+  const drilldownRef = useRef(null);
+
+  // Scroll drill-down into view when state selected
+  useEffect(() => {
+    if (selectedState && drilldownRef.current) {
+      // Delay so layout has time to render the panel
+      const t = setTimeout(() => {
+        drilldownRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      }, 80);
+      return () => clearTimeout(t);
+    }
+  }, [selectedState]);
 
   // Fetch top-level data + stability + cross-border whenever range changes
   useEffect(() => {
@@ -380,7 +392,7 @@ export default function Trends({ api }) {
 
       {/* State Drill-down (visible when state selected) */}
       {selectedState && (
-        <Card className="border-2 border-primary rounded-none bg-card" data-tour="trends-drilldown">
+        <Card ref={drilldownRef} className="border-2 border-primary rounded-none bg-card scroll-mt-4" data-tour="trends-drilldown">
           <CardHeader className="py-3 px-4 border-b border-border flex flex-row items-center justify-between">
             <CardTitle className="text-sm uppercase tracking-wider font-['Barlow_Condensed'] font-semibold flex items-center gap-2">
               <MapPin size={16} className="text-primary" />
