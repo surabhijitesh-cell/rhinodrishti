@@ -384,6 +384,48 @@ const InteractiveNERMap = memo(function InteractiveNERMap({
     if (!relTypes.same_actor) setSelectedActorFilter(null);
   }, [relTypes.same_actor]);
 
+  // Actor-specific item coords (fetches 720h window to cover historical incidents)
+  const [actorItemCoords, setActorItemCoords] = useState({});
+  const [actorItemTitles, setActorItemTitles] = useState({});
+
+  useEffect(() => {
+    if (!selectedActorFilter || !api) {
+      setActorItemCoords({});
+      setActorItemTitles({});
+      return;
+    }
+    const actorDoc = insurgentActors.find(a => a.name === selectedActorFilter);
+    const actorIdSet = new Set(actorDoc?.article_ids || []);
+    if (actorIdSet.size === 0) return;
+
+    const token = localStorage.getItem("token") || "";
+    fetch(`${api}/intelligence/map-timeline?hours=8760&limit=1000`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then(r => r.json())
+      .then(data => {
+        const rawItems = data.items || data || [];
+        const coords = {};
+        const titles = {};
+        rawItems.forEach(item => {
+          const id = item.id || item.item_id;
+          if (!id || !actorIdSet.has(id)) return;
+          titles[id] = item.title || id;
+          const candidates = [...(item.entities?.locations || []), item.state].filter(Boolean);
+          for (const loc of candidates) {
+            if (LOCATION_COORDS[loc]) { coords[id] = LOCATION_COORDS[loc]; break; }
+            const k = Object.keys(LOCATION_COORDS).find(
+              lk => loc.toLowerCase().includes(lk.toLowerCase()) || lk.toLowerCase().includes(loc.toLowerCase())
+            );
+            if (k) { coords[id] = LOCATION_COORDS[k]; break; }
+          }
+        });
+        setActorItemCoords(coords);
+        setActorItemTitles(titles);
+      })
+      .catch(() => {});
+  }, [selectedActorFilter, api, insurgentActors]);
+
   // Keep a stable ref to navigate so the map init closure can call it later
   const navigateRef = useRef(navigate);
   useEffect(() => { navigateRef.current = navigate; }, [navigate]);
@@ -708,8 +750,9 @@ const InteractiveNERMap = memo(function InteractiveNERMap({
     if (!showRel || !items.length) { setRelCount(0); return; }
 
     // Build item id → coords + title + timestamp
-    const itemCoords = {};
-    const itemTitle  = {};
+    // Merge in actor-specific coords (wider 1yr window) so actor lines always draw
+    const itemCoords = { ...actorItemCoords };
+    const itemTitle  = { ...actorItemTitles };
     const itemTime   = {};  // id → ms timestamp for animation ordering
     items.forEach((item) => {
       const id = item.id || item.item_id;
@@ -894,21 +937,25 @@ const InteractiveNERMap = memo(function InteractiveNERMap({
         line.addTo(rl);
 
         // Stroke-dashoffset animation: line draws from start node to end node
-        requestAnimationFrame(() => {
-          if (line._path) {
+        // Double-rAF ensures Leaflet has committed the SVG path to DOM
+        const capturedCount = lineCount;
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+          const path = line._path;
+          if (path) {
             try {
-              const len = line._path.getTotalLength();
-              line._path.style.strokeDasharray = `${len}`;
-              line._path.style.strokeDashoffset = `${len}`;
-              line._path.style.animation = `nerRelDraw 500ms ease-out ${lineCount * 55}ms forwards`;
+              const len = path.getTotalLength ? path.getTotalLength() : 120;
+              path.style.strokeDasharray  = `${len}`;
+              path.style.strokeDashoffset = `${len}`;
+              path.style.transition = "none";
+              path.style.animation  = `nerRelDraw 700ms ease-out ${capturedCount * 60}ms forwards`;
             } catch {}
           }
-        });
+        }));
 
         lineCount++;
       });
     });
-  }, [items, showRel, relTypes, api, selectedActorFilter, insurgentActors]);
+  }, [items, showRel, relTypes, api, selectedActorFilter, insurgentActors, actorItemCoords, actorItemTitles]);
 
   // ── focusActor: zoom map + auto-enable LINKS filtered to same_actor ──────────
   useEffect(() => {
