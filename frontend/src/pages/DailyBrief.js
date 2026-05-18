@@ -1,13 +1,14 @@
 import { useState, useEffect, Component } from "react";
 import {
   FileText, RefreshCw, Calendar, Shield, Globe, AlertTriangle, Download,
-  Newspaper, Upload, ExternalLink, GitBranch
+  Newspaper, Upload, ExternalLink, GitBranch, Layers,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Button } from "../components/ui/button";
 import { Badge } from "../components/ui/badge";
 import Tip from "../components/Tip";
 import axios from "axios";
+import MonthlyBrief from "./MonthlyBrief";
 
 class BriefErrorBoundary extends Component {
   constructor(props) {
@@ -35,6 +36,7 @@ class BriefErrorBoundary extends Component {
 }
 
 export default function DailyBrief({ api }) {
+  const [tab, setTab] = useState("daily"); // "daily" | "monthly"
   const [brief, setBrief] = useState(null);
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
@@ -208,9 +210,40 @@ export default function DailyBrief({ api }) {
     );
   };
 
+  // Tab bar — shared across loading and full render
+  const TabBar = () => (
+    <div className="flex items-center gap-1 border-b border-border" data-testid="brief-tabs">
+      <button onClick={() => setTab("daily")}
+              className={`px-4 py-2 text-xs font-mono uppercase tracking-wider border-b-2 -mb-px flex items-center gap-2 transition-colors ${
+                tab === "daily" ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground"
+              }`}
+              data-testid="tab-daily">
+        <FileText size={13} /> Daily
+      </button>
+      <button onClick={() => setTab("monthly")}
+              className={`px-4 py-2 text-xs font-mono uppercase tracking-wider border-b-2 -mb-px flex items-center gap-2 transition-colors ${
+                tab === "monthly" ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground"
+              }`}
+              data-testid="tab-monthly">
+        <Layers size={13} /> Monthly Strategic
+      </button>
+    </div>
+  );
+
+  // Render Monthly Brief view
+  if (tab === "monthly") {
+    return (
+      <div className="space-y-4">
+        <TabBar />
+        <MonthlyBrief api={api} />
+      </div>
+    );
+  }
+
   if (loading) {
     return (
       <div className="space-y-4" data-testid="daily-brief-loading">
+        <TabBar />
         <div className="h-10 bg-muted animate-pulse w-1/2" />
         <div className="h-6 bg-muted animate-pulse w-1/3" />
         {Array.from({ length: 3 }).map((_, i) => (
@@ -228,6 +261,7 @@ export default function DailyBrief({ api }) {
   return (
     <BriefErrorBoundary>
     <div className="space-y-6" data-testid="daily-brief-page">
+      <TabBar />
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-4">
         <div>
