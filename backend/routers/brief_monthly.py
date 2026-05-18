@@ -82,10 +82,16 @@ async def _aggregate_month_stats(year: int, month: int) -> dict:
     overall_cats      = Counter()
     daily_severity    = defaultdict(lambda: {"critical": 0, "high": 0, "medium": 0, "low": 0, "total": 0})
     cross_border_count = 0
+    # Bangladesh-border states + Myanmar-border states (for cross-border classification)
+    _BD_STATES = {"Assam", "Tripura", "Meghalaya"}
+    _MM_STATES = {"Manipur", "Nagaland", "Mizoram", "Arunachal Pradesh"}
+    cb_bangladesh: list = []
+    cb_myanmar: list = []
 
     async for item in intelligence_col.find(q, {
         "id": 1, "title": 1, "severity": 1, "state": 1, "threat_category": 1,
-        "published_at": 1, "entities": 1, "summary": 1, "analyst_enhancement": 1, "_id": 0,
+        "published_at": 1, "entities": 1, "summary": 1, "ai_summary": 1,
+        "analyst_enhancement": 1, "is_cross_border": 1, "countries_involved": 1, "_id": 0,
     }):
         total += 1
         sev = item.get("severity") or "low"
@@ -108,6 +114,21 @@ async def _aggregate_month_stats(year: int, month: int) -> dict:
                 overall_locations[l] += 1
         if any(c in BORDER_COUNTRIES for c in locs) or state in BORDER_COUNTRIES:
             cross_border_count += 1
+
+        if item.get("is_cross_border"):
+            countries = item.get("countries_involved") or []
+            _cb_rec = {
+                "title": (item.get("title") or "")[:180],
+                "severity": sev, "state": state,
+                "category": cat, "date": pub_date,
+                "summary": (item.get("ai_summary") or item.get("summary") or "")[:200],
+            }
+            if "Bangladesh" in countries or state in _BD_STATES:
+                if len(cb_bangladesh) < 10:
+                    cb_bangladesh.append(_cb_rec)
+            elif "Myanmar" in countries or state in _MM_STATES:
+                if len(cb_myanmar) < 10:
+                    cb_myanmar.append(_cb_rec)
 
         # Per-state breakdown (only for NER states)
         if state in NER_STATES_FULL:
@@ -219,6 +240,8 @@ async def _aggregate_month_stats(year: int, month: int) -> dict:
         "top_locations":     overall_locations.most_common(15),
         "top_categories":    overall_cats.most_common(10),
         "daily_severity":    [{"date": d, **v} for d, v in sorted(daily_severity.items())],
+        "cb_bangladesh":     cb_bangladesh,
+        "cb_myanmar":        cb_myanmar,
     }
 
 
@@ -344,6 +367,58 @@ REQUIREMENTS:
 - Confidence pct = 0-100. Don't anchor everything at 50.
 - Warning indicators must be OBSERVABLE in our intel pipeline (e.g. "Spike in arms-seizure reports along Moreh corridor", NOT "increased tension").
 - Tone: defense analysis. Crisp."""
+
+
+def _cross_border_prompt(cb_bd: list, cb_mm: list, period_label: str) -> str:
+    def _fmt(items):
+        return "\n".join([f"  - [{i['date']}] ({i['severity'].upper()}) [{i['state']}] {i['title']}"
+                          + (f"\n      Summary: {i['summary']}" if i.get("summary") else "")
+                          for i in items]) or "  (no items this period)"
+
+    bd_count = len(cb_bd)
+    mm_count = len(cb_mm)
+
+    return f"""You are the NER Cross-Border Intelligence Cell. Write the CROSS-BORDER THREAT ANALYSIS section for {period_label}.
+
+BANGLADESH BORDER DATA ({bd_count} cross-border items):
+Border states: Assam, Tripura, Meghalaya
+{_fmt(cb_bd[:7])}
+
+MYANMAR BORDER DATA ({mm_count} cross-border items):
+Border states: Manipur, Nagaland, Mizoram, Arunachal Pradesh
+{_fmt(cb_mm[:7])}
+
+THREAT CONTEXT:
+- Bangladesh border: infiltration, illegal immigration, Rohingya movement, narcotics, arms, militant sanctuary in CHT areas, recent Bangladesh political instability (Hasina govt collapse Aug 2024, Yunus-led interim govt, student-led protests, anti-India sentiment)
+- Myanmar border: Arakan Army operations, Chin National Front, drug trafficking Golden Triangle corridor, displaced persons / refugee inflow, arms smuggling, NLFT/ULFA cross-border movement
+
+RETURN STRICT JSON ONLY:
+{{
+  "bangladesh_border": {{
+    "threat_level": "CRITICAL|HIGH|MEDIUM|LOW",
+    "overview": "2-3 sentences. Overall security picture on Bangladesh border this period.",
+    "primary_threats": "Specific threat types active on Bangladesh border — exact. No vague language.",
+    "hotspot_corridors": "Named border corridors or districts seeing highest activity.",
+    "key_actors": "Named actors or groups active on Bangladesh border.",
+    "indo_bd_dimension": "2-3 sentences specifically on India-Bangladesh bilateral security dynamic — diplomatic friction, BSF-BGB coordination, border fence gaps, recent Bangladesh political context affecting security cooperation.",
+    "operational_concerns": "2-3 specific operational concerns for BSF/state police on this border."
+  }},
+  "myanmar_border": {{
+    "threat_level": "CRITICAL|HIGH|MEDIUM|LOW",
+    "overview": "2-3 sentences. Overall security picture on Myanmar border this period.",
+    "primary_threats": "Specific threat types active on Myanmar border.",
+    "hotspot_corridors": "Named corridors or districts.",
+    "key_actors": "Named actors or groups.",
+    "displacement_pressure": "Assessment of refugee/IDP inflow pressure on NER border districts.",
+    "operational_concerns": "2-3 specific operational concerns for AR/state police on this border."
+  }}
+}}
+
+REQUIREMENTS:
+- Label EVERY factual claim: [CONFIRMED] from data above, [ASSESSED] from pattern inference, [SPECULATIVE] forecast.
+- No vague filler. Every field must contain actionable intelligence.
+- If data insufficient for a border, write "Insufficient cross-border data this period" for that border.
+- Tone: military intelligence briefing. Crisp."""
 
 
 async def _call_llm_json(prompt: str, max_tokens: int = 600, model_override: str = None) -> dict:
@@ -590,7 +665,13 @@ async def _run_generation(year: int, month: int) -> dict:
     mitigation_results = await asyncio.gather(*mitigation_tasks)
     mitigation_playbook = {st: res for st, res in zip(mitigation_states, mitigation_results) if res}
 
-    # 2d. Predictive scenarios
+    # 2d. Cross-border analysis (Bangladesh + Myanmar deep dive)
+    cross_border_analysis = await _call_llm_json(
+        _cross_border_prompt(stats.get("cb_bangladesh", []), stats.get("cb_myanmar", []), month_name),
+        max_tokens=1000,
+    )
+
+    # 2e. Predictive scenarios
     scenarios_payload = await _call_llm_json(_scenarios_prompt(stats, year, month), max_tokens=900)
     scenarios = scenarios_payload.get("scenarios", []) if isinstance(scenarios_payload, dict) else []
 
@@ -608,6 +689,7 @@ async def _run_generation(year: int, month: int) -> dict:
         "action_matrix": action_matrix,
         "mitigation_playbook": mitigation_playbook,
         "scenarios": scenarios,
+        "cross_border_analysis": cross_border_analysis,
         "contact_directory": {
             st: get_contacts_for_state(st) for st in target_states
         },
@@ -842,6 +924,36 @@ def _render_pdf(brief: dict) -> bytes:
                 for a in actions:
                     pdf.multi_cell(0, 4, _ascii(f"  - {a.get('action', '')} | Lead: {a.get('lead_agency', '')}"))
                 pdf.ln(1)
+            pdf.ln(2)
+
+    # Cross-border analysis
+    cba = brief.get("cross_border_analysis") or {}
+    if cba:
+        pdf.add_page()
+        pdf.set_font("Helvetica", "B", 13)
+        pdf.cell(0, 7, "Cross-Border Threat Analysis", **NL)
+        for border_key, border_label in [("bangladesh_border", "Indo-Bangladesh Border"), ("myanmar_border", "Indo-Myanmar Border")]:
+            b = cba.get(border_key) or {}
+            if not b:
+                continue
+            if pdf.get_y() > 240:
+                pdf.add_page()
+            pdf.set_font("Helvetica", "B", 11)
+            pdf.cell(0, 6, _ascii(f"{border_label} — Threat Level: {b.get('threat_level', '?')}"), **NL)
+            pdf.set_font("Helvetica", "", 9)
+            for field, label in [
+                ("overview", "Overview"), ("primary_threats", "Primary Threats"),
+                ("hotspot_corridors", "Hotspot Corridors"), ("key_actors", "Key Actors"),
+                ("indo_bd_dimension", "Indo-Bangladesh Dimension"),
+                ("displacement_pressure", "Displacement Pressure"),
+                ("operational_concerns", "Operational Concerns"),
+            ]:
+                v = b.get(field)
+                if v:
+                    pdf.set_font("Helvetica", "B", 9)
+                    pdf.cell(0, 4, _ascii(label + ":"), **NL)
+                    pdf.set_font("Helvetica", "", 9)
+                    pdf.multi_cell(0, 4, _ascii(v))
             pdf.ln(2)
 
     # Contacts

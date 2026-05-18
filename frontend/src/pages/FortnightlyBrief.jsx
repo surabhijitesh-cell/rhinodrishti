@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import {
   Calendar, FileText, RefreshCw, Download, Copy, ChevronDown, ChevronUp,
-  Shield, AlertTriangle, Users, MapPin, Phone, Mail, Activity, TrendingUp,
+  Shield, AlertTriangle, Users, MapPin, Phone, Activity, TrendingUp,
   Target, Layers, CheckCircle2, Clock, Globe,
 } from "lucide-react";
 import axios from "axios";
@@ -9,8 +9,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card"
 import { Button } from "../components/ui/button";
 import Tip from "../components/Tip";
 import {
-  AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip,
-  ResponsiveContainer, Legend, Cell,
+  AreaChart, Area, XAxis, YAxis, Tooltip,
+  ResponsiveContainer, Legend,
 } from "recharts";
 
 const SEVERITY_COLORS = {
@@ -24,7 +24,6 @@ const tooltipStyle = {
   borderRadius: 0, fontSize: 11,
 };
 
-// Format claim labels with color hints
 function renderLabeledText(text) {
   if (!text) return null;
   const str = typeof text === "string" ? text : String(text);
@@ -37,38 +36,48 @@ function renderLabeledText(text) {
   });
 }
 
-function previousMonth() {
-  const d = new Date();
-  d.setDate(1);
-  d.setMonth(d.getMonth() - 1);
-  return { year: d.getFullYear(), month: d.getMonth() + 1 };
+function defaultPeriod() {
+  const now = new Date();
+  const day  = now.getDate();
+  const year = now.getFullYear();
+  const month = now.getMonth() + 1;
+  if (day <= 15) {
+    // Currently in period 1 — most recently completed = period 2 of last month
+    if (month === 1) return { year: year - 1, month: 12, period: 2 };
+    return { year, month: month - 1, period: 2 };
+  }
+  // Currently in period 2 — most recently completed = period 1 of current month
+  return { year, month, period: 1 };
 }
 
-export default function MonthlyBrief({ api }) {
-  const init = previousMonth();
-  const [year, setYear]       = useState(init.year);
-  const [month, setMonth]     = useState(init.month);
-  const [brief, setBrief]     = useState(null);
-  const [loading, setLoading] = useState(true);
+function periodLabel(year, month, period) {
+  const monthName = new Date(year, month - 1, 1).toLocaleString("en-IN", { month: "long", year: "numeric" });
+  const lastDay = new Date(year, month, 0).getDate();
+  return period === 1 ? `1-15 ${monthName}` : `16-${lastDay} ${monthName}`;
+}
+
+export default function FortnightlyBrief({ api }) {
+  const init = defaultPeriod();
+  const [year,   setYear]   = useState(init.year);
+  const [month,  setMonth]  = useState(init.month);
+  const [period, setPeriod] = useState(init.period);
+  const [brief,      setBrief]      = useState(null);
+  const [loading,    setLoading]    = useState(true);
   const [generating, setGenerating] = useState(false);
-  const [error, setError]     = useState(null);
+  const [error,      setError]      = useState(null);
   const [openStates, setOpenStates] = useState({});
   const [openMitig,  setOpenMitig]  = useState({});
-  const [copied, setCopied]   = useState(false);
+  const [copied,     setCopied]     = useState(false);
 
-  const monthLabel = new Date(year, month - 1, 1).toLocaleString("en-IN", { month: "long", year: "numeric" });
+  const label = periodLabel(year, month, period);
 
   const fetchBrief = useCallback(async () => {
     setError(null);
     setLoading(true);
     try {
-      const r = await axios.get(`${api}/brief/monthly/${year}/${month}`);
+      const r = await axios.get(`${api}/brief/fortnightly/${year}/${month}/${period}`);
       setBrief(r.data);
-      if (r.data.status === "generating") {
-        setGenerating(true);
-      } else {
-        setGenerating(false);
-      }
+      setGenerating(r.data.status === "generating");
     } catch (e) {
       if (e?.response?.status === 404) {
         setBrief(null);
@@ -78,11 +87,10 @@ export default function MonthlyBrief({ api }) {
       setGenerating(false);
     }
     setLoading(false);
-  }, [api, year, month]);
+  }, [api, year, month, period]);
 
   useEffect(() => { fetchBrief(); }, [fetchBrief]);
 
-  // Poll while generating
   useEffect(() => {
     if (!generating) return;
     const t = setInterval(fetchBrief, 8000);
@@ -93,8 +101,7 @@ export default function MonthlyBrief({ api }) {
     setGenerating(true);
     setError(null);
     try {
-      await axios.post(`${api}/brief/monthly/generate?year=${year}&month=${month}`);
-      // Poll for completion
+      await axios.post(`${api}/brief/fortnightly/generate?year=${year}&month=${month}&period=${period}`);
       setTimeout(fetchBrief, 4000);
     } catch (e) {
       setError(e?.response?.data?.detail || "Generation request failed");
@@ -104,7 +111,7 @@ export default function MonthlyBrief({ api }) {
 
   const handleCopyNotebookLM = async () => {
     try {
-      const r = await axios.get(`${api}/brief/monthly/${year}/${month}/notebooklm`);
+      const r = await axios.get(`${api}/brief/fortnightly/${year}/${month}/${period}/notebooklm`);
       await navigator.clipboard.writeText(r.data);
       setCopied(true);
       setTimeout(() => setCopied(false), 2500);
@@ -114,30 +121,31 @@ export default function MonthlyBrief({ api }) {
   };
 
   const handleDownloadPDF = () => {
-    window.open(`${api}/brief/monthly/${year}/${month}/pdf`, "_blank");
+    window.open(`${api}/brief/fortnightly/${year}/${month}/${period}/pdf`, "_blank");
   };
 
-  const adjustMonth = (delta) => {
-    let m = month + delta;
+  const adjustPeriod = (delta) => {
+    let p = period + delta;
+    let m = month;
     let y = year;
-    while (m < 1) { m += 12; y -= 1; }
-    while (m > 12) { m -= 12; y += 1; }
-    setMonth(m); setYear(y);
+    if (p < 1) { p = 2; m -= 1; }
+    if (p > 2) { p = 1; m += 1; }
+    if (m < 1)  { m = 12; y -= 1; }
+    if (m > 12) { m = 1;  y += 1; }
+    setPeriod(p); setMonth(m); setYear(y);
   };
 
-  // ── Renderers ────────────────────────────────────────────────────────────
+  // ── Renderers ────────────────────────────────────────────────────────────────
 
   const renderHeader = () => (
     <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4">
       <div>
-        <h1 className="text-3xl md:text-4xl font-bold uppercase tracking-tight font-['Barlow_Condensed']" data-testid="monthly-brief-title">
-          Monthly Strategic Brief
+        <h1 className="text-3xl md:text-4xl font-bold uppercase tracking-tight font-['Barlow_Condensed']" data-testid="fortnightly-brief-title">
+          Fortnightly Strategic Brief
         </h1>
         <div className="flex items-center gap-2 mt-1">
           <Calendar size={12} className="text-muted-foreground" />
-          <p className="text-xs font-mono uppercase tracking-[0.15em] text-muted-foreground">
-            {monthLabel}
-          </p>
+          <p className="text-xs font-mono uppercase tracking-[0.15em] text-muted-foreground">{label}</p>
           {brief?.generated_at && (
             <>
               <span className="text-muted-foreground">|</span>
@@ -149,14 +157,14 @@ export default function MonthlyBrief({ api }) {
         </div>
       </div>
       <div className="flex flex-wrap items-center gap-2">
-        <button onClick={() => adjustMonth(-1)} className="px-2 py-1.5 border border-border text-xs font-mono hover:border-primary">&lt; Prev</button>
-        <div className="text-xs font-mono uppercase tracking-wider min-w-[120px] text-center">{monthLabel}</div>
-        <button onClick={() => adjustMonth(1)}  className="px-2 py-1.5 border border-border text-xs font-mono hover:border-primary">Next &gt;</button>
+        <button onClick={() => adjustPeriod(-1)} className="px-2 py-1.5 border border-border text-xs font-mono hover:border-primary">&lt; Prev</button>
+        <div className="text-xs font-mono uppercase tracking-wider min-w-[160px] text-center">{label}</div>
+        <button onClick={() => adjustPeriod(1)}  className="px-2 py-1.5 border border-border text-xs font-mono hover:border-primary">Next &gt;</button>
         <Button
           onClick={handleGenerate}
           disabled={generating}
           className="rounded-none uppercase text-xs tracking-wider"
-          data-testid="generate-monthly-btn"
+          data-testid="generate-fortnightly-btn"
         >
           {generating ? <><RefreshCw size={12} className="mr-1 animate-spin" /> Generating…</> :
             brief?.status === "ready" ? <><RefreshCw size={12} className="mr-1" /> Regenerate</> :
@@ -164,10 +172,10 @@ export default function MonthlyBrief({ api }) {
         </Button>
         {brief?.status === "ready" && (
           <>
-            <Button onClick={handleDownloadPDF} variant="outline" className="rounded-none uppercase text-xs tracking-wider" data-testid="download-pdf-btn">
+            <Button onClick={handleDownloadPDF} variant="outline" className="rounded-none uppercase text-xs tracking-wider" data-testid="download-fortnightly-pdf-btn">
               <Download size={12} className="mr-1" /> PDF
             </Button>
-            <Button onClick={handleCopyNotebookLM} variant="outline" className="rounded-none uppercase text-xs tracking-wider" data-testid="copy-notebooklm-btn">
+            <Button onClick={handleCopyNotebookLM} variant="outline" className="rounded-none uppercase text-xs tracking-wider" data-testid="copy-fortnightly-notebooklm-btn">
               {copied ? <><CheckCircle2 size={12} className="mr-1 text-emerald-400" /> Copied!</> :
                         <><Copy size={12} className="mr-1" /> NotebookLM</>}
             </Button>
@@ -178,18 +186,18 @@ export default function MonthlyBrief({ api }) {
   );
 
   const renderOverview = () => {
-    const s = brief?.stats || {};
+    const s  = brief?.stats || {};
     const sc = s.sev_counts || {};
     return (
       <Card className="border border-border rounded-none bg-card">
         <CardHeader className="py-3 px-4 border-b border-border">
           <CardTitle className="text-sm uppercase tracking-wider font-['Barlow_Condensed'] font-semibold flex items-center gap-2">
-            <Activity size={16} className="text-primary" /> Regional Overview
+            <Activity size={16} className="text-primary" /> Period Overview
           </CardTitle>
         </CardHeader>
         <CardContent className="p-4">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
-            <Stat label="Items" value={s.total || 0} />
+            <Stat label="Items"    value={s.total || 0} />
             <Stat label="Critical" value={sc.critical || 0} color={SEVERITY_COLORS.critical} />
             <Stat label="High"     value={sc.high || 0}     color={SEVERITY_COLORS.high} />
             <Stat label="X-Border" value={s.cross_border_count || 0} color="#06b6d4" />
@@ -199,7 +207,7 @@ export default function MonthlyBrief({ api }) {
               <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground mb-2">
                 Daily Severity Timeline
               </div>
-              <ResponsiveContainer width="100%" height={200}>
+              <ResponsiveContainer width="100%" height={160}>
                 <AreaChart data={s.daily_severity}>
                   <XAxis dataKey="date" tick={{ fontSize: 9, fill: "hsl(120,5%,60%)" }} tickFormatter={(v) => v?.slice(5)} />
                   <YAxis tick={{ fontSize: 9, fill: "hsl(120,5%,60%)" }} />
@@ -222,7 +230,7 @@ export default function MonthlyBrief({ api }) {
     <Card className="border border-border rounded-none bg-card">
       <CardHeader className="py-3 px-4 border-b border-border">
         <CardTitle className="text-sm uppercase tracking-wider font-['Barlow_Condensed'] font-semibold flex items-center gap-2">
-          <Shield size={16} className="text-primary" /> Strategic Stability Index
+          <Shield size={16} className="text-primary" /> Fortnightly Stability Index
         </CardTitle>
       </CardHeader>
       <CardContent className="p-4">
@@ -253,7 +261,7 @@ export default function MonthlyBrief({ api }) {
     <Card className="border border-border rounded-none bg-card">
       <CardHeader className="py-3 px-4 border-b border-border">
         <CardTitle className="text-sm uppercase tracking-wider font-['Barlow_Condensed'] font-semibold flex items-center gap-2">
-          <Target size={16} className="text-primary" /> Executive Strategic Assessment
+          <Target size={16} className="text-primary" /> Executive Assessment
         </CardTitle>
       </CardHeader>
       <CardContent className="p-4">
@@ -311,8 +319,6 @@ export default function MonthlyBrief({ api }) {
                       </div>
                     );
                   })}
-
-                  {/* Critical incident list */}
                   {st_stats.critical_items?.length > 0 && (
                     <div className="mt-3 border-t border-border pt-2">
                       <div className="text-[10px] uppercase tracking-wider text-red-400 font-bold mb-1">Critical Incidents</div>
@@ -325,8 +331,6 @@ export default function MonthlyBrief({ api }) {
                       </ul>
                     </div>
                   )}
-
-                  {/* Analyst notes (human-enhanced items for this state) */}
                   {st_stats.analyst_notes?.length > 0 && (
                     <div className="mt-3 border-t border-violet-500/30 pt-2 space-y-2">
                       <div className="text-[10px] uppercase tracking-wider text-violet-400 font-bold flex items-center gap-1">
@@ -351,46 +355,61 @@ export default function MonthlyBrief({ api }) {
     </Card>
   );
 
-  const renderActionMatrix = () => (
-    <Card className="border border-border rounded-none bg-card">
-      <CardHeader className="py-3 px-4 border-b border-border">
-        <Tip text="Threat-to-action mapping derived from observed activity volumes. Rows ordered by incident count. Use as command-level prioritization framework." side="top">
-          <CardTitle className="text-sm uppercase tracking-wider font-['Barlow_Condensed'] font-semibold flex items-center gap-2 cursor-help w-fit">
-            <Layers size={16} className="text-primary" /> Commander Action Matrix
-          </CardTitle>
-        </Tip>
-      </CardHeader>
-      <CardContent className="p-0">
-        <div className="overflow-x-auto">
-          <table className="w-full text-xs font-mono">
-            <thead className="bg-muted/30 border-b border-border">
-              <tr>
-                <Th>Threat</Th><Th>Severity</Th><Th>Probability</Th><Th>Action</Th><Th>Lead Agency</Th><Th>Horizon</Th>
-              </tr>
-            </thead>
-            <tbody>
-              {(brief?.action_matrix || []).map((r, i) => (
-                <tr key={i} className="border-b border-border/40">
-                  <Td>{r.threat} <span className="text-muted-foreground">({r.incident_count})</span></Td>
-                  <Td><Badge color={r.severity === "CRITICAL" ? "red" : r.severity === "HIGH" ? "amber" : "yellow"}>{r.severity}</Badge></Td>
-                  <Td><Badge color={r.probability === "HIGH" ? "red" : r.probability === "MODERATE" ? "amber" : "green"}>{r.probability}</Badge></Td>
-                  <Td className="max-w-[300px]">{r.action}</Td>
-                  <Td className="text-amber-400">{r.lead_agency}</Td>
-                  <Td>{r.time_horizon}</Td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+  const renderCrossBorder = () => {
+    const cba = brief?.cross_border_analysis || {};
+    if (!cba.bangladesh_border && !cba.myanmar_border) return null;
+    const LEVEL_COLOR = { CRITICAL: "text-red-400", HIGH: "text-orange-400", MEDIUM: "text-yellow-400", LOW: "text-green-400" };
+    const BorderBlock = ({ data, title, accentClass }) => {
+      if (!data) return null;
+      const lvl = data.threat_level || "MEDIUM";
+      const fields = [
+        ["overview",             "Overview"],
+        ["primary_threats",      "Primary Threats"],
+        ["hotspot_corridors",    "Hotspot Corridors"],
+        ["key_actors",           "Key Actors"],
+        ["indo_bd_dimension",    "Indo-Bangladesh Dimension"],
+        ["displacement_pressure","Displacement Pressure"],
+        ["operational_concerns", "Operational Concerns"],
+      ];
+      return (
+        <div className={`border-l-2 ${accentClass} pl-3 space-y-2`}>
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-bold font-mono uppercase tracking-wider">{title}</span>
+            <span className={`text-[10px] font-mono font-bold px-1.5 py-0.5 border rounded-sm ${LEVEL_COLOR[lvl] || "text-muted-foreground"} border-current bg-current/10`}>{lvl}</span>
+          </div>
+          {fields.map(([k, lbl]) => {
+            const v = data[k];
+            if (!v) return null;
+            return (
+              <div key={k}>
+                <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-mono font-bold">{lbl}</div>
+                <div className="text-sm text-foreground/90 font-mono leading-relaxed mt-0.5">{renderLabeledText(v)}</div>
+              </div>
+            );
+          })}
         </div>
-      </CardContent>
-    </Card>
-  );
+      );
+    };
+    return (
+      <Card className="border border-border rounded-none bg-card">
+        <CardHeader className="py-3 px-4 border-b border-amber-500/30 bg-amber-500/5">
+          <CardTitle className="text-sm uppercase tracking-wider font-['Barlow_Condensed'] font-semibold flex items-center gap-2">
+            <Globe size={16} className="text-amber-400" /> Cross-Border Threat Analysis
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="p-4 space-y-6">
+          <BorderBlock data={cba.bangladesh_border} title="Indo-Bangladesh Border" accentClass="border-orange-500" />
+          <BorderBlock data={cba.myanmar_border}    title="Indo-Myanmar Border"    accentClass="border-red-500" />
+        </CardContent>
+      </Card>
+    );
+  };
 
   const renderScenarios = () => (
     <Card className="border border-border rounded-none bg-card">
       <CardHeader className="py-3 px-4 border-b border-border">
         <CardTitle className="text-sm uppercase tracking-wider font-['Barlow_Condensed'] font-semibold flex items-center gap-2">
-          <TrendingUp size={16} className="text-primary" /> Predictive Scenarios (30-90 Days)
+          <TrendingUp size={16} className="text-primary" /> Predictive Scenarios (H+15 / H+30)
         </CardTitle>
       </CardHeader>
       <CardContent className="p-4 space-y-3">
@@ -426,6 +445,41 @@ export default function MonthlyBrief({ api }) {
     </Card>
   );
 
+  const renderActionMatrix = () => (
+    <Card className="border border-border rounded-none bg-card">
+      <CardHeader className="py-3 px-4 border-b border-border">
+        <Tip text="Threat-to-action mapping derived from observed activity volumes for this fortnightly period." side="top">
+          <CardTitle className="text-sm uppercase tracking-wider font-['Barlow_Condensed'] font-semibold flex items-center gap-2 cursor-help w-fit">
+            <Layers size={16} className="text-primary" /> Commander Action Matrix
+          </CardTitle>
+        </Tip>
+      </CardHeader>
+      <CardContent className="p-0">
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs font-mono">
+            <thead className="bg-muted/30 border-b border-border">
+              <tr>
+                <Th>Threat</Th><Th>Severity</Th><Th>Probability</Th><Th>Action</Th><Th>Lead Agency</Th><Th>Horizon</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {(brief?.action_matrix || []).map((r, i) => (
+                <tr key={i} className="border-b border-border/40">
+                  <Td>{r.threat} <span className="text-muted-foreground">({r.incident_count})</span></Td>
+                  <Td><BadgeChip color={r.severity === "CRITICAL" ? "red" : r.severity === "HIGH" ? "amber" : "yellow"}>{r.severity}</BadgeChip></Td>
+                  <Td><BadgeChip color={r.probability === "HIGH" ? "red" : r.probability === "MODERATE" ? "amber" : "green"}>{r.probability}</BadgeChip></Td>
+                  <Td className="max-w-[300px]">{r.action}</Td>
+                  <Td className="text-amber-400">{r.lead_agency}</Td>
+                  <Td>{r.time_horizon}</Td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </CardContent>
+    </Card>
+  );
+
   const renderMitigation = () => (
     <Card className="border border-border rounded-none bg-card">
       <CardHeader className="py-3 px-4 border-b border-border">
@@ -448,12 +502,12 @@ export default function MonthlyBrief({ api }) {
                   {[["immediate", "Immediate (0-72 hrs)", "#ef4444"],
                     ["short_term", "Short Term (1-4 weeks)", "#f59e0b"],
                     ["medium_term", "Medium Term (1-3 months)", "#eab308"],
-                    ["long_term", "Long Term (3-12 months)", "#a3e635"]].map(([k, label, color]) => {
+                    ["long_term", "Long Term (3-12 months)", "#a3e635"]].map(([k, lbl, color]) => {
                     const actions = plan[k] || [];
                     if (!actions.length) return null;
                     return (
                       <div key={k}>
-                        <div className="text-[10px] uppercase tracking-wider font-bold mb-1" style={{color}}>{label}</div>
+                        <div className="text-[10px] uppercase tracking-wider font-bold mb-1" style={{color}}>{lbl}</div>
                         <ul className="text-xs space-y-1.5 font-mono">
                           {actions.map((a, i) => (
                             <li key={i} className="text-foreground/85">
@@ -476,113 +530,7 @@ export default function MonthlyBrief({ api }) {
     </Card>
   );
 
-  const renderCrossBorder = () => {
-    const cba = brief?.cross_border_analysis || {};
-    if (!cba.bangladesh_border && !cba.myanmar_border) return null;
-    const LEVEL_COLOR = { CRITICAL: "text-red-400", HIGH: "text-orange-400", MEDIUM: "text-yellow-400", LOW: "text-green-400" };
-    const BorderBlock = ({ data, title, accentClass }) => {
-      if (!data) return null;
-      const lvl = data.threat_level || "MEDIUM";
-      const fields = [
-        ["overview",             "Overview"],
-        ["primary_threats",      "Primary Threats"],
-        ["hotspot_corridors",    "Hotspot Corridors"],
-        ["key_actors",           "Key Actors"],
-        ["indo_bd_dimension",    "Indo-Bangladesh Dimension"],
-        ["displacement_pressure","Displacement Pressure"],
-        ["operational_concerns", "Operational Concerns"],
-      ];
-      return (
-        <div className={`border-l-2 ${accentClass} pl-3 space-y-2`}>
-          <div className="flex items-center gap-2">
-            <span className="text-sm font-bold font-mono uppercase tracking-wider">{title}</span>
-            <span className={`text-[10px] font-mono font-bold px-1.5 py-0.5 border rounded-sm ${LEVEL_COLOR[lvl] || "text-muted-foreground"} border-current bg-current/10`}>{lvl}</span>
-          </div>
-          {fields.map(([k, label]) => {
-            const v = data[k];
-            if (!v) return null;
-            return (
-              <div key={k}>
-                <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-mono font-bold">{label}</div>
-                <div className="text-sm text-foreground/90 font-mono leading-relaxed mt-0.5">{renderLabeledText(v)}</div>
-              </div>
-            );
-          })}
-        </div>
-      );
-    };
-    return (
-      <Card className="border border-border rounded-none bg-card">
-        <CardHeader className="py-3 px-4 border-b border-amber-500/30 bg-amber-500/5">
-          <CardTitle className="text-sm uppercase tracking-wider font-['Barlow_Condensed'] font-semibold flex items-center gap-2">
-            <Globe size={16} className="text-amber-400" /> Cross-Border Threat Analysis
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="p-4 space-y-6">
-          <BorderBlock
-            data={cba.bangladesh_border}
-            title="Indo-Bangladesh Border"
-            accentClass="border-orange-500"
-          />
-          <BorderBlock
-            data={cba.myanmar_border}
-            title="Indo-Myanmar Border"
-            accentClass="border-red-500"
-          />
-        </CardContent>
-      </Card>
-    );
-  };
-
-  const renderContacts = () => {
-    const directory = brief?.contact_directory || {};
-    const firstState = Object.keys(directory)[0];
-    const regional = firstState ? directory[firstState].regional_contacts : [];
-    return (
-      <Card className="border border-border rounded-none bg-card">
-        <CardHeader className="py-3 px-4 border-b border-border">
-          <CardTitle className="text-sm uppercase tracking-wider font-['Barlow_Condensed'] font-semibold flex items-center gap-2">
-            <Phone size={16} className="text-primary" /> Contact Directory
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="p-4">
-          <div className="text-[10px] font-mono italic text-muted-foreground border border-amber-500/30 bg-amber-500/5 p-2 mb-3">
-            Public offices only — incumbent names rotate; verify via respective .gov.in portal before engagement.
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {Object.entries(directory).map(([state, block]) => (
-              <div key={state}>
-                <div className="text-[11px] uppercase tracking-wider font-bold text-primary mb-1">{state}</div>
-                <ul className="text-[11px] font-mono space-y-1">
-                  {block.state_contacts?.map((c, i) => (
-                    <li key={i} className="border-l border-border pl-2">
-                      <div className="text-foreground">{c.office}</div>
-                      <div className="text-muted-foreground text-[10px]">
-                        {c.hq} · {c.phone} · {c.email}
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ))}
-          </div>
-          <div className="mt-4 pt-3 border-t border-border">
-            <div className="text-[11px] uppercase tracking-wider font-bold text-cyan-400 mb-1">Regional / National</div>
-            <ul className="text-[11px] font-mono space-y-1">
-              {regional.map((c, i) => (
-                <li key={i} className="border-l border-cyan-500/40 pl-2">
-                  <div className="text-foreground">{c.office}</div>
-                  <div className="text-muted-foreground text-[10px]">{c.hq} · {c.phone} · {c.email}</div>
-                </li>
-              ))}
-            </ul>
-          </div>
-        </CardContent>
-      </Card>
-    );
-  };
-
-  // ── Top-level render ─────────────────────────────────────────────────────
+  // ── Top-level render ─────────────────────────────────────────────────────────
 
   if (loading && !brief) {
     return (
@@ -596,7 +544,7 @@ export default function MonthlyBrief({ api }) {
   }
 
   return (
-    <div className="space-y-5" data-testid="monthly-brief-page">
+    <div className="space-y-5" data-testid="fortnightly-brief-page">
       {renderHeader()}
 
       {error && (
@@ -605,26 +553,23 @@ export default function MonthlyBrief({ api }) {
         </div>
       )}
 
-      {/* Generating state */}
       {generating && (
         <div className="border border-primary bg-primary/5 p-4 text-xs font-mono text-primary flex items-center gap-2">
           <Clock size={14} className="animate-pulse" />
-          Generating {monthLabel} brief — synthesizing per-state assessments, action matrix, scenarios, and contact directory. This typically takes 60-180 seconds.
+          Generating {label} brief — synthesizing state assessments, cross-border analysis, scenarios and action matrix. Typically 45-120 seconds.
         </div>
       )}
 
-      {/* No brief yet */}
       {!brief && !generating && (
         <div className="border border-border bg-card p-8 text-center">
           <FileText size={32} className="mx-auto text-muted-foreground mb-3" />
-          <p className="text-sm text-muted-foreground mb-1">No monthly brief generated for {monthLabel} yet.</p>
+          <p className="text-sm text-muted-foreground mb-1">No fortnightly brief generated for {label} yet.</p>
           <p className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground mb-4">
-            Click GENERATE to synthesize the strategic brief from this month's intelligence.
+            Click GENERATE to synthesize the strategic brief from this period's intelligence.
           </p>
         </div>
       )}
 
-      {/* Status: generating in DB, but we have stub */}
       {brief?.status === "generating" && (
         <div className="border border-primary bg-primary/5 p-4 text-xs font-mono text-primary">
           <Clock size={14} className="inline mr-2 animate-pulse" />
@@ -632,21 +577,18 @@ export default function MonthlyBrief({ api }) {
         </div>
       )}
 
-      {/* Empty month */}
       {brief?.status === "empty" && (
         <div className="border border-amber-500/40 bg-amber-500/5 p-4 text-xs font-mono text-amber-400">
-          No intelligence items recorded for {monthLabel}. Cannot generate brief.
+          No intelligence items recorded for {label}. Cannot generate brief.
         </div>
       )}
 
-      {/* Error state */}
       {brief?.status === "error" && (
         <div className="border border-red-500/40 bg-red-500/5 p-4 text-xs font-mono text-red-400">
           Generation failed: {brief.error || "unknown error"}. Try regenerating.
         </div>
       )}
 
-      {/* Full brief */}
       {brief?.status === "ready" && (
         <>
           {renderOverview()}
@@ -657,27 +599,24 @@ export default function MonthlyBrief({ api }) {
           {renderScenarios()}
           {renderActionMatrix()}
           {renderMitigation()}
-          {renderContacts()}
         </>
       )}
     </div>
   );
 }
 
-// ── Small UI helpers ────────────────────────────────────────────────────────
+// ── Small UI helpers ─────────────────────────────────────────────────────────
 function Stat({ label, value, color }) {
   return (
     <div className="border border-border p-3 bg-background">
       <div className="text-[9px] font-mono uppercase tracking-wider text-muted-foreground">{label}</div>
-      <div className="text-2xl font-bold font-['Barlow_Condensed']" style={{ color: color || undefined }}>
-        {value}
-      </div>
+      <div className="text-2xl font-bold font-['Barlow_Condensed']" style={{ color: color || undefined }}>{value}</div>
     </div>
   );
 }
 function Th({ children }) { return <th className="text-left px-2 py-2 text-[10px] uppercase tracking-wider font-bold text-muted-foreground">{children}</th>; }
 function Td({ children, className = "" }) { return <td className={`px-2 py-2 align-top ${className}`}>{children}</td>; }
-function Badge({ children, color }) {
+function BadgeChip({ children, color }) {
   const styles = {
     red:    "bg-red-500/15    text-red-400    border-red-500/40",
     amber:  "bg-amber-500/15  text-amber-400  border-amber-500/40",

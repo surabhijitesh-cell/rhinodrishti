@@ -9,6 +9,7 @@ import { Badge } from "../components/ui/badge";
 import Tip from "../components/Tip";
 import axios from "axios";
 import MonthlyBrief from "./MonthlyBrief";
+import FortnightlyBrief from "./FortnightlyBrief";
 
 class BriefErrorBoundary extends Component {
   constructor(props) {
@@ -36,7 +37,7 @@ class BriefErrorBoundary extends Component {
 }
 
 export default function DailyBrief({ api }) {
-  const [tab, setTab] = useState("daily"); // "daily" | "monthly"
+  const [tab, setTab] = useState("daily"); // "daily" | "fortnightly" | "monthly"
   const [brief, setBrief] = useState(null);
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
@@ -220,6 +221,13 @@ export default function DailyBrief({ api }) {
               data-testid="tab-daily">
         <FileText size={13} /> Daily
       </button>
+      <button onClick={() => setTab("fortnightly")}
+              className={`px-4 py-2 text-xs font-mono uppercase tracking-wider border-b-2 -mb-px flex items-center gap-2 transition-colors ${
+                tab === "fortnightly" ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground"
+              }`}
+              data-testid="tab-fortnightly">
+        <Globe size={13} /> Fortnightly
+      </button>
       <button onClick={() => setTab("monthly")}
               className={`px-4 py-2 text-xs font-mono uppercase tracking-wider border-b-2 -mb-px flex items-center gap-2 transition-colors ${
                 tab === "monthly" ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground"
@@ -229,6 +237,16 @@ export default function DailyBrief({ api }) {
       </button>
     </div>
   );
+
+  // Render Fortnightly Brief view
+  if (tab === "fortnightly") {
+    return (
+      <div className="space-y-4">
+        <TabBar />
+        <FortnightlyBrief api={api} />
+      </div>
+    );
+  }
 
   // Render Monthly Brief view
   if (tab === "monthly") {

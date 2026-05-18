@@ -38,6 +38,7 @@ from routers.web_sources import router as web_sources_router
 from routers.social_media import router as social_media_router
 from routers.admin import router as admin_router
 from routers.relationships import router as relationships_router
+from routers.brief_fortnightly import router as brief_fortnightly_router
 
 # Import scheduler functions
 from routers.pipeline import (
@@ -81,6 +82,7 @@ app.include_router(web_sources_router, prefix="/api")
 app.include_router(social_media_router, prefix="/api")
 app.include_router(admin_router, prefix="/api")
 app.include_router(relationships_router, prefix="/api")
+app.include_router(brief_fortnightly_router, prefix="/api")
 
 
 # ============================================================

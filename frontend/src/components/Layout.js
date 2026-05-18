@@ -28,8 +28,8 @@ const ALL_NAV_ITEMS = [
     tooltip: "Bangladesh & Myanmar intelligence grouped by Diplomatic, Defence, Internal Politics and Economics.",
   },
   {
-    path: "/daily-brief", label: "Daily Brief", icon: FileText, roles: ["admin", "analyst", "viewer"],
-    tooltip: "AI-generated daily intelligence summary compiled at 06:00 IST. Exportable as PDF.",
+    path: "/daily-brief", label: "Generate Briefs", icon: FileText, roles: ["admin", "analyst", "viewer"],
+    tooltip: "AI-generated daily, fortnightly and monthly intelligence briefs. Exportable as PDF.",
   },
   {
     path: "/trends", label: "Trends", icon: TrendingUp, roles: ["admin", "analyst", "viewer"],
