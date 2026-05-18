@@ -62,7 +62,12 @@ def _month_range(year: int, month: int) -> tuple[str, str]:
 async def _aggregate_month_stats(year: int, month: int) -> dict:
     """Pull and aggregate the month's intelligence_items for downstream synthesis."""
     start_iso, end_iso = _month_range(year, month)
-    q = {"published_at": {"$gte": start_iso, "$lt": end_iso}}
+    q = {
+        "published_at": {"$gte": start_iso, "$lt": end_iso},
+        "processed": True,
+        "severity": {"$nin": ["filtered_out"]},
+        "tags": {"$nin": ["not_relevant", "stage0_filtered", "stage05_filtered", "stage1_filtered"]},
+    }
 
     total = 0
     sev_counts = Counter()
