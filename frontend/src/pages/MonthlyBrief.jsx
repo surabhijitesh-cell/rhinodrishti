@@ -325,6 +325,23 @@ export default function MonthlyBrief({ api }) {
                       </ul>
                     </div>
                   )}
+
+                  {/* Analyst notes (human-enhanced items for this state) */}
+                  {st_stats.analyst_notes?.length > 0 && (
+                    <div className="mt-3 border-t border-violet-500/30 pt-2 space-y-2">
+                      <div className="text-[10px] uppercase tracking-wider text-violet-400 font-bold flex items-center gap-1">
+                        ✎ Analyst Enhancements ({st_stats.analyst_notes.length})
+                      </div>
+                      {st_stats.analyst_notes.map((n, idx) => (
+                        <div key={idx} className="p-2 bg-violet-500/10 border border-violet-500/25 rounded-sm">
+                          <div className="text-[9px] text-violet-400/70 font-mono mb-1">
+                            [{n.date}] {n.severity?.toUpperCase()} · {n.item_title} · {n.by}
+                          </div>
+                          <div className="text-xs text-violet-100 leading-relaxed whitespace-pre-wrap">{n.note}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
             </div>

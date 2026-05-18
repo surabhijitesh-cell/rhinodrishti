@@ -4,12 +4,13 @@ import { toast } from "sonner";
 import {
   Target, MapPin, Users, Package, Shield, AlertTriangle,
   Wifi, Building, Clock, ExternalLink, ChevronDown, ChevronUp,
-  Flag, TrendingUp, Radar, Layers, Trash2, RefreshCw,
+  Flag, TrendingUp, Radar, Layers, Trash2, RefreshCw, Pencil, X, Check,
 } from "lucide-react";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import FeedbackWidget from "./FeedbackWidget";
 import Tip from "./Tip";
+import { useAuth } from "../contexts/AuthContext";
 
 const THREAT_ICONS = {
   "Insurgency": Target,
@@ -111,11 +112,52 @@ function FadingBadge({ item }) {
   );
 }
 
-export default function IntelligenceCard({ item, compact = false, api, feedbackData, onDelete }) {
+export default function IntelligenceCard({ item, compact = false, api, feedbackData, onDelete, onEnhanced }) {
   const [expanded, setExpanded] = useState(false);
   const [sourcesExpanded, setSourcesExpanded] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [reprocessing, setReprocessing] = useState(false);
+  const [editingNote, setEditingNote] = useState(false);
+  const [noteText, setNoteText] = useState(item.analyst_enhancement?.analyst_note || "");
+  const [savingNote, setSavingNote] = useState(false);
+  const { user } = useAuth();
+
+  const canEnhance = user && (user.role === "analyst" || user.role === "admin");
+  const enhancement = item.analyst_enhancement;
+
+  const handleSaveNote = async () => {
+    if (!noteText.trim()) return;
+    setSavingNote(true);
+    try {
+      const token = localStorage.getItem("rd_token");
+      const res = await axios.patch(
+        `${api}/intelligence/${item.id}/enhance`,
+        { analyst_note: noteText.trim() },
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
+      toast.success("Enhancement saved");
+      setEditingNote(false);
+      if (onEnhanced) onEnhanced(item.id, res.data.analyst_enhancement);
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Save failed");
+    }
+    setSavingNote(false);
+  };
+
+  const handleRemoveNote = async () => {
+    if (!window.confirm("Remove analyst enhancement from this item?")) return;
+    try {
+      const token = localStorage.getItem("rd_token");
+      await axios.delete(`${api}/intelligence/${item.id}/enhance`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      toast.success("Enhancement removed");
+      setNoteText("");
+      if (onEnhanced) onEnhanced(item.id, null);
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Remove failed");
+    }
+  };
 
   const handleReprocess = async (e) => {
     e.stopPropagation();
@@ -139,6 +181,39 @@ export default function IntelligenceCard({ item, compact = false, api, feedbackD
       className={`intel-card ${borderClass} p-4 animate-slide-in ${item.severity === "critical" ? "glow-critical" : ""} ${fadeOpacity} transition-opacity duration-500`}
       data-testid={`intel-card-${item.id}`}
     >
+      {/* Manually Enhanced badge */}
+      {enhancement?.is_enhanced && (
+        <div className="flex items-center justify-between mb-2 px-2 py-1 bg-violet-500/15 border border-violet-500/40 rounded-sm">
+          <div className="flex items-center gap-1.5">
+            <Pencil size={10} className="text-violet-400" />
+            <span className="text-[10px] uppercase tracking-widest font-bold text-violet-300">Manually Enhanced</span>
+            {enhancement.enhanced_by_name && (
+              <span className="text-[10px] text-violet-400/70 font-mono">
+                — {enhancement.enhanced_by_name}
+              </span>
+            )}
+          </div>
+          {canEnhance && (
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => { setNoteText(enhancement.analyst_note || ""); setEditingNote(true); setExpanded(true); }}
+                className="p-0.5 text-violet-400/60 hover:text-violet-300 transition-colors"
+                title="Edit enhancement"
+              >
+                <Pencil size={10} />
+              </button>
+              <button
+                onClick={handleRemoveNote}
+                className="p-0.5 text-violet-400/60 hover:text-red-400 transition-colors"
+                title="Remove enhancement"
+              >
+                <X size={10} />
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex items-start justify-between gap-3 mb-2">
         <div className="flex items-start gap-2 flex-1 min-w-0">
@@ -460,6 +535,58 @@ export default function IntelligenceCard({ item, compact = false, api, feedbackD
                   </div>
                 </Tip>
               )}
+              {/* Analyst Note display */}
+              {enhancement?.analyst_note && !editingNote && (
+                <div className="p-2.5 bg-violet-500/10 border border-violet-500/30 rounded space-y-1">
+                  <p className="text-[10px] uppercase tracking-widest text-violet-400 font-mono">Analyst Note</p>
+                  <p className="text-sm text-violet-100 leading-relaxed whitespace-pre-wrap">{enhancement.analyst_note}</p>
+                  <p className="text-[10px] text-violet-400/60 font-mono">
+                    {enhancement.enhanced_by_name} · {enhancement.enhanced_at ? new Date(enhancement.enhanced_at).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }) : ""}
+                  </p>
+                </div>
+              )}
+
+              {/* Inline editor */}
+              {editingNote && (
+                <div className="space-y-2">
+                  <p className="text-[10px] uppercase tracking-widest text-violet-400 font-mono">Analyst Note</p>
+                  <textarea
+                    className="w-full min-h-[100px] p-2 text-sm bg-background border border-violet-500/40 rounded resize-y focus:outline-none focus:border-violet-400 text-foreground font-mono"
+                    value={noteText}
+                    onChange={(e) => setNoteText(e.target.value)}
+                    placeholder="Add your analysis, ground-truth corrections, or operational context here…"
+                    maxLength={4000}
+                  />
+                  <div className="flex items-center gap-2 justify-between">
+                    <span className="text-[10px] text-muted-foreground font-mono">{noteText.length}/4000</span>
+                    <div className="flex gap-2">
+                      <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setEditingNote(false)}>
+                        Cancel
+                      </Button>
+                      <Button
+                        size="sm"
+                        className="h-7 text-xs bg-violet-600 hover:bg-violet-500 text-white"
+                        onClick={handleSaveNote}
+                        disabled={savingNote || !noteText.trim()}
+                      >
+                        {savingNote ? "Saving…" : <><Check size={12} className="mr-1" /> Save</>}
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Add enhancement button (only if not yet enhanced or currently no note) */}
+              {canEnhance && api && !editingNote && !enhancement?.is_enhanced && (
+                <button
+                  onClick={() => { setEditingNote(true); setNoteText(""); }}
+                  className="inline-flex items-center gap-1 text-xs text-violet-400/70 hover:text-violet-300 transition-colors"
+                  data-testid="add-enhancement-btn"
+                >
+                  <Pencil size={11} /> Add analyst note
+                </button>
+              )}
+
               {item.source_url && (
                 <a
                   href={item.source_url}

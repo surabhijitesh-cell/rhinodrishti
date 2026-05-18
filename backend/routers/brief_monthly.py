@@ -70,7 +70,7 @@ async def _aggregate_month_stats(year: int, month: int) -> dict:
         "total": 0, "sev_counts": Counter(),
         "actors": Counter(), "locations": Counter(),
         "categories": Counter(), "daily": Counter(),
-        "critical_items": [], "high_items": [],
+        "critical_items": [], "high_items": [], "analyst_notes": [],
     })
     overall_actors    = Counter()
     overall_locations = Counter()
@@ -80,7 +80,7 @@ async def _aggregate_month_stats(year: int, month: int) -> dict:
 
     async for item in intelligence_col.find(q, {
         "id": 1, "title": 1, "severity": 1, "state": 1, "threat_category": 1,
-        "published_at": 1, "entities": 1, "summary": 1, "_id": 0,
+        "published_at": 1, "entities": 1, "summary": 1, "analyst_enhancement": 1, "_id": 0,
     }):
         total += 1
         sev = item.get("severity") or "low"
@@ -128,6 +128,15 @@ async def _aggregate_month_stats(year: int, month: int) -> dict:
                     "id": item.get("id"), "title": (item.get("title") or "")[:200],
                     "date": pub_date,
                 })
+            enh = item.get("analyst_enhancement") or {}
+            if enh.get("is_enhanced") and enh.get("analyst_note") and len(s["analyst_notes"]) < 6:
+                s["analyst_notes"].append({
+                    "note": enh["analyst_note"][:500],
+                    "by": enh.get("enhanced_by_name", "Analyst"),
+                    "date": pub_date,
+                    "item_title": (item.get("title") or "")[:150],
+                    "severity": sev,
+                })
 
     # Convert per-state Counters to ordered lists for JSON
     states_out = {}
@@ -141,6 +150,7 @@ async def _aggregate_month_stats(year: int, month: int) -> dict:
             "daily_volume":   sorted(s["daily"].items()),
             "critical_items": s["critical_items"],
             "high_items":     s["high_items"],
+            "analyst_notes":  s["analyst_notes"],
         }
 
     # Stability score per state (reusing the trends scoring formula)
@@ -244,6 +254,14 @@ def _state_section_prompt(state: str, state_data: dict, stability_entry: dict, m
     crits = "\n".join([f"  - [{c['date']}] {c['title']}" for c in state_data.get("critical_items", [])[:5]])
     highs = "\n".join([f"  - [{h['date']}] {h['title']}" for h in state_data.get("high_items", [])[:5]])
 
+    notes = state_data.get("analyst_notes", [])
+    analyst_notes_block = ""
+    if notes:
+        lines = []
+        for n in notes:
+            lines.append(f"  - [{n['date']}] ({n['severity'].upper()}) re: \"{n['item_title']}\" — {n['note']} [Analyst: {n['by']}]")
+        analyst_notes_block = "\nANALYST ENHANCEMENTS (ground-truth corrections / human intelligence from field analysts — treat as highest-confidence inputs and incorporate into your assessment):\n" + "\n".join(lines)
+
     return f"""You are the State Analyst for {state} on the NER Theatre Command intel desk. Write the {state} section of the monthly brief for {month_name}.
 
 DATA:
@@ -259,7 +277,7 @@ CRITICAL incidents this month (top 5):
 
 HIGH-severity incidents this month (top 5):
 {highs or "  (none)"}
-
+{analyst_notes_block}
 REQUIRED OUTPUT — return STRICT JSON only (no markdown fences, no commentary). Schema:
 {{
   "severity_summary":   "2-3 sentences on severity profile, trajectory, and stability assessment with [LABEL] tags.",

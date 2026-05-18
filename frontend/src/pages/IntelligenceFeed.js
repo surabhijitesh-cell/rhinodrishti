@@ -126,6 +126,14 @@ export default function IntelligenceFeed({ api, crossBorderOnly = false, alertsO
     fetchFeedback();
   }, [items, api]);
 
+  const handleEnhanced = (itemId, enhancement) => {
+    setItems((prev) => prev.map((item) =>
+      item.id === itemId
+        ? { ...item, analyst_enhancement: enhancement || undefined }
+        : item
+    ));
+  };
+
   const handleDeleteItem = async (itemId) => {
     try {
       await axios.delete(`${api}/intelligence/${itemId}`);
@@ -406,7 +414,7 @@ export default function IntelligenceFeed({ api, crossBorderOnly = false, alertsO
         <>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4" data-testid="intelligence-items-grid">
             {items.map((item) => (
-              <IntelligenceCard key={item.id} item={item} api={api} feedbackData={feedbackMap[item.id]} onDelete={handleDeleteItem} />
+              <IntelligenceCard key={item.id} item={item} api={api} feedbackData={feedbackMap[item.id]} onDelete={handleDeleteItem} onEnhanced={handleEnhanced} />
             ))}
           </div>
 

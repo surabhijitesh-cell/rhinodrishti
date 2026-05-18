@@ -1,7 +1,8 @@
 """Intelligence feed, alerts, acknowledgement, semantic search, embeddings, patterns."""
-from fastapi import APIRouter, Query, HTTPException, BackgroundTasks
+from fastapi import APIRouter, Query, HTTPException, BackgroundTasks, Depends
 from typing import Optional
 from datetime import datetime, timezone, timedelta
+from utils.auth import get_current_user
 from shared import (
     db, intelligence_col, patterns_col, _stats_cache, STATS_CACHE_TTL,
     invalidate_stats_cache, SEVERITY_LEVELS, logger,
@@ -762,6 +763,72 @@ async def reprocess_item(item_id: str, background_tasks: BackgroundTasks):
     background_tasks.add_task(_run_classify)
 
     return {"message": "Item queued for re-classification", "id": item_id, "title": existing.get("title", "")}
+
+
+@router.patch("/intelligence/{item_id}/enhance")
+async def enhance_intelligence_item(
+    item_id: str,
+    body: dict,
+    current_user: dict = Depends(get_current_user),
+):
+    """Analyst enhancement — adds or updates the analyst_enhancement sub-document.
+
+    Only analysts and admins may enhance. Viewers are read-only.
+    The original AI analysis fields are never touched — enhancement is additive only.
+    AI reprocess jobs do not overwrite analyst_enhancement.
+    """
+    if current_user.get("role") not in ("analyst", "admin"):
+        raise HTTPException(status_code=403, detail="Only analysts and admins can enhance intelligence items")
+
+    analyst_note = (body.get("analyst_note") or "").strip()
+    if not analyst_note:
+        raise HTTPException(status_code=400, detail="analyst_note must not be empty")
+    if len(analyst_note) > 4000:
+        raise HTTPException(status_code=400, detail="analyst_note must be 4000 characters or fewer")
+
+    existing = await intelligence_col.find_one({"id": item_id}, {"_id": 0, "title": 1})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Item not found")
+
+    enhancement = {
+        "is_enhanced": True,
+        "analyst_note": analyst_note,
+        "enhanced_by": current_user["id"],
+        "enhanced_by_name": current_user.get("name") or current_user.get("username", ""),
+        "enhanced_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+    await intelligence_col.update_one(
+        {"id": item_id},
+        {"$set": {"analyst_enhancement": enhancement}},
+    )
+    logger.info(f"Item {item_id} enhanced by {current_user['id']} ({current_user.get('username', '')})")
+    return {"message": "Enhancement saved", "id": item_id, "analyst_enhancement": enhancement}
+
+
+@router.delete("/intelligence/{item_id}/enhance")
+async def remove_enhancement(
+    item_id: str,
+    current_user: dict = Depends(get_current_user),
+):
+    """Remove analyst enhancement from an item. Analysts can remove their own; admins can remove any."""
+    if current_user.get("role") not in ("analyst", "admin"):
+        raise HTTPException(status_code=403, detail="Only analysts and admins can modify enhancements")
+
+    existing = await intelligence_col.find_one({"id": item_id}, {"_id": 0, "analyst_enhancement": 1})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Item not found")
+
+    enh = existing.get("analyst_enhancement") or {}
+    if current_user.get("role") == "analyst" and enh.get("enhanced_by") != current_user["id"]:
+        raise HTTPException(status_code=403, detail="Analysts can only remove their own enhancements")
+
+    await intelligence_col.update_one(
+        {"id": item_id},
+        {"$unset": {"analyst_enhancement": ""}},
+    )
+    logger.info(f"Enhancement removed from {item_id} by {current_user['id']}")
+    return {"message": "Enhancement removed", "id": item_id}
 
 
 @router.get("/fusion/stats")
