@@ -27,8 +27,8 @@ const tooltipStyle = {
 // Format claim labels with color hints
 function renderLabeledText(text) {
   if (!text) return null;
-  // Replace [CONFIRMED] / [ASSESSED] / [SPECULATIVE] with styled spans
-  const parts = text.split(/(\[(?:CONFIRMED|ASSESSED|SPECULATIVE)\])/g);
+  const str = typeof text === "string" ? text : String(text);
+  const parts = str.split(/(\[(?:CONFIRMED|ASSESSED|SPECULATIVE)\])/g);
   return parts.map((p, i) => {
     if (p === "[CONFIRMED]")   return <span key={i} className="inline-block text-[8px] font-mono px-1 py-px ml-0.5 mr-0.5 bg-emerald-500/15 text-emerald-400 border border-emerald-500/40 align-middle">CONFIRMED</span>;
     if (p === "[ASSESSED]")    return <span key={i} className="inline-block text-[8px] font-mono px-1 py-px ml-0.5 mr-0.5 bg-amber-500/15  text-amber-400  border border-amber-500/40  align-middle">ASSESSED</span>;
