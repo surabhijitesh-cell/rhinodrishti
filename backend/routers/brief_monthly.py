@@ -565,7 +565,17 @@ async def _run_generation(year: int, month: int) -> dict:
         state_section_tasks.append(_call_llm_json(_state_section_prompt(st, sd, stab, month_name), max_tokens=600))
 
     state_results = await asyncio.gather(*state_section_tasks)
-    state_sections = {st: res for st, res in zip(target_states, state_results) if res}
+    _STR_FIELDS = {"severity_summary", "escalation_pattern", "key_actors", "district_hotspots", "operational_concerns"}
+    def _coerce_state_section(sec: dict) -> dict:
+        """LLM sometimes returns list for fields that should be strings. Coerce."""
+        for f in _STR_FIELDS:
+            v = sec.get(f)
+            if isinstance(v, list):
+                sec[f] = "; ".join(str(x) for x in v)
+            elif v is not None and not isinstance(v, str):
+                sec[f] = str(v)
+        return sec
+    state_sections = {st: _coerce_state_section(res) for st, res in zip(target_states, state_results) if res}
 
     # 2c. Mitigation playbook (parallel — only for states with concern level >= ELEVATED)
     mitigation_tasks = []
@@ -692,10 +702,14 @@ async def get_monthly_brief_pdf(year: int, month: int):
 
 # ── PDF rendering ─────────────────────────────────────────────────────────────
 
-def _ascii(s: str) -> str:
+def _ascii(s) -> str:
     """fpdf2 default fonts are Latin-1 — strip non-encodable chars."""
     if not s:
         return ""
+    if isinstance(s, list):
+        s = "; ".join(str(x) for x in s)
+    elif not isinstance(s, str):
+        s = str(s)
     replacements = {
         '“': '"', '”': '"', '‘': "'", '’': "'",
         '–': '-', '—': '-', '…': '...', '•': '*',
