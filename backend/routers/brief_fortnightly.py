@@ -458,7 +458,12 @@ async def get_fortnightly_pdf(year: int, month: int, period: int):
         raise HTTPException(404, "Brief not generated")
     if brief.get("status") != "ready":
         raise HTTPException(425, f"Brief status: {brief.get('status')} — wait for generation")
-    pdf_bytes = _render_pdf(brief)
+    try:
+        pdf_bytes = _render_pdf(brief)
+    except Exception as e:
+        import traceback
+        logger.error(f"Fortnightly PDF render failed: {traceback.format_exc()}")
+        raise HTTPException(500, f"PDF render error: {type(e).__name__}: {e}")
     label = brief.get("period_label", f"{year}-{month:02d}-P{period}").replace(" ", "_").replace("-", "_")
     filename = f"NER_Fortnightly_Brief_{label}.pdf"
     return StreamingResponse(

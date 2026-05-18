@@ -776,7 +776,12 @@ async def get_monthly_brief_pdf(year: int, month: int):
     if brief.get("status") != "ready":
         raise HTTPException(425, f"Brief status: {brief.get('status')} — wait for generation to complete")
 
-    pdf_bytes = _render_pdf(brief)
+    try:
+        pdf_bytes = _render_pdf(brief)
+    except Exception as e:
+        import traceback
+        logger.error(f"PDF render failed: {traceback.format_exc()}")
+        raise HTTPException(500, f"PDF render error: {type(e).__name__}: {e}")
     filename = f"NER_Monthly_Brief_{year}_{month:02d}.pdf"
     return StreamingResponse(
         io.BytesIO(pdf_bytes), media_type="application/pdf",
