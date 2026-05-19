@@ -840,7 +840,7 @@ def _render_pdf(brief: dict) -> bytes:
         f"Critical: {stats.get('sev_counts', {}).get('critical', 0)} | "
         f"High: {stats.get('sev_counts', {}).get('high', 0)} | "
         f"Cross-border: {stats.get('cross_border_count', 0)}"
-    ))
+    ), **NL)
     pdf.ln(2)
 
     # Stability ranking
@@ -855,7 +855,7 @@ def _render_pdf(brief: dict) -> bytes:
     pdf.set_font("Helvetica", "B", 12)
     pdf.cell(0, 7, "Executive Strategic Assessment", **NL)
     pdf.set_font("Helvetica", "", 10)
-    pdf.multi_cell(0, 5, _ascii(brief.get("executive_summary", "")))
+    pdf.multi_cell(0, 5, _ascii(brief.get("executive_summary", "")), **NL)
     pdf.ln(3)
 
     # State sections
@@ -878,7 +878,7 @@ def _render_pdf(brief: dict) -> bytes:
                 pdf.set_font("Helvetica", "B", 10)
                 pdf.cell(0, 5, _ascii(label), **NL)
                 pdf.set_font("Helvetica", "", 10)
-                pdf.multi_cell(0, 5, _ascii(v))
+                pdf.multi_cell(0, 5, _ascii(v), **NL)
                 pdf.ln(1)
         pdf.ln(2)
 
@@ -892,8 +892,8 @@ def _render_pdf(brief: dict) -> bytes:
             pdf.set_font("Helvetica", "B", 10)
             pdf.cell(0, 5, _ascii(f"{row['threat']} ({row['severity']} / Prob: {row['probability']})"), **NL)
             pdf.set_font("Helvetica", "", 9)
-            pdf.multi_cell(0, 4, _ascii(f"  Action: {row['action']}"))
-            pdf.multi_cell(0, 4, _ascii(f"  Lead: {row['lead_agency']} | Horizon: {row['time_horizon']}"))
+            pdf.multi_cell(0, 4, _ascii(f"  Action: {row['action']}"), **NL)
+            pdf.multi_cell(0, 4, _ascii(f"  Lead: {row['lead_agency']} | Horizon: {row['time_horizon']}"), **NL)
             pdf.ln(1)
 
     # Scenarios
@@ -905,7 +905,7 @@ def _render_pdf(brief: dict) -> bytes:
             pdf.set_font("Helvetica", "B", 10)
             pdf.cell(0, 5, _ascii(f"{sc.get('title', 'Scenario')} (conf {sc.get('confidence_pct', '?')}%, {sc.get('horizon', 'H+30')})"), **NL)
             pdf.set_font("Helvetica", "", 9)
-            pdf.multi_cell(0, 4, _ascii(sc.get("narrative", "")))
+            pdf.multi_cell(0, 4, _ascii(sc.get("narrative", "")), **NL)
             if sc.get("warning_indicators"):
                 pdf.set_font("Helvetica", "I", 8)
                 for w in sc["warning_indicators"]:
@@ -929,7 +929,7 @@ def _render_pdf(brief: dict) -> bytes:
                 pdf.cell(0, 5, _ascii(label + ":"), **NL)
                 pdf.set_font("Helvetica", "", 9)
                 for a in actions:
-                    pdf.multi_cell(0, 4, _ascii(f"  - {a.get('action', '')} | Lead: {a.get('lead_agency', '')}"))
+                    pdf.multi_cell(0, 4, _ascii(f"  - {a.get('action', '')} | Lead: {a.get('lead_agency', '')}"), **NL)
                 pdf.ln(1)
             pdf.ln(2)
 
@@ -960,7 +960,7 @@ def _render_pdf(brief: dict) -> bytes:
                     pdf.set_font("Helvetica", "B", 9)
                     pdf.cell(0, 4, _ascii(label + ":"), **NL)
                     pdf.set_font("Helvetica", "", 9)
-                    pdf.multi_cell(0, 4, _ascii(v))
+                    pdf.multi_cell(0, 4, _ascii(v), **NL)
             pdf.ln(2)
 
     # Contacts
@@ -968,19 +968,19 @@ def _render_pdf(brief: dict) -> bytes:
     pdf.set_font("Helvetica", "B", 13)
     pdf.cell(0, 7, "Contact Directory", **NL)
     pdf.set_font("Helvetica", "I", 8)
-    pdf.multi_cell(0, 4, _ascii("Public offices only — verify incumbent via state .gov.in portal."))
+    pdf.multi_cell(0, 4, _ascii("Public offices only — verify incumbent via state .gov.in portal."), **NL)
     pdf.ln(2)
     for state, c_block in brief.get("contact_directory", {}).items():
         pdf.set_font("Helvetica", "B", 10)
         pdf.cell(0, 5, _ascii(state), **NL)
         pdf.set_font("Helvetica", "", 9)
         for c in c_block.get("state_contacts", []):
-            pdf.multi_cell(0, 4, _ascii(f"  {c['office']} ({c['hq']}) - {c['phone']} | {c['email']}"))
+            pdf.multi_cell(0, 4, _ascii(f"  {c['office']} ({c['hq']}) - {c['phone']} | {c['email']}"), **NL)
         pdf.ln(1)
     pdf.set_font("Helvetica", "B", 10)
     pdf.cell(0, 5, "Regional / National", **NL)
     pdf.set_font("Helvetica", "", 9)
     for c in NER_REGIONAL_CONTACTS:
-        pdf.multi_cell(0, 4, _ascii(f"  {c['office']} ({c['hq']}) - {c['phone']} | {c['email']}"))
+        pdf.multi_cell(0, 4, _ascii(f"  {c['office']} ({c['hq']}) - {c['phone']} | {c['email']}"), **NL)
 
     return bytes(pdf.output())
