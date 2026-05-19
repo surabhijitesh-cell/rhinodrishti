@@ -458,8 +458,23 @@ async def get_fortnightly_pdf(year: int, month: int, period: int):
         raise HTTPException(404, "Brief not generated")
     if brief.get("status") != "ready":
         raise HTTPException(425, f"Brief status: {brief.get('status')} — wait for generation")
+
+    # Fetch previous period for recap section
+    if period == 2:
+        # P2 → recap P1 of same month
+        prev_brief = await fortnightly_briefs_col.find_one(
+            {"year": year, "month": month, "period": 1, "status": "ready"}, {"_id": 0}
+        )
+    else:
+        # P1 → recap P2 of previous month
+        prev_year  = year if month > 1 else year - 1
+        prev_month = month - 1 if month > 1 else 12
+        prev_brief = await fortnightly_briefs_col.find_one(
+            {"year": prev_year, "month": prev_month, "period": 2, "status": "ready"}, {"_id": 0}
+        )
+
     try:
-        pdf_bytes = _render_pdf(brief)
+        pdf_bytes = _render_pdf(brief, prev_brief=prev_brief)
     except Exception as e:
         import traceback
         logger.error(f"Fortnightly PDF render failed: {traceback.format_exc()}")
