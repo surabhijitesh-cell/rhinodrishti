@@ -141,6 +141,21 @@ async def _deferred_init(item_count: int):
     except Exception as e:
         logger.warning(f"Deferred seed failed: {e}")
 
+    # App update history seeding — inserts any missing versions, skips existing
+    try:
+        from seed_updates import UPDATES
+        inserted = 0
+        for u in UPDATES:
+            existing = await db.app_updates.find_one({"version": u["version"]})
+            if not existing:
+                import uuid as _uuid
+                await db.app_updates.insert_one({"id": str(_uuid.uuid4()), **u})
+                inserted += 1
+        if inserted:
+            logger.info(f"App updates seeded: {inserted} new version(s) added")
+    except Exception as e:
+        logger.warning(f"App updates seed failed: {e}")
+
     # Initial fetch only when DB is truly empty
     if item_count == 0:
         logger.info("Empty database — triggering initial fetch…")
