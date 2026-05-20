@@ -765,6 +765,28 @@ async def list_monthly_briefs():
     return {"briefs": [b async for b in cursor]}
 
 
+@router.get("/brief/monthly/stability-history")
+async def monthly_stability_history():
+    """Return stability scores + sev_counts for all ready monthly briefs (for trend chart)."""
+    cursor = monthly_briefs_col.find(
+        {"status": {"$in": ["ready", "partial"]}},
+        {"_id": 0, "year": 1, "month": 1,
+         "stats.stability": 1, "stats.sev_counts": 1, "stats.total": 1},
+    ).sort([("year", 1), ("month", 1)])
+    results = []
+    async for b in cursor:
+        stats = b.get("stats") or {}
+        results.append({
+            "year": b["year"],
+            "month": b["month"],
+            "label": datetime(b["year"], b["month"], 1).strftime("%b %Y"),
+            "stability": stats.get("stability", []),
+            "sev_counts": stats.get("sev_counts", {}),
+            "total": stats.get("total", 0),
+        })
+    return {"history": results}
+
+
 @router.get("/brief/monthly/{year}/{month}")
 async def get_monthly_brief(year: int, month: int):
     brief = await monthly_briefs_col.find_one({"year": year, "month": month}, {"_id": 0})

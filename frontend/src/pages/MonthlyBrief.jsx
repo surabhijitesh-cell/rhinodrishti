@@ -9,8 +9,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card"
 import { Button } from "../components/ui/button";
 import Tip from "../components/Tip";
 import {
-  AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip,
-  ResponsiveContainer, Legend, Cell,
+  AreaChart, Area, BarChart, Bar, LineChart, Line,
+  XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, Cell,
 } from "recharts";
 
 const SEVERITY_COLORS = {
@@ -48,9 +48,11 @@ export default function MonthlyBrief({ api }) {
   const init = previousMonth();
   const [year, setYear]       = useState(init.year);
   const [month, setMonth]     = useState(init.month);
-  const [brief, setBrief]     = useState(null);
+  const [brief, setBrief]         = useState(null);
   const [prevBrief, setPrevBrief] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [history, setHistory]     = useState([]);
+  const [selPeriods, setSelPeriods] = useState(null); // null = last 6 auto-selected
+  const [loading, setLoading]     = useState(true);
   const [generating, setGenerating] = useState(false);
   const [error, setError]     = useState(null);
   const [openStates, setOpenStates] = useState({});
@@ -82,7 +84,7 @@ export default function MonthlyBrief({ api }) {
       setGenerating(false);
     }
     setLoading(false);
-    // Fetch previous month brief silently (for comparison table)
+    // Fetch previous month brief silently (for comparison)
     try {
       const pr = await axios.get(`${api}/brief/monthly/${prevYear}/${prevMonth}`);
       if (pr.data?.status === "ready" || pr.data?.status === "partial") {
@@ -92,6 +94,13 @@ export default function MonthlyBrief({ api }) {
       }
     } catch {
       setPrevBrief(null);
+    }
+    // Fetch full stability history for trend chart
+    try {
+      const hr = await axios.get(`${api}/brief/monthly/stability-history`);
+      setHistory(hr.data?.history || []);
+    } catch {
+      setHistory([]);
     }
   }, [api, year, month, prevYear, prevMonth]);
 
@@ -264,63 +273,109 @@ export default function MonthlyBrief({ api }) {
     </Card>
   );
 
-  const renderPrevComparison = () => {
-    if (!prevBrief) return null;
-    const currStab = brief?.stats?.stability || [];
-    const prevStab = prevBrief?.stats?.stability || [];
-    const currMap  = Object.fromEntries(currStab.map(s => [s.state, s]));
-    const prevMap  = Object.fromEntries(prevStab.map(s => [s.state, s]));
-    const states   = [...new Set([...prevStab.map(s => s.state), ...currStab.map(s => s.state)])];
-    if (!states.length) return null;
+  const renderStabilityHistory = () => {
+    if (!history.length) return null;
+
+    // All states across all periods
+    const allStates = [...new Set(history.flatMap(h => h.stability.map(s => s.state)))].sort();
+
+    // Period toggle — default last 6
+    const allLabels = history.map(h => h.label);
+    const defaultSel = new Set(allLabels.slice(-6));
+    const active = selPeriods ?? defaultSel;
+
+    // Build chart data: one row per period, columns = state scores
+    const chartData = history
+      .filter(h => active.has(h.label))
+      .map(h => {
+        const row = { label: h.label };
+        const stab = Object.fromEntries(h.stability.map(s => [s.state, s.score]));
+        allStates.forEach(st => { row[st] = stab[st] ?? null; });
+        return row;
+      });
+
+    // State line colors — cycle through distinct hues
+    const STATE_COLORS = [
+      "#a3e635","#38bdf8","#f87171","#fb923c","#fbbf24",
+      "#34d399","#c084fc","#f472b6","#67e8f9","#86efac",
+    ];
+
+    const togglePeriod = (lbl) => {
+      const next = new Set(active);
+      if (next.has(lbl)) { if (next.size > 1) next.delete(lbl); }
+      else next.add(lbl);
+      setSelPeriods(next);
+    };
+    const selectAll  = () => setSelPeriods(new Set(allLabels));
+    const selectLast = (n) => setSelPeriods(new Set(allLabels.slice(-n)));
 
     return (
       <Card className="border border-border rounded-none bg-card">
         <CardHeader className="py-3 px-4 border-b border-border">
           <CardTitle className="text-sm uppercase tracking-wider font-['Barlow_Condensed'] font-semibold flex items-center gap-2">
-            <TrendingUp size={16} className="text-primary" /> Stability Comparison — {prevMonthLabel} → {monthLabel}
+            <TrendingUp size={16} className="text-primary" /> Stability Trend — Historical
           </CardTitle>
         </CardHeader>
-        <CardContent className="p-0">
-          <table className="w-full text-xs font-mono">
-            <thead>
-              <tr className="border-b border-border bg-muted/40">
-                <th className="text-left px-3 py-2 text-muted-foreground uppercase tracking-wider font-semibold">State</th>
-                <th className="text-center px-3 py-2 text-muted-foreground uppercase tracking-wider font-semibold">{prevMonthLabel.split(" ")[0]} Score</th>
-                <th className="text-center px-3 py-2 text-muted-foreground uppercase tracking-wider font-semibold">Level</th>
-                <th className="text-center px-3 py-2 text-muted-foreground uppercase tracking-wider font-semibold">{monthLabel.split(" ")[0]} Score</th>
-                <th className="text-center px-3 py-2 text-muted-foreground uppercase tracking-wider font-semibold">Level</th>
-                <th className="text-center px-3 py-2 text-muted-foreground uppercase tracking-wider font-semibold">Trend</th>
-              </tr>
-            </thead>
-            <tbody>
-              {states.map((st, i) => {
-                const p = prevMap[st] || {};
-                const c = currMap[st] || {};
-                const pScore = p.score ?? "-";
-                const cScore = c.score ?? "-";
-                const delta  = (typeof cScore === "number" && typeof pScore === "number") ? cScore - pScore : null;
-                const deltaColor = delta === null ? "text-muted-foreground"
-                                 : delta > 0     ? "text-emerald-400"
-                                 : delta < 0     ? "text-red-400"
-                                 :                 "text-muted-foreground";
-                const deltaStr = delta === null ? "—" : delta > 0 ? `+${delta}` : String(delta);
-                return (
-                  <tr key={st} className={`border-b border-border/50 ${i % 2 === 0 ? "bg-background" : "bg-muted/10"}`}>
-                    <td className="px-3 py-1.5 font-semibold uppercase tracking-wide text-[11px]">{st}</td>
-                    <td className="px-3 py-1.5 text-center" style={{ color: CONCERN_COLOR[p.level] || "inherit" }}>{pScore}</td>
-                    <td className="px-3 py-1.5 text-center">
-                      {p.level ? <span className="text-[9px] px-1 py-px" style={{ background: `${CONCERN_COLOR[p.level]}22`, color: CONCERN_COLOR[p.level], border: `1px solid ${CONCERN_COLOR[p.level]}55` }}>{p.level}</span> : "—"}
-                    </td>
-                    <td className="px-3 py-1.5 text-center" style={{ color: CONCERN_COLOR[c.level] || "inherit" }}>{cScore}</td>
-                    <td className="px-3 py-1.5 text-center">
-                      {c.level ? <span className="text-[9px] px-1 py-px" style={{ background: `${CONCERN_COLOR[c.level]}22`, color: CONCERN_COLOR[c.level], border: `1px solid ${CONCERN_COLOR[c.level]}55` }}>{c.level}</span> : "—"}
-                    </td>
-                    <td className={`px-3 py-1.5 text-center font-bold ${deltaColor}`}>{deltaStr}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+        <CardContent className="p-4 space-y-3">
+          {/* Period toggles */}
+          <div className="flex flex-wrap gap-1 items-center">
+            <span className="text-[9px] font-mono uppercase text-muted-foreground mr-1">Periods:</span>
+            {[3,6,12].map(n => (
+              <button key={n} onClick={() => selectLast(n)}
+                className="text-[9px] font-mono uppercase px-2 py-0.5 border border-border hover:border-primary hover:text-primary transition-colors">
+                Last {n}
+              </button>
+            ))}
+            <button onClick={selectAll}
+              className="text-[9px] font-mono uppercase px-2 py-0.5 border border-border hover:border-primary hover:text-primary transition-colors">
+              All
+            </button>
+            <span className="text-[9px] font-mono text-muted-foreground mx-1">|</span>
+            {allLabels.map(lbl => (
+              <button key={lbl} onClick={() => togglePeriod(lbl)}
+                className={`text-[9px] font-mono px-2 py-0.5 border transition-colors ${
+                  active.has(lbl)
+                    ? "border-primary text-primary bg-primary/10"
+                    : "border-border text-muted-foreground"
+                }`}>
+                {lbl}
+              </button>
+            ))}
+          </div>
+
+          {/* Chart */}
+          <div style={{ height: 280 }}>
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={chartData} margin={{ top: 4, right: 8, bottom: 20, left: 0 }}>
+                <XAxis dataKey="label" tick={{ fontSize: 9, fill: "#888", fontFamily: "monospace" }}
+                  angle={-35} textAnchor="end" interval={0} />
+                <YAxis domain={[0, 100]} tick={{ fontSize: 9, fill: "#888" }}
+                  tickLine={false} axisLine={false} width={28} />
+                <Tooltip
+                  contentStyle={{ background: "hsl(120,10%,8%)", border: "1px solid hsl(120,5%,20%)", borderRadius: 0, fontSize: 10 }}
+                  labelStyle={{ color: "#b4db50", fontFamily: "monospace", fontSize: 10, marginBottom: 4 }}
+                  itemStyle={{ fontFamily: "monospace", fontSize: 10 }}
+                  formatter={(val, name) => [val !== null ? `${val}/100` : "—", name]}
+                />
+                <Legend wrapperStyle={{ fontSize: 9, fontFamily: "monospace", paddingTop: 8 }} />
+                {/* Threshold reference bands rendered as faint grid */}
+                {allStates.map((st, i) => (
+                  <Line key={st} type="monotone" dataKey={st}
+                    stroke={STATE_COLORS[i % STATE_COLORS.length]}
+                    strokeWidth={1.5} dot={{ r: 3, strokeWidth: 0 }}
+                    activeDot={{ r: 5 }} connectNulls={false} />
+                ))}
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+
+          {/* Zone legend */}
+          <div className="flex gap-4 text-[9px] font-mono text-muted-foreground border-t border-border pt-2">
+            <span><span className="inline-block w-2 h-2 mr-1 align-middle" style={{background:"#a3e635"}}/>75–100 Stable</span>
+            <span><span className="inline-block w-2 h-2 mr-1 align-middle" style={{background:"#eab308"}}/>50–74 Monitor</span>
+            <span><span className="inline-block w-2 h-2 mr-1 align-middle" style={{background:"#f59e0b"}}/>25–49 Elevated</span>
+            <span><span className="inline-block w-2 h-2 mr-1 align-middle" style={{background:"#ef4444"}}/>0–24 Critical</span>
+          </div>
         </CardContent>
       </Card>
     );
@@ -735,7 +790,7 @@ export default function MonthlyBrief({ api }) {
         <>
           {renderOverview()}
           {renderStability()}
-          {renderPrevComparison()}
+          {renderStabilityHistory()}
           {renderExecSummary()}
           {renderStateSections()}
           {renderCrossBorder()}

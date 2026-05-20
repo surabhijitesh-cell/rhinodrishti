@@ -432,6 +432,29 @@ async def list_fortnightly_briefs():
     return {"briefs": [b async for b in cursor]}
 
 
+@router.get("/brief/fortnightly/stability-history")
+async def fortnightly_stability_history():
+    """Return stability scores + sev_counts for all ready fortnightly briefs (for trend chart)."""
+    cursor = fortnightly_briefs_col.find(
+        {"status": {"$in": ["ready", "partial"]}},
+        {"_id": 0, "year": 1, "month": 1, "period": 1, "period_label": 1,
+         "stats.stability": 1, "stats.sev_counts": 1, "stats.total": 1},
+    ).sort([("year", 1), ("month", 1), ("period", 1)])
+    results = []
+    async for b in cursor:
+        stats = b.get("stats") or {}
+        results.append({
+            "year": b["year"],
+            "month": b["month"],
+            "period": b["period"],
+            "label": b.get("period_label", f"{b['year']}-{b['month']:02d}-P{b['period']}"),
+            "stability": stats.get("stability", []),
+            "sev_counts": stats.get("sev_counts", {}),
+            "total": stats.get("total", 0),
+        })
+    return {"history": results}
+
+
 @router.get("/brief/fortnightly/default")
 async def get_fortnightly_default():
     year, month, period = _current_fortnightly_default()
