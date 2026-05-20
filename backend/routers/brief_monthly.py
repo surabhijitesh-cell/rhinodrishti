@@ -423,6 +423,7 @@ REQUIREMENTS:
 
 async def _call_llm_json(prompt: str, max_tokens: int = 600, model_override: str = None) -> dict:
     """Call Gemini, expect JSON in response, parse and return dict (empty dict on failure)."""
+    text = ""
     try:
         client = get_client()
         resp = await client.chat.completions.create(
@@ -430,9 +431,11 @@ async def _call_llm_json(prompt: str, max_tokens: int = 600, model_override: str
             messages=[{"role": "user", "content": prompt}],
             max_tokens=max_tokens,
             temperature=0.4,
-            extra_body={"include_reasoning": False},
         )
-        text = resp.choices[0].message.content.strip()
+        text = resp.choices[0].message.content or ""
+        # Strip <think>...</think> blocks (Gemini 2.5 Flash reasoning tokens)
+        import re
+        text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
         # Strip code fences if present
         if text.startswith("```"):
             text = text.split("```", 2)[1] if "```" in text[3:] else text[3:]
@@ -441,10 +444,10 @@ async def _call_llm_json(prompt: str, max_tokens: int = 600, model_override: str
             text = text.strip().rstrip("`").strip()
         return json.loads(text)
     except json.JSONDecodeError as e:
-        logger.warning(f"Monthly brief JSON parse failed: {e} -- text was: {text[:300] if 'text' in dir() else 'n/a'}")
+        logger.warning(f"Brief JSON parse failed: {e} -- raw: {text[:400]}")
         return {}
     except Exception as e:
-        logger.error(f"Monthly brief LLM call failed: {e}")
+        logger.error(f"Brief LLM JSON call failed: {type(e).__name__}: {e}")
         return {}
 
 
@@ -456,11 +459,14 @@ async def _call_llm_text(prompt: str, max_tokens: int = 800) -> str:
             messages=[{"role": "user", "content": prompt}],
             max_tokens=max_tokens,
             temperature=0.5,
-            extra_body={"include_reasoning": False},
         )
-        return resp.choices[0].message.content.strip()
+        text = resp.choices[0].message.content or ""
+        # Strip <think>...</think> blocks
+        import re
+        text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+        return text
     except Exception as e:
-        logger.error(f"Monthly brief text LLM call failed: {e}")
+        logger.error(f"Brief LLM text call failed: {type(e).__name__}: {e}")
         return ""
 
 
@@ -681,9 +687,17 @@ async def _run_generation(year: int, month: int) -> dict:
     action_matrix = _build_action_matrix(stats)
 
     # 4. Assemble brief
+    # Detect partial failure — LLM calls silently returned empty
+    llm_ok = bool(exec_summary and state_sections)
+    if not llm_ok:
+        logger.error(
+            f"Monthly brief LLM content missing: exec_summary={bool(exec_summary)}, "
+            f"state_sections={len(state_sections)}/{len(target_states)} states"
+        )
+
     brief = {
         "year": year, "month": month,
-        "status": "ready",
+        "status": "ready" if llm_ok else "partial",
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "stats": stats,
         "executive_summary": exec_summary,
@@ -696,6 +710,8 @@ async def _run_generation(year: int, month: int) -> dict:
             st: get_contacts_for_state(st) for st in target_states
         },
     }
+    if not llm_ok:
+        brief["_llm_error"] = "LLM calls returned empty — check OpenRouter API key and rate limits. Re-generate to retry."
 
     # 5. NotebookLM markdown
     brief["notebooklm_script"] = _build_notebooklm_script(brief, year, month)
@@ -704,7 +720,7 @@ async def _run_generation(year: int, month: int) -> dict:
     await monthly_briefs_col.replace_one(
         {"year": year, "month": month}, brief, upsert=True,
     )
-    logger.info(f"Monthly brief generation complete: {year}-{month:02d}")
+    logger.info(f"Monthly brief generation {'complete' if llm_ok else 'partial (LLM empty)'}: {year}-{month:02d}")
     return brief
 
 
@@ -773,7 +789,7 @@ async def get_monthly_brief_pdf(year: int, month: int):
     brief = await monthly_briefs_col.find_one({"year": year, "month": month}, {"_id": 0})
     if not brief:
         raise HTTPException(404, "Brief not generated")
-    if brief.get("status") != "ready":
+    if brief.get("status") not in ("ready", "partial"):
         raise HTTPException(425, f"Brief status: {brief.get('status')} — wait for generation to complete")
 
     # Fetch previous month for comparison snapshot

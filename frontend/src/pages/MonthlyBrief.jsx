@@ -646,8 +646,15 @@ export default function MonthlyBrief({ api }) {
         </div>
       )}
 
-      {/* Full brief */}
-      {brief?.status === "ready" && (
+      {/* Partial — LLM calls failed silently */}
+      {brief?.status === "partial" && (
+        <div className="border border-amber-500/40 bg-amber-500/5 p-3 text-xs font-mono text-amber-400 mb-2">
+          LLM synthesis failed — sections below may be empty. {brief._llm_error || "Re-generate to retry."}
+        </div>
+      )}
+
+      {/* Full brief (ready or partial — stats + tables always present) */}
+      {(brief?.status === "ready" || brief?.status === "partial") && (
         <>
           {renderOverview()}
           {renderStability()}

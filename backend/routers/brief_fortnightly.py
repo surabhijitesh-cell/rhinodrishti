@@ -360,10 +360,17 @@ async def _run_fortnightly_generation(year: int, month: int, period: int):
 
     action_matrix = _build_action_matrix(stats)
 
+    llm_ok = bool(exec_summary and state_sections)
+    if not llm_ok:
+        logger.error(
+            f"Fortnightly brief LLM content missing: exec_summary={bool(exec_summary)}, "
+            f"state_sections={len(state_sections)}/{len(target_states)} states"
+        )
+
     brief = {
         "year": year, "month": month, "period": period,
         "period_label": period_label,
-        "status": "ready",
+        "status": "ready" if llm_ok else "partial",
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "stats": stats,
         "executive_summary": exec_summary,
@@ -374,12 +381,14 @@ async def _run_fortnightly_generation(year: int, month: int, period: int):
         "cross_border_analysis": cross_border_analysis,
         "contact_directory": {st: get_contacts_for_state(st) for st in target_states},
     }
+    if not llm_ok:
+        brief["_llm_error"] = "LLM calls returned empty — check OpenRouter API key and rate limits. Re-generate to retry."
     brief["notebooklm_script"] = _build_notebooklm_script(brief, year, month)
 
     await fortnightly_briefs_col.replace_one(
         {"year": year, "month": month, "period": period}, brief, upsert=True
     )
-    logger.info(f"Fortnightly brief generation complete: {period_label}")
+    logger.info(f"Fortnightly brief generation {'complete' if llm_ok else 'partial (LLM empty)'}: {period_label}")
     return brief
 
 
@@ -456,7 +465,7 @@ async def get_fortnightly_pdf(year: int, month: int, period: int):
     )
     if not brief:
         raise HTTPException(404, "Brief not generated")
-    if brief.get("status") != "ready":
+    if brief.get("status") not in ("ready", "partial"):
         raise HTTPException(425, f"Brief status: {brief.get('status')} — wait for generation")
 
     # Fetch previous period for recap section
