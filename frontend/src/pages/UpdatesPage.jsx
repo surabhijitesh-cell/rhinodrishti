@@ -41,12 +41,12 @@ export default function UpdatesPage({ api }) {
           description: `v${p.version} (Preview)`,
           icon: <Bell size={16} className="text-primary" />,
           className: "border-l-4 border-l-primary",
-          duration: 5000,
+          duration: 12000,
         });
       } else {
         toast(p.message, {
           description: `v${p.version} (Preview)`,
-          duration: 5000,
+          duration: 12000,
         });
       }
     } catch (e) {
@@ -190,12 +190,12 @@ function AdminPanel({ api, onCreated }) {
           description: `v${p.version} (Preview)`,
           icon: <Bell size={16} className="text-primary" />,
           className: "border-l-4 border-l-primary",
-          duration: 5000,
+          duration: 12000,
         });
       } else {
         toast(p.message, {
           description: `v${p.version} (Preview)`,
-          duration: 5000,
+          duration: 12000,
         });
       }
     } catch (e) {

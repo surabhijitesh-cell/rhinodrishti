@@ -32,8 +32,8 @@ export function UpdateNotificationProvider({ children, api }) {
 
   const showToastQueue = (notifications, hasMore) => {
     let delay = 500;
-    const TOAST_DURATION = 5000;
-    const GAP = 800;
+    const TOAST_DURATION = 12000;
+    const GAP = 1200;
 
     notifications.forEach((notif, i) => {
       setTimeout(() => {
