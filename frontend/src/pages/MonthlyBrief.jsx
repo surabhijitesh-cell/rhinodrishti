@@ -49,6 +49,7 @@ export default function MonthlyBrief({ api }) {
   const [year, setYear]       = useState(init.year);
   const [month, setMonth]     = useState(init.month);
   const [brief, setBrief]     = useState(null);
+  const [prevBrief, setPrevBrief] = useState(null);
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
   const [error, setError]     = useState(null);
@@ -57,6 +58,9 @@ export default function MonthlyBrief({ api }) {
   const [copied, setCopied]   = useState(false);
 
   const monthLabel = new Date(year, month - 1, 1).toLocaleString("en-IN", { month: "long", year: "numeric" });
+  const prevYear  = month === 1 ? year - 1 : year;
+  const prevMonth = month === 1 ? 12 : month - 1;
+  const prevMonthLabel = new Date(prevYear, prevMonth - 1, 1).toLocaleString("en-IN", { month: "long", year: "numeric" });
 
   const fetchBrief = useCallback(async () => {
     setError(null);
@@ -78,7 +82,18 @@ export default function MonthlyBrief({ api }) {
       setGenerating(false);
     }
     setLoading(false);
-  }, [api, year, month]);
+    // Fetch previous month brief silently (for comparison table)
+    try {
+      const pr = await axios.get(`${api}/brief/monthly/${prevYear}/${prevMonth}`);
+      if (pr.data?.status === "ready" || pr.data?.status === "partial") {
+        setPrevBrief(pr.data);
+      } else {
+        setPrevBrief(null);
+      }
+    } catch {
+      setPrevBrief(null);
+    }
+  }, [api, year, month, prevYear, prevMonth]);
 
   useEffect(() => { fetchBrief(); }, [fetchBrief]);
 
@@ -248,6 +263,68 @@ export default function MonthlyBrief({ api }) {
       </CardContent>
     </Card>
   );
+
+  const renderPrevComparison = () => {
+    if (!prevBrief) return null;
+    const currStab = brief?.stats?.stability || [];
+    const prevStab = prevBrief?.stats?.stability || [];
+    const currMap  = Object.fromEntries(currStab.map(s => [s.state, s]));
+    const prevMap  = Object.fromEntries(prevStab.map(s => [s.state, s]));
+    const states   = [...new Set([...prevStab.map(s => s.state), ...currStab.map(s => s.state)])];
+    if (!states.length) return null;
+
+    return (
+      <Card className="border border-border rounded-none bg-card">
+        <CardHeader className="py-3 px-4 border-b border-border">
+          <CardTitle className="text-sm uppercase tracking-wider font-['Barlow_Condensed'] font-semibold flex items-center gap-2">
+            <TrendingUp size={16} className="text-primary" /> Stability Comparison — {prevMonthLabel} → {monthLabel}
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="p-0">
+          <table className="w-full text-xs font-mono">
+            <thead>
+              <tr className="border-b border-border bg-muted/40">
+                <th className="text-left px-3 py-2 text-muted-foreground uppercase tracking-wider font-semibold">State</th>
+                <th className="text-center px-3 py-2 text-muted-foreground uppercase tracking-wider font-semibold">{prevMonthLabel.split(" ")[0]} Score</th>
+                <th className="text-center px-3 py-2 text-muted-foreground uppercase tracking-wider font-semibold">Level</th>
+                <th className="text-center px-3 py-2 text-muted-foreground uppercase tracking-wider font-semibold">{monthLabel.split(" ")[0]} Score</th>
+                <th className="text-center px-3 py-2 text-muted-foreground uppercase tracking-wider font-semibold">Level</th>
+                <th className="text-center px-3 py-2 text-muted-foreground uppercase tracking-wider font-semibold">Trend</th>
+              </tr>
+            </thead>
+            <tbody>
+              {states.map((st, i) => {
+                const p = prevMap[st] || {};
+                const c = currMap[st] || {};
+                const pScore = p.score ?? "-";
+                const cScore = c.score ?? "-";
+                const delta  = (typeof cScore === "number" && typeof pScore === "number") ? cScore - pScore : null;
+                const deltaColor = delta === null ? "text-muted-foreground"
+                                 : delta > 0     ? "text-emerald-400"
+                                 : delta < 0     ? "text-red-400"
+                                 :                 "text-muted-foreground";
+                const deltaStr = delta === null ? "—" : delta > 0 ? `+${delta}` : String(delta);
+                return (
+                  <tr key={st} className={`border-b border-border/50 ${i % 2 === 0 ? "bg-background" : "bg-muted/10"}`}>
+                    <td className="px-3 py-1.5 font-semibold uppercase tracking-wide text-[11px]">{st}</td>
+                    <td className="px-3 py-1.5 text-center" style={{ color: CONCERN_COLOR[p.level] || "inherit" }}>{pScore}</td>
+                    <td className="px-3 py-1.5 text-center">
+                      {p.level ? <span className="text-[9px] px-1 py-px" style={{ background: `${CONCERN_COLOR[p.level]}22`, color: CONCERN_COLOR[p.level], border: `1px solid ${CONCERN_COLOR[p.level]}55` }}>{p.level}</span> : "—"}
+                    </td>
+                    <td className="px-3 py-1.5 text-center" style={{ color: CONCERN_COLOR[c.level] || "inherit" }}>{cScore}</td>
+                    <td className="px-3 py-1.5 text-center">
+                      {c.level ? <span className="text-[9px] px-1 py-px" style={{ background: `${CONCERN_COLOR[c.level]}22`, color: CONCERN_COLOR[c.level], border: `1px solid ${CONCERN_COLOR[c.level]}55` }}>{c.level}</span> : "—"}
+                    </td>
+                    <td className={`px-3 py-1.5 text-center font-bold ${deltaColor}`}>{deltaStr}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </CardContent>
+      </Card>
+    );
+  };
 
   const renderExecSummary = () => (
     <Card className="border border-border rounded-none bg-card">
@@ -658,6 +735,7 @@ export default function MonthlyBrief({ api }) {
         <>
           {renderOverview()}
           {renderStability()}
+          {renderPrevComparison()}
           {renderExecSummary()}
           {renderStateSections()}
           {renderCrossBorder()}
