@@ -85,20 +85,13 @@ const ALL_NAV_ITEMS = [
   },
 ];
 
-const NEW_BADGE_PATHS = ["/reports", "/updates"];
-const NEW_BADGE_DISMISS_COUNT = 3;
+// Paths that show a "New" badge until user has logged in 3+ times
+const NEW_BADGE_PATHS = ["/reports", "/updates", "/trends", "/daily-brief"];
+const NEW_BADGE_LOGIN_THRESHOLD = 3;
 
-function useNewBadge(path) {
-  const key = `new_badge_${path}`;
-  const [count, setCount] = useState(() => {
-    try { return parseInt(localStorage.getItem(key) || "0", 10); } catch { return 0; }
-  });
-  const dismiss = () => {
-    const next = count + 1;
-    setCount(next);
-    localStorage.setItem(key, String(next));
-  };
-  return { show: count < NEW_BADGE_DISMISS_COUNT, dismiss };
+function useLoginCount(username) {
+  if (!username) return 0;
+  try { return parseInt(localStorage.getItem(`rd_login_count_${username}`) || "0", 10); } catch { return 0; }
 }
 
 export default function Layout({ children, alertCount = 0, onSearch }) {
@@ -113,9 +106,9 @@ export default function Layout({ children, alertCount = 0, onSearch }) {
   const userRole = user?.role || "viewer";
   const navItems = ALL_NAV_ITEMS.filter((item) => item.roles.includes(userRole));
 
-  const reportsBadge = useNewBadge("/reports");
-  const updatesBadge = useNewBadge("/updates");
-  const badgeMap = { "/reports": reportsBadge, "/updates": updatesBadge };
+  const loginCount = useLoginCount(user?.username);
+  const showNewBadge = loginCount < NEW_BADGE_LOGIN_THRESHOLD;
+  const badgeMap = Object.fromEntries(NEW_BADGE_PATHS.map(p => [p, { show: showNewBadge }]));
 
   const handleSearch = (e) => {
     e.preventDefault();
@@ -133,7 +126,7 @@ export default function Layout({ children, alertCount = 0, onSearch }) {
           <Link
             to={item.path}
             data-testid={`nav-${item.label.toLowerCase().replace(/\s+/g, '-')}`}
-            onClick={() => { setMobileOpen(false); if (badge) badge.dismiss(); }}
+            onClick={() => setMobileOpen(false)}
             className={`sidebar-nav-item ${isActive ? "active" : "text-muted-foreground"}`}
           >
             <Icon size={18} />

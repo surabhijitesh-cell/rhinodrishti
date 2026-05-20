@@ -1,4 +1,4 @@
-import { useState, useEffect, Component } from "react";
+import { useState, useEffect, Component, useMemo } from "react";
 import {
   FileText, RefreshCw, Calendar, Shield, Globe, AlertTriangle, Download,
   Newspaper, Upload, ExternalLink, GitBranch, Layers,
@@ -10,6 +10,7 @@ import Tip from "../components/Tip";
 import axios from "axios";
 import MonthlyBrief from "./MonthlyBrief";
 import FortnightlyBrief from "./FortnightlyBrief";
+import { useAuth } from "../contexts/AuthContext";
 
 class BriefErrorBoundary extends Component {
   constructor(props) {
@@ -36,7 +37,17 @@ class BriefErrorBoundary extends Component {
   }
 }
 
+const NEW_BADGE_LOGIN_THRESHOLD = 3;
+
 export default function DailyBrief({ api }) {
+  const { user } = useAuth();
+  const showNewBadge = useMemo(() => {
+    try {
+      const count = parseInt(localStorage.getItem(`rd_login_count_${user?.username}`) || "0", 10);
+      return count < NEW_BADGE_LOGIN_THRESHOLD;
+    } catch { return false; }
+  }, [user?.username]);
+
   const [tab, setTab] = useState("daily"); // "daily" | "fortnightly" | "monthly"
   const [brief, setBrief] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -227,6 +238,7 @@ export default function DailyBrief({ api }) {
               }`}
               data-testid="tab-fortnightly">
         <Globe size={13} /> Fortnightly
+        {showNewBadge && <span className="text-[8px] font-bold uppercase tracking-wider text-emerald-400 animate-pulse">New</span>}
       </button>
       <button onClick={() => setTab("monthly")}
               className={`px-4 py-2 text-xs font-mono uppercase tracking-wider border-b-2 -mb-px flex items-center gap-2 transition-colors ${
@@ -234,6 +246,7 @@ export default function DailyBrief({ api }) {
               }`}
               data-testid="tab-monthly">
         <Layers size={13} /> Monthly Strategic
+        {showNewBadge && <span className="text-[8px] font-bold uppercase tracking-wider text-emerald-400 animate-pulse">New</span>}
       </button>
     </div>
   );
