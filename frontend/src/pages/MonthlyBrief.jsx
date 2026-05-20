@@ -50,9 +50,10 @@ export default function MonthlyBrief({ api }) {
   const [month, setMonth]     = useState(init.month);
   const [brief, setBrief]         = useState(null);
   const [prevBrief, setPrevBrief] = useState(null);
-  const [history, setHistory]     = useState([]);
-  const [selPeriods, setSelPeriods] = useState(null); // null = last 6 auto-selected
-  const [loading, setLoading]     = useState(true);
+  const [history,    setHistory]    = useState([]);
+  const [selPeriods, setSelPeriods] = useState(null);
+  const [viewMode,   setViewMode]   = useState("minigraphs");
+  const [loading,    setLoading]    = useState(true);
   const [generating, setGenerating] = useState(false);
   const [error, setError]     = useState(null);
   const [openStates, setOpenStates] = useState({});
@@ -276,29 +277,29 @@ export default function MonthlyBrief({ api }) {
   const renderStabilityHistory = () => {
     if (!history.length) return null;
 
-    // All states across all periods
-    const allStates = [...new Set(history.flatMap(h => h.stability.map(s => s.state)))].sort();
+    const STATE_SHORT = {
+      "Arunachal Pradesh": "AR", "Assam": "AS", "Manipur": "MN", "Meghalaya": "ML",
+      "Mizoram": "MZ", "Nagaland": "NL", "Sikkim": "SK", "Tripura": "TR",
+    };
+    const NER_8 = ["Arunachal Pradesh","Assam","Manipur","Meghalaya","Mizoram","Nagaland","Sikkim","Tripura"];
+    const ACCENT = "#a3e635";
 
-    // Period toggle — default last 6
+    // Sort states by current brief stability score ascending (most critical first)
+    const currStabMap = Object.fromEntries((brief?.stats?.stability || []).map(s => [s.state, s.score]));
+    const orderedStates = [...NER_8].sort((a, b) => (currStabMap[a] ?? 100) - (currStabMap[b] ?? 100));
+
     const allLabels = history.map(h => h.label);
     const defaultSel = new Set(allLabels.slice(-6));
     const active = selPeriods ?? defaultSel;
 
-    // Build chart data: one row per period, columns = state scores
     const chartData = history
       .filter(h => active.has(h.label))
       .map(h => {
         const row = { label: h.label };
         const stab = Object.fromEntries(h.stability.map(s => [s.state, s.score]));
-        allStates.forEach(st => { row[st] = stab[st] ?? null; });
+        orderedStates.forEach(st => { row[st] = stab[st] ?? null; });
         return row;
       });
-
-    // State line colors — cycle through distinct hues
-    const STATE_COLORS = [
-      "#a3e635","#38bdf8","#f87171","#fb923c","#fbbf24",
-      "#34d399","#c084fc","#f472b6","#67e8f9","#86efac",
-    ];
 
     const togglePeriod = (lbl) => {
       const next = new Set(active);
@@ -306,18 +307,38 @@ export default function MonthlyBrief({ api }) {
       else next.add(lbl);
       setSelPeriods(next);
     };
-    const selectAll  = () => setSelPeriods(new Set(allLabels));
     const selectLast = (n) => setSelPeriods(new Set(allLabels.slice(-n)));
+    const selectAll  = () => setSelPeriods(new Set(allLabels));
+
+    const stabilityBg = (score) => {
+      if (score === null || score === undefined) return "rgba(255,255,255,0.04)";
+      if (score >= 75) return `rgba(163,230,53,${0.15 + (score-75)/25*0.55})`;
+      if (score >= 50) return `rgba(234,179,8,${0.15 + (score-50)/25*0.55})`;
+      if (score >= 25) return `rgba(249,115,22,${0.15 + (score-25)/25*0.55})`;
+      return `rgba(239,68,68,${0.25 + (25-score)/25*0.5})`;
+    };
 
     return (
       <Card className="border border-border rounded-none bg-card">
         <CardHeader className="py-3 px-4 border-b border-border">
-          <CardTitle className="text-sm uppercase tracking-wider font-['Barlow_Condensed'] font-semibold flex items-center gap-2">
-            <TrendingUp size={16} className="text-primary" /> Stability Trend — Historical
-          </CardTitle>
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <CardTitle className="text-sm uppercase tracking-wider font-['Barlow_Condensed'] font-semibold flex items-center gap-2">
+              <TrendingUp size={16} className="text-primary" /> Stability Trend — Historical
+            </CardTitle>
+            <div className="flex gap-1">
+              {[["minigraphs","Minigraphs"],["heatmap","Heatmap"]].map(([v, lbl]) => (
+                <button key={v} onClick={() => setViewMode(v)}
+                  className={`text-[9px] font-mono uppercase px-2 py-0.5 border transition-colors ${
+                    viewMode === v ? "border-primary text-primary bg-primary/10" : "border-border text-muted-foreground"
+                  }`}>
+                  {lbl}
+                </button>
+              ))}
+            </div>
+          </div>
         </CardHeader>
         <CardContent className="p-4 space-y-3">
-          {/* Period toggles */}
+          {/* Period controls */}
           <div className="flex flex-wrap gap-1 items-center">
             <span className="text-[9px] font-mono uppercase text-muted-foreground mr-1">Periods:</span>
             {[3,6,12].map(n => (
@@ -334,42 +355,94 @@ export default function MonthlyBrief({ api }) {
             {allLabels.map(lbl => (
               <button key={lbl} onClick={() => togglePeriod(lbl)}
                 className={`text-[9px] font-mono px-2 py-0.5 border transition-colors ${
-                  active.has(lbl)
-                    ? "border-primary text-primary bg-primary/10"
-                    : "border-border text-muted-foreground"
+                  active.has(lbl) ? "border-primary text-primary bg-primary/10" : "border-border text-muted-foreground"
                 }`}>
                 {lbl}
               </button>
             ))}
           </div>
 
-          {/* Chart */}
-          <div style={{ height: 280 }}>
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={chartData} margin={{ top: 4, right: 8, bottom: 20, left: 0 }}>
-                <XAxis dataKey="label" tick={{ fontSize: 9, fill: "#888", fontFamily: "monospace" }}
-                  angle={-35} textAnchor="end" interval={0} />
-                <YAxis domain={[0, 100]} tick={{ fontSize: 9, fill: "#888" }}
-                  tickLine={false} axisLine={false} width={28} />
-                <Tooltip
-                  contentStyle={{ background: "hsl(120,10%,8%)", border: "1px solid hsl(120,5%,20%)", borderRadius: 0, fontSize: 10 }}
-                  labelStyle={{ color: "#b4db50", fontFamily: "monospace", fontSize: 10, marginBottom: 4 }}
-                  itemStyle={{ fontFamily: "monospace", fontSize: 10 }}
-                  formatter={(val, name) => [val !== null ? `${val}/100` : "—", name]}
-                />
-                <Legend wrapperStyle={{ fontSize: 9, fontFamily: "monospace", paddingTop: 8 }} />
-                {/* Threshold reference bands rendered as faint grid */}
-                {allStates.map((st, i) => (
-                  <Line key={st} type="monotone" dataKey={st}
-                    stroke={STATE_COLORS[i % STATE_COLORS.length]}
-                    strokeWidth={1.5} dot={{ r: 3, strokeWidth: 0 }}
-                    activeDot={{ r: 5 }} connectNulls={false} />
-                ))}
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
+          {viewMode === "minigraphs" ? (
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+              {orderedStates.map(st => {
+                const currScore = currStabMap[st];
+                const currLevel = (brief?.stats?.stability || []).find(s => s.state === st)?.level;
+                return (
+                  <div key={st} className="border border-border bg-background p-2">
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-[9px] font-mono uppercase font-semibold tracking-wide truncate" style={{maxWidth:"70%"}}>{st}</span>
+                      {currScore !== undefined && (
+                        <span className="text-[9px] font-bold font-mono" style={{ color: CONCERN_COLOR[currLevel] || "#888" }}>
+                          {currScore}
+                        </span>
+                      )}
+                    </div>
+                    <div style={{ height: 68 }}>
+                      <ResponsiveContainer width="100%" height="100%">
+                        <LineChart data={chartData} margin={{ top: 2, right: 2, bottom: 0, left: 0 }}>
+                          <YAxis domain={[0, 100]} hide />
+                          <XAxis dataKey="label" hide />
+                          <Tooltip
+                            contentStyle={{ background: "hsl(120,10%,8%)", border: "1px solid hsl(120,5%,20%)", borderRadius: 0, fontSize: 9, padding: "2px 6px" }}
+                            labelStyle={{ color: "#b4db50", fontFamily: "monospace", fontSize: 9 }}
+                            itemStyle={{ fontFamily: "monospace", fontSize: 9 }}
+                            formatter={(val) => [val !== null ? `${val}/100` : "—", st]}
+                          />
+                          <Line type="monotone" dataKey={st} stroke={ACCENT}
+                            strokeWidth={1.5} dot={false} activeDot={{ r: 3 }} connectNulls={false} />
+                        </LineChart>
+                      </ResponsiveContainer>
+                    </div>
+                    {chartData.length > 1 && (
+                      <div className="flex justify-between mt-0.5">
+                        <span className="text-[7px] font-mono text-muted-foreground truncate" style={{maxWidth:"48%"}}>{chartData[0]?.label}</span>
+                        <span className="text-[7px] font-mono text-muted-foreground truncate text-right" style={{maxWidth:"48%"}}>{chartData[chartData.length-1]?.label}</span>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            /* Heatmap */
+            <div className="overflow-x-auto">
+              <div style={{ minWidth: Math.max(260, 56 + chartData.length * 50) }}>
+                <div className="flex mb-1" style={{ paddingLeft: 56 }}>
+                  {chartData.map(d => (
+                    <div key={d.label} className="text-[8px] font-mono text-muted-foreground shrink-0"
+                      style={{ width: 50, textAlign: "center", transform: "rotate(-30deg)", transformOrigin: "left bottom", height: 28, lineHeight: "28px" }}>
+                      {d.label}
+                    </div>
+                  ))}
+                </div>
+                {orderedStates.map(st => {
+                  const currLevel = (brief?.stats?.stability || []).find(s => s.state === st)?.level;
+                  return (
+                    <div key={st} className="flex items-center mb-px">
+                      <div className="shrink-0 text-[9px] font-mono text-right pr-2"
+                        style={{ width: 56, color: CONCERN_COLOR[currLevel] || "#888" }}>
+                        {STATE_SHORT[st] || st.slice(0,2).toUpperCase()}
+                      </div>
+                      {chartData.map(d => {
+                        const score = d[st];
+                        return (
+                          <div key={d.label} className="shrink-0 flex items-center justify-center"
+                            style={{ width: 50, height: 26, background: stabilityBg(score), cursor: "default" }}
+                            title={`${st} | ${d.label}: ${score ?? "—"}/100`}>
+                            <span className="text-[8px] font-bold font-mono select-none"
+                              style={{ color: score !== null && score >= 50 ? "#111" : "#eee" }}>
+                              {score ?? "—"}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
-          {/* Zone legend */}
           <div className="flex gap-4 text-[9px] font-mono text-muted-foreground border-t border-border pt-2">
             <span><span className="inline-block w-2 h-2 mr-1 align-middle" style={{background:"#a3e635"}}/>75–100 Stable</span>
             <span><span className="inline-block w-2 h-2 mr-1 align-middle" style={{background:"#eab308"}}/>50–74 Monitor</span>
@@ -409,7 +482,14 @@ export default function MonthlyBrief({ api }) {
         </CardTitle>
       </CardHeader>
       <CardContent className="p-2">
-        {Object.entries(brief?.state_sections || {}).map(([state, sec]) => {
+        {Object.entries(brief?.state_sections || {})
+          .sort(([a], [b]) => {
+            const stab = brief?.stats?.stability || [];
+            const aScore = stab.find(s => s.state === a)?.score ?? 100;
+            const bScore = stab.find(s => s.state === b)?.score ?? 100;
+            return aScore - bScore;
+          })
+          .map(([state, sec]) => {
           const open = openStates[state];
           const st_stats = brief.stats?.states?.[state] || {};
           return (
