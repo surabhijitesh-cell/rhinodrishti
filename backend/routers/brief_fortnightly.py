@@ -34,14 +34,12 @@ from routers.brief_monthly import (
     _cross_border_prompt,
     _call_llm_json,
     _call_llm_text,
-    _build_action_matrix,
     _coerce_state_section,
     _build_notebooklm_script,
     _render_pdf,
     NER_STATES_FULL,
     BORDER_COUNTRIES,
 )
-from ner_contacts import get_contacts_for_state
 
 router = APIRouter()
 fortnightly_briefs_col = db.fortnightly_briefs
@@ -347,8 +345,13 @@ async def _run_fortnightly_generation(year: int, month: int, period: int):
             sd = stats["states"][s["state"]]
             actors_str = ", ".join([a[0] for a in sd["top_actors"][:5]]) or "various"
             cats_str   = ", ".join([c[0] for c in sd["top_categories"][:4]]) or "mixed"
-            mitigation_tasks.append(_call_llm_json(_mitigation_playbook_prompt(s["state"], s, actors_str, cats_str), max_tokens=600))
+            mitigation_tasks.append(_call_llm_json(_mitigation_playbook_prompt(s["state"], s, actors_str, cats_str), max_tokens=1400))
     mitigation_results = await asyncio.gather(*mitigation_tasks)
+    for st, res in zip(mitigation_states, mitigation_results):
+        if not res:
+            logger.warning(f"Mitigation playbook empty for {st} — LLM returned no parseable JSON")
+        else:
+            logger.info(f"Mitigation playbook OK for {st}: keys={list(res.keys())}")
     mitigation_playbook = {st: res for st, res in zip(mitigation_states, mitigation_results) if res}
 
     cross_border_analysis = await _call_llm_json(
@@ -357,8 +360,6 @@ async def _run_fortnightly_generation(year: int, month: int, period: int):
 
     scenarios_payload = await _call_llm_json(_fortnightly_scenarios_prompt(stats, period_label), max_tokens=600)
     scenarios = scenarios_payload.get("scenarios", []) if isinstance(scenarios_payload, dict) else []
-
-    action_matrix = _build_action_matrix(stats)
 
     llm_ok = bool(exec_summary and state_sections)
     if not llm_ok:
@@ -375,11 +376,9 @@ async def _run_fortnightly_generation(year: int, month: int, period: int):
         "stats": stats,
         "executive_summary": exec_summary,
         "state_sections": state_sections,
-        "action_matrix": action_matrix,
         "mitigation_playbook": mitigation_playbook,
         "scenarios": scenarios,
         "cross_border_analysis": cross_border_analysis,
-        "contact_directory": {st: get_contacts_for_state(st) for st in target_states},
     }
     if not llm_ok:
         brief["_llm_error"] = "LLM calls returned empty — check OpenRouter API key and rate limits. Re-generate to retry."

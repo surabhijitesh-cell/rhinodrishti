@@ -35,7 +35,6 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
 from fastapi.responses import StreamingResponse, PlainTextResponse
 
 from shared import db, intelligence_col, NER_STATES, logger
-from ner_contacts import get_contacts_for_state, NER_REGIONAL_CONTACTS
 from llm_client import get_client, MODEL
 
 router = APIRouter()
@@ -561,15 +560,6 @@ def _build_notebooklm_script(brief: dict, year: int, month: int) -> str:
                 md.append(f"**{label}.** {v}")
                 md.append("")
 
-    # Action matrix
-    md.append("## Commander Action Matrix")
-    md.append("")
-    md.append("| Threat | Severity | Probability | Action | Lead Agency | Horizon |")
-    md.append("|--------|----------|-------------|--------|-------------|---------|")
-    for row in brief.get("action_matrix", []):
-        md.append(f"| {row['threat']} | {row['severity']} | {row['probability']} | {row['action']} | {row['lead_agency']} | {row['time_horizon']} |")
-    md.append("")
-
     # Predictive scenarios
     md.append("## Predictive Intelligence — Scenarios for the Next 30-90 Days")
     md.append("")
@@ -603,23 +593,6 @@ def _build_notebooklm_script(brief: dict, year: int, month: int) -> str:
                 md.append(f"- {a.get('action', '')} — Lead: *{a.get('lead_agency', '')}*. Rationale: {a.get('rationale', '')}")
             md.append("")
 
-    # Contacts
-    md.append("## Contact Directory")
-    md.append("")
-    md.append("_Public offices only — verify incumbent via respective .gov.in portal before engagement._")
-    md.append("")
-    for state in brief.get("state_sections", {}).keys():
-        contacts = get_contacts_for_state(state)["state_contacts"]
-        if not contacts:
-            continue
-        md.append(f"### {state}")
-        for c in contacts:
-            md.append(f"- **{c['office']}** ({c['hq']}) — {c['phone']} · {c['email']}")
-        md.append("")
-    md.append("### Regional / National")
-    for c in NER_REGIONAL_CONTACTS:
-        md.append(f"- **{c['office']}** ({c['hq']}) — {c['phone']} · {c['email']}")
-    md.append("")
     md.append("---")
     md.append("")
     md.append(f"_Prepared: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}. Rhino Drishti NER Intelligence Platform._")
@@ -669,8 +642,13 @@ async def _run_generation(year: int, month: int) -> dict:
             sd = stats["states"][s["state"]]
             actors_str = ", ".join([a[0] for a in sd["top_actors"][:5]]) or "various"
             cats_str   = ", ".join([c[0] for c in sd["top_categories"][:4]]) or "mixed"
-            mitigation_tasks.append(_call_llm_json(_mitigation_playbook_prompt(s["state"], s, actors_str, cats_str), max_tokens=700))
+            mitigation_tasks.append(_call_llm_json(_mitigation_playbook_prompt(s["state"], s, actors_str, cats_str), max_tokens=1400))
     mitigation_results = await asyncio.gather(*mitigation_tasks)
+    for st, res in zip(mitigation_states, mitigation_results):
+        if not res:
+            logger.warning(f"Mitigation playbook empty for {st} — LLM returned no parseable JSON")
+        else:
+            logger.info(f"Mitigation playbook OK for {st}: keys={list(res.keys())}")
     mitigation_playbook = {st: res for st, res in zip(mitigation_states, mitigation_results) if res}
 
     # 2d. Cross-border analysis (Bangladesh + Myanmar deep dive)
@@ -683,10 +661,7 @@ async def _run_generation(year: int, month: int) -> dict:
     scenarios_payload = await _call_llm_json(_scenarios_prompt(stats, year, month), max_tokens=900)
     scenarios = scenarios_payload.get("scenarios", []) if isinstance(scenarios_payload, dict) else []
 
-    # 3. Build action matrix (derived from data, not LLM)
-    action_matrix = _build_action_matrix(stats)
-
-    # 4. Assemble brief
+    # 3. Assemble brief
     # Detect partial failure — LLM calls silently returned empty
     llm_ok = bool(exec_summary and state_sections)
     if not llm_ok:
@@ -702,13 +677,9 @@ async def _run_generation(year: int, month: int) -> dict:
         "stats": stats,
         "executive_summary": exec_summary,
         "state_sections": state_sections,
-        "action_matrix": action_matrix,
         "mitigation_playbook": mitigation_playbook,
         "scenarios": scenarios,
         "cross_border_analysis": cross_border_analysis,
-        "contact_directory": {
-            st: get_contacts_for_state(st) for st in target_states
-        },
     }
     if not llm_ok:
         brief["_llm_error"] = "LLM calls returned empty — check OpenRouter API key and rate limits. Re-generate to retry."
@@ -1177,48 +1148,7 @@ def _render_pdf(brief: dict, prev_brief: dict = None) -> bytes:
         pdf.ln(2)
 
     # ══════════════════════════════════════════════════════════════════════════
-    # 5. COMMANDER ACTION MATRIX
-    # ══════════════════════════════════════════════════════════════════════════
-    if brief.get("action_matrix"):
-        pdf.add_page()
-        pdf.section_title("COMMANDER ACTION MATRIX")
-
-        col_ws  = [50, 22, 22, 22, 45, 29]
-        headers = ["Threat", "Severity", "Probability", "Horizon", "Action", "Lead Agency"]
-
-        pdf.set_fill_color(*C_TBL_HDR)
-        pdf.set_text_color(255, 255, 255)
-        pdf.set_font("Helvetica", "B", 7)
-        for j, (h, w) in enumerate(zip(headers, col_ws)):
-            kw = NL if j == len(headers) - 1 else {}
-            pdf.cell(w, 6, h, fill=True, border=1, **kw)
-
-        for i, row in enumerate(brief["action_matrix"]):
-            if pdf.get_y() > 265:
-                pdf.add_page()
-            sev_name = row.get("severity", "")
-            bg       = C_TBL_ALT if i % 2 == 0 else (255, 255, 255)
-            vals = [
-                _ascii(str(row.get("threat",       ""))[:65]),
-                _ascii(sev_name.capitalize()),
-                _ascii(str(row.get("probability",  ""))),
-                _ascii(str(row.get("time_horizon", ""))),
-                _ascii(str(row.get("action",       ""))[:60]),
-                _ascii(str(row.get("lead_agency",  ""))[:30]),
-            ]
-            for j, (v, w) in enumerate(zip(vals, col_ws)):
-                pdf.set_fill_color(*bg)
-                if j == 1:
-                    pdf.set_text_color(*SEV_COLORS.get(sev_name.lower(), (80, 80, 80)))
-                    pdf.set_font("Helvetica", "B", 7)
-                else:
-                    pdf.set_text_color(40, 40, 40)
-                    pdf.set_font("Helvetica", "", 7)
-                kw = NL if j == len(vals) - 1 else {}
-                pdf.cell(w, 5, v, fill=True, border=1, **kw)
-
-    # ══════════════════════════════════════════════════════════════════════════
-    # 6. PREDICTIVE SCENARIOS
+    # 5. PREDICTIVE SCENARIOS
     # ══════════════════════════════════════════════════════════════════════════
     if brief.get("scenarios"):
         if pdf.get_y() > 220:
@@ -1332,71 +1262,5 @@ def _render_pdf(brief: dict, prev_brief: dict = None) -> bytes:
                     pdf.set_text_color(40, 40, 40)
                     pdf.multi_cell(0, 4, _ascii(str(v)), **NL)
             pdf.ln(3)
-
-    # ══════════════════════════════════════════════════════════════════════════
-    # 9. CONTACT DIRECTORY
-    # ══════════════════════════════════════════════════════════════════════════
-    pdf.add_page()
-    pdf.section_title("CONTACT DIRECTORY")
-    pdf.set_font("Helvetica", "I", 7)
-    pdf.set_text_color(120, 120, 120)
-    pdf.cell(0, 4, _ascii("Public offices only — verify incumbent via state .gov.in portal."), **NL)
-    pdf.ln(2)
-
-    c_col_ws = [52, 38, 44, 56]
-    c_hdrs   = ["Office", "Headquarters", "Phone", "Email"]
-
-    def _contact_table_hdr():
-        pdf.set_fill_color(*C_TBL_HDR)
-        pdf.set_text_color(255, 255, 255)
-        pdf.set_font("Helvetica", "B", 7)
-        for j, (h, w) in enumerate(zip(c_hdrs, c_col_ws)):
-            kw = NL if j == len(c_hdrs) - 1 else {}
-            pdf.cell(w, 6, h, fill=True, border=1, **kw)
-
-    for state, c_block in brief.get("contact_directory", {}).items():
-        if pdf.get_y() > 250:
-            pdf.add_page()
-        pdf.set_font("Helvetica", "B", 9)
-        pdf.set_text_color(45, 65, 40)
-        pdf.cell(0, 5, _ascii(state), **NL)
-        contacts = c_block.get("state_contacts", [])
-        if contacts:
-            _contact_table_hdr()
-            for i, c in enumerate(contacts):
-                pdf.set_fill_color(*C_TBL_ALT if i % 2 == 0 else (255, 255, 255))
-                pdf.set_text_color(40, 40, 40)
-                pdf.set_font("Helvetica", "", 7)
-                row_v = [
-                    _ascii(c.get("office", ""))[:48],
-                    _ascii(c.get("hq",     ""))[:34],
-                    _ascii(c.get("phone",  ""))[:40],
-                    _ascii(c.get("email",  ""))[:52],
-                ]
-                for j, (v, w) in enumerate(zip(row_v, c_col_ws)):
-                    kw = NL if j == len(row_v) - 1 else {}
-                    pdf.cell(w, 5, v, fill=True, border=1, **kw)
-        pdf.ln(2)
-
-    if NER_REGIONAL_CONTACTS:
-        if pdf.get_y() > 250:
-            pdf.add_page()
-        pdf.set_font("Helvetica", "B", 9)
-        pdf.set_text_color(45, 65, 40)
-        pdf.cell(0, 5, "Regional / National", **NL)
-        _contact_table_hdr()
-        for i, c in enumerate(NER_REGIONAL_CONTACTS):
-            pdf.set_fill_color(*C_TBL_ALT if i % 2 == 0 else (255, 255, 255))
-            pdf.set_text_color(40, 40, 40)
-            pdf.set_font("Helvetica", "", 7)
-            row_v = [
-                _ascii(c.get("office", ""))[:48],
-                _ascii(c.get("hq",     ""))[:34],
-                _ascii(c.get("phone",  ""))[:40],
-                _ascii(c.get("email",  ""))[:52],
-            ]
-            for j, (v, w) in enumerate(zip(row_v, c_col_ws)):
-                kw = NL if j == len(row_v) - 1 else {}
-                pdf.cell(w, 5, v, fill=True, border=1, **kw)
 
     return bytes(pdf.output())
