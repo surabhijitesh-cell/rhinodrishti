@@ -15,10 +15,9 @@ jobs:
         id: report
         env:
           ADMIN_PASS: ${{ secrets.RHINO_ADMIN_PASSWORD }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           OPENROUTER_KEY: ${{ secrets.OPENROUTER_API_KEY }}
         run: |
-          pip install requests anthropic -q
+          pip install requests openai -q
 
           python3 << 'PYEOF'
           import requests, json, os, sys
@@ -26,7 +25,6 @@ jobs:
 
           BASE          = "https://rhino-drishti-api.onrender.com/api"
           PASS          = os.environ.get("ADMIN_PASS", "")
-          ANTHROPIC_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
           OR_KEY        = os.environ.get("OPENROUTER_KEY", "")
           GH_REPO       = "surabhijitesh-cell/rhinodrishti"
 
@@ -117,14 +115,17 @@ jobs:
           print(context_str)
           print()
 
-          # ── Claude recommendation engine ───────────────────────────────────
+          # ── Gemini 2.5 Flash via OpenRouter ───────────────────────────────
           recommendations = ""
-          if ANTHROPIC_KEY:
+          if OR_KEY:
               try:
-                  import anthropic
-                  client = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
-                  msg = client.messages.create(
-                      model="claude-haiku-4-5",
+                  from openai import OpenAI
+                  client = OpenAI(
+                      api_key=OR_KEY,
+                      base_url="https://openrouter.ai/api/v1",
+                  )
+                  resp = client.chat.completions.create(
+                      model="google/gemini-2.5-flash",
                       max_tokens=1800,
                       messages=[{
                           "role": "user",
@@ -132,7 +133,7 @@ jobs:
 - Backend: FastAPI on Render
 - Frontend: React on Vercel
 - DB: MongoDB Atlas
-- AI: OpenRouter (Gemini 2.5 Flash for classification, GPT-4 for briefs)
+- AI: OpenRouter (Gemini 2.5 Flash for classification + brief generation)
 - Sources: 89 RSS feeds, YouTube, Telegram, Firecrawl
 
 Weekly data snapshot:
@@ -160,13 +161,13 @@ One specific action item
 Be concrete and specific. Reference actual commit messages, endpoint names, or patterns you see. Max 500 words."""
                       }]
                   )
-                  recommendations = msg.content[0].text
+                  recommendations = resp.choices[0].message.content
                   print("=== AI RECOMMENDATIONS ===")
                   print(recommendations)
               except Exception as e:
-                  recommendations = f"⚠️ Claude API call failed: {e}\n\nAdd ANTHROPIC_API_KEY to GitHub Secrets to enable AI recommendations."
+                  recommendations = f"⚠️ Gemini API call failed: {e}"
           else:
-              recommendations = "ℹ️ Add `ANTHROPIC_API_KEY` to GitHub Secrets to enable AI-powered recommendations.\n\nRaw data collected above can be reviewed manually."
+              recommendations = "ℹ️ Add `OPENROUTER_API_KEY` to GitHub Secrets to enable AI-powered recommendations."
 
           # ── Assemble final report ──────────────────────────────────────────
           report = f"""# 📊 Rhino Drishti Weekly Improvement Report
