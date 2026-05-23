@@ -1,0 +1,137 @@
+name: Health Monitor
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'   # every 15 minutes
+  workflow_dispatch:          # manual trigger
+
+jobs:
+  health-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check API health
+        id: check
+        env:
+          ADMIN_PASS: ${{ secrets.RHINO_ADMIN_PASSWORD }}
+        run: |
+          BASE="https://rhino-drishti-api.onrender.com/api"
+          ISSUES=""
+
+          # 1. Root endpoint (no auth)
+          ROOT=$(curl -s -o /dev/null -w "%{http_code}" --max-time 20 "$BASE/")
+          echo "Root: $ROOT"
+          if [ "$ROOT" != "200" ]; then
+            ISSUES="$ISSUES\n- Root endpoint returned $ROOT (expected 200)"
+          fi
+
+          # 2. Login to get token
+          LOGIN=$(curl -s -X POST "$BASE/auth/login" \
+            -H "Content-Type: application/json" \
+            -d "{\"username\":\"admin\",\"password\":\"$ADMIN_PASS\"}" \
+            --max-time 20)
+          TOKEN=$(echo "$LOGIN" | python3 -c "import sys,json; print(json.load(sys.stdin).get('token',''))" 2>/dev/null)
+
+          if [ -z "$TOKEN" ]; then
+            ISSUES="$ISSUES\n- Login failed — API may be down or credentials invalid"
+          else
+            # 3. Intelligence feed
+            INTEL=$(curl -s -o /dev/null -w "%{http_code}" --max-time 20 \
+              -H "Authorization: Bearer $TOKEN" \
+              "$BASE/intelligence?limit=1")
+            echo "Intelligence: $INTEL"
+            if [ "$INTEL" != "200" ]; then
+              ISSUES="$ISSUES\n- Intelligence endpoint returned $INTEL"
+            fi
+
+            # 4. Daily brief
+            BRIEF=$(curl -s -o /dev/null -w "%{http_code}" --max-time 20 \
+              -H "Authorization: Bearer $TOKEN" \
+              "$BASE/daily-brief")
+            echo "Brief: $BRIEF"
+            if [ "$BRIEF" != "200" ] && [ "$BRIEF" != "404" ]; then
+              ISSUES="$ISSUES\n- Daily brief endpoint returned $BRIEF"
+            fi
+
+            # 5. MongoDB connectivity (via analytics)
+            ANALYTICS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 20 \
+              -H "Authorization: Bearer $TOKEN" \
+              "$BASE/analytics/overview")
+            echo "Analytics: $ANALYTICS"
+            if [ "$ANALYTICS" != "200" ] && [ "$ANALYTICS" != "404" ]; then
+              ISSUES="$ISSUES\n- Analytics endpoint returned $ANALYTICS (possible MongoDB issue)"
+            fi
+          fi
+
+          if [ -n "$ISSUES" ]; then
+            echo "OUTAGE=true" >> $GITHUB_OUTPUT
+            printf "DETAILS<<EOF\n$ISSUES\nEOF" >> $GITHUB_OUTPUT
+          else
+            echo "OUTAGE=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Open outage issue
+        if: steps.check.outputs.OUTAGE == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            // Only open one outage issue at a time
+            const existing = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              labels: 'outage',
+              state: 'open'
+            });
+            if (existing.data.length > 0) {
+              console.log('Outage issue already open — skipping duplicate');
+              return;
+            }
+            const details = `${{ steps.check.outputs.DETAILS }}`;
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `🚨 OUTAGE — Rhino Drishti API down (${new Date().toUTCString()})`,
+              body: [
+                '## Rhino Drishti API Outage Detected',
+                '',
+                `**Detected at:** ${new Date().toUTCString()}`,
+                `**Endpoint:** https://rhino-drishti-api.onrender.com`,
+                '',
+                '### Failed checks',
+                details,
+                '',
+                '### Checklist',
+                '- [ ] Check [Render dashboard](https://dashboard.render.com) — is service running?',
+                '- [ ] Check MongoDB Atlas — connection string valid?',
+                '- [ ] Check OpenRouter credits — balance > $0?',
+                '- [ ] Check Render environment variables — all secrets present?',
+                '',
+                '_Auto-detected by Health Monitor · runs every 15 min_',
+              ].join('\n'),
+              labels: ['outage', 'automated']
+            });
+
+      - name: Close outage issue if recovered
+        if: steps.check.outputs.OUTAGE == 'false'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const issues = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              labels: 'outage',
+              state: 'open'
+            });
+            for (const issue of issues.data) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                body: `✅ **Service recovered** at ${new Date().toUTCString()}\n\nAll health checks passing.`
+              });
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                state: 'closed'
+              });
+            }
