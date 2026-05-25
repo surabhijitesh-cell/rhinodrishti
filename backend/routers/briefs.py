@@ -573,7 +573,8 @@ def generate_brief_pdf(brief: dict, date: str, total: int, critical: int, high: 
                     if source:
                         pdf.set_font('Helvetica', 'I', 7)
                         pdf.set_text_color(100, 100, 100)
-                        pdf.cell(0, 3.5, f"     Source: {source}", new_x="LMARGIN", new_y="NEXT")
+                        source_clean = str(source)[:80].encode('latin-1', 'replace').decode('latin-1')
+                        pdf.cell(0, 3.5, f"     Source: {source_clean}", new_x="LMARGIN", new_y="NEXT")
                     pdf.ln(1)
             pdf.ln(1)
 
@@ -596,7 +597,7 @@ def generate_brief_pdf(brief: dict, date: str, total: int, critical: int, high: 
         for i, doc in enumerate(same_date_docs[:10], 1):
             pdf.set_font('Helvetica', 'B', 9)
             pdf.set_text_color(80, 60, 40)
-            filename = doc.get('filename', 'Unknown Document')
+            filename = str(doc.get('filename', 'Unknown Document')).encode('latin-1', 'replace').decode('latin-1')
             pdf.cell(0, 5, f'{i}. {filename}', new_x="LMARGIN", new_y="NEXT")
 
             pdf.set_font('Helvetica', '', 8)
