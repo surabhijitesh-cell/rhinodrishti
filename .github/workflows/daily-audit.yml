@@ -8,6 +8,8 @@ on:
 jobs:
   audit:
     runs-on: ubuntu-latest
+    permissions:
+      issues: write
     steps:
       - name: Run daily audit
         id: audit
