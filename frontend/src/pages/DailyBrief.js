@@ -38,6 +38,8 @@ export default function DailyBrief({ api }) {
   const [brief, setBrief] = useState(null);
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
+  const [downloading, setDownloading] = useState(false);
+  const [downloadError, setDownloadError] = useState(null);
 
   useEffect(() => {
     fetchBrief();
@@ -59,11 +61,20 @@ export default function DailyBrief({ api }) {
     try {
       await axios.post(`${api}/generate-brief`);
       // Brief generation runs in background; poll until ready
+      // Use a ref-style counter to avoid stale closure on `brief` state
       let attempts = 0;
       const poll = setInterval(async () => {
         attempts++;
-        await fetchBrief();
-        if (brief || attempts >= 12) {
+        try {
+          const res = await axios.get(`${api}/daily-brief`);
+          if (res.data) {
+            setBrief(res.data);
+            clearInterval(poll);
+            setGenerating(false);
+            return;
+          }
+        } catch {}
+        if (attempts >= 12) {
           clearInterval(poll);
           setGenerating(false);
         }
@@ -75,10 +86,13 @@ export default function DailyBrief({ api }) {
   };
 
   const downloadPDF = async () => {
+    setDownloading(true);
+    setDownloadError(null);
     try {
       const dateParam = brief?.date || new Date().toISOString().split("T")[0];
       const res = await axios.get(`${api}/daily-brief/pdf?date=${dateParam}`, {
-        responseType: "blob"
+        responseType: "blob",
+        timeout: 120000, // 2 min — Render cold-start can be slow
       });
       const url = window.URL.createObjectURL(new Blob([res.data], { type: "application/pdf" }));
       const link = document.createElement("a");
@@ -86,10 +100,22 @@ export default function DailyBrief({ api }) {
       link.setAttribute("download", `Rhino_Drishti_Brief_${dateParam}.pdf`);
       document.body.appendChild(link);
       link.click();
-      link.remove();
-      window.URL.revokeObjectURL(url);
+      // Delay revoke so browser has time to start the download
+      setTimeout(() => {
+        link.remove();
+        window.URL.revokeObjectURL(url);
+      }, 1000);
     } catch (e) {
       console.error("PDF download failed:", e);
+      setDownloadError(
+        e?.response?.status === 404
+          ? "No brief found for this date."
+          : e?.code === "ECONNABORTED"
+          ? "Request timed out — the server may be waking up. Try again in 30 seconds."
+          : `Download failed: ${e?.response?.status || e?.message || "unknown error"}`
+      );
+    } finally {
+      setDownloading(false);
     }
   };
 
@@ -251,18 +277,24 @@ export default function DailyBrief({ api }) {
         </div>
         <div className="flex items-center gap-2">
           {brief && (
-            <Tip text="Download this brief as a formatted PDF with RESTRICTED classification headers — suitable for distribution within authorized channels." side="bottom">
-              <Button
-                variant="outline"
-                onClick={downloadPDF}
-                className="uppercase text-xs font-bold tracking-wider rounded-none"
-                data-testid="download-pdf-btn"
-                data-tour="brief-export"
-              >
-                <Download size={14} className="mr-2" />
-                Export PDF
-              </Button>
-            </Tip>
+            <div className="flex flex-col items-end gap-1">
+              <Tip text="Download this brief as a formatted PDF with RESTRICTED classification headers — suitable for distribution within authorized channels." side="bottom">
+                <Button
+                  variant="outline"
+                  onClick={downloadPDF}
+                  disabled={downloading}
+                  className="uppercase text-xs font-bold tracking-wider rounded-none"
+                  data-testid="download-pdf-btn"
+                  data-tour="brief-export"
+                >
+                  <Download size={14} className={`mr-2 ${downloading ? "animate-bounce" : ""}`} />
+                  {downloading ? "Generating PDF..." : "Export PDF"}
+                </Button>
+              </Tip>
+              {downloadError && (
+                <p className="text-xs text-red-400 font-mono max-w-xs text-right">{downloadError}</p>
+              )}
+            </div>
           )}
           <Tip text="Generate a fresh brief using all intelligence collected since the last brief. Runs in the background — takes ~30 seconds to complete." side="bottom">
             <Button
