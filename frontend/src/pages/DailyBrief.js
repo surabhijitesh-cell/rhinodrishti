@@ -96,7 +96,8 @@ export default function DailyBrief({ api }) {
     try {
       const dateParam = brief?.date || new Date().toISOString().split("T")[0];
       const res = await axios.get(`${api}/daily-brief/pdf?date=${dateParam}`, {
-        responseType: "blob"
+        responseType: "blob",
+        timeout: 120000, // 2 min — Render cold-start can be slow
       });
       const url = window.URL.createObjectURL(new Blob([res.data], { type: "application/pdf" }));
       const link = document.createElement("a");

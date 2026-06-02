@@ -93,6 +93,12 @@ async def root():
     return {"message": "Rhino Drishti API - Intelligence Aggregation Platform"}
 
 
+@app.get("/api/health")
+async def health():
+    """Lightweight keep-alive endpoint — no DB query, no auth. Pinged every 10 min by GitHub Actions to prevent Render cold-starts."""
+    return {"status": "ok"}
+
+
 # ============================================================
 # WebSocket Endpoint
 # ============================================================
