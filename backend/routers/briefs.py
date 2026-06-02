@@ -44,7 +44,10 @@ async def get_daily_brief_pdf(date: Optional[str] = None):
     if not brief:
         brief = await generate_brief_for_date(date)
 
-    brief = await translate_brief_for_pdf(brief)
+    # NOTE: translation removed — translate_brief_for_pdf made N sequential
+    # external API calls (one per non-Latin field) causing 40-60s response times
+    # that exceeded Render's load-balancer timeout → connection drop → "Network Error".
+    # clean_for_pdf() already handles non-Latin chars with a safe fallback string.
 
     total = await intelligence_col.count_documents({})
     critical = await intelligence_col.count_documents({"severity": "critical"})
@@ -57,7 +60,11 @@ async def get_daily_brief_pdf(date: Optional[str] = None):
         {"_id": 0}
     ).sort("uploaded_at", -1).to_list(20)
 
-    pdf_bytes = generate_brief_pdf(brief, date, total, critical, high, fresh_uploads)
+    try:
+        pdf_bytes = generate_brief_pdf(brief, date, total, critical, high, fresh_uploads)
+    except Exception as e:
+        logger.error(f"PDF generation failed for {date}: {e}")
+        raise HTTPException(status_code=500, detail=f"PDF generation failed: {str(e)}")
 
     return StreamingResponse(
         io.BytesIO(pdf_bytes),
@@ -566,7 +573,8 @@ def generate_brief_pdf(brief: dict, date: str, total: int, critical: int, high: 
                     if source:
                         pdf.set_font('Helvetica', 'I', 7)
                         pdf.set_text_color(100, 100, 100)
-                        pdf.cell(0, 3.5, f"     Source: {source}", new_x="LMARGIN", new_y="NEXT")
+                        source_clean = str(source)[:80].encode('latin-1', 'replace').decode('latin-1')
+                        pdf.cell(0, 3.5, f"     Source: {source_clean}", new_x="LMARGIN", new_y="NEXT")
                     pdf.ln(1)
             pdf.ln(1)
 
@@ -589,7 +597,7 @@ def generate_brief_pdf(brief: dict, date: str, total: int, critical: int, high: 
         for i, doc in enumerate(same_date_docs[:10], 1):
             pdf.set_font('Helvetica', 'B', 9)
             pdf.set_text_color(80, 60, 40)
-            filename = doc.get('filename', 'Unknown Document')
+            filename = str(doc.get('filename', 'Unknown Document')).encode('latin-1', 'replace').decode('latin-1')
             pdf.cell(0, 5, f'{i}. {filename}', new_x="LMARGIN", new_y="NEXT")
 
             pdf.set_font('Helvetica', '', 8)
