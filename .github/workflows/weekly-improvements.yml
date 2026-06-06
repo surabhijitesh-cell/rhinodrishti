@@ -1,0 +1,178 @@
+name: Weekly Improvement Report
+
+on:
+  schedule:
+    - cron: '30 1 * * 0'   # Sunday 07:00 IST = 01:30 UTC
+  workflow_dispatch:
+
+jobs:
+  improvements:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Collect app data + generate recommendations
+        id: report
+        env:
+          ADMIN_PASS: ${{ secrets.RHINO_ADMIN_PASSWORD }}
+          OPENROUTER_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+        run: |
+          pip install requests openai -q
+
+          python3 << 'PYEOF'
+          import requests, json, os, sys
+          from datetime import datetime, timezone, timedelta
+
+          BASE          = "https://rhino-drishti-api.onrender.com/api"
+          PASS          = os.environ.get("ADMIN_PASS", "")
+          OR_KEY        = os.environ.get("OPENROUTER_KEY", "")
+          GH_REPO       = "surabhijitesh-cell/rhinodrishti"
+
+          try:
+              r = requests.post(f"{BASE}/auth/login",
+                  json={"username": "admin", "password": PASS}, timeout=30)
+              token = r.json().get("token", "")
+              headers = {"Authorization": f"Bearer {token}"}
+          except Exception as e:
+              print(f"Login failed: {e}"); exit(1)
+
+          data_points = []
+
+          try:
+              r = requests.get(f"{BASE}/intelligence?limit=1", headers=headers, timeout=30)
+              total = r.json().get("total", 0)
+              data_points.append(f"Total intelligence items in DB: {total}")
+          except: pass
+
+          for sev in ["critical", "high", "medium", "low"]:
+              try:
+                  r = requests.get(f"{BASE}/intelligence?severity={sev}&limit=1", headers=headers, timeout=15)
+                  cnt = r.json().get("total", 0)
+                  data_points.append(f"  {sev.capitalize()} items: {cnt}")
+              except: pass
+
+          try:
+              r = requests.get(f"{BASE}/daily-brief", headers=headers, timeout=30)
+              if r.status_code == 200:
+                  d = r.json()
+                  data_points.append(f"Daily brief: status={d.get('status')}, date={d.get('date')}")
+          except: pass
+
+          try:
+              r = requests.get(f"{BASE}/sources?limit=100", headers=headers, timeout=30)
+              if r.status_code == 200:
+                  sources = r.json()
+                  data_points.append(f"Active intelligence sources configured: {len(sources) if isinstance(sources, list) else 'unknown'}")
+          except: pass
+
+          if OR_KEY:
+              try:
+                  r = requests.get("https://openrouter.ai/api/v1/auth/key",
+                      headers={"Authorization": f"Bearer {OR_KEY}"}, timeout=15)
+                  if r.status_code == 200:
+                      d = r.json().get("data", {})
+                      usage = d.get("usage", 0)
+                      limit = d.get("limit")
+                      remaining = round(limit - usage, 4) if limit else None
+                      if remaining:
+                          data_points.append(f"OpenRouter: ${usage:.4f} used, ${remaining:.4f} remaining")
+                      else:
+                          data_points.append(f"OpenRouter: ${usage:.4f} used")
+              except: pass
+
+          try:
+              since = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+              r = requests.get(
+                  f"https://api.github.com/repos/{GH_REPO}/commits?per_page=30&since={since}",
+                  timeout=15)
+              if r.status_code == 200:
+                  commits = r.json()
+                  msgs = [c["commit"]["message"].split("\n")[0] for c in commits
+                          if not c["commit"]["message"].startswith("auto-commit")]
+                  data_points.append(f"Commits last 7 days ({len(commits)} total):")
+                  for m in msgs[:15]:
+                      data_points.append(f"  - {m}")
+          except: pass
+
+          try:
+              r = requests.get(
+                  f"https://api.github.com/repos/{GH_REPO}/issues?state=open&labels=automated&per_page=20",
+                  timeout=15)
+              if r.status_code == 200:
+                  issues = r.json()
+                  data_points.append(f"Open automated issues: {len(issues)}")
+                  for i in issues[:5]:
+                      data_points.append(f"  - [{i['number']}] {i['title']}")
+          except: pass
+
+          context_str = "\n".join(data_points)
+          print("=== COLLECTED DATA ===")
+          print(context_str)
+
+          recommendations = ""
+          if OR_KEY:
+              try:
+                  from openai import OpenAI
+                  client = OpenAI(api_key=OR_KEY, base_url="https://openrouter.ai/api/v1")
+                  resp = client.chat.completions.create(
+                      model="google/gemini-2.5-flash",
+                      max_tokens=1800,
+                      messages=[{
+                          "role": "user",
+                          "content": (
+                              "You are auditing Rhino Drishti, an AI-powered military intelligence "
+                              "aggregation platform for India's North Eastern Region (NER).\n\n"
+                              f"Weekly data snapshot:\n{context_str}\n\n"
+                              "Provide a structured weekly improvement report with:\n"
+                              "## 1. System Health Summary\n"
+                              "## 2. Top 3 Performance/Reliability Improvements\n"
+                              "## 3. Top 3 UX/Feature Improvements\n"
+                              "## 4. Security Review\n"
+                              "## 5. Cost Optimisation\n"
+                              "## 6. Recommended Priority This Week\n"
+                              "Be concrete. Max 500 words."
+                          )
+                      }]
+                  )
+                  recommendations = resp.choices[0].message.content
+              except Exception as e:
+                  recommendations = f"Gemini API call failed: {e}"
+          else:
+              recommendations = "Add OPENROUTER_API_KEY to GitHub Secrets to enable AI recommendations."
+
+          report = (
+              "# Rhino Drishti Weekly Improvement Report\n"
+              f"**Generated:** {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')} | **Period:** last 7 days\n\n"
+              "---\n\n"
+              f"{recommendations}\n\n"
+              "---\n\n"
+              "<details>\n<summary>Raw data snapshot</summary>\n\n"
+              f"```\n{context_str}\n```\n"
+              "</details>\n\n"
+              "_Auto-generated by Weekly Improvement Agent - every Sunday 07:00 IST_"
+          )
+
+          with open("weekly_report.md", "w") as f:
+              f.write(report)
+          PYEOF
+
+      - name: Publish report as GitHub Issue
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            let body;
+            try {
+              body = fs.readFileSync('weekly_report.md', 'utf8');
+            } catch(e) {
+              body = 'Report generation failed - check workflow logs at ' + context.runId;
+            }
+            const today = new Date().toISOString().split('T')[0];
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: 'Weekly Improvement Report - ' + today,
+              body,
+              labels: ['improvement-report', 'automated']
+            });
+            console.log('Weekly report issue created.');
