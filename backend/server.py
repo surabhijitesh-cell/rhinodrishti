@@ -39,6 +39,7 @@ from routers.social_media import router as social_media_router
 from routers.admin import router as admin_router
 from routers.relationships import router as relationships_router
 from routers.brief_fortnightly import router as brief_fortnightly_router
+from routers.faultlines import router as faultlines_router
 
 # Import scheduler functions
 from routers.pipeline import (
@@ -53,6 +54,7 @@ from twitter_fetcher import fetch_twitter_accounts, fetch_twitter_searches, seed
 from youtube_fetcher import fetch_youtube_channels, fetch_youtube_searches, seed_youtube_defaults
 from telegram_fetcher import fetch_telegram_channels, seed_telegram_defaults
 from fading_engine import run_fading_pass, delete_expired_low_severity
+from faultline_engine import run_daily_faultline_pass
 
 
 app = FastAPI(title="Rhino Drishti API")
@@ -83,6 +85,7 @@ app.include_router(social_media_router, prefix="/api")
 app.include_router(admin_router, prefix="/api")
 app.include_router(relationships_router, prefix="/api")
 app.include_router(brief_fortnightly_router, prefix="/api")
+app.include_router(faultlines_router, prefix="/api")
 
 
 # ============================================================
@@ -376,8 +379,31 @@ async def startup():
             misfire_grace_time=3600,
         )
 
+        # Faultline daily pass — nightly at 22:30 UTC (04:00 IST), after relationships
+        # Scores all faultlines for today using last 7d window, applies propagation,
+        # emits warning alerts. Idempotent — re-running same day overwrites scores.
+        async def _run_faultline_pass():
+            try:
+                from faultline_seed import FAULTLINES
+                # Ensure registry seeded (idempotent — no-op if already current)
+                if await db.faultlines.count_documents({}) < len(FAULTLINES):
+                    from faultline_seed import seed_faultlines
+                    seed_result = await seed_faultlines(db)
+                    logger.info(f"Faultline registry seeded: {seed_result}")
+                summary = await run_daily_faultline_pass(db)
+                logger.info(f"Faultline daily pass: {summary}")
+            except Exception as e:
+                logger.warning(f"Faultline daily pass failed: {e}")
+
+        scheduler.add_job(
+            _run_faultline_pass,
+            CronTrigger(hour=22, minute=30, timezone='UTC'),  # 04:00 IST (UTC+5:30)
+            id='faultline_daily_pass',
+            misfire_grace_time=3600,
+        )
+
         scheduler.start()
-        logger.info("Scheduler: grassroots/60min, standard/30min, established/12hr, retry/15min, brief/0600 IST, embeddings/6hr, fusion/30min, youtube/4hr, telegram/1hr, fading/1hr, relationships/nightly [firecrawl+twitter DISABLED]")
+        logger.info("Scheduler: grassroots/60min, standard/30min, established/12hr, retry/15min, brief/0600 IST, embeddings/6hr, fusion/30min, youtube/4hr, telegram/1hr, fading/1hr, relationships/nightly, faultlines/0400 IST [firecrawl+twitter DISABLED]")
     except Exception as e:
         logger.warning(f"Scheduler setup failed: {e}")
 
