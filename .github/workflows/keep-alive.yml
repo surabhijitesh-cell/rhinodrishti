@@ -11,10 +11,10 @@ jobs:
     steps:
       - name: Ping health endpoint
         run: |
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 30 \
-            "https://rhino-drishti-api.onrender.com/api/health")
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 60 \
+            "https://rhino-drishti-api.onrender.com/api/health" || echo "000")
           echo "Health status: $STATUS"
           if [ "$STATUS" != "200" ]; then
             echo "Warning: health endpoint returned $STATUS — Render may be cold-starting"
-            exit 0  # don't fail the workflow, just log
           fi
+          exit 0  # never fail — this is a keep-alive ping, not a health gate

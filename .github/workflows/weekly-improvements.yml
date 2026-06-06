@@ -11,8 +11,6 @@ jobs:
     permissions:
       issues: write
     steps:
-      - uses: actions/checkout@v4
-
       - name: Collect app data + generate recommendations
         id: report
         env:
