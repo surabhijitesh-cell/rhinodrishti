@@ -598,6 +598,182 @@ function UnacknowledgedAlerts({ api }) {
   );
 }
 
+/**
+ * Faultline warning banner — mirrors UnacknowledgedAlerts pattern.
+ * Polls /api/faultlines/warnings every 60s. Shows active un-ack'd alerts
+ * with faultline name, state, score, trend direction, and reason.
+ */
+function FaultlineWarnings({ api }) {
+  const [warnings, setWarnings] = useState([]);
+  const [dismissing, setDismissing] = useState(null);
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    const fetch = async () => {
+      try {
+        const res = await axios.get(`${api}/faultlines/warnings`);
+        setWarnings(res.data.warnings || []);
+      } catch (e) { /* silent — endpoint may not be live yet */ }
+    };
+    fetch();
+    const interval = setInterval(fetch, 60000);
+    return () => clearInterval(interval);
+  }, [api]);
+
+  const acknowledge = async (id) => {
+    setDismissing(id);
+    try {
+      await axios.post(`${api}/faultlines/warnings/${id}/ack`);
+      setWarnings((prev) => prev.filter((w) => w.id !== id));
+    } catch (e) { console.error(e); }
+    setDismissing(null);
+  };
+
+  if (warnings.length === 0) return null;
+
+  const levelStyle = (level) => {
+    if (level === "CRITICAL") return "text-red-400 border-red-500/40 bg-red-950/30";
+    if (level === "ELEVATED") return "text-orange-400 border-orange-500/40 bg-orange-950/30";
+    return "text-yellow-400 border-yellow-500/30 bg-yellow-950/20";
+  };
+
+  return (
+    <Card className="border-2 border-orange-500/40 rounded-none bg-orange-950/15 animate-slide-in" data-testid="faultline-warnings-panel">
+      <div className="flex items-center gap-2 px-4 py-2 border-b border-orange-500/30">
+        <AlertTriangle size={14} className="text-orange-400 animate-pulse" />
+        <span className="text-xs uppercase tracking-wider font-['Barlow_Condensed'] font-semibold text-orange-400">
+          Faultline Warnings ({warnings.length})
+        </span>
+        <Button
+          variant="ghost" size="sm"
+          className="ml-auto text-xs text-orange-400"
+          onClick={() => navigate("/faultlines")}
+        >
+          View All <ChevronRight size={12} />
+        </Button>
+      </div>
+      <CardContent className="p-3">
+        <ClickToScroll className="space-y-2 max-h-48">
+        {warnings.slice(0, 5).map((w) => (
+          <div
+            key={w.id}
+            className={`flex items-center gap-3 p-2 border ${levelStyle(w.level)} cursor-pointer hover:bg-orange-950/40`}
+            onClick={() => navigate(`/faultlines/${w.faultline_id}`)}
+            data-testid={`faultline-warning-${w.id}`}
+          >
+            <Target size={14} className="text-orange-400 shrink-0" />
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium leading-tight truncate">
+                {w.faultline_name}
+              </p>
+              <p className="text-[10px] text-muted-foreground font-mono">
+                {w.state} · {w.reason}
+              </p>
+            </div>
+            <Badge className={`shrink-0 rounded-none uppercase text-[10px] px-1.5 py-0 border ${levelStyle(w.level)}`}>
+              {w.score?.toFixed?.(0) ?? w.score} {w.level}
+            </Badge>
+            <Button
+              variant="outline" size="sm"
+              className="h-7 text-[10px] rounded-none border-green-500/30 text-green-400 hover:bg-green-500/10"
+              onClick={(e) => { e.stopPropagation(); acknowledge(w.id); }}
+              disabled={dismissing === w.id}
+              data-testid={`ack-faultline-${w.id}`}
+            >
+              <Check size={12} className="mr-1" />
+              ACK
+            </Button>
+          </div>
+        ))}
+        </ClickToScroll>
+      </CardContent>
+    </Card>
+  );
+}
+
+
+/**
+ * Faultline pulse strip — compact top-N stressed faultlines for dashboard.
+ * Polls /api/faultlines/dashboard-summary every 5 min (low churn).
+ */
+function FaultlinePulse({ api }) {
+  const [data, setData] = useState(null);
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    const fetch = async () => {
+      try {
+        const res = await axios.get(`${api}/faultlines/dashboard-summary?top_n=3`);
+        setData(res.data);
+      } catch (e) { /* silent */ }
+    };
+    fetch();
+    const interval = setInterval(fetch, 5 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, [api]);
+
+  if (!data || !data.top_stressed?.length) return null;
+
+  const levelColor = (level) => {
+    if (level === "CRITICAL") return "border-red-500/40 bg-red-950/20";
+    if (level === "ELEVATED") return "border-orange-500/40 bg-orange-950/20";
+    if (level === "MONITOR") return "border-yellow-500/30 bg-yellow-950/15";
+    return "border-green-500/30 bg-green-950/10";
+  };
+
+  return (
+    <Card className="border border-border rounded-none bg-card" data-testid="faultline-pulse">
+      <div className="flex items-center gap-2 px-4 py-2 border-b border-border">
+        <Activity size={14} className="text-primary" />
+        <span className="text-xs uppercase tracking-wider font-['Barlow_Condensed'] font-semibold text-foreground">
+          Faultline Pulse · Top Stressed
+        </span>
+        <span className="ml-auto text-[10px] text-muted-foreground font-mono">
+          as of {data.as_of}
+        </span>
+        <Button
+          variant="ghost" size="sm"
+          className="text-xs"
+          onClick={() => navigate("/faultlines")}
+        >
+          Open <ChevronRight size={12} />
+        </Button>
+      </div>
+      <CardContent className="p-3 grid grid-cols-1 md:grid-cols-3 gap-2">
+        {data.top_stressed.map((s) => (
+          <div
+            key={s.faultline_id}
+            className={`border ${levelColor(s.level)} p-3 cursor-pointer hover:opacity-90`}
+            onClick={() => navigate(`/faultlines/${s.faultline_id}`)}
+            data-testid={`pulse-${s.faultline_id}`}
+          >
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-[10px] uppercase tracking-wider font-mono text-muted-foreground">
+                {s.state}
+              </span>
+              <Badge className="rounded-none text-[10px] px-1.5 py-0">
+                {s.level}
+              </Badge>
+            </div>
+            <p className="text-sm font-medium leading-tight mb-2 line-clamp-2">
+              {s.faultline_name}
+            </p>
+            <div className="flex items-center justify-between">
+              <span className="text-2xl font-bold font-['Barlow_Condensed']">
+                {s.score?.toFixed?.(0) ?? s.score}
+              </span>
+              <span className="text-[10px] text-muted-foreground font-mono">
+                {s.n_articles} articles
+              </span>
+            </div>
+          </div>
+        ))}
+      </CardContent>
+    </Card>
+  );
+}
+
+
 function PatternInsights({ api }) {
   const [patterns, setPatterns] = useState([]);
 
@@ -1002,6 +1178,12 @@ export default function Dashboard({ stats: propStats, api }) {
 
       {/* Unacknowledged Critical Alerts - Sticky Panel */}
       <UnacknowledgedAlerts api={api} />
+
+      {/* Faultline Warnings - dangerous threshold crossings */}
+      <FaultlineWarnings api={api} />
+
+      {/* Faultline Pulse - top 3 most stressed faultlines */}
+      <FaultlinePulse api={api} />
 
       {/* WebSocket Live Feed - Shows items as they arrive */}
       {wsNewItems.length > 0 && (

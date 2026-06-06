@@ -6,7 +6,7 @@ import {
   Shield, LayoutDashboard, Newspaper, FileText, TrendingUp,
   Globe, Bell, ChevronLeft, ChevronRight, Sun, Moon, Search,
   Activity, Menu, X, Upload, GitBranch, Settings, Network, Key, BookOpen, Brain,
-  LogOut, Users, Megaphone, HelpCircle, RotateCcw
+  LogOut, Users, Megaphone, HelpCircle, RotateCcw, Target
 } from "lucide-react";
 import { Input } from "../components/ui/input";
 import { Button } from "../components/ui/button";
@@ -34,6 +34,10 @@ const ALL_NAV_ITEMS = [
   {
     path: "/trends", label: "Trends", icon: TrendingUp, roles: ["admin", "analyst", "viewer"],
     tooltip: "Multi-timeframe severity evolution, state-wise stability index, cross-border correlation and drill-down intelligence center.",
+  },
+  {
+    path: "/faultlines", label: "Faultlines", icon: Target, roles: ["admin", "analyst", "viewer"],
+    tooltip: "Continuous monitoring of regional faultlines — daily scoring, cross-impact, warning banners, and monthly state-wise reports.",
   },
   {
     path: "/patterns", label: "Patterns", icon: GitBranch, roles: ["admin", "analyst", "viewer"],
@@ -86,7 +90,7 @@ const ALL_NAV_ITEMS = [
 ];
 
 // Paths that show a "New" badge until user has logged in 3+ times
-const NEW_BADGE_PATHS = ["/reports", "/updates", "/trends", "/daily-brief"];
+const NEW_BADGE_PATHS = ["/reports", "/updates", "/trends", "/daily-brief", "/faultlines"];
 const NEW_BADGE_LOGIN_THRESHOLD = 3;
 
 function useLoginCount(username) {

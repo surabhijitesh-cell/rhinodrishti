@@ -746,6 +746,167 @@ export default function MonthlyBrief({ api }) {
     );
   };
 
+  // ── Faultline section (Phase 5c) ──────────────────────────────────────────
+  const renderFaultlines = () => {
+    const fa = brief?.faultline_analysis;
+    if (!fa || !fa.available) return null;
+
+    const states = Object.keys(fa.by_state || {}).sort();
+    const rising = fa.rising || [];
+    const critical = fa.critical || [];
+    const narratives = fa.state_narratives || {};
+
+    const handleDownload = () => {
+      window.open(`${api}/faultlines/report?year=${year}&month=${month}`, "_blank");
+    };
+
+    return (
+      <Card className="border border-border rounded-none bg-card" data-testid="faultline-section">
+        <CardHeader className="py-3 px-4 border-b border-border flex flex-row items-center gap-2">
+          <CardTitle className="text-sm uppercase tracking-wider font-['Barlow_Condensed'] font-semibold flex items-center gap-2">
+            <Target size={16} className="text-primary" /> Faultline Analysis
+          </CardTitle>
+          <Button
+            variant="outline" size="sm"
+            className="ml-auto rounded-none text-xs"
+            onClick={handleDownload}
+            data-testid="download-faultline-pdf-btn"
+          >
+            <Download size={12} className="mr-1" /> Faultline Report PDF
+          </Button>
+        </CardHeader>
+        <CardContent className="p-4 space-y-4">
+          {/* Summary strip */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <Stat label="Monitored"  value={fa.total_faultlines || 0} />
+            <Stat label="Critical"   value={critical.length} color={CONCERN_COLOR.CRITICAL} />
+            <Stat label="Rising"     value={rising.length}   color={CONCERN_COLOR.ELEVATED} />
+            <Stat label="States"     value={states.length} />
+          </div>
+
+          {/* Critical roll-up */}
+          {critical.length > 0 && (
+            <div className="border border-red-500/30 bg-red-500/5 p-3">
+              <div className="text-[10px] font-mono uppercase tracking-wider text-red-400 mb-2">
+                Currently CRITICAL (score ≥ 75)
+              </div>
+              <div className="space-y-1">
+                {critical.slice(0, 10).map((c) => (
+                  <div key={c.faultline_id} className="flex items-center gap-2 text-xs">
+                    <span className="font-mono text-[10px] text-muted-foreground w-20 shrink-0">
+                      [{c.state}]
+                    </span>
+                    <span className="flex-1 truncate">{c.faultline_name}</span>
+                    <span className="font-bold text-red-400 w-12 text-right">
+                      {Math.round(c.last)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Rising roll-up */}
+          {rising.length > 0 && (
+            <div className="border border-orange-500/30 bg-orange-500/5 p-3">
+              <div className="text-[10px] font-mono uppercase tracking-wider text-orange-400 mb-2">
+                Rising this month (Δ ≥ +10 pts)
+              </div>
+              <div className="space-y-1">
+                {rising.slice(0, 10).map((r) => (
+                  <div key={r.faultline_id} className="flex items-center gap-2 text-xs">
+                    <span className="font-mono text-[10px] text-muted-foreground w-20 shrink-0">
+                      [{r.state}]
+                    </span>
+                    <span className="flex-1 truncate">{r.faultline_name}</span>
+                    <span className="text-orange-400 w-12 text-right font-mono text-[10px]">
+                      +{r.delta.toFixed(0)}
+                    </span>
+                    <span className="font-bold w-12 text-right">{Math.round(r.last)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Per-state heatmap */}
+          <div>
+            <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground mb-2">
+              State × Faultline heatmap (top 5 per state)
+            </div>
+            <div className="space-y-1">
+              {states.map((st) => {
+                const fls = (fa.by_state[st] || []).slice(0, 5);
+                return (
+                  <div key={st} className="flex items-center gap-2">
+                    <span className="text-xs font-mono uppercase tracking-wider w-24 shrink-0 text-muted-foreground">
+                      {st}
+                    </span>
+                    <div className="flex-1 flex gap-1">
+                      {fls.map((f) => (
+                        <div
+                          key={f.faultline_id}
+                          className="flex-1 px-2 py-2 text-[10px] font-mono border cursor-pointer hover:opacity-90"
+                          style={{
+                            background: `${CONCERN_COLOR[f.level]}22`,
+                            borderColor: `${CONCERN_COLOR[f.level]}55`,
+                            color: CONCERN_COLOR[f.level],
+                          }}
+                          title={`${f.faultline_name}: ${f.last.toFixed(0)} (${f.level}), Δ ${f.delta.toFixed(0)}`}
+                          onClick={() => window.open(`/faultlines/${f.faultline_id}`, "_blank")}
+                          data-testid={`fl-heatmap-${f.faultline_id}`}
+                        >
+                          <div className="truncate">{f.faultline_name}</div>
+                          <div className="flex items-center justify-between mt-1">
+                            <span className="font-bold text-base">{Math.round(f.last)}</span>
+                            <span>
+                              {f.delta > 0 ? "+" : ""}{f.delta.toFixed(0)}
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Per-state narratives */}
+          {Object.keys(narratives).length > 0 && (
+            <div className="space-y-3">
+              <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">
+                State narratives
+              </div>
+              {states.map((st) => {
+                const n = narratives[st];
+                if (!n || !n.summary) return null;
+                return (
+                  <div key={st} className="border border-border p-3 bg-background">
+                    <div className="text-xs font-mono uppercase tracking-wider text-primary mb-1">
+                      {st}
+                    </div>
+                    <p className="text-sm leading-relaxed">
+                      {renderLabeledText(n.summary)}
+                    </p>
+                    {n.manual_review_advisory && (
+                      <p className="text-[11px] text-muted-foreground italic mt-2 pt-2 border-t border-border">
+                        <span className="uppercase tracking-wider font-mono text-[9px] text-amber-400">
+                          Manual review:
+                        </span>{" "}
+                        {n.manual_review_advisory}
+                      </p>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    );
+  };
+
   const renderContacts = () => {
     const directory = brief?.contact_directory || {};
     const firstState = Object.keys(directory)[0];
@@ -877,6 +1038,7 @@ export default function MonthlyBrief({ api }) {
           {renderScenarios()}
           {renderActionMatrix()}
           {renderMitigation()}
+          {renderFaultlines()}
           {renderContacts()}
         </>
       )}

@@ -601,6 +601,126 @@ def _build_notebooklm_script(brief: dict, year: int, month: int) -> str:
 
 # ── Generation orchestrator ───────────────────────────────────────────────────
 
+# ── Faultline section (Phase 5a) ─────────────────────────────────────────────
+
+async def _aggregate_faultline_section(year: int, month: int) -> dict:
+    """
+    Aggregate faultline_scores for the calendar month, grouped by state.
+    Returns:
+      {
+        "available": bool,             # True if any scores exist for this month
+        "by_state": {                  # state → list of {faultline + month stats}
+          "Manipur": [
+            {faultline_id, faultline_name, first, last, peak, avg, delta, level, days_observed},
+            ...
+          ]
+        },
+        "rising": [...top 10 by delta...],
+        "declining": [...top 5...],
+        "critical": [...current CRITICAL...],
+      }
+    """
+    from collections import defaultdict
+    start = datetime(year, month, 1, tzinfo=timezone.utc).date()
+    if month == 12:
+        end = datetime(year + 1, 1, 1, tzinfo=timezone.utc).date()
+    else:
+        end = datetime(year, month + 1, 1, tzinfo=timezone.utc).date()
+
+    cursor = db.faultline_scores.find(
+        {"date": {"$gte": start.isoformat(), "$lt": end.isoformat()}},
+        {"_id": 0},
+    ).sort([("faultline_id", 1), ("date", 1)])
+    all_scores = [s async for s in cursor]
+
+    if not all_scores:
+        return {"available": False, "by_state": {}, "rising": [], "declining": [], "critical": []}
+
+    by_fl: dict = defaultdict(list)
+    for s in all_scores:
+        by_fl[s["faultline_id"]].append(s)
+
+    fl_summaries = []
+    for fl_id, series in by_fl.items():
+        series = sorted(series, key=lambda x: x["date"])
+        first = series[0]["score"]
+        last = series[-1]["score"]
+        peak = max(s["score"] for s in series)
+        avg = sum(s["score"] for s in series) / len(series)
+        fl_summaries.append({
+            "faultline_id": fl_id,
+            "faultline_name": series[-1]["faultline_name"],
+            "state": series[-1]["state"],
+            "first": round(first, 1),
+            "last": round(last, 1),
+            "peak": round(peak, 1),
+            "avg": round(avg, 1),
+            "delta": round(last - first, 1),
+            "level": series[-1]["level"],
+            "days_observed": len(series),
+        })
+
+    by_state: dict = defaultdict(list)
+    for summary in fl_summaries:
+        by_state[summary["state"]].append(summary)
+    # Sort each state's faultlines by current score desc
+    for st in by_state:
+        by_state[st] = sorted(by_state[st], key=lambda x: -x["last"])
+
+    rising = sorted([s for s in fl_summaries if s["delta"] >= 10],
+                    key=lambda x: -x["delta"])[:10]
+    declining = sorted([s for s in fl_summaries if s["delta"] <= -10],
+                       key=lambda x: x["delta"])[:5]
+    critical = sorted([s for s in fl_summaries if s["last"] >= 75],
+                      key=lambda x: -x["last"])
+
+    return {
+        "available": True,
+        "by_state": dict(by_state),
+        "rising": rising,
+        "declining": declining,
+        "critical": critical,
+        "total_faultlines": len(fl_summaries),
+    }
+
+
+def _faultline_narrative_prompt(state: str, faultlines: list, month_name: str) -> str:
+    """LLM prompt for state-level faultline narrative summary."""
+    lines = []
+    for f in faultlines[:8]:
+        arrow = "rising" if f["delta"] > 2 else ("falling" if f["delta"] < -2 else "flat")
+        lines.append(
+            f"- {f['faultline_name']}: {f['last']:.0f}/100 ({f['level']}), "
+            f"{arrow} {f['delta']:+.1f} pts over {f['days_observed']} days "
+            f"(peak {f['peak']:.0f}, avg {f['avg']:.0f})"
+        )
+    fl_summary = "\n".join(lines)
+
+    return f"""You are writing the faultline analysis section of a monthly strategic intelligence brief.
+
+State: {state}
+Period: {month_name}
+
+Faultline data for this month:
+{fl_summary}
+
+Write a tight 4-6 sentence narrative that:
+1. Names the 2-3 most concerning faultlines for {state} this month and why
+2. Calls out direction (rising / falling / flat) with the delta
+3. Connects related faultlines through their underlying drivers (don't list — synthesize)
+4. Ends with one concrete recommendation for what to monitor next month
+
+Use label conventions: [CONFIRMED] for direct data points (e.g. "Score rose 18 pts [CONFIRMED]"),
+[ASSESSED] for inferences, [SPECULATIVE] for forecasts.
+
+Return strict JSON:
+{{
+  "summary": "your narrative paragraph here",
+  "manual_review_advisory": "2-3 sentence advisory on what to inspect manually for {state} - mention specific local news cycles, social media channels, or narratives worth checking"
+}}
+"""
+
+
 async def _run_generation(year: int, month: int) -> dict:
     """The actual heavy generator — called via background task or directly."""
     logger.info(f"Monthly brief generation start: {year}-{month:02d}")
@@ -661,6 +781,24 @@ async def _run_generation(year: int, month: int) -> dict:
     scenarios_payload = await _call_llm_json(_scenarios_prompt(stats, year, month), max_tokens=900)
     scenarios = scenarios_payload.get("scenarios", []) if isinstance(scenarios_payload, dict) else []
 
+    # 2f. Faultline analysis section (Phase 5a)
+    faultline_section = await _aggregate_faultline_section(year, month)
+    if faultline_section["available"]:
+        narrative_tasks = []
+        narrative_states = []
+        for st, fls in faultline_section["by_state"].items():
+            if not fls:
+                continue
+            narrative_states.append(st)
+            narrative_tasks.append(
+                _call_llm_json(_faultline_narrative_prompt(st, fls, month_name), max_tokens=500)
+            )
+        narrative_results = await asyncio.gather(*narrative_tasks)
+        narratives = {st: res for st, res in zip(narrative_states, narrative_results) if res}
+        faultline_section["state_narratives"] = narratives
+    else:
+        faultline_section["state_narratives"] = {}
+
     # 3. Assemble brief
     # Detect partial failure — LLM calls silently returned empty
     llm_ok = bool(exec_summary and state_sections)
@@ -680,6 +818,7 @@ async def _run_generation(year: int, month: int) -> dict:
         "mitigation_playbook": mitigation_playbook,
         "scenarios": scenarios,
         "cross_border_analysis": cross_border_analysis,
+        "faultline_analysis": faultline_section,
     }
     if not llm_ok:
         brief["_llm_error"] = "LLM calls returned empty — check OpenRouter API key and rate limits. Re-generate to retry."
@@ -1262,5 +1401,102 @@ def _render_pdf(brief: dict, prev_brief: dict = None) -> bytes:
                     pdf.set_text_color(40, 40, 40)
                     pdf.multi_cell(0, 4, _ascii(str(v)), **NL)
             pdf.ln(3)
+
+    # ── Faultline Analysis (Phase 5b) ──────────────────────────────────────────
+    fl_section = brief.get("faultline_analysis") or {}
+    if fl_section.get("available"):
+        pdf.add_page()
+        pdf.set_fill_color(*C_TBL_HDR)
+        pdf.set_text_color(255, 255, 255)
+        pdf.set_font("Helvetica", "B", 12)
+        pdf.cell(0, 7, _ascii("  Faultline Analysis"), fill=True, **NL)
+        pdf.ln(2)
+
+        # Overview line
+        pdf.set_text_color(*C_SEC_TEXT)
+        pdf.set_font("Helvetica", "", 9)
+        rising = fl_section.get("rising", [])
+        declining = fl_section.get("declining", [])
+        critical = fl_section.get("critical", [])
+        pdf.multi_cell(0, 5, _ascii(
+            f"Faultlines monitored this period: {fl_section.get('total_faultlines', 0)}. "
+            f"Currently CRITICAL: {len(critical)}. Rising (delta >= +10): {len(rising)}. "
+            f"Declining (delta <= -10): {len(declining)}."
+        ), **NL)
+        pdf.ln(2)
+
+        # Per-state table + narrative
+        for state in sorted(fl_section.get("by_state", {}).keys()):
+            if pdf.get_y() > 230:
+                pdf.add_page()
+            state_fls = fl_section["by_state"][state]
+            pdf.set_fill_color(50, 70, 45)
+            pdf.set_text_color(255, 255, 255)
+            pdf.set_font("Helvetica", "B", 10)
+            pdf.cell(0, 6, _ascii(f"  {state}"), fill=True, **NL)
+
+            # Narrative summary (if LLM produced one)
+            narratives = fl_section.get("state_narratives", {})
+            n = narratives.get(state) or {}
+            if n.get("summary"):
+                pdf.set_text_color(*C_SEC_TEXT)
+                pdf.set_font("Helvetica", "", 9)
+                pdf.multi_cell(0, 5, _ascii(n["summary"]), **NL)
+                pdf.ln(1)
+            if n.get("manual_review_advisory"):
+                pdf.set_text_color(80, 100, 60)
+                pdf.set_font("Helvetica", "I", 8)
+                pdf.multi_cell(0, 4, _ascii(f"Manual review: {n['manual_review_advisory']}"), **NL)
+                pdf.ln(1)
+
+            # Top faultline table
+            pdf.set_font("Helvetica", "B", 8)
+            pdf.set_fill_color(*C_TBL_HDR)
+            pdf.set_text_color(255, 255, 255)
+            pdf.cell(95, 5, _ascii("  Faultline"), fill=True)
+            pdf.cell(20, 5, "Score",   fill=True, align="C")
+            pdf.cell(25, 5, "Level",   fill=True, align="C")
+            pdf.cell(20, 5, "Delta",   fill=True, align="C")
+            pdf.cell(20, 5, "Peak",    fill=True, align="C", **NL)
+            for i, fl in enumerate(state_fls[:8]):
+                if pdf.get_y() > 270:
+                    pdf.add_page()
+                pdf.set_text_color(40, 40, 40)
+                pdf.set_font("Helvetica", "", 8)
+                if i % 2 == 0:
+                    pdf.set_fill_color(*C_TBL_ALT)
+                    fill = True
+                else:
+                    fill = False
+                name = fl["faultline_name"][:50]
+                pdf.cell(95, 5, _ascii(f"  {name}"), fill=fill)
+                pdf.cell(20, 5, f"{fl['last']:.0f}", fill=fill, align="C")
+                pdf.cell(25, 5, fl["level"],         fill=fill, align="C")
+                delta_str = f"{fl['delta']:+.1f}"
+                pdf.cell(20, 5, delta_str, fill=fill, align="C")
+                pdf.cell(20, 5, f"{fl['peak']:.0f}", fill=fill, align="C", **NL)
+            pdf.ln(2)
+
+        # Rising / declining roll-up + cross-state advisory
+        if rising:
+            if pdf.get_y() > 230:
+                pdf.add_page()
+            pdf.set_font("Helvetica", "B", 10)
+            pdf.set_text_color(*C_SEC_TEXT)
+            pdf.cell(0, 6, _ascii("  Rising faultlines this period (top 10 by delta)"), **NL)
+            pdf.set_font("Helvetica", "", 8)
+            for r in rising[:10]:
+                line = f"  [{r['state']}] {r['faultline_name'][:55]:55s} now {r['last']:.0f}, +{r['delta']:.0f}"
+                pdf.cell(0, 4, _ascii(line), **NL)
+            pdf.ln(2)
+
+        # General manual review advisory
+        pdf.set_font("Helvetica", "I", 8)
+        pdf.set_text_color(80, 100, 60)
+        pdf.multi_cell(0, 4, _ascii(
+            "Manual review supplement: for rising or borderline faultlines, inspect regional language news "
+            "(Assamese, Bengali, Manipuri, Mizo, Naga), Twitter/X and Telegram narrative spikes, influencer "
+            "amplification patterns, and repeated cross-posted claims aligned with foreign-influence indicators."
+        ), **NL)
 
     return bytes(pdf.output())
