@@ -484,6 +484,130 @@ async def faultline_pdf_report(
     )
 
 
+# ── Admin: force-clear a stuck backfill job ───────────────────────────────────
+@router.post("/faultlines/admin/clear-stuck-backfill")
+async def clear_stuck_backfill(
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Admin-only: mark any 'running' backfill job as 'stale'. Does NOT kill the
+    underlying asyncio task — you must also restart the Render service to stop
+    the actual runaway loop. After both steps you can re-trigger /backfill.
+    """
+    if current_user.get("role") != "admin":
+        raise HTTPException(403, "Admin only")
+
+    result = await backfill_status_col.update_many(
+        {"status": "running"},
+        {"$set": {
+            "status": "stale",
+            "finished_at": datetime.now(timezone.utc).isoformat(),
+            "cleared_by": current_user.get("username") or current_user.get("id"),
+        }},
+    )
+    return {
+        "status": "ok",
+        "jobs_cleared": result.modified_count,
+        "note": (
+            "If a backfill loop is still running in the Render process, you must "
+            "restart the Render service to actually stop it. This endpoint only "
+            "clears the DB lock so a new backfill can start."
+        ),
+    }
+
+
+# ── Admin: purge intelligence + score data before a cutoff date ───────────────
+@router.post("/faultlines/admin/purge-before")
+async def purge_before(
+    cutoff: str = Query(..., description="YYYY-MM-DD. All data strictly before this date is deleted."),
+    confirm: bool = Query(False, description="Must be true to actually delete. Defaults to dry-run."),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Admin-only DESTRUCTIVE operation. Deletes from:
+      - intelligence_items   (published_at < cutoff)
+      - faultline_scores     (date < cutoff)
+      - faultline_mappings   (date < cutoff)
+      - intelligence_patterns (detected_at < cutoff)
+
+    Use confirm=false (default) for a dry-run that reports counts without deleting.
+    Use confirm=true to commit.
+    """
+    if current_user.get("role") != "admin":
+        raise HTTPException(403, "Admin only")
+
+    # Validate cutoff format
+    try:
+        cutoff_date = datetime.fromisoformat(cutoff).date()
+    except ValueError:
+        raise HTTPException(400, f"Invalid cutoff date format: {cutoff}. Expected YYYY-MM-DD.")
+    cutoff_iso = cutoff_date.isoformat()
+
+    # Safety: refuse to purge anything inside the last 30 days
+    floor = (datetime.now(timezone.utc).date() - timedelta(days=30)).isoformat()
+    if cutoff_iso > floor:
+        raise HTTPException(
+            400,
+            f"Refusing to purge within the last 30 days. cutoff={cutoff_iso}, floor={floor}",
+        )
+
+    # Count matches first (always — dry-run + confirmed)
+    intel_count = await db.intelligence_items.count_documents(
+        {"published_at": {"$lt": cutoff_iso}}
+    )
+    scores_count = await db.faultline_scores.count_documents(
+        {"date": {"$lt": cutoff_iso}}
+    )
+    mappings_count = await db.faultline_mappings.count_documents(
+        {"date": {"$lt": cutoff_iso}}
+    )
+    patterns_count = await db.intelligence_patterns.count_documents(
+        {"detected_at": {"$lt": cutoff_iso}}
+    )
+
+    counts = {
+        "intelligence_items": intel_count,
+        "faultline_scores": scores_count,
+        "faultline_mappings": mappings_count,
+        "intelligence_patterns": patterns_count,
+    }
+
+    if not confirm:
+        return {
+            "status": "dry_run",
+            "cutoff": cutoff_iso,
+            "would_delete": counts,
+            "total": sum(counts.values()),
+            "hint": "Re-run with confirm=true to commit the delete.",
+        }
+
+    # Confirmed — execute deletes
+    triggered_by = current_user.get("username") or current_user.get("id")
+    logger.warning(
+        f"Purging pre-{cutoff_iso} data: intel={intel_count}, "
+        f"scores={scores_count}, mappings={mappings_count}, "
+        f"patterns={patterns_count}. Triggered by {triggered_by}."
+    )
+
+    deleted = {}
+    r = await db.intelligence_items.delete_many({"published_at": {"$lt": cutoff_iso}})
+    deleted["intelligence_items"] = r.deleted_count
+    r = await db.faultline_scores.delete_many({"date": {"$lt": cutoff_iso}})
+    deleted["faultline_scores"] = r.deleted_count
+    r = await db.faultline_mappings.delete_many({"date": {"$lt": cutoff_iso}})
+    deleted["faultline_mappings"] = r.deleted_count
+    r = await db.intelligence_patterns.delete_many({"detected_at": {"$lt": cutoff_iso}})
+    deleted["intelligence_patterns"] = r.deleted_count
+
+    return {
+        "status": "ok",
+        "cutoff": cutoff_iso,
+        "deleted": deleted,
+        "total": sum(deleted.values()),
+        "triggered_by": triggered_by,
+    }
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # DYNAMIC-PATH ROUTES (catch-all `/{fl_id}` — must come LAST)
 # ═══════════════════════════════════════════════════════════════════════════════

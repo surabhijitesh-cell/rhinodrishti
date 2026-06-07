@@ -619,6 +619,10 @@ async def run_daily_faultline_pass(
 
 
 # ── Backfill ──────────────────────────────────────────────────────────────────
+BACKFILL_DEFAULT_LOOKBACK_DAYS = 90
+BACKFILL_MAX_LOOKBACK_DAYS = 365
+
+
 async def run_backfill(
     db,
     start_date: Optional[str] = None,
@@ -628,26 +632,50 @@ async def run_backfill(
     """
     Backfill: re-run daily pass for each day in [start_date, end_date].
 
-    Defaults: start_date = earliest published_at in intelligence_items, end_date = today.
-    Sleeps between days to avoid rate-limiting and Render starvation.
+    Defaults:
+      end_date   = today (UTC)
+      start_date = max(end_date - BACKFILL_DEFAULT_LOOKBACK_DAYS, earliest article)
+
+    If start_date is supplied explicitly, it is still capped at
+    (end_date - BACKFILL_MAX_LOOKBACK_DAYS) to prevent multi-year runaway runs
+    caused by a single stale article in the DB.
 
     Run as background task. Long-running.
     """
+    if end_date is None:
+        end_date = datetime.now(timezone.utc).date().isoformat()
+    end = datetime.fromisoformat(end_date).date()
+
+    default_start = end - timedelta(days=BACKFILL_DEFAULT_LOOKBACK_DAYS)
+    hard_floor = end - timedelta(days=BACKFILL_MAX_LOOKBACK_DAYS)
+
     if start_date is None:
+        # Find earliest article, but clamp to default lookback so a stale
+        # 2018 article cannot drag the backfill across 8 years.
         earliest = await db.intelligence_items.find(
             {}, {"published_at": 1}
         ).sort("published_at", 1).limit(1).to_list(length=1)
         if not earliest:
             return {"status": "no articles in DB"}
-        start_date = earliest[0]["published_at"][:10]
+        article_earliest = datetime.fromisoformat(earliest[0]["published_at"][:10]).date()
+        # Use the LATER of (today - 90d) and (earliest article date).
+        # If articles are newer than 90 days, start from articles.
+        # If articles are older than 90 days, start from 90 days ago.
+        start = max(default_start, article_earliest)
+        start_date = start.isoformat()
+    else:
+        # Explicit start_date — still cap at hard floor (today - 365d) to
+        # block accidental multi-year runs from the caller.
+        start = datetime.fromisoformat(start_date).date()
+        if start < hard_floor:
+            logger.warning(
+                f"Backfill start_date {start} below hard floor {hard_floor}; "
+                f"clamping to {hard_floor}"
+            )
+            start = hard_floor
+            start_date = start.isoformat()
 
-    if end_date is None:
-        end_date = datetime.now(timezone.utc).date().isoformat()
-
-    start = datetime.fromisoformat(start_date).date()
-    end = datetime.fromisoformat(end_date).date()
-
-    logger.info(f"Backfill: {start} → {end}")
+    logger.info(f"Backfill: {start} → {end} ({(end - start).days + 1} days)")
 
     days_processed = 0
     total_alerts = 0
