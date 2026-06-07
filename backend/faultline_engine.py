@@ -562,6 +562,11 @@ async def run_daily_faultline_pass(
     raw_scores: dict[str, float] = {}
     breakdowns: dict[str, dict] = {}
     all_mappings_count = 0
+    # Track LLM health across the whole pass. If zero successes but we attempted
+    # calls, the day is LLM-dead (e.g. 402 insufficient credits) — the resume
+    # logic must NOT treat such a day as "done".
+    llm_attempts = 0
+    llm_successes = 0
 
     async def _score_one(fl_id: str, art: dict, fl: dict) -> tuple[str, dict] | None:
         async with sem:
@@ -583,6 +588,8 @@ async def run_daily_faultline_pass(
         if llm_client:
             tasks = [_score_one(fl_id, art, fl) for art in candidates]
             results = await asyncio.gather(*tasks, return_exceptions=False)
+            llm_attempts += len(candidates)
+            llm_successes += sum(1 for r in results if r is not None)
         else:
             results = [None] * len(candidates)
 
@@ -668,6 +675,13 @@ async def run_daily_faultline_pass(
 
     # Persist daily snapshots + evaluate alerts
     alerts_emitted = 0
+    # Pass-level LLM health. llm_ok=True means at least one LLM call succeeded
+    # this pass. If we made attempts but ALL failed (e.g. 402 insufficient
+    # credits), llm_ok=False → resume will re-process this date later.
+    # No attempts (no candidate articles anywhere) counts as ok=True — there
+    # was genuinely nothing to score, re-running won't help.
+    llm_ok = (llm_attempts == 0) or (llm_successes > 0)
+
     for fl in faultlines:
         fl_id = fl["id"]
         final = final_scores.get(fl_id, 0.0)
@@ -688,6 +702,7 @@ async def run_daily_faultline_pass(
             "n_significant": breakdown.get("n_significant", 0),
             "avg_impact": breakdown["avg_impact"],
             "avg_confidence": breakdown["avg_confidence"],
+            "llm_ok": llm_ok,
             "computed_at": datetime.now(timezone.utc).isoformat(),
         }
         await db.faultline_scores.replace_one(
@@ -700,12 +715,21 @@ async def run_daily_faultline_pass(
         if alert:
             alerts_emitted += 1
 
+    if not llm_ok:
+        logger.warning(
+            f"Faultline pass {target_date}: LLM DEAD — {llm_attempts} attempts, "
+            f"0 successes (likely 402/credits). Scores stored as 0; resume will redo this date."
+        )
+
     return {
         "date": target_date,
         "faultlines_scored": len(faultlines),
         "articles_in_window": len(articles),
         "mappings_created": all_mappings_count,
         "alerts_emitted": alerts_emitted,
+        "llm_attempts": llm_attempts,
+        "llm_successes": llm_successes,
+        "llm_ok": llm_ok,
     }
 
 
@@ -782,11 +806,19 @@ async def run_backfill(
         cur_iso = cur.isoformat()
         try:
             if resume:
-                # Skip dates already scored — enables resume after a crash.
-                existing = await db.faultline_scores.count_documents({"date": cur_iso})
-                if existing > 0:
+                # Skip a date only if it was scored with a HEALTHY LLM pass.
+                # Dates scored during an LLM outage (llm_ok=False, e.g. 402
+                # insufficient credits) are NOT considered done — they get
+                # re-processed so a resume run after topping up credits fixes
+                # the zero-score days. Legacy docs without the llm_ok field are
+                # treated as healthy (don't redo old good data).
+                healthy = await db.faultline_scores.count_documents({
+                    "date": cur_iso,
+                    "$or": [{"llm_ok": True}, {"llm_ok": {"$exists": False}}],
+                })
+                if healthy > 0:
                     days_skipped += 1
-                    logger.info(f"Backfill {cur_iso}: SKIP (already scored, {existing} docs)")
+                    logger.info(f"Backfill {cur_iso}: SKIP (already scored, llm healthy)")
                     cur = cur + timedelta(days=1)
                     continue
             result = await run_daily_faultline_pass(db, target_date=cur_iso)
