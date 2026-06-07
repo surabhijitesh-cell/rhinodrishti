@@ -278,12 +278,18 @@ async def trigger_backfill(
     background_tasks: BackgroundTasks,
     start_date: Optional[str] = Query(None, description="YYYY-MM-DD; default = earliest article"),
     end_date: Optional[str] = Query(None, description="YYYY-MM-DD; default = today"),
+    force: bool = Query(False, description="True = re-score every date (overwrite). False = resume (skip already-scored dates)."),
     current_user: dict = Depends(get_current_user),
 ):
     """
     Kick off historical backfill. Long-running (minutes to hours).
-    Re-running same range overwrites existing scores.
     Blocked if another backfill is already running (concurrency guard).
+
+    force=false (default): RESUME mode — skips dates that already have scores.
+      If a run dies mid-way, just re-fire and it continues from where it stopped.
+    force=true: re-score every date in range, overwriting existing scores.
+      Use this for the FIRST run after a scoring-logic change (old scores are
+      stale and must be overwritten).
     """
     _require_analyst_or_admin(current_user)
 
@@ -301,11 +307,14 @@ async def trigger_backfill(
         "end_date": end_date,
         "started_at": datetime.now(timezone.utc).isoformat(),
         "triggered_by": current_user.get("username") or current_user.get("id"),
+        "force": force,
     })
 
     async def _bg():
         try:
-            result = await run_backfill(db, start_date=start_date, end_date=end_date)
+            result = await run_backfill(
+                db, start_date=start_date, end_date=end_date, resume=not force
+            )
             await backfill_status_col.update_one(
                 {"job_id": job_id},
                 {"$set": {

@@ -504,7 +504,7 @@ async def evaluate_alerts(
 async def run_daily_faultline_pass(
     db,
     target_date: Optional[str] = None,
-    max_articles_per_faultline: int = 30,
+    max_articles_per_faultline: int = 12,
     llm_concurrency: int = 4,
 ) -> dict:
     """
@@ -719,6 +719,7 @@ async def run_backfill(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     inter_day_sleep_seconds: float = 5.0,
+    resume: bool = True,
 ) -> dict:
     """
     Backfill: re-run daily pass for each day in [start_date, end_date].
@@ -730,6 +731,11 @@ async def run_backfill(
     If start_date is supplied explicitly, it is still capped at
     (end_date - BACKFILL_MAX_LOOKBACK_DAYS) to prevent multi-year runaway runs
     caused by a single stale article in the DB.
+
+    resume=True (default): skip any date that already has score docs. If Render
+    hibernates/OOMs mid-run, just re-fire the same backfill — it picks up where
+    it left off instead of restarting from day 1. Set resume=False to force a
+    full re-score (overwrites everything).
 
     Run as background task. Long-running.
     """
@@ -769,16 +775,26 @@ async def run_backfill(
     logger.info(f"Backfill: {start} → {end} ({(end - start).days + 1} days)")
 
     days_processed = 0
+    days_skipped = 0
     total_alerts = 0
     cur = start
     while cur <= end:
+        cur_iso = cur.isoformat()
         try:
-            result = await run_daily_faultline_pass(db, target_date=cur.isoformat())
+            if resume:
+                # Skip dates already scored — enables resume after a crash.
+                existing = await db.faultline_scores.count_documents({"date": cur_iso})
+                if existing > 0:
+                    days_skipped += 1
+                    logger.info(f"Backfill {cur_iso}: SKIP (already scored, {existing} docs)")
+                    cur = cur + timedelta(days=1)
+                    continue
+            result = await run_daily_faultline_pass(db, target_date=cur_iso)
             days_processed += 1
             total_alerts += result.get("alerts_emitted", 0)
-            logger.info(f"Backfill {cur}: {result}")
+            logger.info(f"Backfill {cur_iso}: {result}")
         except Exception as e:
-            logger.exception(f"Backfill failed for {cur}: {e}")
+            logger.exception(f"Backfill failed for {cur_iso}: {e}")
         cur = cur + timedelta(days=1)
         await asyncio.sleep(inter_day_sleep_seconds)
 
@@ -786,5 +802,6 @@ async def run_backfill(
         "start_date": start_date,
         "end_date": end_date,
         "days_processed": days_processed,
+        "days_skipped": days_skipped,
         "total_alerts_emitted": total_alerts,
     }
