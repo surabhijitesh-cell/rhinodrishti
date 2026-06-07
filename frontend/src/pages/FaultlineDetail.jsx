@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import {
   ArrowLeft, Target, AlertTriangle, ExternalLink, Save, RefreshCw,
@@ -71,6 +71,10 @@ export default function FaultlineDetail({ api }) {
   const [notesDraft, setNotesDraft] = useState("");
   const [savingNotes, setSavingNotes] = useState(false);
   const [notesSaved, setNotesSaved] = useState(false);
+  // Only initialize notesDraft from the server response on the first load.
+  // Subsequent fetchAll calls (e.g. days-selector change, refresh, polling)
+  // would otherwise silently overwrite the user's in-progress draft.
+  const notesInitialized = useRef(false);
 
   const fetchAll = useCallback(async () => {
     setLoading(true);
@@ -83,12 +87,21 @@ export default function FaultlineDetail({ api }) {
       setFaultline(fl.data);
       setHistory(hist.data.series || []);
       setArticles(arts.data.articles || []);
-      setNotesDraft(fl.data?.notes || "");
+      if (!notesInitialized.current) {
+        setNotesDraft(fl.data?.notes || "");
+        notesInitialized.current = true;
+      }
     } catch (e) {
       console.error("Failed to load faultline detail", e);
     }
     setLoading(false);
   }, [api, id, days]);
+
+  // Reset the "initialized" flag when the user navigates to a different faultline
+  // — otherwise a fresh page would still show stale notes from the prior faultline.
+  useEffect(() => {
+    notesInitialized.current = false;
+  }, [id]);
 
   useEffect(() => { fetchAll(); }, [fetchAll]);
 

@@ -143,33 +143,43 @@ export default function FaultlineIntelligence({ api }) {
 
   useEffect(() => { fetchFaultlines(); }, [fetchFaultlines]);
 
+  // Stable signature: comma-joined sorted faultline IDs. Re-runs only when the
+  // SET of faultlines changes, not on every refresh that returns the same set
+  // (which would otherwise refetch 66 × 7-day history on every poll).
+  const faultlineIdsSig = useMemo(
+    () => faultlines.map((f) => f.id).sort().join(","),
+    [faultlines]
+  );
+
   // Lazily fetch 7-day history per faultline for sparkline (one call per fl, batched)
   useEffect(() => {
-    if (!faultlines.length) return;
+    if (!faultlineIdsSig) return;
+    const ids = faultlineIdsSig.split(",").filter(Boolean);
+    if (!ids.length) return;
     let cancelled = false;
     const load = async () => {
       const out = {};
       // Throttle: 6 at a time
       const chunks = [];
-      for (let i = 0; i < faultlines.length; i += 6) {
-        chunks.push(faultlines.slice(i, i + 6));
+      for (let i = 0; i < ids.length; i += 6) {
+        chunks.push(ids.slice(i, i + 6));
       }
       for (const chunk of chunks) {
         if (cancelled) return;
         const results = await Promise.all(
-          chunk.map((fl) =>
-            axios.get(`${api}/faultlines/${fl.id}/history?days=7`)
-              .then((r) => [fl.id, r.data.series || []])
-              .catch(() => [fl.id, []])
+          chunk.map((flId) =>
+            axios.get(`${api}/faultlines/${flId}/history?days=7`)
+              .then((r) => [flId, r.data.series || []])
+              .catch(() => [flId, []])
           )
         );
-        results.forEach(([id, series]) => { out[id] = series; });
+        results.forEach(([flId, series]) => { out[flId] = series; });
         if (!cancelled) setHistoryByFl((prev) => ({ ...prev, ...out }));
       }
     };
     load();
     return () => { cancelled = true; };
-  }, [api, faultlines]);
+  }, [api, faultlineIdsSig]);
 
   const states = useMemo(() => {
     const set = new Set(faultlines.map((f) => f.state).filter(Boolean));

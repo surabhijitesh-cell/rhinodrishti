@@ -1,26 +1,29 @@
 """
 Faultline Intelligence — API endpoints.
 
-Endpoints:
+Endpoints (declaration order matters for FastAPI path matching — fixed paths
+are declared BEFORE the `/{fl_id}` catch-all):
+
   POST   /api/faultlines/seed                              — seed/update faultline registry
   GET    /api/faultlines                                   — list all faultlines (optional state filter)
+  GET    /api/faultlines/dashboard-summary                 — top stressed faultlines for dashboard pulse strip
+  GET    /api/faultlines/warnings                          — active un-ack'd alerts (warning banner)
+  POST   /api/faultlines/warnings/{alert_id}/ack           — acknowledge an alert
+  POST   /api/faultlines/run-daily                         — trigger daily pass (manual / debug)
+  POST   /api/faultlines/backfill                          — kick off historical backfill
+  GET    /api/faultlines/backfill/status                   — backfill progress
+  GET    /api/faultlines/report?year=&month=               — standalone faultline-only PDF report
   GET    /api/faultlines/{fl_id}                           — single faultline + latest score
   PATCH  /api/faultlines/{fl_id}                           — update notes / active flag
   GET    /api/faultlines/{fl_id}/history?days=30           — daily score history (trendline)
   GET    /api/faultlines/{fl_id}/articles?date=&limit=     — matched articles + rationale
-  GET    /api/faultlines/warnings                          — active un-ack'd alerts (warning banner)
-  POST   /api/faultlines/warnings/{alert_id}/ack           — acknowledge an alert
-  GET    /api/faultlines/dashboard-summary                 — top stressed faultlines for dashboard pulse strip
-  POST   /api/faultlines/run-daily                         — trigger daily pass (manual / debug)
-  POST   /api/faultlines/backfill                          — kick off historical backfill (all-time by default)
-  GET    /api/faultlines/backfill/status                   — backfill progress
-  GET    /api/faultlines/report?year=&month=               — standalone faultline-only PDF report
 
-Reuses:
-  - faultline_seed.seed_faultlines for registry seed
-  - faultline_engine.run_daily_faultline_pass / run_backfill for compute
-  - shared.db (Motor) — schemaless collections: faultlines, faultline_scores,
-    faultline_mappings, faultline_alerts, faultline_backfill_status
+Auth:
+  - All write endpoints (POST/PATCH) require `get_current_user`.
+  - Admin-only endpoints (seed, backfill, run-daily, report) gate further on
+    user.role in {"admin", "analyst"}.
+  - Public reads (list, detail, history, articles, warnings, dashboard-summary)
+    still require an authenticated user — match the project convention.
 """
 import asyncio
 import io
@@ -28,11 +31,12 @@ import logging
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from shared import db, logger
+from utils.auth import get_current_user
 from faultline_seed import seed_faultlines, FAULTLINES, STATE_TO_REGIONS
 from faultline_engine import (
     run_daily_faultline_pass,
@@ -55,6 +59,16 @@ class FaultlinePatch(BaseModel):
     active: Optional[bool] = None
     notes: Optional[str] = None
     manual_review_required: Optional[bool] = None
+
+
+# ── Auth helper ───────────────────────────────────────────────────────────────
+def _require_analyst_or_admin(current_user: dict) -> None:
+    """Gate state-changing endpoints to analyst/admin roles only."""
+    if current_user.get("role") not in ("admin", "analyst"):
+        raise HTTPException(
+            status_code=403,
+            detail="Only analysts and admins can trigger faultline operations",
+        )
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -83,20 +97,52 @@ async def _is_alert_active(alert: dict) -> bool:
         return True
 
 
+async def _backfill_already_running() -> bool:
+    """Check if a backfill job is currently in 'running' status."""
+    existing = await backfill_status_col.find_one(
+        {"status": "running"}, {"_id": 0, "job_id": 1, "started_at": 1}
+    )
+    if not existing:
+        return False
+    # Stale-job protection: if a job has been "running" for > 24h, assume
+    # crashed and let a new one start.
+    started = existing.get("started_at")
+    if started:
+        try:
+            started_dt = datetime.fromisoformat(started)
+            if (datetime.now(timezone.utc) - started_dt).total_seconds() > 86400:
+                await backfill_status_col.update_one(
+                    {"job_id": existing["job_id"]},
+                    {"$set": {"status": "stale", "finished_at": datetime.now(timezone.utc).isoformat()}},
+                )
+                return False
+        except (ValueError, TypeError):
+            pass
+    return True
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# FIXED-PATH ROUTES (must be declared BEFORE /{fl_id} catch-all)
+# ═══════════════════════════════════════════════════════════════════════════════
+
 # ── Seed ──────────────────────────────────────────────────────────────────────
 @router.post("/faultlines/seed")
-async def seed_faultline_registry():
+async def seed_faultline_registry(
+    current_user: dict = Depends(get_current_user),
+):
     """Seed (or refresh) the faultline registry from faultline_seed.FAULTLINES. Idempotent."""
+    _require_analyst_or_admin(current_user)
     result = await seed_faultlines(db)
     return {"status": "ok", **result}
 
 
-# ── List + detail ─────────────────────────────────────────────────────────────
+# ── List ──────────────────────────────────────────────────────────────────────
 @router.get("/faultlines")
 async def list_faultlines(
     state: Optional[str] = Query(None, description="Filter by state"),
     active_only: bool = Query(True),
     include_score: bool = Query(True),
+    current_user: dict = Depends(get_current_user),
 ):
     """List all faultlines (optionally filtered)."""
     q: dict = {}
@@ -114,168 +160,60 @@ async def list_faultlines(
     return {"total": len(faultlines), "faultlines": faultlines}
 
 
+# ── Dashboard summary ─────────────────────────────────────────────────────────
 @router.get("/faultlines/dashboard-summary")
-async def dashboard_summary(top_n: int = Query(5, ge=1, le=20)):
+async def dashboard_summary(
+    top_n: int = Query(5, ge=1, le=20),
+    current_user: dict = Depends(get_current_user),
+):
     """
     Top stressed faultlines (highest current score) for dashboard pulse strip.
-    Also returns counts per level.
-    """
-    # Get most recent date per faultline
-    latest_date_cursor = scores_col.find({}, {"date": 1}).sort("date", -1).limit(1)
-    latest = [d async for d in latest_date_cursor]
-    if not latest:
-        return {"top_stressed": [], "level_counts": {}, "as_of": None}
 
-    as_of = latest[0]["date"]
-    cursor = scores_col.find({"date": as_of}, {"_id": 0}).sort("score", -1)
+    Uses per-faultline most-recent score (NOT a global "as_of" date) — so a
+    faultline that hasn't been scored today still contributes its latest
+    available snapshot. Returns level counts across all faultlines.
+    """
+    # Aggregation: per-faultline most recent doc by date
+    pipeline = [
+        {"$sort": {"date": -1}},
+        {
+            "$group": {
+                "_id": "$faultline_id",
+                "doc": {"$first": "$$ROOT"},
+            }
+        },
+        {"$replaceRoot": {"newRoot": "$doc"}},
+        {"$project": {"_id": 0}},
+    ]
+    cursor = scores_col.aggregate(pipeline)
     snapshots = [s async for s in cursor]
+
+    if not snapshots:
+        return {"top_stressed": [], "level_counts": {}, "as_of": None, "total_faultlines": 0}
+
+    snapshots.sort(key=lambda s: s.get("score", 0), reverse=True)
 
     level_counts: dict[str, int] = {}
     for s in snapshots:
         lvl = s.get("level") or "STABLE"
         level_counts[lvl] = level_counts.get(lvl, 0) + 1
 
+    most_recent_date = max((s.get("date", "") for s in snapshots), default=None)
+
     return {
-        "as_of": as_of,
+        "as_of": most_recent_date,
         "top_stressed": snapshots[:top_n],
         "level_counts": level_counts,
         "total_faultlines": len(snapshots),
     }
 
 
-@router.get("/faultlines/{fl_id}")
-async def get_faultline(fl_id: str):
-    """Single faultline with latest score + linked faultlines + active alert (if any)."""
-    fl = await faultlines_col.find_one({"id": fl_id}, {"_id": 0})
-    if not fl:
-        raise HTTPException(404, f"Faultline '{fl_id}' not found")
-
-    fl = await _attach_latest_score(fl)
-
-    # Active alert
-    cursor = alerts_col.find(
-        {"faultline_id": fl_id, "acknowledged": {"$ne": True}},
-        {"_id": 0},
-    ).sort("created_at", -1).limit(1)
-    alerts = [a async for a in cursor]
-    fl["active_alert"] = None
-    if alerts and await _is_alert_active(alerts[0]):
-        fl["active_alert"] = alerts[0]
-
-    # Linked faultline details (name + state)
-    linked_ids = [lf["id"] for lf in fl.get("linked_faultlines", [])]
-    if linked_ids:
-        linked_docs = await faultlines_col.find(
-            {"id": {"$in": linked_ids}},
-            {"_id": 0, "id": 1, "name": 1, "state": 1},
-        ).to_list(length=100)
-        linked_map = {d["id"]: d for d in linked_docs}
-        for lf in fl.get("linked_faultlines", []):
-            target = linked_map.get(lf["id"])
-            if target:
-                lf["name"] = target["name"]
-                lf["state"] = target["state"]
-
-    return fl
-
-
-@router.patch("/faultlines/{fl_id}")
-async def update_faultline(fl_id: str, patch: FaultlinePatch):
-    """Update notes / active / manual_review_required flags."""
-    update_doc: dict = {}
-    if patch.active is not None:
-        update_doc["active"] = patch.active
-    if patch.notes is not None:
-        update_doc["notes"] = patch.notes[:5000]
-    if patch.manual_review_required is not None:
-        update_doc["manual_review_required"] = patch.manual_review_required
-
-    if not update_doc:
-        raise HTTPException(400, "No fields to update")
-
-    update_doc["updated_at"] = datetime.now(timezone.utc).isoformat()
-    result = await faultlines_col.update_one({"id": fl_id}, {"$set": update_doc})
-    if result.matched_count == 0:
-        raise HTTPException(404, f"Faultline '{fl_id}' not found")
-    return {"status": "ok", "updated_fields": list(update_doc.keys())}
-
-
-@router.get("/faultlines/{fl_id}/history")
-async def get_faultline_history(
-    fl_id: str,
-    days: int = Query(30, ge=1, le=730),
-):
-    """Daily score history for trendline chart."""
-    fl = await faultlines_col.find_one({"id": fl_id}, {"_id": 0, "name": 1, "state": 1})
-    if not fl:
-        raise HTTPException(404, f"Faultline '{fl_id}' not found")
-
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).date().isoformat()
-    cursor = scores_col.find(
-        {"faultline_id": fl_id, "date": {"$gte": cutoff}},
-        {"_id": 0, "date": 1, "score": 1, "level": 1, "n_articles": 1,
-         "severity_load": 1, "velocity": 1, "actor_spread": 1, "cross_border": 1},
-    ).sort("date", 1)
-    series = [s async for s in cursor]
-
-    return {
-        "faultline_id": fl_id,
-        "name": fl["name"],
-        "state": fl["state"],
-        "series": series,
-        "days_requested": days,
-        "points": len(series),
-    }
-
-
-@router.get("/faultlines/{fl_id}/articles")
-async def get_faultline_articles(
-    fl_id: str,
-    date: Optional[str] = Query(None, description="YYYY-MM-DD; defaults to latest"),
-    limit: int = Query(30, ge=1, le=200),
-):
-    """Matched articles for a faultline on a given day with rationale + evidence."""
-    q: dict = {"faultline_id": fl_id}
-    if date:
-        q["date"] = date
-    else:
-        latest = await mappings_col.find_one(
-            {"faultline_id": fl_id}, {"date": 1}, sort=[("date", -1)]
-        )
-        if not latest:
-            return {"faultline_id": fl_id, "articles": [], "date": None}
-        q["date"] = latest["date"]
-
-    cursor = mappings_col.find(q, {"_id": 0}).sort("impact_score", -1).limit(limit)
-    mappings = [m async for m in cursor]
-
-    # Fetch source article URLs for navigation
-    article_ids = [m["article_id"] for m in mappings]
-    if article_ids:
-        articles_meta = await db.intelligence_items.find(
-            {"id": {"$in": article_ids}},
-            {"_id": 0, "id": 1, "source_url": 1, "source": 1,
-             "priority_score": 1, "is_cross_border": 1, "regions": 1},
-        ).to_list(length=limit)
-        meta_map = {a["id"]: a for a in articles_meta}
-        for m in mappings:
-            meta = meta_map.get(m["article_id"], {})
-            m["source_url"] = meta.get("source_url")
-            m["source"] = meta.get("source") or m.get("article_source", "")
-            m["priority_score"] = meta.get("priority_score")
-            m["is_cross_border"] = meta.get("is_cross_border")
-
-    return {
-        "faultline_id": fl_id,
-        "date": q["date"],
-        "total": len(mappings),
-        "articles": mappings,
-    }
-
-
 # ── Warnings (alerts) ─────────────────────────────────────────────────────────
 @router.get("/faultlines/warnings")
-async def get_active_warnings(limit: int = Query(20, ge=1, le=100)):
+async def get_active_warnings(
+    limit: int = Query(20, ge=1, le=100),
+    current_user: dict = Depends(get_current_user),
+):
     """All active un-ack'd faultline alerts. Powers dashboard warning banner."""
     cursor = alerts_col.find(
         {"acknowledged": {"$ne": True}},
@@ -288,19 +226,25 @@ async def get_active_warnings(limit: int = Query(20, ge=1, le=100)):
 
 
 @router.post("/faultlines/warnings/{alert_id}/ack")
-async def acknowledge_warning(alert_id: str, acknowledged_by: str = "analyst"):
-    """Mark an alert as acknowledged (removes from warning banner)."""
+async def acknowledge_warning(
+    alert_id: str,
+    current_user: dict = Depends(get_current_user),
+):
+    """Mark an alert as acknowledged (removes from warning banner).
+    The acknowledger's identity is taken from the authenticated session, not
+    a query parameter — prevents impersonation in the audit trail."""
+    acked_by = current_user.get("username") or current_user.get("id") or "unknown"
     result = await alerts_col.update_one(
         {"id": alert_id, "acknowledged": {"$ne": True}},
         {"$set": {
             "acknowledged": True,
             "acknowledged_at": datetime.now(timezone.utc).isoformat(),
-            "acknowledged_by": acknowledged_by,
+            "acknowledged_by": acked_by,
         }},
     )
     if result.matched_count == 0:
         raise HTTPException(404, "Alert not found or already acknowledged")
-    return {"status": "ok"}
+    return {"status": "ok", "acknowledged_by": acked_by}
 
 
 # ── Generation triggers ───────────────────────────────────────────────────────
@@ -308,8 +252,18 @@ async def acknowledge_warning(alert_id: str, acknowledged_by: str = "analyst"):
 async def trigger_daily_pass(
     background_tasks: BackgroundTasks,
     target_date: Optional[str] = Query(None, description="YYYY-MM-DD; defaults to today"),
+    current_user: dict = Depends(get_current_user),
 ):
-    """Manually trigger the daily faultline scoring pass (debug / catch-up)."""
+    """Manually trigger the daily faultline scoring pass (debug / catch-up).
+    Blocked if a backfill is currently running (concurrency guard)."""
+    _require_analyst_or_admin(current_user)
+
+    if await _backfill_already_running():
+        raise HTTPException(
+            409,
+            "A backfill job is currently running. Wait for it to finish before triggering a manual pass.",
+        )
+
     async def _bg():
         try:
             await run_daily_faultline_pass(db, target_date=target_date)
@@ -324,12 +278,21 @@ async def trigger_backfill(
     background_tasks: BackgroundTasks,
     start_date: Optional[str] = Query(None, description="YYYY-MM-DD; default = earliest article"),
     end_date: Optional[str] = Query(None, description="YYYY-MM-DD; default = today"),
+    current_user: dict = Depends(get_current_user),
 ):
     """
     Kick off historical backfill. Long-running (minutes to hours).
     Re-running same range overwrites existing scores.
+    Blocked if another backfill is already running (concurrency guard).
     """
-    # Mark status
+    _require_analyst_or_admin(current_user)
+
+    if await _backfill_already_running():
+        raise HTTPException(
+            409,
+            "A backfill job is already running. Check /api/faultlines/backfill/status.",
+        )
+
     job_id = f"backfill_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
     await backfill_status_col.insert_one({
         "job_id": job_id,
@@ -337,6 +300,7 @@ async def trigger_backfill(
         "start_date": start_date,
         "end_date": end_date,
         "started_at": datetime.now(timezone.utc).isoformat(),
+        "triggered_by": current_user.get("username") or current_user.get("id"),
     })
 
     async def _bg():
@@ -366,7 +330,9 @@ async def trigger_backfill(
 
 
 @router.get("/faultlines/backfill/status")
-async def backfill_status():
+async def backfill_status(
+    current_user: dict = Depends(get_current_user),
+):
     """Most recent backfill job status."""
     latest = await backfill_status_col.find_one(
         {}, {"_id": 0}, sort=[("started_at", -1)]
@@ -379,6 +345,7 @@ async def backfill_status():
 async def faultline_pdf_report(
     year: int = Query(...),
     month: int = Query(..., ge=1, le=12),
+    current_user: dict = Depends(get_current_user),
 ):
     """
     Standalone faultline-only PDF report for a calendar month.
@@ -515,3 +482,150 @@ async def faultline_pdf_report(
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# DYNAMIC-PATH ROUTES (catch-all `/{fl_id}` — must come LAST)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@router.get("/faultlines/{fl_id}")
+async def get_faultline(
+    fl_id: str,
+    current_user: dict = Depends(get_current_user),
+):
+    """Single faultline with latest score + linked faultlines + active alert (if any)."""
+    fl = await faultlines_col.find_one({"id": fl_id}, {"_id": 0})
+    if not fl:
+        raise HTTPException(404, f"Faultline '{fl_id}' not found")
+
+    fl = await _attach_latest_score(fl)
+
+    # Active alert
+    cursor = alerts_col.find(
+        {"faultline_id": fl_id, "acknowledged": {"$ne": True}},
+        {"_id": 0},
+    ).sort("created_at", -1).limit(1)
+    alerts = [a async for a in cursor]
+    fl["active_alert"] = None
+    if alerts and await _is_alert_active(alerts[0]):
+        fl["active_alert"] = alerts[0]
+
+    # Linked faultline details (name + state)
+    linked_ids = [lf["id"] for lf in fl.get("linked_faultlines", [])]
+    if linked_ids:
+        linked_docs = await faultlines_col.find(
+            {"id": {"$in": linked_ids}},
+            {"_id": 0, "id": 1, "name": 1, "state": 1},
+        ).to_list(length=100)
+        linked_map = {d["id"]: d for d in linked_docs}
+        for lf in fl.get("linked_faultlines", []):
+            target = linked_map.get(lf["id"])
+            if target:
+                lf["name"] = target["name"]
+                lf["state"] = target["state"]
+
+    return fl
+
+
+@router.patch("/faultlines/{fl_id}")
+async def update_faultline(
+    fl_id: str,
+    patch: FaultlinePatch,
+    current_user: dict = Depends(get_current_user),
+):
+    """Update notes / active / manual_review_required flags."""
+    _require_analyst_or_admin(current_user)
+
+    update_doc: dict = {}
+    if patch.active is not None:
+        update_doc["active"] = patch.active
+    if patch.notes is not None:
+        # Cap at 5000 chars to prevent abuse
+        update_doc["notes"] = patch.notes[:5000]
+    if patch.manual_review_required is not None:
+        update_doc["manual_review_required"] = patch.manual_review_required
+
+    if not update_doc:
+        raise HTTPException(400, "No fields to update")
+
+    update_doc["updated_at"] = datetime.now(timezone.utc).isoformat()
+    update_doc["updated_by"] = current_user.get("username") or current_user.get("id")
+    result = await faultlines_col.update_one({"id": fl_id}, {"$set": update_doc})
+    if result.matched_count == 0:
+        raise HTTPException(404, f"Faultline '{fl_id}' not found")
+    return {"status": "ok", "updated_fields": list(update_doc.keys())}
+
+
+@router.get("/faultlines/{fl_id}/history")
+async def get_faultline_history(
+    fl_id: str,
+    days: int = Query(30, ge=1, le=730),
+    current_user: dict = Depends(get_current_user),
+):
+    """Daily score history for trendline chart."""
+    fl = await faultlines_col.find_one({"id": fl_id}, {"_id": 0, "name": 1, "state": 1})
+    if not fl:
+        raise HTTPException(404, f"Faultline '{fl_id}' not found")
+
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).date().isoformat()
+    cursor = scores_col.find(
+        {"faultline_id": fl_id, "date": {"$gte": cutoff}},
+        {"_id": 0, "date": 1, "score": 1, "level": 1, "n_articles": 1,
+         "severity_load": 1, "velocity": 1, "actor_spread": 1, "cross_border": 1},
+    ).sort("date", 1)
+    series = [s async for s in cursor]
+
+    return {
+        "faultline_id": fl_id,
+        "name": fl["name"],
+        "state": fl["state"],
+        "series": series,
+        "days_requested": days,
+        "points": len(series),
+    }
+
+
+@router.get("/faultlines/{fl_id}/articles")
+async def get_faultline_articles(
+    fl_id: str,
+    date: Optional[str] = Query(None, description="YYYY-MM-DD; defaults to latest"),
+    limit: int = Query(30, ge=1, le=200),
+    current_user: dict = Depends(get_current_user),
+):
+    """Matched articles for a faultline on a given day with rationale + evidence."""
+    q: dict = {"faultline_id": fl_id}
+    if date:
+        q["date"] = date
+    else:
+        latest = await mappings_col.find_one(
+            {"faultline_id": fl_id}, {"date": 1}, sort=[("date", -1)]
+        )
+        if not latest:
+            return {"faultline_id": fl_id, "articles": [], "date": None}
+        q["date"] = latest["date"]
+
+    cursor = mappings_col.find(q, {"_id": 0}).sort("impact_score", -1).limit(limit)
+    mappings = [m async for m in cursor]
+
+    # Fetch source article URLs for navigation
+    article_ids = [m["article_id"] for m in mappings]
+    if article_ids:
+        articles_meta = await db.intelligence_items.find(
+            {"id": {"$in": article_ids}},
+            {"_id": 0, "id": 1, "source_url": 1, "source": 1,
+             "priority_score": 1, "is_cross_border": 1, "regions": 1},
+        ).to_list(length=limit)
+        meta_map = {a["id"]: a for a in articles_meta}
+        for m in mappings:
+            meta = meta_map.get(m["article_id"], {})
+            m["source_url"] = meta.get("source_url")
+            m["source"] = meta.get("source") or m.get("article_source", "")
+            m["priority_score"] = meta.get("priority_score")
+            m["is_cross_border"] = meta.get("is_cross_border")
+
+    return {
+        "faultline_id": fl_id,
+        "date": q["date"],
+        "total": len(mappings),
+        "articles": mappings,
+    }

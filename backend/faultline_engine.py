@@ -36,6 +36,37 @@ logger = logging.getLogger("faultline_engine")
 # ── Severity weighting (matches trends.py / brief_monthly.py) ─────────────────
 _SEV_WEIGHT = {"critical": 4, "high": 3, "medium": 2, "low": 1}
 
+
+# ── LLM string sanitization ───────────────────────────────────────────────────
+# LLM output is stored and later rendered in UI + PDF + monthly briefs. Strip
+# markup-like characters to prevent prompt-injected payloads from embedding
+# misleading structure into official audit documents.
+_LLM_STRIP_PATTERN = re.compile(r"[<>{}\\]|```")
+
+
+def _sanitize_llm_string(value, max_len: int) -> str:
+    """Sanitize a single LLM-output string for safe storage and rendering."""
+    if not isinstance(value, str):
+        return ""
+    cleaned = _LLM_STRIP_PATTERN.sub("", value).strip()
+    # Collapse newlines + tabs into spaces — rationale should be a single sentence
+    cleaned = re.sub(r"[\r\n\t]+", " ", cleaned)
+    # Collapse runs of whitespace
+    cleaned = re.sub(r"\s{2,}", " ", cleaned)
+    return cleaned[:max_len]
+
+
+def _sanitize_llm_list(values, max_items: int, max_item_len: int) -> list[str]:
+    """Sanitize a list of LLM-output strings."""
+    if not isinstance(values, list):
+        return []
+    out = []
+    for v in values[:max_items]:
+        s = _sanitize_llm_string(v, max_item_len)
+        if s:
+            out.append(s)
+    return out
+
 # ── Scoring weights (composite formula, mirrors stability index) ──────────────
 W_SEVERITY_LOAD = 0.40
 W_VELOCITY = 0.25
@@ -172,13 +203,21 @@ async def score_article_faultline_impact(
         # Strip code fences if present
         text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text.strip(), flags=re.MULTILINE)
         data = json.loads(text)
-        # Clamp + sanitize
+
+        # Constrain `direction` to known vocabulary — prevent arbitrary LLM strings
+        direction = data.get("direction") or "STABLE"
+        if direction not in ("ESCALATING", "STABLE", "DE_ESCALATING"):
+            direction = "STABLE"
+
+        # Clamp + sanitize. LLM string fields go through _sanitize_llm_string to
+        # strip markup-like characters (prevents prompt-injected payloads from
+        # embedding HTML / template tokens into the stored audit trail).
         return {
             "impact_score": max(0, min(100, int(data.get("impact_score", 0)))),
-            "direction": data.get("direction") or "STABLE",
+            "direction": direction,
             "confidence": max(0, min(100, int(data.get("confidence", 0)))),
-            "rationale": (data.get("rationale") or "")[:500],
-            "evidence_phrases": (data.get("evidence_phrases") or [])[:3],
+            "rationale": _sanitize_llm_string(data.get("rationale"), 500),
+            "evidence_phrases": _sanitize_llm_list(data.get("evidence_phrases"), 3, 120),
         }
     except (asyncio.TimeoutError, json.JSONDecodeError, ValueError, KeyError, Exception) as e:
         logger.warning(f"score_article_faultline_impact failed for {faultline['id']}/{article.get('id')}: {e}")
@@ -497,9 +536,37 @@ async def run_daily_faultline_pass(
             kept_articles.append(art)
 
         if mapping_docs:
-            # Replace today's mappings for this faultline (idempotent)
-            await db.faultline_mappings.delete_many({"faultline_id": fl_id, "date": target_date})
-            await db.faultline_mappings.insert_many(mapping_docs)
+            # Atomic per-mapping upsert keyed on (faultline_id, article_id, date).
+            # Prior approach (delete_many → insert_many) left a half-state window
+            # where prior mappings were gone if the insert failed. This pattern
+            # only removes a mapping AFTER its replacement has been written.
+            kept_article_ids: list[str] = []
+            for doc in mapping_docs:
+                # Preserve original `id` on update; only set it on insert.
+                set_doc = {k: v for k, v in doc.items() if k != "id"}
+                await db.faultline_mappings.update_one(
+                    {
+                        "faultline_id": fl_id,
+                        "article_id": doc["article_id"],
+                        "date": target_date,
+                    },
+                    {
+                        "$set": set_doc,
+                        "$setOnInsert": {"id": doc["id"]},
+                    },
+                    upsert=True,
+                )
+                kept_article_ids.append(doc["article_id"])
+
+            # Cleanup: remove stale mappings for this (faultline, date) that
+            # weren't part of the current run (e.g. articles previously matched
+            # but no longer relevant). Runs AFTER successful upserts, so a
+            # mid-run failure leaves all prior data intact.
+            await db.faultline_mappings.delete_many({
+                "faultline_id": fl_id,
+                "date": target_date,
+                "article_id": {"$nin": kept_article_ids},
+            })
             all_mappings_count += len(mapping_docs)
 
         breakdown = compute_faultline_score(kept_articles, mappings)
