@@ -695,6 +695,7 @@ async def get_faultline_history(
     cursor = scores_col.find(
         {"faultline_id": fl_id, "date": {"$gte": cutoff}},
         {"_id": 0, "date": 1, "score": 1, "level": 1, "n_articles": 1,
+         "n_significant": 1, "avg_impact": 1, "avg_confidence": 1,
          "severity_load": 1, "velocity": 1, "actor_spread": 1, "cross_border": 1},
     ).sort("date", 1)
     series = [s async for s in cursor]
