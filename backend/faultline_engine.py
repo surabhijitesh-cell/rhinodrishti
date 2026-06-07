@@ -173,10 +173,12 @@ async def score_article_faultline_impact(
     Returns dict with impact_score, direction, confidence, rationale, evidence_phrases.
     Returns None on LLM failure.
     """
-    if llm_client is None:
-        from llm_client import get_client, MODEL
-        llm_client = get_client()
-        model = model or MODEL
+    if llm_client is None or model is None:
+        from llm_client import get_client, MODEL as DEFAULT_MODEL
+        if llm_client is None:
+            llm_client = get_client()
+        if model is None:
+            model = DEFAULT_MODEL
 
     prompt = FAULTLINE_IMPACT_PROMPT.format(
         fl_name=faultline["name"],
@@ -191,17 +193,22 @@ async def score_article_faultline_impact(
     )
 
     try:
+        # OpenAI/OpenRouter chat completions API (used by llm_client.get_client).
+        # NOTE: not Anthropic SDK — get_client() returns AsyncOpenAI.
         resp = await asyncio.wait_for(
-            llm_client.messages.create(
+            llm_client.chat.completions.create(
                 model=model,
-                max_tokens=400,
                 messages=[{"role": "user", "content": prompt}],
+                max_tokens=400,
+                temperature=0.3,
             ),
             timeout=45,
         )
-        text = resp.content[0].text if resp.content else ""
+        text = resp.choices[0].message.content if resp.choices else ""
+        # Strip <think>…</think> blocks (Gemini 2.5 Flash reasoning tokens)
+        text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
         # Strip code fences if present
-        text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text.strip(), flags=re.MULTILINE)
+        text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.MULTILINE).strip()
         data = json.loads(text)
 
         # Constrain `direction` to known vocabulary — prevent arbitrary LLM strings
