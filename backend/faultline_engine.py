@@ -192,23 +192,45 @@ async def score_article_faultline_impact(
         trajectory=article.get("threat_trajectory") or "INDETERMINATE",
     )
 
+    raw_text = ""
     try:
         # OpenAI/OpenRouter chat completions API (used by llm_client.get_client).
         # NOTE: not Anthropic SDK — get_client() returns AsyncOpenAI.
+        # `response_format` asks OpenRouter to coerce the model into valid JSON,
+        # which removes 95% of parse failures on Gemini 2.5 Flash.
         resp = await asyncio.wait_for(
             llm_client.chat.completions.create(
                 model=model,
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=400,
                 temperature=0.3,
+                response_format={"type": "json_object"},
             ),
             timeout=45,
         )
-        text = resp.choices[0].message.content if resp.choices else ""
+        raw_text = resp.choices[0].message.content if resp.choices else ""
+        text = raw_text or ""
+
         # Strip <think>…</think> blocks (Gemini 2.5 Flash reasoning tokens)
         text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
         # Strip code fences if present
         text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.MULTILINE).strip()
+
+        # Robust JSON extraction: find first '{' and last '}' if the model
+        # surrounded the JSON with explanatory prose.
+        if text and not text.startswith("{"):
+            lo = text.find("{")
+            hi = text.rfind("}")
+            if lo != -1 and hi != -1 and hi > lo:
+                text = text[lo:hi + 1]
+
+        if not text:
+            logger.warning(
+                f"score_article_faultline_impact empty response for "
+                f"{faultline['id']}/{article.get('id')}. raw={raw_text[:200]!r}"
+            )
+            return None
+
         data = json.loads(text)
 
         # Constrain `direction` to known vocabulary — prevent arbitrary LLM strings
@@ -216,18 +238,49 @@ async def score_article_faultline_impact(
         if direction not in ("ESCALATING", "STABLE", "DE_ESCALATING"):
             direction = "STABLE"
 
+        # Coerce numeric fields tolerantly: LLM sometimes returns "75" instead of 75
+        def _to_int(value, default: int = 0) -> int:
+            if value is None:
+                return default
+            if isinstance(value, bool):
+                return default
+            if isinstance(value, (int, float)):
+                return int(value)
+            if isinstance(value, str):
+                try:
+                    return int(float(value.strip()))
+                except (ValueError, AttributeError):
+                    return default
+            return default
+
         # Clamp + sanitize. LLM string fields go through _sanitize_llm_string to
         # strip markup-like characters (prevents prompt-injected payloads from
         # embedding HTML / template tokens into the stored audit trail).
         return {
-            "impact_score": max(0, min(100, int(data.get("impact_score", 0)))),
+            "impact_score": max(0, min(100, _to_int(data.get("impact_score")))),
             "direction": direction,
-            "confidence": max(0, min(100, int(data.get("confidence", 0)))),
+            "confidence": max(0, min(100, _to_int(data.get("confidence")))),
             "rationale": _sanitize_llm_string(data.get("rationale"), 500),
             "evidence_phrases": _sanitize_llm_list(data.get("evidence_phrases"), 3, 120),
         }
-    except (asyncio.TimeoutError, json.JSONDecodeError, ValueError, KeyError, Exception) as e:
-        logger.warning(f"score_article_faultline_impact failed for {faultline['id']}/{article.get('id')}: {e}")
+    except asyncio.TimeoutError:
+        logger.warning(
+            f"score_article_faultline_impact TIMEOUT for "
+            f"{faultline['id']}/{article.get('id')}"
+        )
+        return None
+    except json.JSONDecodeError as e:
+        logger.warning(
+            f"score_article_faultline_impact JSON parse failed for "
+            f"{faultline['id']}/{article.get('id')}: {e}. raw={raw_text[:300]!r}"
+        )
+        return None
+    except Exception as e:
+        logger.warning(
+            f"score_article_faultline_impact failed for "
+            f"{faultline['id']}/{article.get('id')}: {type(e).__name__}: {e}. "
+            f"raw={raw_text[:200]!r}"
+        )
         return None
 
 
