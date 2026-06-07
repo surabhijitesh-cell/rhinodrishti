@@ -284,44 +284,74 @@ async def score_article_faultline_impact(
         return None
 
 
+# ── Significance gate (de-saturation) ─────────────────────────────────────────
+# Only articles the LLM judged as genuinely impacting the faultline count toward
+# the score. A pre-filter keyword hit is NOT enough — the LLM must assign real
+# impact + confidence. This is what stops "every state article → score 100".
+SIG_IMPACT_MIN = 45      # LLM impact_score floor to count
+SIG_CONF_MIN = 45        # LLM confidence floor to count
+VELOCITY_PER_ARTICLE = 8 # 12.5 significant articles → velocity caps (was 5 = 20)
+
+
 # ── Daily score computation (mirrors stability formula in trends.py) ──────────
 def compute_faultline_score(matched_articles: list[dict], mappings: list[dict]) -> dict:
     """
     Compute composite faultline score from matched articles + their LLM impact mappings.
 
-    Formula (mirrors trends.py stability):
-      score = severity_load × 0.40 + velocity × 0.25 + actor_spread × 0.20 + cross_border × 0.15
+    De-saturated design (demo build):
+      1. Only LLM-significant articles count (impact >= SIG_IMPACT_MIN AND
+         confidence >= SIG_CONF_MIN). A bare keyword match no longer inflates
+         the score — the LLM has to judge real impact.
+      2. LLM impact is HALF the final score (was ~24% via confidence blend),
+         so day-to-day variance from the LLM actually shows in the trendline.
+      3. Velocity de-capped: 12.5 significant articles to max (was 20 raw → cap
+         at n=20 meant every busy day pegged 100).
 
-    severity_load: weighted average severity of matched articles (scaled to 0-100)
-    velocity:      article count in last 7d normalized (more recent stories = higher)
-    actor_spread:  number of distinct actors / locations mentioned (proxy for breadth)
-    cross_border:  share of cross-border or foreign-influence articles
+    Formula backbone (unchanged weights, scoped to SIGNIFICANT articles):
+      raw = severity_load×0.40 + velocity×0.25 + actor_spread×0.20 + cross_border×0.15
+      final = 0.5×raw + 0.5×avg_llm_impact
 
-    Returns {raw_score, severity_load, velocity, actor_spread, cross_border, n_articles}
+    Returns {raw_score, severity_load, velocity, actor_spread, cross_border,
+             n_articles, n_significant, avg_impact, avg_confidence}
     """
-    n = len(matched_articles)
-    if n == 0:
+    n_total = len(matched_articles)
+    if n_total == 0:
         return {
-            "raw_score": 0.0,
-            "severity_load": 0.0,
-            "velocity": 0.0,
-            "actor_spread": 0.0,
-            "cross_border": 0.0,
-            "n_articles": 0,
-            "avg_impact": 0.0,
-            "avg_confidence": 0.0,
+            "raw_score": 0.0, "severity_load": 0.0, "velocity": 0.0,
+            "actor_spread": 0.0, "cross_border": 0.0,
+            "n_articles": 0, "n_significant": 0,
+            "avg_impact": 0.0, "avg_confidence": 0.0,
         }
 
-    # Severity load (0-100): weighted average severity × 25 (since weights are 1-4)
-    sev_sum = sum(_SEV_WEIGHT.get(a.get("severity", "low"), 1) for a in matched_articles)
+    # Gate: keep only (article, mapping) pairs the LLM judged significant.
+    sig_articles: list[dict] = []
+    sig_mappings: list[dict] = []
+    for art, m in zip(matched_articles, mappings):
+        if m.get("impact_score", 0) >= SIG_IMPACT_MIN and m.get("confidence", 0) >= SIG_CONF_MIN:
+            sig_articles.append(art)
+            sig_mappings.append(m)
+
+    n = len(sig_articles)
+    if n == 0:
+        # Nothing significant today — faultline quiet. Low score from any
+        # residual sub-threshold signal, not zero, so the line isn't jagged.
+        return {
+            "raw_score": 0.0, "severity_load": 0.0, "velocity": 0.0,
+            "actor_spread": 0.0, "cross_border": 0.0,
+            "n_articles": n_total, "n_significant": 0,
+            "avg_impact": 0.0, "avg_confidence": 0.0,
+        }
+
+    # Severity load (0-100): weighted average severity × 25 (weights 1-4)
+    sev_sum = sum(_SEV_WEIGHT.get(a.get("severity", "low"), 1) for a in sig_articles)
     severity_load = (sev_sum / n) * 25
 
-    # Velocity (0-100): article count, capped at 20 articles = 100
-    velocity = min(100, n * 5)
+    # Velocity (0-100): significant article count, de-capped
+    velocity = min(100, n * VELOCITY_PER_ARTICLE)
 
-    # Actor spread (0-100): unique actors + locations, capped at 10 = 100
+    # Actor spread (0-100): unique actors + locations across significant articles
     actors = set()
-    for a in matched_articles:
+    for a in sig_articles:
         for actor in (a.get("actors") or []):
             actors.add(actor)
         entities = a.get("entities") or {}
@@ -329,17 +359,17 @@ def compute_faultline_score(matched_articles: list[dict], mappings: list[dict]) 
             actors.add(loc)
     actor_spread = min(100, len(actors) * 10)
 
-    # Cross-border share (0-100)
-    cb_count = sum(1 for a in matched_articles if a.get("is_cross_border"))
+    # Cross-border share (0-100) of significant articles
+    cb_count = sum(1 for a in sig_articles if a.get("is_cross_border"))
     cross_border = (cb_count / n) * 100
 
-    # LLM-weighted impact: avg impact × avg confidence/100
-    impacts = [m.get("impact_score", 0) for m in mappings]
-    confidences = [m.get("confidence", 0) for m in mappings]
+    # LLM impact over significant mappings
+    impacts = [m.get("impact_score", 0) for m in sig_mappings]
+    confidences = [m.get("confidence", 0) for m in sig_mappings]
     avg_impact = sum(impacts) / len(impacts) if impacts else 0
     avg_confidence = sum(confidences) / len(confidences) if confidences else 0
 
-    # Composite — same weight structure as stability
+    # Composite — same weight structure as stability, on significant articles
     raw_score = (
         severity_load * W_SEVERITY_LOAD
         + velocity * W_VELOCITY
@@ -347,9 +377,8 @@ def compute_faultline_score(matched_articles: list[dict], mappings: list[dict]) 
         + cross_border * W_CROSS_BORDER
     )
 
-    # Blend with LLM impact (LLM weighted to ~30%, formula to ~70%)
-    llm_weight = (avg_confidence / 100) * 0.3
-    final_raw = raw_score * (1 - llm_weight) + avg_impact * llm_weight
+    # LLM impact is HALF the score → real day-to-day variance shows
+    final_raw = 0.5 * raw_score + 0.5 * avg_impact
 
     return {
         "raw_score": round(final_raw, 2),
@@ -357,7 +386,8 @@ def compute_faultline_score(matched_articles: list[dict], mappings: list[dict]) 
         "velocity": round(velocity, 2),
         "actor_spread": round(actor_spread, 2),
         "cross_border": round(cross_border, 2),
-        "n_articles": n,
+        "n_articles": n_total,
+        "n_significant": n,
         "avg_impact": round(avg_impact, 2),
         "avg_confidence": round(avg_confidence, 2),
     }
@@ -367,7 +397,7 @@ def compute_faultline_score(matched_articles: list[dict], mappings: list[dict]) 
 def apply_propagation(
     raw_scores: dict[str, float],
     faultlines: list[dict],
-    propagation_factor: float = 0.5,
+    propagation_factor: float = 0.2,
 ) -> dict[str, float]:
     """
     Apply weighted cross-faultline influence.
@@ -655,6 +685,7 @@ async def run_daily_faultline_pass(
             "actor_spread": breakdown["actor_spread"],
             "cross_border": breakdown["cross_border"],
             "n_articles": breakdown["n_articles"],
+            "n_significant": breakdown.get("n_significant", 0),
             "avg_impact": breakdown["avg_impact"],
             "avg_confidence": breakdown["avg_confidence"],
             "computed_at": datetime.now(timezone.utc).isoformat(),
