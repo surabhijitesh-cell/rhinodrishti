@@ -45,6 +45,40 @@ router = APIRouter()
 fortnightly_briefs_col = db.fortnightly_briefs
 
 
+async def _build_fortnightly_paoi(year, month, period, start_iso, end_iso, period_label) -> dict:
+    """PAOI analysis for a fortnightly brief. Rich first gen, lean on regen."""
+    import paoi_brief
+    prior = await fortnightly_briefs_col.find_one(
+        {"year": year, "month": month, "period": period},
+        {"_id": 0, "generation_count": 1},
+    )
+    prior_count = (prior or {}).get("generation_count", 0)
+    tier = "rich" if prior_count == 0 else "lean"
+    try:
+        agg = await paoi_brief.aggregate_paoi_period(db, start_iso, end_iso)
+        dashboard = paoi_brief.build_commander_dashboard(agg)
+        synthesis = await paoi_brief.run_paoi_synthesis(
+            db, agg, dashboard, period_label, tier, _call_llm_json
+        )
+        other = await paoi_brief.other_faultline_movements(db, start_iso, end_iso)
+        return {
+            "available": bool(agg.get("paois")),
+            "commander_dashboard": dashboard,
+            "paois": agg.get("paois", []),
+            "synthesis": synthesis,
+            "other_movements": other,
+            "synthesis_tier": tier,
+            "_next_generation_count": prior_count + 1,
+        }
+    except Exception as e:
+        logger.exception(f"Fortnightly PAOI build failed: {e}")
+        return {
+            "available": False, "commander_dashboard": [], "paois": [],
+            "synthesis": {}, "other_movements": {},
+            "synthesis_tier": tier, "_next_generation_count": prior_count + 1,
+        }
+
+
 # ── Period helpers ─────────────────────────────────────────────────────────────
 
 def _fortnightly_range(year: int, month: int, period: int):
@@ -392,6 +426,9 @@ async def _run_fortnightly_generation(year: int, month: int, period: int):
     scenarios_payload = await _call_llm_json(_fortnightly_scenarios_prompt(stats, period_label), max_tokens=600)
     scenarios = scenarios_payload.get("scenarios", []) if isinstance(scenarios_payload, dict) else []
 
+    # PAOI sections — rich on first generation of this period, lean on regen.
+    paoi_analysis = await _build_fortnightly_paoi(year, month, period, start_iso, end_iso, period_label)
+
     llm_ok = bool(exec_summary and state_sections)
     if not llm_ok:
         logger.error(
@@ -410,6 +447,8 @@ async def _run_fortnightly_generation(year: int, month: int, period: int):
         "mitigation_playbook": mitigation_playbook,
         "scenarios": scenarios,
         "cross_border_analysis": cross_border_analysis,
+        "paoi_analysis": paoi_analysis,
+        "generation_count": paoi_analysis.get("_next_generation_count", 1),
     }
     if not llm_ok:
         brief["_llm_error"] = "LLM calls returned empty — check OpenRouter API key and rate limits. Re-generate to retry."

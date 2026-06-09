@@ -777,6 +777,52 @@ Return strict JSON:
 """
 
 
+async def _build_paoi_analysis(year: int, month: int, month_name: str) -> dict:
+    """
+    Build the Priority Area of Interest analysis block:
+      commander_dashboard, paois (deep-dives), synthesis (rich/lean),
+      other_movements.
+
+    Tier selection: RICH on the first generation of this period, LEAN on every
+    subsequent regeneration (cheaper). Detected via the prior brief's
+    generation_count.
+    """
+    import paoi_brief
+
+    start_iso, end_iso = _month_range(year, month)
+
+    # Determine synthesis tier from prior generation count
+    prior = await monthly_briefs_col.find_one(
+        {"year": year, "month": month}, {"_id": 0, "generation_count": 1}
+    )
+    prior_count = (prior or {}).get("generation_count", 0)
+    tier = "rich" if prior_count == 0 else "lean"
+
+    try:
+        agg = await paoi_brief.aggregate_paoi_period(db, start_iso, end_iso)
+        dashboard = paoi_brief.build_commander_dashboard(agg)
+        synthesis = await paoi_brief.run_paoi_synthesis(
+            db, agg, dashboard, month_name, tier, _call_llm_json
+        )
+        other = await paoi_brief.other_faultline_movements(db, start_iso, end_iso)
+        return {
+            "available": bool(agg.get("paois")),
+            "commander_dashboard": dashboard,
+            "paois": agg.get("paois", []),
+            "synthesis": synthesis,
+            "other_movements": other,
+            "synthesis_tier": tier,
+            "_next_generation_count": prior_count + 1,
+        }
+    except Exception as e:
+        logger.exception(f"PAOI analysis build failed: {e}")
+        return {
+            "available": False, "commander_dashboard": [], "paois": [],
+            "synthesis": {}, "other_movements": {},
+            "synthesis_tier": tier, "_next_generation_count": prior_count + 1,
+        }
+
+
 async def _run_generation(year: int, month: int) -> dict:
     """The actual heavy generator — called via background task or directly."""
     logger.info(f"Monthly brief generation start: {year}-{month:02d}")
@@ -855,6 +901,10 @@ async def _run_generation(year: int, month: int) -> dict:
     else:
         faultline_section["state_narratives"] = {}
 
+    # 2g. PAOI sections (Commander Priority Dashboard + deep-dives + inference).
+    #     Rich synthesis on first generation of this period, lean on regen.
+    paoi_analysis = await _build_paoi_analysis(year, month, month_name)
+
     # 3. Assemble brief
     # Detect partial failure — LLM calls silently returned empty
     llm_ok = bool(exec_summary and state_sections)
@@ -875,6 +925,8 @@ async def _run_generation(year: int, month: int) -> dict:
         "scenarios": scenarios,
         "cross_border_analysis": cross_border_analysis,
         "faultline_analysis": faultline_section,
+        "paoi_analysis": paoi_analysis,
+        "generation_count": paoi_analysis.get("_next_generation_count", 1),
     }
     if not llm_ok:
         brief["_llm_error"] = "LLM calls returned empty — check OpenRouter API key and rate limits. Re-generate to retry."
