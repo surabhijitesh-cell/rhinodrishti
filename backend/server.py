@@ -150,6 +150,15 @@ async def _deferred_init(item_count: int):
     except Exception as e:
         logger.warning(f"Deferred seed failed: {e}")
 
+    # Priority Areas of Interest (PAOI) seed — idempotent upsert + faultline tagging.
+    # Required for Faultline Analysis Report PDF page 2 + monthly brief PAOI sections.
+    try:
+        from priority_areas_seed import seed_priority_areas
+        paoi_result = await seed_priority_areas(db)
+        logger.info(f"PAOI registry seeded: {paoi_result}")
+    except Exception as e:
+        logger.warning(f"PAOI seed failed: {e}")
+
     # App update history seeding — inserts any missing versions, skips existing
     try:
         from seed_updates import UPDATES

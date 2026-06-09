@@ -191,11 +191,20 @@ async def aggregate_faultline_report(
             {"_id": 0, "faultline_id": 1, "article_id": 1, "impact_score": 1,
              "confidence": 1, "rationale": 1, "article_title": 1,
              "article_published_at": 1, "article_severity": 1},
-        ).sort("impact_score", -1).limit(500)
+        ).sort("impact_score", -1).limit(1000)
+        # Dedup by article_id within each faultline's driver list — re-scoring
+        # can produce multiple mapping rows per (article_id, faultline_id) and
+        # the un-deduped version made all 3 driver slots identical (issue #3).
+        seen_articles_by_fl: dict = defaultdict(set)
         async for m in m_cursor:
-            slot = drivers_by_fl[m["faultline_id"]]
+            fid = m["faultline_id"]
+            aid = m.get("article_id")
+            if not aid or aid in seen_articles_by_fl[fid]:
+                continue
+            slot = drivers_by_fl[fid]
             if len(slot) < 3:
                 slot.append(m)
+                seen_articles_by_fl[fid].add(aid)
 
         # Fetch source URLs in one go
         all_aids = [d["article_id"] for ds in drivers_by_fl.values() for d in ds]
