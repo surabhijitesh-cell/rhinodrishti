@@ -253,9 +253,15 @@ export default function MonthlyBrief({ api }) {
       <CardContent className="p-4">
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           {(brief?.stats?.stability || []).map(s => (
-            <div key={s.state} className="border border-border p-3 bg-background">
+            <div
+              key={s.state}
+              className={`border p-3 bg-background ${s.is_cross_border_region ? "border-cyan-500/50" : "border-border"}`}
+            >
               <div className="flex items-center justify-between mb-2">
-                <span className="text-xs font-mono uppercase tracking-wider text-muted-foreground">{s.state}</span>
+                <span className="text-xs font-mono uppercase tracking-wider text-muted-foreground flex items-center gap-1">
+                  {s.is_cross_border_region && <Globe size={10} className="text-cyan-400" />}
+                  {s.state}
+                </span>
                 <span className="text-[9px] font-mono uppercase px-1.5 py-0.5"
                       style={{ background: `${CONCERN_COLOR[s.level]}22`, color: CONCERN_COLOR[s.level], border: `1px solid ${CONCERN_COLOR[s.level]}55` }}>
                   {s.level}

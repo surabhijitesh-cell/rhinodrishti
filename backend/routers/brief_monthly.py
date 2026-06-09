@@ -225,6 +225,62 @@ async def _aggregate_month_stats(year: int, month: int) -> dict:
         stability.append({"state": st, "score": score, "level": level,
                           "severity_load": round(severity_load, 2),
                           "velocity": round(velocity, 2)})
+
+    # ── Bangladesh + Myanmar cards (commander ask) ─────────────────────────────
+    # These regions live in regions[]/countries_involved, not the `state` field,
+    # so they aren't captured by the NER loop above. Compute the same inverted
+    # stability score (higher = more stable) for each, using cross-border items.
+    for region_name, region_match in [
+        ("Bangladesh", {"$or": [
+            {"regions": "Bangladesh"},
+            {"countries_involved": "Bangladesh"},
+            {"state": "Bangladesh"},
+        ]}),
+        ("Myanmar", {"$or": [
+            {"regions": "Myanmar"},
+            {"countries_involved": "Myanmar"},
+            {"state": "Myanmar"},
+        ]}),
+    ]:
+        rq = {**q, **region_match}
+        r_sev_counts: Counter = Counter()
+        r_actors: set = set()
+        r_early = r_late = 0
+        async for item in intelligence_col.find(
+            rq, {"published_at": 1, "severity": 1, "actors": 1, "_id": 0}
+        ):
+            r_sev_counts[item.get("severity", "low")] += 1
+            for a in (item.get("actors") or []):
+                r_actors.add(a)
+            pub = item.get("published_at") or ""
+            if pub < early_cutoff:
+                r_early += 1
+            if pub >= late_cutoff:
+                r_late += 1
+
+        sw = sum(_SEV_WEIGHT.get(k, 0) * v for k, v in r_sev_counts.items())
+        severity_load = sw / max_sev_w if max_sev_w else 0
+        velocity = 0.0
+        if r_early > 0:
+            velocity = min(r_late / r_early / 3, 1.0)
+        elif r_late > 0:
+            velocity = 0.8
+        actor_spread = min(len(r_actors) / 8, 1.0)
+        # Cross-border regions ARE cross-border by definition → full cb weight
+        cb_share = 1.0
+        concern = severity_load * 0.40 + velocity * 0.25 + actor_spread * 0.20 + cb_share * 0.15
+        score = max(0, round(100 - concern * 100))
+        if   score >= 75: level = "STABLE"
+        elif score >= 50: level = "MONITOR"
+        elif score >= 25: level = "ELEVATED"
+        else:             level = "CRITICAL"
+        stability.append({
+            "state": region_name, "score": score, "level": level,
+            "severity_load": round(severity_load, 2),
+            "velocity": round(velocity, 2),
+            "is_cross_border_region": True,
+        })
+
     stability.sort(key=lambda x: x["score"])  # most concerning first
 
     return {

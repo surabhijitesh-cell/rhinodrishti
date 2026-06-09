@@ -301,6 +301,37 @@ async def _run_fortnightly_generation(year: int, month: int, period: int):
         level = "STABLE" if score >= 75 else "MONITOR" if score >= 50 else "ELEVATED" if score >= 25 else "CRITICAL"
         stability.append({"state": st, "score": score, "level": level,
                           "severity_load": round(severity_load, 2), "velocity": round(velocity, 2)})
+
+    # Bangladesh + Myanmar cards (commander ask) — same inverted formula,
+    # scoped to cross-border regions (regions[]/countries_involved).
+    for region_name, region_match in [
+        ("Bangladesh", {"$or": [{"regions": "Bangladesh"}, {"countries_involved": "Bangladesh"}, {"state": "Bangladesh"}]}),
+        ("Myanmar", {"$or": [{"regions": "Myanmar"}, {"countries_involved": "Myanmar"}, {"state": "Myanmar"}]}),
+    ]:
+        rq = {**q, **region_match}
+        r_sev: Counter = Counter()
+        r_actors: set = set()
+        r_early = r_late = 0
+        async for item in intelligence_col.find(rq, {"published_at": 1, "severity": 1, "actors": 1, "_id": 0}):
+            r_sev[item.get("severity", "low")] += 1
+            for a in (item.get("actors") or []):
+                r_actors.add(a)
+            pub = item.get("published_at") or ""
+            if pub < early_cutoff:
+                r_early += 1
+            if pub >= late_cutoff:
+                r_late += 1
+        sw = sum(_SEV_WEIGHT.get(k, 0) * v for k, v in r_sev.items())
+        severity_load = sw / max_sev_w if max_sev_w else 0
+        velocity = min(r_late / r_early / 3, 1.0) if r_early > 0 else (0.8 if r_late > 0 else 0.0)
+        actor_spread = min(len(r_actors) / 8, 1.0)
+        concern = severity_load * 0.40 + velocity * 0.25 + actor_spread * 0.20 + 1.0 * 0.15
+        score = max(0, round(100 - concern * 100))
+        level = "STABLE" if score >= 75 else "MONITOR" if score >= 50 else "ELEVATED" if score >= 25 else "CRITICAL"
+        stability.append({"state": region_name, "score": score, "level": level,
+                          "severity_load": round(severity_load, 2), "velocity": round(velocity, 2),
+                          "is_cross_border_region": True})
+
     stability.sort(key=lambda x: x["score"])
 
     stats = {
