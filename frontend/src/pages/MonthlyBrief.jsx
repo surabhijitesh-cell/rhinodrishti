@@ -60,6 +60,8 @@ export default function MonthlyBrief({ api }) {
   const [openStates, setOpenStates] = useState({});
   const [openMitig,  setOpenMitig]  = useState({});
   const [copied, setCopied]   = useState(false);
+  // Sub-tab inside the Monthly Strategic page — "brief" or "faultlines".
+  const [activeTab, setActiveTab] = useState("brief");
 
   const monthLabel = new Date(year, month - 1, 1).toLocaleString("en-IN", { month: "long", year: "numeric" });
   const prevYear  = month === 1 ? year - 1 : year;
@@ -195,10 +197,25 @@ export default function MonthlyBrief({ api }) {
             brief?.status === "ready" ? <><RefreshCw size={12} className="mr-1" /> Regenerate</> :
                                           <><FileText  size={12} className="mr-1" /> Generate</>}
         </Button>
-        {brief?.status === "ready" && (
+        {brief?.status === "ready" && activeTab === "brief" && (
           <>
-            <Button onClick={handleDownloadPDF} variant="outline" className="rounded-none uppercase text-xs tracking-wider" data-testid="download-pdf-btn">
-              <Download size={12} className="mr-1" /> PDF
+            <Button
+              onClick={() => handleDownloadPDF(false)}
+              variant="outline"
+              className="rounded-none uppercase text-xs tracking-wider"
+              data-testid="download-brief-pdf-btn"
+              title="Monthly Brief PDF (no Faultline Analysis)"
+            >
+              <Download size={12} className="mr-1" /> Brief PDF
+            </Button>
+            <Button
+              onClick={() => handleDownloadPDF(true)}
+              variant="outline"
+              className="rounded-none uppercase text-xs tracking-wider"
+              data-testid="download-combined-pdf-btn"
+              title="Monthly Brief + Faultline Analysis combined PDF"
+            >
+              <Download size={12} className="mr-1" /> Combined PDF
             </Button>
             <Button onClick={handleCopyNotebookLM} variant="outline" className="rounded-none uppercase text-xs tracking-wider" data-testid="copy-notebooklm-btn">
               {copied ? <><CheckCircle2 size={12} className="mr-1 text-emerald-400" /> Copied!</> :
@@ -1234,8 +1251,34 @@ export default function MonthlyBrief({ api }) {
         </div>
       )}
 
-      {/* Full brief (ready or partial — stats + tables always present) */}
+      {/* Sub-tabs inside Monthly Strategic — Brief vs Faultline Analysis */}
       {(brief?.status === "ready" || brief?.status === "partial") && (
+        <div className="flex gap-1 border-b border-border" data-testid="monthly-subtabs">
+          <button
+            type="button"
+            className={`px-3 py-1.5 text-xs uppercase tracking-wider font-mono border-b-2 ${
+              activeTab === "brief" ? "border-primary text-primary" : "border-transparent text-muted-foreground"
+            }`}
+            onClick={() => setActiveTab("brief")}
+            data-testid="subtab-brief"
+          >
+            Monthly Brief
+          </button>
+          <button
+            type="button"
+            className={`px-3 py-1.5 text-xs uppercase tracking-wider font-mono border-b-2 ${
+              activeTab === "faultlines" ? "border-primary text-primary" : "border-transparent text-muted-foreground"
+            }`}
+            onClick={() => setActiveTab("faultlines")}
+            data-testid="subtab-faultlines"
+          >
+            Faultline Analysis
+          </button>
+        </div>
+      )}
+
+      {/* MONTHLY BRIEF TAB — everything except faultline analysis section */}
+      {(brief?.status === "ready" || brief?.status === "partial") && activeTab === "brief" && (
         <>
           {renderCommanderDashboard()}
           {renderOverview()}
@@ -1247,6 +1290,12 @@ export default function MonthlyBrief({ api }) {
           {renderCrossBorder()}
           {renderScenarios()}
           {renderMitigation()}
+        </>
+      )}
+
+      {/* FAULTLINE ANALYSIS TAB — faultline section only, with dedicated PDF */}
+      {(brief?.status === "ready" || brief?.status === "partial") && activeTab === "faultlines" && (
+        <>
           {renderFaultlines()}
         </>
       )}

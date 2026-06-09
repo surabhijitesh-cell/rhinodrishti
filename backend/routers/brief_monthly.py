@@ -1071,8 +1071,16 @@ async def get_monthly_brief_notebooklm(year: int, month: int):
 
 
 @router.get("/brief/monthly/{year}/{month}/pdf")
-async def get_monthly_brief_pdf(year: int, month: int):
-    """PDF export of the monthly brief."""
+async def get_monthly_brief_pdf(
+    year: int,
+    month: int,
+    include_faultlines: bool = Query(True, description="Set false to exclude the Faultline Analysis section from the combined PDF."),
+):
+    """PDF export of the monthly brief.
+
+    Default behavior includes the Faultline Analysis section (full Monthly
+    Strategic Brief). Pass include_faultlines=false to get the Monthly Brief
+    portion only (commander option from the UI)."""
     brief = await monthly_briefs_col.find_one({"year": year, "month": month}, {"_id": 0})
     if not brief:
         raise HTTPException(404, "Brief not generated")
@@ -1086,12 +1094,13 @@ async def get_monthly_brief_pdf(year: int, month: int):
     )
 
     try:
-        pdf_bytes = _render_pdf(brief, prev_brief=prev_brief)
+        pdf_bytes = _render_pdf(brief, prev_brief=prev_brief, include_faultlines=include_faultlines)
     except Exception as e:
         import traceback
         logger.error(f"PDF render failed: {traceback.format_exc()}")
         raise HTTPException(500, f"PDF render error: {type(e).__name__}: {e}")
-    filename = f"NER_Monthly_Brief_{year}_{month:02d}.pdf"
+    suffix = "" if include_faultlines else "_brief_only"
+    filename = f"NER_Monthly_Strategic_{year}_{month:02d}{suffix}.pdf"
     return StreamingResponse(
         io.BytesIO(pdf_bytes), media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
@@ -1118,7 +1127,7 @@ def _ascii(s) -> str:
     return s.encode("latin-1", errors="replace").decode("latin-1")
 
 
-def _render_pdf(brief: dict, prev_brief: dict = None) -> bytes:
+def _render_pdf(brief: dict, prev_brief: dict = None, include_faultlines: bool = True) -> bytes:
     from fpdf import FPDF
     from fpdf.enums import XPos, YPos
 
@@ -1655,7 +1664,7 @@ def _render_pdf(brief: dict, prev_brief: dict = None) -> bytes:
 
     # ── Faultline Analysis (Phase 5b) ──────────────────────────────────────────
     fl_section = brief.get("faultline_analysis") or {}
-    if fl_section.get("available"):
+    if include_faultlines and fl_section.get("available"):
         pdf.add_page()
         pdf.set_fill_color(*C_TBL_HDR)
         pdf.set_text_color(255, 255, 255)
