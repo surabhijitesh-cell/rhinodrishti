@@ -251,14 +251,27 @@ async def _aggregate_month_stats(year: int, month: int) -> dict:
     ]:
         rq = {**q, **region_match}
         r_sev_counts: Counter = Counter()
-        r_actors: set = set()
+        r_actors_counter: Counter = Counter()  # for top_actors (mitigation playbook)
+        r_cats_counter: Counter = Counter()    # for top_categories
+        r_total = 0
         r_early = r_late = 0
         async for item in intelligence_col.find(
-            rq, {"published_at": 1, "severity": 1, "actors": 1, "_id": 0}
+            rq,
+            {"published_at": 1, "severity": 1, "actors": 1,
+             "threat_category": 1, "tags": 1, "_id": 0},
         ):
+            r_total += 1
             r_sev_counts[item.get("severity", "low")] += 1
             for a in (item.get("actors") or []):
-                r_actors.add(a)
+                if a:
+                    r_actors_counter[a] += 1
+            # threat_category preferred; fall back to first tag
+            cat = item.get("threat_category")
+            if not cat:
+                tags = item.get("tags") or []
+                cat = tags[0] if tags else None
+            if cat:
+                r_cats_counter[cat] += 1
             pub = item.get("published_at") or ""
             if pub < early_cutoff:
                 r_early += 1
@@ -272,7 +285,7 @@ async def _aggregate_month_stats(year: int, month: int) -> dict:
             velocity = min(r_late / r_early / 3, 1.0)
         elif r_late > 0:
             velocity = 0.8
-        actor_spread = min(len(r_actors) / 8, 1.0)
+        actor_spread = min(len(r_actors_counter) / 8, 1.0)
         # Cross-border regions ARE cross-border by definition → full cb weight
         cb_share = 1.0
         concern = severity_load * 0.40 + velocity * 0.25 + actor_spread * 0.20 + cb_share * 0.15
@@ -287,6 +300,20 @@ async def _aggregate_month_stats(year: int, month: int) -> dict:
             "velocity": round(velocity, 2),
             "is_cross_border_region": True,
         })
+
+        # Populate states_out so the mitigation_playbook loop picks up BD/Myanmar
+        # (commander ask). The loop gates on stats["states"][st].total > 3.
+        states_out[region_name] = {
+            "total":          r_total,
+            "sev_counts":     dict(r_sev_counts),
+            "top_actors":     r_actors_counter.most_common(8),
+            "top_locations":  [],
+            "top_categories": r_cats_counter.most_common(8),
+            "daily_volume":   [],
+            "critical_items": [],
+            "high_items":     [],
+            "is_cross_border_region": True,
+        }
 
     stability.sort(key=lambda x: x["score"])  # most concerning first
 

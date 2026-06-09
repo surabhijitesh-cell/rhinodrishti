@@ -346,12 +346,26 @@ async def _run_fortnightly_generation(year: int, month: int, period: int):
     ]:
         rq = {**q, **region_match}
         r_sev: Counter = Counter()
-        r_actors: set = set()
+        r_actors_counter: Counter = Counter()
+        r_cats_counter: Counter = Counter()
+        r_total = 0
         r_early = r_late = 0
-        async for item in intelligence_col.find(rq, {"published_at": 1, "severity": 1, "actors": 1, "_id": 0}):
+        async for item in intelligence_col.find(
+            rq,
+            {"published_at": 1, "severity": 1, "actors": 1,
+             "threat_category": 1, "tags": 1, "_id": 0},
+        ):
+            r_total += 1
             r_sev[item.get("severity", "low")] += 1
             for a in (item.get("actors") or []):
-                r_actors.add(a)
+                if a:
+                    r_actors_counter[a] += 1
+            cat = item.get("threat_category")
+            if not cat:
+                tags = item.get("tags") or []
+                cat = tags[0] if tags else None
+            if cat:
+                r_cats_counter[cat] += 1
             pub = item.get("published_at") or ""
             if pub < early_cutoff:
                 r_early += 1
@@ -360,13 +374,26 @@ async def _run_fortnightly_generation(year: int, month: int, period: int):
         sw = sum(_SEV_WEIGHT.get(k, 0) * v for k, v in r_sev.items())
         severity_load = sw / max_sev_w if max_sev_w else 0
         velocity = min(r_late / r_early / 3, 1.0) if r_early > 0 else (0.8 if r_late > 0 else 0.0)
-        actor_spread = min(len(r_actors) / 8, 1.0)
+        actor_spread = min(len(r_actors_counter) / 8, 1.0)
         concern = severity_load * 0.40 + velocity * 0.25 + actor_spread * 0.20 + 1.0 * 0.15
         score = max(0, round(100 - concern * 100))
         level = "STABLE" if score >= 75 else "MONITOR" if score >= 50 else "ELEVATED" if score >= 25 else "CRITICAL"
         stability.append({"state": region_name, "score": score, "level": level,
                           "severity_load": round(severity_load, 2), "velocity": round(velocity, 2),
                           "is_cross_border_region": True})
+
+        # Populate states_out so the mitigation_playbook loop picks up BD/Myanmar.
+        states_out[region_name] = {
+            "total":          r_total,
+            "sev_counts":     dict(r_sev),
+            "top_actors":     r_actors_counter.most_common(8),
+            "top_locations":  [],
+            "top_categories": r_cats_counter.most_common(8),
+            "daily_volume":   [],
+            "critical_items": [],
+            "high_items":     [],
+            "is_cross_border_region": True,
+        }
 
     stability.sort(key=lambda x: x["score"])
 

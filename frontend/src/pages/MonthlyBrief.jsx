@@ -8,6 +8,7 @@ import axios from "axios";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Button } from "../components/ui/button";
 import Tip from "../components/Tip";
+import { downloadPdf } from "../lib/downloadPdf";
 import {
   AreaChart, Area, BarChart, Bar, LineChart, Line,
   XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, Cell,
@@ -138,8 +139,15 @@ export default function MonthlyBrief({ api }) {
     }
   };
 
-  const handleDownloadPDF = () => {
-    window.open(`${api}/brief/monthly/${year}/${month}/pdf`, "_blank");
+  const handleDownloadPDF = async (includeFaultlines = true) => {
+    const suffix = includeFaultlines ? "" : "?include_faultlines=false";
+    const fname = includeFaultlines
+      ? `ner_monthly_strategic_${year}_${month}.pdf`
+      : `ner_monthly_brief_${year}_${month}.pdf`;
+    const result = await downloadPdf(axios, `${api}/brief/monthly/${year}/${month}/pdf${suffix}`, fname);
+    if (!result.ok) {
+      setError(`PDF download failed${result.status ? ` (${result.status})` : ""}: ${result.error}`);
+    }
   };
 
   const adjustMonth = (delta) => {
@@ -949,8 +957,15 @@ export default function MonthlyBrief({ api }) {
     const critical = fa.critical || [];
     const narratives = fa.state_narratives || {};
 
-    const handleDownload = () => {
-      window.open(`${api}/faultlines/report?year=${year}&month=${month}`, "_blank");
+    const handleDownload = async () => {
+      const result = await downloadPdf(
+        axios,
+        `${api}/faultlines/report?year=${year}&month=${month}`,
+        `faultline_report_${year}_${month}.pdf`,
+      );
+      if (!result.ok) {
+        setError(`Faultline PDF failed${result.status ? ` (${result.status})` : ""}: ${result.error}`);
+      }
     };
 
     return (
@@ -1231,10 +1246,8 @@ export default function MonthlyBrief({ api }) {
           {renderStateSections()}
           {renderCrossBorder()}
           {renderScenarios()}
-          {renderActionMatrix()}
           {renderMitigation()}
           {renderFaultlines()}
-          {renderContacts()}
         </>
       )}
     </div>

@@ -9,6 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card"
 import { Button } from "../components/ui/button";
 import Tip from "../components/Tip";
 import { CommanderDashboard, PaoiDeepDives } from "../components/PaoiBriefSections";
+import { downloadPdf } from "../lib/downloadPdf";
 import {
   AreaChart, Area, LineChart, Line, XAxis, YAxis, Tooltip,
   ResponsiveContainer, Legend,
@@ -148,8 +149,15 @@ export default function FortnightlyBrief({ api }) {
     }
   };
 
-  const handleDownloadPDF = () => {
-    window.open(`${api}/brief/fortnightly/${year}/${month}/${period}/pdf`, "_blank");
+  const handleDownloadPDF = async () => {
+    const result = await downloadPdf(
+      axios,
+      `${api}/brief/fortnightly/${year}/${month}/${period}/pdf`,
+      `ner_fortnightly_${year}_${month}_p${period}.pdf`,
+    );
+    if (!result.ok) {
+      setError(`PDF download failed${result.status ? ` (${result.status})` : ""}: ${result.error}`);
+    }
   };
 
   const adjustPeriod = (delta) => {
@@ -825,7 +833,6 @@ export default function FortnightlyBrief({ api }) {
           {renderStateSections()}
           {renderCrossBorder()}
           {renderScenarios()}
-          {renderActionMatrix()}
           {renderMitigation()}
         </>
       )}
