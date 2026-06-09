@@ -417,7 +417,7 @@ async def backfill_status(
     return latest or {"status": "no_jobs"}
 
 
-# ── Standalone faultline PDF report ───────────────────────────────────────────
+# ── Standalone Faultline Analysis Report PDF (5 pages, Path B LLM) ────────────
 @router.get("/faultlines/report")
 async def faultline_pdf_report(
     year: int = Query(...),
@@ -425,137 +425,36 @@ async def faultline_pdf_report(
     current_user: dict = Depends(get_current_user),
 ):
     """
-    Standalone faultline-only PDF report for a calendar month.
-    Aggregates all faultline_scores for the month, groups by state, identifies
-    rising / declining faultlines, includes manual review advisory.
+    Faultline Analysis Report PDF — 5 pages, shared visual identity with the
+    Monthly Strategic Brief. Layout:
+      P1  Cover + Key Metrics + MoM Level Distribution + LLM-written Bottom Line
+      P2  Priority Areas of Interest (P1->P5) with reused PAOI synthesis
+      P3  State-wise faultline tables + state narratives
+      P4  Top 10 Movers with 3 news drivers each + LLM batched outlooks
+      P5  Cross-cutting Manual Review Advisory + per-state advisory roll-up
+
+    3 LLM calls (Path B): bottom line, batched mover outlooks, cross-state advisory.
+    Reuses cached PAOI synthesis + state_narratives from the monthly brief.
     """
-    from fpdf import FPDF
-    from collections import defaultdict
+    from faultline_pdf import (
+        aggregate_faultline_report, run_pdf_synthesis, render_faultline_pdf,
+    )
+    from routers.brief_monthly import _call_llm_json
 
-    # Window
-    start = datetime(year, month, 1, tzinfo=timezone.utc).date()
-    if month == 12:
-        end = datetime(year + 1, 1, 1, tzinfo=timezone.utc).date()
-    else:
-        end = datetime(year, month + 1, 1, tzinfo=timezone.utc).date()
-
-    # Load scores in window
-    cursor = scores_col.find(
-        {"date": {"$gte": start.isoformat(), "$lt": end.isoformat()}},
-        {"_id": 0},
-    ).sort([("faultline_id", 1), ("date", 1)])
-    all_scores = [s async for s in cursor]
-
-    if not all_scores:
+    # Aggregate everything PDF needs (no LLM here)
+    agg = await aggregate_faultline_report(db, year, month)
+    if not agg.get("all_faultlines"):
         raise HTTPException(404, f"No faultline data for {year}-{month:02d}")
 
-    # Group by faultline → compute first/last/peak
-    by_fl: dict[str, list] = defaultdict(list)
-    for s in all_scores:
-        by_fl[s["faultline_id"]].append(s)
+    # Run B1+B2+B3 LLM synthesis in parallel
+    synthesis = await run_pdf_synthesis(agg, _call_llm_json)
 
-    fl_summaries = []
-    for fl_id, series in by_fl.items():
-        series = sorted(series, key=lambda x: x["date"])
-        first = series[0]["score"]
-        last = series[-1]["score"]
-        peak = max(s["score"] for s in series)
-        avg = sum(s["score"] for s in series) / len(series)
-        fl_summaries.append({
-            "faultline_id": fl_id,
-            "faultline_name": series[-1]["faultline_name"],
-            "state": series[-1]["state"],
-            "first_score": first,
-            "last_score": last,
-            "peak_score": peak,
-            "avg_score": avg,
-            "delta": last - first,
-            "days_observed": len(series),
-            "level": series[-1]["level"],
-        })
+    # Render PDF
+    pdf_bytes = render_faultline_pdf(agg, synthesis)
 
-    # Group by state
-    by_state: dict[str, list] = defaultdict(list)
-    for summary in fl_summaries:
-        by_state[summary["state"]].append(summary)
-
-    # Build PDF (clean ASCII-safe to avoid Helvetica unicode issues)
-    pdf = FPDF()
-    pdf.add_page()
-    pdf.set_font("Helvetica", "B", 16)
-    pdf.cell(0, 10, f"Faultline Intelligence Report - {start.strftime('%B %Y')}", ln=True)
-    pdf.ln(2)
-    pdf.set_font("Helvetica", "", 10)
-    pdf.cell(0, 6, f"Period: {start.isoformat()} to {(end - timedelta(days=1)).isoformat()}", ln=True)
-    pdf.cell(0, 6, f"Generated: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}", ln=True)
-    pdf.ln(4)
-
-    # Overall summary
-    pdf.set_font("Helvetica", "B", 13)
-    pdf.cell(0, 8, "Executive Summary", ln=True)
-    pdf.set_font("Helvetica", "", 10)
-    rising = [s for s in fl_summaries if s["delta"] >= 10]
-    declining = [s for s in fl_summaries if s["delta"] <= -10]
-    critical = [s for s in fl_summaries if s["last_score"] >= 75]
-    pdf.multi_cell(0, 5,
-        f"Faultlines monitored: {len(fl_summaries)} across {len(by_state)} states.\n"
-        f"Currently CRITICAL: {len(critical)}.\n"
-        f"Rising (delta >= +10): {len(rising)}.\n"
-        f"Declining (delta <= -10): {len(declining)}."
-    )
-    pdf.ln(3)
-
-    # Per state
-    for state in sorted(by_state.keys()):
-        pdf.set_font("Helvetica", "B", 12)
-        pdf.cell(0, 7, state, ln=True)
-        pdf.set_font("Helvetica", "", 9)
-
-        state_fls = sorted(by_state[state], key=lambda x: -x["last_score"])
-        for fl in state_fls:
-            arrow = "UP" if fl["delta"] > 2 else ("DOWN" if fl["delta"] < -2 else "FLAT")
-            line = (f"  {fl['faultline_name'][:60]:60s} "
-                    f"{fl['last_score']:5.1f}  ({fl['level']})  "
-                    f"{arrow} {fl['delta']:+5.1f}  "
-                    f"peak {fl['peak_score']:5.1f}")
-            # ASCII-safe
-            line = line.encode("ascii", "ignore").decode("ascii")
-            pdf.cell(0, 5, line, ln=True)
-        pdf.ln(2)
-
-    # Manual review advisory
-    pdf.add_page()
-    pdf.set_font("Helvetica", "B", 13)
-    pdf.cell(0, 8, "Manual Review Advisory", ln=True)
-    pdf.set_font("Helvetica", "", 10)
-    advisory = (
-        "For faultlines with rising scores, weak signals, or rapidly changing trajectories, "
-        "supplement automated analysis with manual review of:\n"
-        "  - Local news cycles in regional languages (Assamese, Bengali, Manipuri, Mizo, Naga)\n"
-        "  - Narrative spikes on Twitter/X, YouTube, and Telegram channels\n"
-        "  - Influencer amplification patterns across local political pages\n"
-        "  - Cross-posting patterns linking different platforms (text-to-image-to-video)\n"
-        "  - Repeated narrative claims that align with foreign-influence indicators\n\n"
-        "Specifically inspect for the rising faultlines identified above."
-    )
-    pdf.multi_cell(0, 5, advisory.encode("ascii", "ignore").decode("ascii"))
-
-    if rising:
-        pdf.ln(3)
-        pdf.set_font("Helvetica", "B", 11)
-        pdf.cell(0, 6, "Priority faultlines for manual review:", ln=True)
-        pdf.set_font("Helvetica", "", 9)
-        for fl in sorted(rising, key=lambda x: -x["delta"])[:10]:
-            line = f"  - [{fl['state']}] {fl['faultline_name'][:70]} (now {fl['last_score']:.0f}, +{fl['delta']:.0f})"
-            line = line.encode("ascii", "ignore").decode("ascii")
-            pdf.cell(0, 5, line, ln=True)
-
-    buf = io.BytesIO()
-    pdf.output(buf)
-    buf.seek(0)
-    filename = f"faultline_report_{year}_{month:02d}.pdf"
+    filename = f"faultline_analysis_{year}_{month:02d}.pdf"
     return StreamingResponse(
-        buf,
+        io.BytesIO(pdf_bytes),
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
