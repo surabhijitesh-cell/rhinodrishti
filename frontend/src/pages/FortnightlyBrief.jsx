@@ -8,6 +8,7 @@ import axios from "axios";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Button } from "../components/ui/button";
 import Tip from "../components/Tip";
+import { CommanderDashboard, PaoiDeepDives } from "../components/PaoiBriefSections";
 import {
   AreaChart, Area, LineChart, Line, XAxis, YAxis, Tooltip,
   ResponsiveContainer, Legend,
@@ -815,10 +816,12 @@ export default function FortnightlyBrief({ api }) {
 
       {brief?.status === "ready" && (
         <>
+          <CommanderDashboard paoiAnalysis={brief?.paoi_analysis} />
           {renderOverview()}
           {renderStability()}
           {renderStabilityHistory()}
           {renderExecSummary()}
+          <PaoiDeepDives paoiAnalysis={brief?.paoi_analysis} />
           {renderStateSections()}
           {renderCrossBorder()}
           {renderScenarios()}
