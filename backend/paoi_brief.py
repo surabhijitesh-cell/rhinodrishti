@@ -180,9 +180,12 @@ async def _keyword_article_pull(db, keyword_pull: dict, start_iso: str, end_iso:
     if not keywords:
         return {"n_articles": 0, "top_articles": []}
 
-    # Region gate (regions[] or state) + window
+    # Region gate (regions[] or state) + window.
+    # published_at is stored as a date-only string ("YYYY-MM-DD"); compare
+    # against date-only bounds so first-day articles aren't dropped by a
+    # datetime suffix on the lower bound (ASCII ordering).
     q: dict = {
-        "published_at": {"$gte": start_iso, "$lt": end_iso},
+        "published_at": {"$gte": start_iso[:10], "$lt": end_iso[:10]},
         "processed": True,
     }
     if regions:
@@ -367,15 +370,27 @@ async def run_paoi_synthesis(
         tasks = [call_llm_json(rich_paoi_prompt(pa, period_label), 700) for pa in paois]
         results = await asyncio.gather(*tasks, return_exceptions=True)
         for pa, res in zip(paois, results):
-            if isinstance(res, dict) and res:
+            if isinstance(res, Exception):
+                logger.warning(f"PAOI rich synthesis call failed for {pa['id']}: {res}")
+            elif isinstance(res, dict) and res:
                 per_paoi[pa["id"]] = {
                     "period_impact": res.get("period_impact", ""),
                     "forward_concerns": res.get("forward_concerns", ""),
                     "manual_review": res.get("manual_review", ""),
                 }
+            else:
+                logger.warning(f"PAOI rich synthesis empty for {pa['id']}")
     else:  # lean
         res = await call_llm_json(lean_all_paoi_prompt(paois, period_label), 1600)
         if isinstance(res, dict):
+            # Detect key mismatch — LLM may key by short id / name instead of PAOI id
+            known = {pa["id"] for pa in paois}
+            returned = set(res.keys())
+            if known and not (known & returned):
+                logger.error(
+                    f"Lean PAOI synthesis key mismatch: got {sorted(returned)}, "
+                    f"expected {sorted(known)} — per_paoi will be empty"
+                )
             for pa in paois:
                 entry = res.get(pa["id"]) or {}
                 if entry:
@@ -384,6 +399,8 @@ async def run_paoi_synthesis(
                         "forward_concerns": entry.get("forward_concerns", ""),
                         "manual_review": entry.get("manual_review", ""),
                     }
+        else:
+            logger.warning("Lean PAOI synthesis returned non-dict — per_paoi empty")
 
     overall = await call_llm_json(overall_inference_prompt(dashboard, period_label), 700)
     if not isinstance(overall, dict):

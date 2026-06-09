@@ -31,11 +31,18 @@ from collections import Counter, defaultdict
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse, PlainTextResponse
 
 from shared import db, intelligence_col, NER_STATES, logger
 from llm_client import get_client, MODEL
+from utils.auth import get_current_user
+
+
+def _require_brief_author(current_user: dict) -> None:
+    """Gate brief (re)generation to analyst/admin — protects LLM budget."""
+    if current_user.get("role") not in ("admin", "analyst"):
+        raise HTTPException(403, "Only analysts and admins can generate briefs")
 
 router = APIRouter()
 
@@ -926,7 +933,8 @@ async def _run_generation(year: int, month: int) -> dict:
         "cross_border_analysis": cross_border_analysis,
         "faultline_analysis": faultline_section,
         "paoi_analysis": paoi_analysis,
-        "generation_count": paoi_analysis.get("_next_generation_count", 1),
+        # pop (not get) so the internal key doesn't persist in the stored doc
+        "generation_count": paoi_analysis.pop("_next_generation_count", 1),
     }
     if not llm_ok:
         brief["_llm_error"] = "LLM calls returned empty — check OpenRouter API key and rate limits. Re-generate to retry."
@@ -949,13 +957,25 @@ async def generate_monthly_brief(
     background_tasks: BackgroundTasks,
     year:  int = Query(...),
     month: int = Query(..., ge=1, le=12),
+    current_user: dict = Depends(get_current_user),
 ):
     """Kick off (re)generation. Marks brief as 'generating' immediately, then
     runs full LLM synthesis in background. Poll /brief/monthly/{y}/{m} for status."""
+    _require_brief_author(current_user)
+
+    # Preserve generation_count across regenerations so the rich/lean tier
+    # selection works. The stub below otherwise wipes it (replace_one), forcing
+    # every regen back to the expensive rich tier.
+    prior = await monthly_briefs_col.find_one(
+        {"year": year, "month": month}, {"_id": 0, "generation_count": 1}
+    )
+    prior_count = (prior or {}).get("generation_count", 0)
+
     # Mark as generating
     await monthly_briefs_col.replace_one(
         {"year": year, "month": month},
         {"year": year, "month": month, "status": "generating",
+         "generation_count": prior_count,
          "started_at": datetime.now(timezone.utc).isoformat()},
         upsert=True,
     )

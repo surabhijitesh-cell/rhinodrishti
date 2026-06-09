@@ -19,10 +19,12 @@ import io
 from calendar import monthrange
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse, PlainTextResponse
 
 from shared import db, logger
+from utils.auth import get_current_user
+from routers.brief_monthly import _require_brief_author
 
 # ── Import shared machinery from brief_monthly ────────────────────────────────
 from routers.brief_monthly import (
@@ -448,7 +450,7 @@ async def _run_fortnightly_generation(year: int, month: int, period: int):
         "scenarios": scenarios,
         "cross_border_analysis": cross_border_analysis,
         "paoi_analysis": paoi_analysis,
-        "generation_count": paoi_analysis.get("_next_generation_count", 1),
+        "generation_count": paoi_analysis.pop("_next_generation_count", 1),
     }
     if not llm_ok:
         brief["_llm_error"] = "LLM calls returned empty — check OpenRouter API key and rate limits. Re-generate to retry."
@@ -469,11 +471,22 @@ async def generate_fortnightly_brief(
     year:   int = Query(...),
     month:  int = Query(..., ge=1, le=12),
     period: int = Query(..., ge=1, le=2),
+    current_user: dict = Depends(get_current_user),
 ):
+    _require_brief_author(current_user)
+
+    # Preserve generation_count so rich/lean tier selection survives regen.
+    prior = await fortnightly_briefs_col.find_one(
+        {"year": year, "month": month, "period": period},
+        {"_id": 0, "generation_count": 1},
+    )
+    prior_count = (prior or {}).get("generation_count", 0)
+
     await fortnightly_briefs_col.replace_one(
         {"year": year, "month": month, "period": period},
         {"year": year, "month": month, "period": period,
          "status": "generating",
+         "generation_count": prior_count,
          "started_at": datetime.now(timezone.utc).isoformat()},
         upsert=True,
     )
