@@ -196,6 +196,25 @@ export default function DailyBrief({ api }) {
                 ))}
               </div>
             )}
+            {item.faultline_tags && Array.isArray(item.faultline_tags) && item.faultline_tags.length > 0 && (
+              <div className="flex flex-wrap items-center gap-1 mt-1">
+                <span className="text-[8px] uppercase tracking-wider font-mono text-muted-foreground">Faultlines:</span>
+                {item.faultline_tags.map((ft, ti) => (
+                  <Badge
+                    key={ti}
+                    variant="outline"
+                    title={ft.is_priority ? "Priority Area of Interest" : "Monitored faultline"}
+                    className={`text-[9px] rounded-none px-1.5 py-0 ${
+                      ft.is_priority
+                        ? "border-red-500/60 text-red-400 bg-red-950/30 font-semibold"
+                        : "border-cyan-500/40 text-cyan-400"
+                    }`}
+                  >
+                    {ft.is_priority && "▲ "}{safeStr(ft.name)}
+                  </Badge>
+                ))}
+              </div>
+            )}
             <div className="flex flex-wrap items-center gap-3 mt-1">
               {item.source_url && (
                 <a 

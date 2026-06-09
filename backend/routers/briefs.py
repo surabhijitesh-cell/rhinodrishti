@@ -16,6 +16,81 @@ router = APIRouter()
 
 
 # ============================================================
+# Faultline tag enrichment (PAOI overlay for Daily Brief)
+# ============================================================
+async def attach_faultline_tags(items: list[dict]) -> None:
+    """
+    Enrich brief news items in-place with `faultline_tags`:
+      [{id, name, score, is_priority}]
+    Each tag = a faultline this article was mapped to (via faultline_mappings),
+    with is_priority=True if that faultline belongs to any PAOI.
+
+    is_priority drives the RED chip in the Daily Brief UI. Best (highest-impact)
+    faultline per article is listed first. Only confident mappings count
+    (confidence >= 45, matching the scoring significance gate).
+
+    Cheap: one mappings query + one faultlines lookup for the whole batch.
+    No-op if the faultline collections aren't seeded yet (graceful).
+    """
+    article_ids = [it.get("id") for it in items if it.get("id")]
+    if not article_ids:
+        return
+
+    try:
+        # All confident mappings for these articles (any date)
+        cursor = db.faultline_mappings.find(
+            {"article_id": {"$in": article_ids}, "confidence": {"$gte": 45}},
+            {"_id": 0, "article_id": 1, "faultline_id": 1, "impact_score": 1},
+        )
+        mappings = [m async for m in cursor]
+        if not mappings:
+            return
+
+        # Faultline id -> {name, is_priority}
+        fl_ids = list({m["faultline_id"] for m in mappings})
+        fl_docs = await db.faultlines.find(
+            {"id": {"$in": fl_ids}},
+            {"_id": 0, "id": 1, "name": 1, "priority_area_ids": 1},
+        ).to_list(length=500)
+        fl_meta = {
+            d["id"]: {
+                "name": d.get("name", d["id"]),
+                "is_priority": bool(d.get("priority_area_ids")),
+            }
+            for d in fl_docs
+        }
+
+        # Build per-article tag lists (dedup faultline, keep best impact)
+        by_article: dict[str, dict[str, dict]] = {}
+        for m in mappings:
+            aid = m["article_id"]
+            fid = m["faultline_id"]
+            meta = fl_meta.get(fid)
+            if not meta:
+                continue
+            slot = by_article.setdefault(aid, {})
+            existing = slot.get(fid)
+            impact = m.get("impact_score", 0)
+            if existing is None or impact > existing["score"]:
+                slot[fid] = {
+                    "id": fid,
+                    "name": meta["name"],
+                    "score": impact,
+                    "is_priority": meta["is_priority"],
+                }
+
+        for it in items:
+            aid = it.get("id")
+            tags = list(by_article.get(aid, {}).values())
+            # Priority tags first, then by impact desc
+            tags.sort(key=lambda t: (not t["is_priority"], -t["score"]))
+            if tags:
+                it["faultline_tags"] = tags
+    except Exception as e:
+        logger.warning(f"attach_faultline_tags failed (non-fatal): {e}")
+
+
+# ============================================================
 # Brief Endpoints
 # ============================================================
 
@@ -1035,6 +1110,7 @@ async def generate_brief_for_date(date: str):
     # 8. BUILD KEY DEVELOPMENTS
     def build_brief_item(item):
         result = {
+            "id": item.get("id", ""),  # used for faultline-tag enrichment
             "title": item.get("title", ""),
             "summary": item.get("ai_summary", ""),
             "source_url": item.get("source_url", ""),
@@ -1190,6 +1266,14 @@ async def generate_brief_for_date(date: str):
 
     # 12. TRACK INCLUDED ITEM IDS
     brief_data["included_item_ids"] = list(added_ids)
+
+    # 12b. FAULTLINE TAGS (PAOI overlay) — enrich news items with faultline
+    #      chips; RED in UI when the faultline belongs to a Priority Area.
+    await attach_faultline_tags(brief_data.get("key_developments", []))
+    await attach_faultline_tags(brief_data.get("national_news", []))
+    await attach_faultline_tags(brief_data.get("international_news", []))
+    await attach_faultline_tags(brief_data.get("cross_border_bangladesh", []))
+    await attach_faultline_tags(brief_data.get("cross_border_myanmar", []))
 
     # 13. SAVE AND RETURN
     brief = DailyBrief(**brief_data)
