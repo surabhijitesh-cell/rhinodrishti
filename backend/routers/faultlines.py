@@ -38,6 +38,7 @@ from pydantic import BaseModel
 from shared import db, logger
 from utils.auth import get_current_user
 from faultline_seed import seed_faultlines, FAULTLINES, STATE_TO_REGIONS
+from priority_areas_seed import seed_priority_areas, PRIORITY_AREAS
 from faultline_engine import (
     run_daily_faultline_pass,
     run_backfill,
@@ -50,6 +51,7 @@ router = APIRouter()
 faultlines_col = db.faultlines
 scores_col = db.faultline_scores
 mappings_col = db.faultline_mappings
+priority_areas_col = db.priority_areas
 alerts_col = db.faultline_alerts
 backfill_status_col = db.faultline_backfill_status
 
@@ -134,6 +136,72 @@ async def seed_faultline_registry(
     _require_analyst_or_admin(current_user)
     result = await seed_faultlines(db)
     return {"status": "ok", **result}
+
+
+# ── Priority Areas of Interest (PAOI) ─────────────────────────────────────────
+@router.post("/priority-areas/seed")
+async def seed_priority_area_registry(
+    current_user: dict = Depends(get_current_user),
+):
+    """Seed PAOIs + tag faultlines with priority_area_ids. Idempotent.
+    Run AFTER /faultlines/seed (it tags existing faultlines)."""
+    _require_analyst_or_admin(current_user)
+    result = await seed_priority_areas(db)
+    return {"status": "ok", **result}
+
+
+@router.get("/priority-areas")
+async def list_priority_areas(
+    include_scores: bool = Query(True),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    List PAOIs ranked. With include_scores, attaches the current aggregate
+    status of each PAOI: the max + avg score of its linked faultlines (latest
+    snapshot per faultline), plus the dominant (highest-scoring) faultline.
+    """
+    cursor = priority_areas_col.find({"enabled": True}, {"_id": 0}).sort("rank", 1)
+    paois = [p async for p in cursor]
+
+    if not include_scores:
+        return {"total": len(paois), "priority_areas": paois}
+
+    # Latest score per faultline (one aggregation, reused across PAOIs)
+    pipeline = [
+        {"$sort": {"date": -1}},
+        {"$group": {"_id": "$faultline_id", "doc": {"$first": "$$ROOT"}}},
+        {"$replaceRoot": {"newRoot": "$doc"}},
+        {"$project": {"_id": 0, "faultline_id": 1, "faultline_name": 1,
+                      "score": 1, "level": 1, "date": 1}},
+    ]
+    latest = {s["faultline_id"]: s async for s in scores_col.aggregate(pipeline)}
+
+    for pa in paois:
+        fl_ids = pa.get("linked_faultline_ids", [])
+        scored = [latest[f] for f in fl_ids if f in latest]
+        if scored:
+            scores = [s["score"] for s in scored]
+            top = max(scored, key=lambda s: s["score"])
+            pa["status"] = {
+                "max_score": round(max(scores), 1),
+                "avg_score": round(sum(scores) / len(scores), 1),
+                "level": _score_level(max(scores)),
+                "dominant_faultline": {
+                    "id": top["faultline_id"],
+                    "name": top.get("faultline_name"),
+                    "score": round(top["score"], 1),
+                },
+                "n_faultlines": len(scored),
+                "as_of": max((s.get("date", "") for s in scored), default=None),
+            }
+        else:
+            # Keyword-only PAOI (P3 LOC) or no scores yet
+            pa["status"] = {
+                "max_score": None, "avg_score": None, "level": "STABLE",
+                "dominant_faultline": None, "n_faultlines": 0, "as_of": None,
+            }
+
+    return {"total": len(paois), "priority_areas": paois}
 
 
 # ── List ──────────────────────────────────────────────────────────────────────
