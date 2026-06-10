@@ -1180,15 +1180,6 @@ export default function Dashboard({ stats: propStats, api }) {
       {/* Unacknowledged Critical Alerts - Sticky Panel */}
       <UnacknowledgedAlerts api={api} />
 
-      {/* Faultline Warnings - dangerous threshold crossings */}
-      <FaultlineWarnings api={api} />
-
-      {/* Faultline Pulse - top 3 most stressed faultlines */}
-      <FaultlinePulse api={api} />
-
-      {/* Watchlist Strip — user's priority-ranked faultlines */}
-      <WatchlistStrip api={api} />
-
       {/* WebSocket Live Feed - Shows items as they arrive */}
       {wsNewItems.length > 0 && (
         <Card className="border border-green-500/30 rounded-none bg-green-950/10 animate-slide-in" data-testid="ws-live-feed">
@@ -1361,6 +1352,15 @@ export default function Dashboard({ stats: propStats, api }) {
           </Card>
         </div>
       </div>
+
+      {/* Faultline Warnings - dangerous threshold crossings */}
+      <FaultlineWarnings api={api} />
+
+      {/* Faultline Pulse - top 3 most stressed faultlines */}
+      <FaultlinePulse api={api} />
+
+      {/* Watchlist Strip — user's priority-ranked faultlines */}
+      <WatchlistStrip api={api} />
 
       {/* Charts Row */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
