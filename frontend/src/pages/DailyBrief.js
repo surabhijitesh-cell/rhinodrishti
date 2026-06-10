@@ -215,6 +215,12 @@ export default function DailyBrief({ api }) {
                 ))}
               </div>
             )}
+            {item.analyst_note && (
+              <div className="mt-2 px-3 py-2 bg-violet-950/30 border border-violet-500/30 border-l-2 border-l-violet-400">
+                <p className="text-[10px] uppercase tracking-widest text-violet-400 font-mono mb-0.5">Analyst Note</p>
+                <p className="text-xs text-violet-200 leading-relaxed">{safeStr(item.analyst_note)}</p>
+              </div>
+            )}
             <div className="flex flex-wrap items-center gap-3 mt-1">
               {item.source_url && (
                 <a 
@@ -472,6 +478,12 @@ export default function DailyBrief({ api }) {
                                 )}
                               </div>
                               {item.summary && <p className="text-xs text-muted-foreground mt-1 leading-relaxed">{safeStr(item.summary)}</p>}
+                              {item.analyst_note && (
+                                <div className="mt-2 px-2 py-1.5 bg-violet-950/30 border border-violet-500/30 border-l-2 border-l-violet-400">
+                                  <p className="text-[9px] uppercase tracking-widest text-violet-400 font-mono mb-0.5">Analyst Note</p>
+                                  <p className="text-xs text-violet-200 leading-relaxed">{safeStr(item.analyst_note)}</p>
+                                </div>
+                              )}
                               {item.source && <p className="text-[10px] text-muted-foreground/60 mt-1 font-mono">Source: {item.source}</p>}
                             </div>
                           </div>
@@ -503,6 +515,12 @@ export default function DailyBrief({ api }) {
                                 )}
                               </div>
                               {item.summary && <p className="text-xs text-muted-foreground mt-1 leading-relaxed">{safeStr(item.summary)}</p>}
+                              {item.analyst_note && (
+                                <div className="mt-2 px-2 py-1.5 bg-violet-950/30 border border-violet-500/30 border-l-2 border-l-violet-400">
+                                  <p className="text-[9px] uppercase tracking-widest text-violet-400 font-mono mb-0.5">Analyst Note</p>
+                                  <p className="text-xs text-violet-200 leading-relaxed">{safeStr(item.analyst_note)}</p>
+                                </div>
+                              )}
                               {item.source && <p className="text-[10px] text-muted-foreground/60 mt-1 font-mono">Source: {item.source}</p>}
                             </div>
                           </div>

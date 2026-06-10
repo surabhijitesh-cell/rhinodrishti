@@ -534,6 +534,17 @@ def generate_brief_pdf(brief: dict, date: str, total: int, critical: int, high: 
                 self.set_text_color(100, 100, 120)
                 self.cell(0, 4, f'Actors: {str(actors)[:120]}'.encode('latin-1', 'replace').decode('latin-1'), new_x="LMARGIN", new_y="NEXT")
 
+            analyst_note = item.get('analyst_note', '')
+            if analyst_note:
+                if self.get_y() > 270: self.add_page()
+                self.set_font('Helvetica', 'B', 7)
+                self.set_text_color(100, 50, 160)
+                self.cell(0, 4, 'ANALYST NOTE:', new_x="LMARGIN", new_y="NEXT")
+                self.set_font('Helvetica', 'I', 8)
+                self.set_text_color(70, 40, 120)
+                note_clean = analyst_note[:400].encode('latin-1', 'replace').decode('latin-1')
+                self.multi_cell(0, 4, note_clean, new_x="LMARGIN", new_y="NEXT")
+
             meta_parts = []
             if state: meta_parts.append(f'Region: {state}')
             if priority: meta_parts.append(f'Priority: {priority}')
@@ -1134,6 +1145,11 @@ async def generate_brief_for_date(date: str):
             result["actors"] = ", ".join(actors) if isinstance(actors, list) else str(actors)
         if item.get("attention_level") and item["attention_level"] != "Routine Monitoring":
             result["attention_level"] = item["attention_level"]
+        analyst_enhancement = item.get("analyst_enhancement") or {}
+        if isinstance(analyst_enhancement, dict):
+            note = analyst_enhancement.get("analyst_note", "")
+            if note and isinstance(note, str) and note.strip():
+                result["analyst_note"] = note.strip()
         return result
 
     key_developments = []
