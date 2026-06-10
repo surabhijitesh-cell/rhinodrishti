@@ -1,5 +1,5 @@
 """
-faultline_pdf.py — Faultline Analysis Report PDF (5 pages).
+faultline_pdf.py — Faultline Analysis Report PDF (6 pages).
 
 Same visual identity as the Monthly Strategic Brief (via brief_pdf_style.BriefPDF)
 plus faultline-specific content:
@@ -8,18 +8,21 @@ plus faultline-specific content:
   Page 2 — Priority Areas of Interest (P1->P5) with cached PAOI synthesis
   Page 3 — State-wise faultline tables + state narratives (10 states)
   Page 4 — Top 10 Movers + News Drivers (3 per mover) + outlooks (LLM B2)
-  Page 5 — Cross-cutting Manual Review Advisory (LLM B3) + per-state roll-up
+  Page 5 — Actors of Interest | NER + BD + MM | Top 10 by mention count (LLM B4)
+  Page 6 — Cross-cutting Manual Review Advisory (LLM B3) + per-state roll-up
 
 Data sources (all DB-resident — no re-scoring):
-  - faultline_scores   (current month + previous month for MoM)
-  - faultline_mappings (top news drivers per mover, joined with intelligence_items)
-  - priority_areas     (PAOI registry for ordering)
-  - monthly_briefs     (cached state_narratives + paoi_analysis synthesis)
+  - faultline_scores      (current month + previous month for MoM)
+  - faultline_mappings    (top news drivers per mover, joined with intelligence_items)
+  - intelligence_items    (actors[], entities.organizations[], state filter for scope)
+  - priority_areas        (PAOI registry for ordering)
+  - monthly_briefs        (cached state_narratives + paoi_analysis synthesis)
 
-LLM calls (Path B, 3 total):
+LLM calls (Path B, 4 total, run in parallel):
   B1 — Bottom Line MoM executive (~700 tokens)
   B2 — Batched outlooks for top 10 movers (~1200 tokens, single call)
   B3 — Cross-cutting Manual Review Advisory (~500 tokens)
+  B4 — Actor posture profiles, top 10 (~600 tokens)
 """
 import asyncio
 import io
@@ -33,6 +36,12 @@ from brief_pdf_style import (
 )
 
 logger = logging.getLogger("faultline_pdf")
+
+# NER states + Bangladesh + Myanmar — scope for actor aggregation.
+ACTOR_SCOPE_STATES = {
+    "Manipur", "Assam", "Meghalaya", "Tripura", "Mizoram",
+    "Nagaland", "North Bengal", "Bangladesh", "Myanmar", "Arunachal Pradesh",
+}
 
 
 # ── Data aggregation ─────────────────────────────────────────────────────────
@@ -72,10 +81,85 @@ async def _load_month_scores(db, year: int, month: int) -> dict:
     return out
 
 
+async def _top_actors(db, year: int, month: int) -> list:
+    """
+    Top 10 actors/orgs by mention count across ACTOR_SCOPE_STATES faultline-mapped
+    articles this month.  Returns list of dicts:
+      {name, count, faultlines[3], headline{title,date,source,severity}}
+    """
+    start_iso = datetime(year, month, 1, tzinfo=timezone.utc).date().isoformat()
+    end_iso = (
+        datetime(year + 1, 1, 1, tzinfo=timezone.utc).date().isoformat()
+        if month == 12
+        else datetime(year, month + 1, 1, tzinfo=timezone.utc).date().isoformat()
+    )
+
+    # Collect article_id → set of faultline names from mappings this month.
+    article_faultlines: dict = defaultdict(set)
+    m_cursor = db.faultline_mappings.find(
+        {"date": {"$gte": start_iso, "$lt": end_iso}, "confidence": {"$gte": 45}},
+        {"_id": 0, "article_id": 1, "faultline_name": 1, "faultline_id": 1},
+    )
+    async for m in m_cursor:
+        aid = m.get("article_id")
+        if aid:
+            fl_name = m.get("faultline_name") or m.get("faultline_id", "")
+            article_faultlines[aid].add(fl_name)
+
+    if not article_faultlines:
+        return []
+
+    # Fetch intelligence_items for mapped articles, filter by scope state.
+    actor_counts: Counter = Counter()
+    actor_faultlines: dict = defaultdict(set)
+    actor_headlines: dict = {}
+
+    items_cursor = db.intelligence_items.find(
+        {"id": {"$in": list(article_faultlines.keys())}},
+        {"_id": 0, "id": 1, "actors": 1, "entities": 1, "state": 1,
+         "title": 1, "published_at": 1, "source": 1, "severity": 1},
+    )
+    async for item in items_cursor:
+        state = item.get("state") or ""
+        if state and state not in ACTOR_SCOPE_STATES:
+            continue
+        aid = item["id"]
+        fl_names = article_faultlines.get(aid, set())
+
+        actors = list(item.get("actors") or [])
+        orgs = list((item.get("entities") or {}).get("organizations") or [])
+        for actor in actors + orgs:
+            actor = (actor or "").strip()
+            if len(actor) < 3:
+                continue
+            actor_counts[actor] += 1
+            actor_faultlines[actor].update(fl_names)
+            if actor not in actor_headlines:
+                actor_headlines[actor] = {
+                    "title": item.get("title", ""),
+                    "date": (item.get("published_at") or "")[:10],
+                    "source": item.get("source", ""),
+                    "severity": item.get("severity", ""),
+                }
+
+    result = []
+    for actor, count in actor_counts.most_common(10):
+        result.append({
+            "name": actor,
+            "count": count,
+            "faultlines": sorted(actor_faultlines[actor])[:3],
+            "headline": actor_headlines.get(actor, {}),
+        })
+    return result
+
+
 async def aggregate_faultline_report(
     db, year: int, month: int
 ) -> dict:
     """Aggregate everything the PDF needs. No LLM here — that's a separate pass."""
+    # Actors of interest (parallel with score load — independent query)
+    actors_task = asyncio.ensure_future(_top_actors(db, year, month))
+
     # Current + previous month scores for MoM
     curr = await _load_month_scores(db, year, month)
     prev_year, prev_month = (year, month - 1) if month > 1 else (year - 1, 12)
@@ -223,6 +307,13 @@ async def aggregate_faultline_report(
     for m in top_movers:
         m["drivers"] = drivers_by_fl.get(m["id"], [])
 
+    # Await actors task (started at top of function alongside score loads)
+    try:
+        top_actors = await actors_task
+    except Exception as e:
+        logger.warning(f"Actor aggregation failed: {e}")
+        top_actors = []
+
     return {
         "year": year, "month": month,
         "prev_year": prev_year, "prev_month": prev_month,
@@ -242,6 +333,7 @@ async def aggregate_faultline_report(
         "top_movers": top_movers,
         "paoi_analysis": paoi_analysis,
         "state_narratives": state_narratives,
+        "top_actors": top_actors,
     }
 
 
@@ -338,14 +430,36 @@ def _b3_advisory_prompt(agg: dict) -> str:
     )
 
 
+def _b4_actors_prompt(actors: list) -> str:
+    lines = []
+    for i, a in enumerate(actors, 1):
+        fls = ", ".join(a["faultlines"][:3]) or "unspecified"
+        lines.append(f"{i}. {a['name']} — {a['count']} mentions — faultlines: {fls}")
+    return (
+        "You are writing ACTOR PROFILES for a Faultline Analysis Report.\n\n"
+        "Top actors/organizations by mention count this period (NER + BD + MM scope):\n"
+        + "\n".join(lines) + "\n\n"
+        + "For EACH actor (by exact name as listed), write ONE sentence describing:\n"
+        + "  - their likely role (state security force, insurgent group, political party,\n"
+        + "    Islamist organisation, media/disinfo outlet, foreign state actor, etc.)\n"
+        + "  - their current posture (escalatory, conciliatory, destabilising, monitoring, etc.)\n"
+        + "  - the primary faultline or concern they are most associated with\n\n"
+        + "Use [ASSESSED] for inferences. Be specific — name known affiliation or agenda.\n\n"
+        + "Return strict JSON keyed by exact actor name: "
+        + "{\"<name>\": \"one-sentence profile...\"}"
+    )
+
+
 async def run_pdf_synthesis(agg: dict, call_llm_json) -> dict:
-    """Run B1+B2+B3 in parallel. Returns {bottom_line, mover_outlooks{}, advisory}."""
+    """Run B1+B2+B3+B4 in parallel. Returns {bottom_line, mover_outlooks{}, advisory, actor_profiles{}}."""
     b1_task = call_llm_json(_b1_bottom_line_prompt(agg), max_tokens=700)
     b2_task = (call_llm_json(_b2_movers_prompt(agg), max_tokens=1500)
                if agg["top_movers"] else asyncio.sleep(0, result={}))
     b3_task = call_llm_json(_b3_advisory_prompt(agg), max_tokens=600)
+    b4_task = (call_llm_json(_b4_actors_prompt(agg["top_actors"]), max_tokens=700)
+               if agg.get("top_actors") else asyncio.sleep(0, result={}))
 
-    b1, b2, b3 = await asyncio.gather(b1_task, b2_task, b3_task, return_exceptions=True)
+    b1, b2, b3, b4 = await asyncio.gather(b1_task, b2_task, b3_task, b4_task, return_exceptions=True)
 
     def _safe(r, key=None):
         if isinstance(r, Exception):
@@ -358,11 +472,13 @@ async def run_pdf_synthesis(agg: dict, call_llm_json) -> dict:
     bottom_line = _safe(b1, "bottom_line") or ""
     mover_outlooks = _safe(b2) or {}
     advisory = _safe(b3, "advisory") or ""
+    actor_profiles = _safe(b4) or {}
 
     return {
         "bottom_line": bottom_line,
         "mover_outlooks": mover_outlooks,
         "advisory": advisory,
+        "actor_profiles": actor_profiles,
     }
 
 
@@ -612,7 +728,61 @@ def render_faultline_pdf(agg: dict, synthesis: dict) -> bytes:
             pdf.multi_cell(0, 4, ascii_safe(f"  Watch next: {outlook[:280]}"), **NL)
         pdf.ln(1)
 
-    # ──────────────── PAGE 5 — Manual Review Advisory ────────────────────────
+    # ──────────────── PAGE 5 — Actors of Interest ────────────────────────────
+    pdf.add_page()
+    pdf.section_title("Actors of Interest",
+                      "NER + BD + MM | Top 10 by Mention Count")
+    top_actors = agg.get("top_actors") or []
+    actor_profiles = synthesis.get("actor_profiles") or {}
+
+    if not top_actors:
+        pdf.set_font("Helvetica", "I", 9)
+        pdf.set_text_color(120, 120, 120)
+        pdf.cell(0, 8, "No actor data available for this period.", **NL)
+    else:
+        for rank, actor in enumerate(top_actors, 1):
+            if pdf.get_y() > 252:
+                pdf.add_page()
+            name = actor["name"]
+            count = actor["count"]
+            fls = actor.get("faultlines") or []
+            hl = actor.get("headline") or {}
+
+            # Actor name band
+            pdf.set_fill_color(45, 60, 40)
+            pdf.set_text_color(255, 255, 255)
+            pdf.set_font("Helvetica", "B", 9)
+            pdf.cell(0, 5.5, ascii_safe(f"  #{rank}  {name}"), fill=True, **NL)
+
+            # Mention count + faultlines row
+            pdf.set_font("Helvetica", "", 8)
+            pdf.set_text_color(60, 60, 60)
+            fl_str = "  |  ".join(fls) if fls else "—"
+            pdf.cell(0, 4, ascii_safe(
+                f"  Mentions: {count}   Faultlines: {fl_str[:100]}"
+            ), **NL)
+
+            # Representative headline
+            if hl.get("title"):
+                date_str = hl.get("date", "")
+                sev_str = hl.get("severity", "")
+                src_str = (hl.get("source") or "")[:25]
+                pdf.set_font("Helvetica", "B", 7)
+                pdf.set_text_color(*C_SEC_TEXT)
+                pdf.multi_cell(0, 3.5, ascii_safe(
+                    f"  Rep. headline [{date_str}|{sev_str}]: "
+                    f"{hl['title'][:110]}  ({src_str})"
+                ), **NL)
+
+            # B4 LLM posture line
+            profile = actor_profiles.get(name) or ""
+            if profile:
+                pdf.set_font("Helvetica", "I", 8)
+                pdf.set_text_color(120, 80, 20)
+                pdf.multi_cell(0, 4, ascii_safe(f"  Assessment: {profile[:260]}"), **NL)
+            pdf.ln(1)
+
+    # ──────────────── PAGE 6 — Manual Review Advisory ────────────────────────
     pdf.add_page()
     pdf.section_title("Manual Review Advisory",
                       "Cross-Cutting + Per-State Roll-up")
