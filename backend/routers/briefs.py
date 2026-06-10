@@ -1175,21 +1175,27 @@ async def generate_brief_for_date(date: str):
     national_deduped = []
     for item in military_national:
         title = item.get("title", "")
-        if item.get("id") not in added_ids and not is_duplicate_title(title, seen_titles, seen_entities):
+        item_id = item.get("id")
+        if item_id not in added_ids and not is_duplicate_title(title, seen_titles, seen_entities):
             national_deduped.append(build_brief_item(item))
             seen_titles.append(normalize_title(title))
             seen_entities.append(extract_key_entities(title))
+            if item_id:
+                added_ids.add(item_id)
     brief_data["national_news"] = national_deduped[:15]
 
     # 10. INTERNATIONAL NEWS
-    brief_data["international_news"] = [
-        {
-            **build_brief_item(item),
-            "countries": ", ".join(item.get("countries_involved", [])) if isinstance(item.get("countries_involved"), list) else str(item.get("countries_involved", "")),
-        }
-        for item in diverse_intl_items
-        if item.get("id") not in added_ids
-    ]
+    intl_built = []
+    for item in diverse_intl_items:
+        item_id = item.get("id")
+        if item_id not in added_ids:
+            intl_built.append({
+                **build_brief_item(item),
+                "countries": ", ".join(item.get("countries_involved", [])) if isinstance(item.get("countries_involved"), list) else str(item.get("countries_involved", "")),
+            })
+            if item_id:
+                added_ids.add(item_id)
+    brief_data["international_news"] = intl_built
 
     # 10.5 CROSS-BORDER INTELLIGENCE (Bangladesh & Myanmar)
     from routers.cross_border import _auto_categorize, CATEGORY_LABELS
@@ -1249,6 +1255,11 @@ async def generate_brief_for_date(date: str):
 
     bd_brief_items = _dedup_cb(bd_brief_items)[:15]
     mm_brief_items = _dedup_cb(mm_brief_items)[:15]
+
+    for item in bd_brief_items + mm_brief_items:
+        item_id = item.get("id")
+        if item_id:
+            added_ids.add(item_id)
 
     brief_data["cross_border_bangladesh"] = bd_brief_items
     brief_data["cross_border_myanmar"] = mm_brief_items
