@@ -216,23 +216,16 @@ export default function IntelligenceFeed({ api, crossBorderOnly = false, alertsO
         <p className="text-xs font-mono uppercase tracking-[0.15em] text-muted-foreground mt-1">{pageDesc}</p>
       </div>
 
-      {/* Search + Filter toggle + Semantic Search */}
-      <div className="flex items-center gap-3">
-        {/* Rating guide */}
-        <div className="hidden lg:flex items-center gap-1.5 px-3 py-1.5 border border-primary/20 bg-primary/5 shrink-0" data-testid="rating-guide-banner">
-          <Star size={12} className="text-amber-400" fill="currentColor" />
-          <span className="text-[10px] font-mono text-muted-foreground">
-            Rate each article 1 (Entirely Irrelevant) to 6 (Extremely Relevant) to train the system
-          </span>
-        </div>
-        <div className="relative flex-1 max-w-md">
-          <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+      {/* Row 1 — Search + mode toggle */}
+      <div className="flex items-center gap-2">
+        <div className="relative flex-1">
+          <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
           <Input
-            placeholder={semanticMode ? "Describe what you're looking for..." : "Search articles..."}
+            placeholder={semanticMode ? "Describe what you're looking for… (press Enter to search)" : "Search articles by keyword…"}
             value={semanticMode ? semanticQuery : filters.search}
             onChange={(e) => semanticMode ? setSemanticQuery(e.target.value) : updateFilter("search", e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter" && semanticMode) runSemanticSearch(); }}
-            className="pl-9 rounded-none"
+            className="pl-9 rounded-none h-9 text-sm"
             data-testid="feed-search-input"
           />
         </div>
@@ -240,7 +233,7 @@ export default function IntelligenceFeed({ api, crossBorderOnly = false, alertsO
           <Button
             variant={semanticMode ? "default" : "outline"}
             size="sm"
-            className={`rounded-none uppercase text-xs tracking-wider ${semanticMode ? "bg-primary" : ""}`}
+            className={`rounded-none uppercase text-xs tracking-wider shrink-0 ${semanticMode ? "bg-primary" : ""}`}
             onClick={() => {
               setSemanticMode(!semanticMode);
               setSemanticResults([]);
@@ -248,41 +241,54 @@ export default function IntelligenceFeed({ api, crossBorderOnly = false, alertsO
             }}
             data-testid="semantic-search-toggle"
           >
-            <Sparkles size={14} className="mr-1.5" />
-            {semanticMode ? "Semantic ON" : "Semantic"}
+            <Sparkles size={13} className="mr-1" />
+            {semanticMode ? "AI: ON" : "AI Search"}
           </Button>
         </Tip>
         {semanticMode && (
           <Button
             size="sm"
-            className="rounded-none uppercase text-xs"
+            className="rounded-none uppercase text-xs shrink-0"
             onClick={runSemanticSearch}
             disabled={semanticLoading || !semanticQuery.trim()}
             data-testid="semantic-search-btn"
           >
-            {semanticLoading ? "Searching..." : "Find Similar"}
+            {semanticLoading ? <><Loader2 size={13} className="mr-1 animate-spin" />Searching…</> : "Find Similar"}
           </Button>
         )}
+      </div>
+
+      {/* Row 2 — Filters + actions + result count */}
+      <div className="flex items-center gap-2 flex-wrap">
+        {/* Rating guide — compact chip */}
+        <div className="flex items-center gap-1 px-2 py-1 border border-primary/20 bg-primary/5 shrink-0" data-testid="rating-guide-banner">
+          <Star size={11} className="text-amber-400 shrink-0" fill="currentColor" />
+          <span className="text-[10px] font-mono text-muted-foreground hidden sm:inline">
+            Rate 1–6 to train the system
+          </span>
+        </div>
+
         <Tip text="Toggle filter panel — narrow results by State, Threat Type, Severity and Minimum Priority. Active filters are shown as a count badge." side="bottom">
           <Button
             variant={showFilters ? "default" : "outline"}
             size="sm"
-            className="rounded-none uppercase text-xs tracking-wider"
+            className="rounded-none uppercase text-xs tracking-wider shrink-0"
             onClick={() => setShowFilters(!showFilters)}
             data-testid="toggle-filters-btn"
           >
-            <SlidersHorizontal size={14} className="mr-1.5" />
+            <SlidersHorizontal size={13} className="mr-1" />
             Filters
             {activeFilterCount > 0 && (
-              <Badge className="ml-1.5 severity-high rounded-none text-[10px] px-1">{activeFilterCount}</Badge>
+              <Badge className="ml-1 severity-high rounded-none text-[10px] px-1">{activeFilterCount}</Badge>
             )}
           </Button>
         </Tip>
+
         <Tip text="Export the current filtered view as a formatted PDF brief — includes severity breakdown and all matching items in priority order." side="bottom">
           <Button
             variant="outline"
             size="sm"
-            className="rounded-none uppercase text-xs tracking-wider border-primary/30 text-primary hover:bg-primary/10 relative"
+            className="rounded-none uppercase text-xs tracking-wider border-primary/30 text-primary hover:bg-primary/10 relative shrink-0"
             onClick={() => {
               const next = pdfClickCount + 1;
               setPdfClickCount(next);
@@ -292,16 +298,17 @@ export default function IntelligenceFeed({ api, crossBorderOnly = false, alertsO
             disabled={generatingPdf}
             data-testid="generate-pdf-btn"
           >
-          {generatingPdf ? <Loader2 size={14} className="mr-1.5 animate-spin" /> : <FileDown size={14} className="mr-1.5" />}
-          {generatingPdf ? "Generating..." : "Export PDF"}
-          {showPdfBadge && (
-            <span className="absolute -top-2 -right-2 text-[8px] font-bold uppercase tracking-wider text-emerald-400 animate-pulse bg-card px-1 border border-emerald-500/30" data-testid="new-badge-export-pdf">
-              New
-            </span>
-          )}
+            {generatingPdf ? <Loader2 size={13} className="mr-1 animate-spin" /> : <FileDown size={13} className="mr-1" />}
+            {generatingPdf ? "Generating…" : "Export PDF"}
+            {showPdfBadge && (
+              <span className="absolute -top-2 -right-2 text-[8px] font-bold uppercase tracking-wider text-emerald-400 animate-pulse bg-card px-1 border border-emerald-500/30" data-testid="new-badge-export-pdf">
+                New
+              </span>
+            )}
           </Button>
         </Tip>
-        <span className="text-xs font-mono text-muted-foreground" data-testid="result-count">
+
+        <span className="text-xs font-mono text-muted-foreground ml-auto" data-testid="result-count">
           {semanticMode && semanticResults.length > 0 ? `${semanticResults.length} similar` : `${total} results`}
         </span>
       </div>
