@@ -38,6 +38,48 @@ const tooltipStyle = {
   fontSize: 12,
 };
 
+// Tooltip for State Severity Evolution — sorts states by value descending
+const CustomEvolutionTooltip = ({ active, payload, label }) => {
+  if (!active || !payload || payload.length === 0) return null;
+  const sorted = [...payload]
+    .filter(p => p.value > 0)
+    .sort((a, b) => b.value - a.value);
+  if (sorted.length === 0) return null;
+  return (
+    <div style={{ ...tooltipStyle, padding: "8px 10px", minWidth: 140 }}>
+      <div style={{ fontSize: 10, color: "hsl(120,5%,60%)", marginBottom: 4 }}>{label}</div>
+      {sorted.map(p => (
+        <div key={p.dataKey} style={{ fontSize: 11, color: p.stroke, display: "flex", justifyContent: "space-between", gap: 16 }}>
+          <span>{p.dataKey}</span>
+          <span style={{ fontWeight: "bold" }}>{p.value}</span>
+        </div>
+      ))}
+    </div>
+  );
+};
+
+// Severity weight for tooltip ordering
+const SEV_ORDER = { critical: 0, high: 1, medium: 2, low: 3 };
+
+// Tooltip for Severity Trend Aggregate — orders critical → high → medium → low
+const CustomSeverityTooltip = ({ active, payload, label }) => {
+  if (!active || !payload || payload.length === 0) return null;
+  const sorted = [...payload].sort((a, b) =>
+    (SEV_ORDER[a.dataKey] ?? 99) - (SEV_ORDER[b.dataKey] ?? 99)
+  );
+  return (
+    <div style={{ ...tooltipStyle, padding: "8px 10px", minWidth: 130 }}>
+      <div style={{ fontSize: 10, color: "hsl(120,5%,60%)", marginBottom: 4 }}>{label}</div>
+      {sorted.map(p => (
+        <div key={p.dataKey} style={{ fontSize: 11, color: p.stroke, display: "flex", justifyContent: "space-between", gap: 16 }}>
+          <span style={{ textTransform: "capitalize" }}>{p.dataKey}</span>
+          <span style={{ fontWeight: "bold" }}>{p.value}</span>
+        </div>
+      ))}
+    </div>
+  );
+};
+
 export default function Trends({ api }) {
   const [range, setRange]               = useState("7d");
   const [data, setData]                 = useState(null);
@@ -234,7 +276,7 @@ export default function Trends({ api }) {
                 <XAxis dataKey="date" tick={{ fontSize: 9, fill: "hsl(120,5%,60%)" }}
                        tickFormatter={(v) => v?.slice(5) || v} />
                 <YAxis tick={{ fontSize: 10, fill: "hsl(120,5%,60%)" }} />
-                <Tooltip contentStyle={tooltipStyle} />
+                <Tooltip content={<CustomEvolutionTooltip />} />
                 <Legend wrapperStyle={{ fontSize: 9, fontFamily: "JetBrains Mono" }} />
                 {stateNames.map((name, i) => (
                   <Line key={name} type="monotone" dataKey={name}
@@ -268,7 +310,7 @@ export default function Trends({ api }) {
                 <XAxis dataKey="date" tick={{ fontSize: 10, fill: "hsl(120,5%,60%)" }}
                        tickFormatter={(v) => v?.slice(5)} />
                 <YAxis tick={{ fontSize: 10, fill: "hsl(120,5%,60%)" }} />
-                <Tooltip contentStyle={tooltipStyle} />
+                <Tooltip content={<CustomSeverityTooltip />} />
                 <Legend wrapperStyle={{ fontSize: 10, fontFamily: "JetBrains Mono" }} />
                 <Area type="monotone" dataKey="critical" stackId="1"
                       stroke={SEVERITY_COLORS.critical} fill={SEVERITY_COLORS.critical} fillOpacity={0.6} />

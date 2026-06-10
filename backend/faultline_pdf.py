@@ -169,8 +169,8 @@ async def aggregate_faultline_report(
     # If no prior month data, delta_mom = None.
     for fl_id, c in curr.items():
         p = prev.get(fl_id)
-        c["mom_delta"] = round(c["avg"] - p["avg"], 1) if p else None
-        c["prev_avg"] = p["avg"] if p else None
+        c["mom_delta"] = round(c["avg"] - p["avg"], 1) if (p and p["avg"] > 0) else None
+        c["prev_avg"] = p["avg"] if (p and p["avg"] > 0) else None
 
     # Level distribution this month vs last
     def _dist(scores_dict: dict) -> dict:

@@ -82,7 +82,7 @@ async def get_trends(range: str = Query("7d", regex="^(24h|7d|30d|90d|365d)$")):
             continue
         date_key = pub[:10]
         sev = item.get("severity") or "low"
-        state = item.get("state") or "Unknown"
+        state = item.get("state") or "Unclassified"
         category = item.get("threat_category") or "Other"
 
         # Bucket date for chart
