@@ -446,11 +446,20 @@ async def faultline_pdf_report(
     if not agg.get("all_faultlines"):
         raise HTTPException(404, f"No faultline data for {year}-{month:02d}")
 
-    # Run B1+B2+B3 LLM synthesis in parallel
+    # Run B1+B2+B3+B4 LLM synthesis in parallel
     synthesis = await run_pdf_synthesis(agg, _call_llm_json)
 
+    # Load requesting user's watchlist priority map
+    from shared import db as _db
+    from routers.watchlist import watchlist_col as _wl_col
+    username = current_user.get("username", "")
+    priority_map: dict = {}
+    if username:
+        async for entry in _wl_col.find({"username": username}, {"faultline_id": 1, "rank": 1, "_id": 0}):
+            priority_map[entry["faultline_id"]] = entry["rank"]
+
     # Render PDF
-    pdf_bytes = render_faultline_pdf(agg, synthesis)
+    pdf_bytes = render_faultline_pdf(agg, synthesis, priority_map=priority_map)
 
     filename = f"faultline_analysis_{year}_{month:02d}.pdf"
     return StreamingResponse(
@@ -582,6 +591,66 @@ async def purge_before(
         "total": sum(deleted.values()),
         "triggered_by": triggered_by,
     }
+
+
+# ── Custom faultline creation ─────────────────────────────────────────────────
+class CustomFaultlineCreate(BaseModel):
+    name: str
+    state: str
+    description: str
+    keywords: Optional[list] = None
+
+
+class KeywordRecommendRequest(BaseModel):
+    name: str
+    state: str
+    description: str
+
+
+@router.post("/faultlines/recommend-keywords")
+async def recommend_keywords(
+    body: KeywordRecommendRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """Ask the LLM to suggest monitoring keywords for a custom faultline."""
+    from routers.brief_monthly import _call_llm_json
+    prompt = (
+        f"You are an intelligence analyst. A user wants to monitor a new faultline:\n"
+        f"Name: {body.name}\nState/Region: {body.state}\nDescription: {body.description}\n\n"
+        f"Return a JSON object with a single key \"keywords\" whose value is a list of "
+        f"10-15 specific search keywords or short phrases (English) most likely to surface "
+        f"relevant news articles about this faultline. Focus on actors, locations, events, "
+        f"and issue-specific terminology. No generic terms like 'violence' or 'protest'."
+    )
+    result = await _call_llm_json(prompt, max_tokens=400)
+    keywords = result.get("keywords", [])
+    if not isinstance(keywords, list):
+        keywords = []
+    return {"keywords": keywords[:20]}
+
+
+@router.post("/faultlines")
+async def create_custom_faultline(
+    body: CustomFaultlineCreate,
+    current_user: dict = Depends(get_current_user),
+):
+    """Create a user-defined custom faultline."""
+    import uuid
+    from datetime import datetime, timezone as _tz
+    fl_id = f"custom_{uuid.uuid4().hex[:10]}"
+    doc = {
+        "id": fl_id,
+        "name": body.name.strip(),
+        "state": body.state.strip(),
+        "description": body.description.strip(),
+        "keywords": body.keywords or [],
+        "active": True,
+        "is_custom": True,
+        "created_by": current_user.get("username"),
+        "created_at": datetime.now(_tz.utc).isoformat(),
+    }
+    await faultlines_col.insert_one({**doc, "_id": fl_id})
+    return {"status": "ok", "faultline": doc}
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

@@ -22,6 +22,7 @@ import MapTimelineSlider, { computeItemOpacity } from "../components/MapTimeline
 import IntelligenceCard from "../components/IntelligenceCard";
 import { useIntelligenceWS } from "../hooks/useIntelligenceWS";
 import SocialMediaFeedWidget from "../components/SocialMediaFeedWidget";
+import WatchlistStrip from "../components/WatchlistStrip";
 import axios from "axios";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, PieChart, Pie
@@ -1184,6 +1185,9 @@ export default function Dashboard({ stats: propStats, api }) {
 
       {/* Faultline Pulse - top 3 most stressed faultlines */}
       <FaultlinePulse api={api} />
+
+      {/* Watchlist Strip — user's priority-ranked faultlines */}
+      <WatchlistStrip api={api} />
 
       {/* WebSocket Live Feed - Shows items as they arrive */}
       {wsNewItems.length > 0 && (

@@ -501,7 +501,8 @@ def _short_state(name: str) -> str:
     return aliases.get(s, s[:6])
 
 
-def render_faultline_pdf(agg: dict, synthesis: dict) -> bytes:
+def render_faultline_pdf(agg: dict, synthesis: dict, priority_map: dict = None) -> bytes:
+    """Render PDF.  priority_map is optional {faultline_id: rank(1-10)} from user watchlist."""
     pdf = BriefPDF()
     pdf.brief_type = "FAULTLINE ANALYSIS REPORT"
     pdf.display_period = agg["month_name"]
@@ -683,6 +684,7 @@ def render_faultline_pdf(agg: dict, synthesis: dict) -> bytes:
     pdf.section_title("Top 10 Movers + News Drivers",
                       "Priority-First | 3 Top Drivers Each")
     mover_outlooks = synthesis.get("mover_outlooks") or {}
+    _pmap = priority_map or {}
 
     for i, m in enumerate(agg["top_movers"], 1):
         if pdf.get_y() > 245:
@@ -691,7 +693,8 @@ def render_faultline_pdf(agg: dict, synthesis: dict) -> bytes:
         col = CONCERN_COLORS.get(level, (60, 80, 50))
         mom = m["mom_delta"]
         mom_str = "" if mom is None else f"  MoM Δ {mom:+.1f}"
-        hdr = (f"#{i}  [{m['state']}]  {m['name']}   {m['last']:.0f} {level}   "
+        rank_badge = f"[WL#{_pmap[m['id']]}] " if m["id"] in _pmap else ""
+        hdr = (f"#{i}  {rank_badge}[{m['state']}]  {m['name']}   {m['last']:.0f} {level}   "
                f"Period Δ {m['delta_period']:+.1f}{mom_str}")
         pdf.sub_band(hdr, fill_rgb=col, height=5.5)
 

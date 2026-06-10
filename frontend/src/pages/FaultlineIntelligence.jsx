@@ -3,7 +3,9 @@ import { useNavigate } from "react-router-dom";
 import {
   Target, AlertTriangle, TrendingUp, TrendingDown, Minus,
   Activity, RefreshCw, ChevronRight, Filter, MapPin, Network,
+  Star, Plus,
 } from "lucide-react";
+import CustomFaultlineModal from "../components/CustomFaultlineModal";
 import axios from "axios";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Badge } from "../components/ui/badge";
@@ -34,7 +36,7 @@ function TrendArrow({ delta }) {
   return <Minus size={12} className="text-muted-foreground" />;
 }
 
-function FaultlineCard({ fl, sparkData, delta7d, onClick }) {
+function FaultlineCard({ fl, sparkData, delta7d, onClick, watchlistRank, onToggleWatchlist, onSetRank }) {
   const level = fl.latest_score?.level || "STABLE";
   const style = LEVEL_STYLE[level] || LEVEL_STYLE.STABLE;
   const score = fl.latest_score?.score ?? 0;
@@ -55,9 +57,34 @@ function FaultlineCard({ fl, sparkData, delta7d, onClick }) {
             {fl.name}
           </h3>
         </div>
-        <Badge className={`shrink-0 rounded-none text-[10px] px-1.5 py-0 ${style.text} border ${style.border}`}>
-          {level}
-        </Badge>
+        <div className="flex items-center gap-1 shrink-0 ml-1">
+          {watchlistRank != null && (
+            <select
+              className="text-[9px] font-mono bg-yellow-900/40 border border-yellow-500/40 text-yellow-300 px-1 py-0 outline-none cursor-pointer"
+              value={watchlistRank}
+              onClick={(e) => e.stopPropagation()}
+              onChange={(e) => { e.stopPropagation(); onSetRank(fl.id, Number(e.target.value)); }}
+            >
+              {Array.from({ length: 10 }, (_, i) => i + 1).map((r) => (
+                <option key={r} value={r}>#{r}</option>
+              ))}
+            </select>
+          )}
+          <button
+            onClick={(e) => { e.stopPropagation(); onToggleWatchlist(fl); }}
+            className="p-0.5 hover:opacity-80 transition-opacity"
+            title={watchlistRank != null ? "Remove from watchlist" : "Add to watchlist"}
+          >
+            <Star
+              size={13}
+              className={watchlistRank != null ? "text-yellow-400" : "text-muted-foreground"}
+              fill={watchlistRank != null ? "currentColor" : "none"}
+            />
+          </button>
+          <Badge className={`rounded-none text-[10px] px-1.5 py-0 ${style.text} border ${style.border}`}>
+            {level}
+          </Badge>
+        </div>
       </div>
 
       <div className="flex items-end justify-between gap-2 mb-2">
@@ -128,6 +155,9 @@ export default function FaultlineIntelligence({ api }) {
   const [levelFilter, setLevelFilter] = useState("all");
   const [sortBy, setSortBy] = useState("score_desc");
   const [tab, setTab] = useState("list");
+  // watchlist: Map<faultline_id, rank>
+  const [watchlist, setWatchlist] = useState(new Map());
+  const [showCustomModal, setShowCustomModal] = useState(false);
 
   const fetchFaultlines = useCallback(async () => {
     setLoading(true);
@@ -142,6 +172,56 @@ export default function FaultlineIntelligence({ api }) {
   }, [api]);
 
   useEffect(() => { fetchFaultlines(); }, [fetchFaultlines]);
+
+  const fetchWatchlist = useCallback(async () => {
+    try {
+      const res = await axios.get(`${api}/watchlist/me`);
+      const map = new Map();
+      (res.data.entries || []).forEach((e) => map.set(e.faultline_id, e.rank));
+      setWatchlist(map);
+    } catch { /* not fatal */ }
+  }, [api]);
+
+  useEffect(() => { fetchWatchlist(); }, [fetchWatchlist]);
+
+  const toggleWatchlist = useCallback(async (fl) => {
+    const currentRank = watchlist.get(fl.id);
+    if (currentRank != null) {
+      // Remove
+      try {
+        await axios.delete(`${api}/watchlist/me/${fl.id}`);
+        setWatchlist((prev) => { const next = new Map(prev); next.delete(fl.id); return next; });
+      } catch (e) { console.error("Watchlist remove failed", e); }
+    } else {
+      // Add at next available rank
+      const usedRanks = new Set(watchlist.values());
+      if (usedRanks.size >= 10) {
+        alert("Watchlist is full (max 10). Remove one first.");
+        return;
+      }
+      const nextRank = Array.from({ length: 10 }, (_, i) => i + 1).find((r) => !usedRanks.has(r));
+      const entries = [...watchlist.entries()].map(([fid, r]) => ({ faultline_id: fid, rank: r }));
+      entries.push({ faultline_id: fl.id, rank: nextRank });
+      try {
+        await axios.put(`${api}/watchlist/me`, { entries });
+        setWatchlist((prev) => { const next = new Map(prev); next.set(fl.id, nextRank); return next; });
+      } catch (e) { console.error("Watchlist add failed", e); }
+    }
+  }, [api, watchlist]);
+
+  const setWatchlistRank = useCallback(async (flId, newRank) => {
+    // Swap ranks if another faultline already holds newRank
+    const entries = [...watchlist.entries()].map(([fid, r]) => {
+      if (fid === flId) return { faultline_id: fid, rank: newRank };
+      if (r === newRank) return { faultline_id: fid, rank: watchlist.get(flId) };
+      return { faultline_id: fid, rank: r };
+    });
+    try {
+      await axios.put(`${api}/watchlist/me`, { entries });
+      const next = new Map(entries.map((e) => [e.faultline_id, e.rank]));
+      setWatchlist(next);
+    } catch (e) { console.error("Watchlist rank update failed", e); }
+  }, [api, watchlist]);
 
   // Stable signature: comma-joined sorted faultline IDs. Re-runs only when the
   // SET of faultlines changes, not on every refresh that returns the same set
@@ -202,6 +282,11 @@ export default function FaultlineIntelligence({ api }) {
     if (stateFilter !== "all") out = out.filter((f) => f.state === stateFilter);
     if (levelFilter !== "all") out = out.filter((f) => (f.latest_score?.level || "STABLE") === levelFilter);
     out = [...out].sort((a, b) => {
+      const rankA = watchlist.get(a.id) ?? Infinity;
+      const rankB = watchlist.get(b.id) ?? Infinity;
+      // Watchlisted faultlines pin to top sorted by rank
+      if (rankA !== rankB) return rankA - rankB;
+      // Secondary sort by user's chosen field
       const sa = a.latest_score?.score ?? 0;
       const sb = b.latest_score?.score ?? 0;
       if (sortBy === "score_desc") return sb - sa;
@@ -211,7 +296,7 @@ export default function FaultlineIntelligence({ api }) {
       return 0;
     });
     return out;
-  }, [decorated, stateFilter, levelFilter, sortBy]);
+  }, [decorated, stateFilter, levelFilter, sortBy, watchlist]);
 
   const summary = useMemo(() => {
     const counts = { CRITICAL: 0, ELEVATED: 0, MONITOR: 0, STABLE: 0 };
@@ -254,6 +339,15 @@ export default function FaultlineIntelligence({ api }) {
           </p>
         </div>
         <div className="flex gap-2">
+          <Button
+            variant="outline" size="sm"
+            className="rounded-none text-xs"
+            onClick={() => setShowCustomModal(true)}
+            data-testid="new-faultline-btn"
+          >
+            <Plus size={12} className="mr-1" />
+            New Faultline
+          </Button>
           <Button
             variant="outline" size="sm"
             className="rounded-none text-xs"
@@ -375,6 +469,9 @@ export default function FaultlineIntelligence({ api }) {
                   sparkData={fl.sparkData}
                   delta7d={fl.delta7d}
                   onClick={() => navigate(`/faultlines/${fl.id}`)}
+                  watchlistRank={watchlist.get(fl.id) ?? null}
+                  onToggleWatchlist={toggleWatchlist}
+                  onSetRank={setWatchlistRank}
                 />
               ))}
             </div>
@@ -435,6 +532,17 @@ export default function FaultlineIntelligence({ api }) {
             </div>
           </CardContent>
         </Card>
+      )}
+
+      {showCustomModal && (
+        <CustomFaultlineModal
+          api={api}
+          onClose={() => setShowCustomModal(false)}
+          onCreated={(fl) => {
+            setShowCustomModal(false);
+            setFaultlines((prev) => [fl, ...prev]);
+          }}
+        />
       )}
     </div>
   );

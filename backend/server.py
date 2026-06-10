@@ -40,6 +40,7 @@ from routers.admin import router as admin_router
 from routers.relationships import router as relationships_router
 from routers.brief_fortnightly import router as brief_fortnightly_router
 from routers.faultlines import router as faultlines_router
+from routers.watchlist import router as watchlist_router
 
 # Import scheduler functions
 from routers.pipeline import (
@@ -86,6 +87,7 @@ app.include_router(admin_router, prefix="/api")
 app.include_router(relationships_router, prefix="/api")
 app.include_router(brief_fortnightly_router, prefix="/api")
 app.include_router(faultlines_router, prefix="/api")
+app.include_router(watchlist_router, prefix="/api")
 
 
 # ============================================================
