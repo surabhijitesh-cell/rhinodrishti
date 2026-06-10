@@ -71,6 +71,8 @@ export default function FortnightlyBrief({ api }) {
   const [loading,    setLoading]    = useState(true);
   const [generating, setGenerating] = useState(false);
   const [error,      setError]      = useState(null);
+  const [pdfLoading, setPdfLoading] = useState(false);
+  const [pdfError,   setPdfError]   = useState(null);
   const [openStates, setOpenStates] = useState({});
   const [openMitig,  setOpenMitig]  = useState({});
   const [copied,     setCopied]     = useState(false);
@@ -150,13 +152,16 @@ export default function FortnightlyBrief({ api }) {
   };
 
   const handleDownloadPDF = async () => {
+    setPdfLoading(true);
+    setPdfError(null);
     const result = await downloadPdf(
       axios,
       `${api}/brief/fortnightly/${year}/${month}/${period}/pdf`,
       `ner_fortnightly_${year}_${month}_p${period}.pdf`,
     );
+    setPdfLoading(false);
     if (!result.ok) {
-      setError(`PDF download failed${result.status ? ` (${result.status})` : ""}: ${result.error}`);
+      setPdfError(`PDF failed${result.status ? ` (${result.status})` : ""}: ${result.error}`);
     }
   };
 
@@ -208,9 +213,21 @@ export default function FortnightlyBrief({ api }) {
         </Button>
         {brief?.status === "ready" && (
           <>
-            <Button onClick={handleDownloadPDF} variant="outline" className="rounded-none uppercase text-xs tracking-wider" data-testid="download-fortnightly-pdf-btn">
-              <Download size={12} className="mr-1" /> PDF
-            </Button>
+            <div className="flex flex-col items-end gap-1">
+              <Button
+                onClick={handleDownloadPDF}
+                disabled={pdfLoading}
+                variant="outline"
+                className="rounded-none uppercase text-xs tracking-wider"
+                data-testid="download-fortnightly-pdf-btn"
+              >
+                <Download size={12} className={`mr-1 ${pdfLoading ? "animate-pulse" : ""}`} />
+                {pdfLoading ? "Generating…" : "PDF"}
+              </Button>
+              {pdfError && (
+                <p className="text-[10px] text-red-400 font-mono max-w-[260px] text-right leading-tight">{pdfError}</p>
+              )}
+            </div>
             <Button onClick={handleCopyNotebookLM} variant="outline" className="rounded-none uppercase text-xs tracking-wider" data-testid="copy-fortnightly-notebooklm-btn">
               {copied ? <><CheckCircle2 size={12} className="mr-1 text-emerald-400" /> Copied!</> :
                         <><Copy size={12} className="mr-1" /> NotebookLM</>}

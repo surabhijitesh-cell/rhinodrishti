@@ -62,6 +62,9 @@ export default function MonthlyBrief({ api }) {
   const [copied, setCopied]   = useState(false);
   // Sub-tab inside the Monthly Strategic page — "brief" or "faultlines".
   const [activeTab, setActiveTab] = useState("brief");
+  // PDF download state — which button is in-flight, and any error message.
+  const [pdfLoading, setPdfLoading] = useState(null); // "brief" | "combined" | "faultline" | null
+  const [pdfError,   setPdfError]   = useState(null);
 
   const monthLabel = new Date(year, month - 1, 1).toLocaleString("en-IN", { month: "long", year: "numeric" });
   const prevYear  = month === 1 ? year - 1 : year;
@@ -142,13 +145,17 @@ export default function MonthlyBrief({ api }) {
   };
 
   const handleDownloadPDF = async (includeFaultlines = true) => {
+    const key = includeFaultlines ? "combined" : "brief";
+    setPdfLoading(key);
+    setPdfError(null);
     const suffix = includeFaultlines ? "" : "?include_faultlines=false";
     const fname = includeFaultlines
       ? `ner_monthly_strategic_${year}_${month}.pdf`
       : `ner_monthly_brief_${year}_${month}.pdf`;
     const result = await downloadPdf(axios, `${api}/brief/monthly/${year}/${month}/pdf${suffix}`, fname);
+    setPdfLoading(null);
     if (!result.ok) {
-      setError(`PDF download failed${result.status ? ` (${result.status})` : ""}: ${result.error}`);
+      setPdfError(`PDF failed${result.status ? ` (${result.status})` : ""}: ${result.error}`);
     }
   };
 
@@ -201,27 +208,34 @@ export default function MonthlyBrief({ api }) {
           <>
             <Button
               onClick={() => handleDownloadPDF(false)}
+              disabled={!!pdfLoading}
               variant="outline"
               className="rounded-none uppercase text-xs tracking-wider"
               data-testid="download-brief-pdf-btn"
               title="Monthly Brief PDF (no Faultline Analysis)"
             >
-              <Download size={12} className="mr-1" /> Brief PDF
+              <Download size={12} className={`mr-1 ${pdfLoading === "brief" ? "animate-pulse" : ""}`} />
+              {pdfLoading === "brief" ? "Generating…" : "Brief PDF"}
             </Button>
             <Button
               onClick={() => handleDownloadPDF(true)}
+              disabled={!!pdfLoading}
               variant="outline"
               className="rounded-none uppercase text-xs tracking-wider"
               data-testid="download-combined-pdf-btn"
               title="Monthly Brief + Faultline Analysis combined PDF"
             >
-              <Download size={12} className="mr-1" /> Combined PDF
+              <Download size={12} className={`mr-1 ${pdfLoading === "combined" ? "animate-pulse" : ""}`} />
+              {pdfLoading === "combined" ? "Generating…" : "Combined PDF"}
             </Button>
             <Button onClick={handleCopyNotebookLM} variant="outline" className="rounded-none uppercase text-xs tracking-wider" data-testid="copy-notebooklm-btn">
               {copied ? <><CheckCircle2 size={12} className="mr-1 text-emerald-400" /> Copied!</> :
                         <><Copy size={12} className="mr-1" /> NotebookLM</>}
             </Button>
           </>
+        )}
+        {pdfError && (
+          <p className="text-[10px] text-red-400 font-mono max-w-[300px] text-right leading-tight">{pdfError}</p>
         )}
       </div>
     </div>
@@ -975,13 +989,16 @@ export default function MonthlyBrief({ api }) {
     const narratives = fa.state_narratives || {};
 
     const handleDownload = async () => {
+      setPdfLoading("faultline");
+      setPdfError(null);
       const result = await downloadPdf(
         axios,
         `${api}/faultlines/report?year=${year}&month=${month}`,
         `faultline_report_${year}_${month}.pdf`,
       );
+      setPdfLoading(null);
       if (!result.ok) {
-        setError(`Faultline PDF failed${result.status ? ` (${result.status})` : ""}: ${result.error}`);
+        setPdfError(`Faultline PDF failed${result.status ? ` (${result.status})` : ""}: ${result.error}`);
       }
     };
 
@@ -991,14 +1008,21 @@ export default function MonthlyBrief({ api }) {
           <CardTitle className="text-sm uppercase tracking-wider font-['Barlow_Condensed'] font-semibold flex items-center gap-2">
             <Target size={16} className="text-primary" /> Faultline Analysis
           </CardTitle>
-          <Button
-            variant="outline" size="sm"
-            className="ml-auto rounded-none text-xs"
-            onClick={handleDownload}
-            data-testid="download-faultline-pdf-btn"
-          >
-            <Download size={12} className="mr-1" /> Faultline Report PDF
-          </Button>
+          <div className="ml-auto flex flex-col items-end gap-1">
+            <Button
+              variant="outline" size="sm"
+              className="rounded-none text-xs"
+              onClick={handleDownload}
+              disabled={!!pdfLoading}
+              data-testid="download-faultline-pdf-btn"
+            >
+              <Download size={12} className={`mr-1 ${pdfLoading === "faultline" ? "animate-pulse" : ""}`} />
+              {pdfLoading === "faultline" ? "Generating…" : "Faultline Report PDF"}
+            </Button>
+            {pdfError && (
+              <p className="text-[10px] text-red-400 font-mono max-w-[260px] text-right leading-tight">{pdfError}</p>
+            )}
+          </div>
         </CardHeader>
         <CardContent className="p-4 space-y-4">
           {/* Summary strip */}
