@@ -734,21 +734,32 @@ async def run_daily_faultline_pass(
 
 
 # ── Incremental pass (no LLM) ─────────────────────────────────────────────────
-async def run_incremental_faultline_pass(db, lookback_hours: int = 6) -> dict:
+async def run_incremental_faultline_pass(
+    db,
+    lookback_hours: int = 6,
+    faultline_id: Optional[str] = None,
+) -> dict:
     """Keyword-only pass that appends newly processed articles to today's mappings.
 
     Runs every few hours to keep faultlines current without expensive LLM calls.
     Only inserts mappings for articles not yet seen today; leaves existing
     LLM-scored mappings untouched.
 
+    faultline_id: when set, only updates that one faultline (used by per-faultline
+                  refresh button). When None, scans all active faultlines.
+
     Returns a summary dict.
     """
     today = datetime.now(timezone.utc).date().isoformat()
     cutoff = (datetime.now(timezone.utc) - timedelta(hours=lookback_hours)).isoformat()
 
-    faultlines = await db.faultlines.find({"active": True}).to_list(length=500)
+    fl_query: dict = {"active": True}
+    if faultline_id:
+        fl_query["id"] = faultline_id
+
+    faultlines = await db.faultlines.find(fl_query).to_list(length=500)
     if not faultlines:
-        return {"date": today, "new_mappings": 0}
+        return {"date": today, "new_mappings": 0, "faultline_id": faultline_id}
 
     # New articles processed since cutoff
     articles = await db.intelligence_items.find(
@@ -808,8 +819,9 @@ async def run_incremental_faultline_pass(db, lookback_hours: int = 6) -> dict:
             )
             new_mappings += 1
 
-    logger.info(f"[incr-faultline] Added {new_mappings} new keyword-matched mappings for {today}")
-    return {"date": today, "new_mappings": new_mappings}
+    scope = faultline_id or "all"
+    logger.info(f"[incr-faultline] Added {new_mappings} new keyword-matched mappings for {today} (scope: {scope})")
+    return {"date": today, "new_mappings": new_mappings, "faultline_id": faultline_id}
 
 
 # ── Backfill ──────────────────────────────────────────────────────────────────

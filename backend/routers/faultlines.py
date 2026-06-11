@@ -348,7 +348,7 @@ async def trigger_incremental_pass(
     lookback_hours: int = Query(6, ge=1, le=48, description="How many hours back to scan for new articles"),
     current_user: dict = Depends(get_current_user),
 ):
-    """Keyword-only incremental pass — maps newly processed articles to today's faultlines.
+    """Keyword-only incremental pass across all active faultlines.
 
     Fast (seconds). No LLM calls. Use to pull in articles processed since the last
     full daily pass without waiting for the next scheduled run at 06:00/18:00 IST.
@@ -357,11 +357,40 @@ async def trigger_incremental_pass(
     async def _bg():
         try:
             result = await run_incremental_faultline_pass(db, lookback_hours=lookback_hours)
-            logger.info(f"Manual incremental faultline pass: {result}")
+            logger.info(f"Manual incremental faultline pass (all): {result}")
         except Exception as e:
             logger.exception(f"Manual incremental faultline pass failed: {e}")
     background_tasks.add_task(_bg)
     return {"status": "started", "lookback_hours": lookback_hours}
+
+
+@router.post("/faultlines/{fl_id}/refresh")
+async def trigger_faultline_refresh(
+    fl_id: str,
+    background_tasks: BackgroundTasks,
+    lookback_hours: int = Query(24, ge=1, le=72, description="Hours back to scan for new articles"),
+    current_user: dict = Depends(get_current_user),
+):
+    """Per-faultline incremental refresh — scans only for articles matching this faultline.
+
+    Called by the refresh button on the faultline detail page. Keyword-only (no LLM),
+    runs in seconds. Inserts any new matching articles into today's mappings.
+    Returns immediately; UI should re-fetch article list after a short delay.
+    """
+    fl = await db.faultlines.find_one({"id": fl_id})
+    if not fl:
+        raise HTTPException(404, f"Faultline {fl_id} not found")
+
+    async def _bg():
+        try:
+            result = await run_incremental_faultline_pass(
+                db, lookback_hours=lookback_hours, faultline_id=fl_id
+            )
+            logger.info(f"Per-faultline refresh [{fl_id}]: {result}")
+        except Exception as e:
+            logger.exception(f"Per-faultline refresh [{fl_id}] failed: {e}")
+    background_tasks.add_task(_bg)
+    return {"status": "started", "faultline_id": fl_id, "lookback_hours": lookback_hours}
 
 
 @router.post("/faultlines/backfill")

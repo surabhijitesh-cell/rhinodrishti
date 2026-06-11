@@ -71,6 +71,7 @@ export default function FaultlineDetail({ api }) {
   const [notesDraft, setNotesDraft] = useState("");
   const [savingNotes, setSavingNotes] = useState(false);
   const [notesSaved, setNotesSaved] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   // Only initialize notesDraft from the server response on the first load.
   // Subsequent fetchAll calls (e.g. days-selector change, refresh, polling)
   // would otherwise silently overwrite the user's in-progress draft.
@@ -114,6 +115,20 @@ export default function FaultlineDetail({ api }) {
       setTimeout(() => setNotesSaved(false), 3000);
     } catch (e) { console.error(e); }
     setSavingNotes(false);
+  };
+
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    try {
+      await axios.post(`${api}/faultlines/${id}/refresh?lookback_hours=24`);
+      // Give the background task ~2 s to insert new mappings, then re-fetch
+      await new Promise((r) => setTimeout(r, 2000));
+      await fetchAll();
+    } catch (e) {
+      console.error("Faultline refresh failed", e);
+      await fetchAll();
+    }
+    setRefreshing(false);
   };
 
   const ackAlert = async (alertId) => {
@@ -224,8 +239,15 @@ export default function FaultlineDetail({ api }) {
                 <SelectItem value="365">365 days</SelectItem>
               </SelectContent>
             </Select>
-            <Button variant="ghost" size="sm" onClick={fetchAll} className="h-7">
-              <RefreshCw size={12} />
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleRefresh}
+              disabled={refreshing}
+              className="h-7"
+              title="Scan for new articles matching this faultline"
+            >
+              <RefreshCw size={12} className={refreshing ? "animate-spin" : ""} />
             </Button>
           </CardHeader>
           <CardContent className="p-3 h-64">
