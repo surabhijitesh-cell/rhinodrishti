@@ -56,6 +56,74 @@ def invalidate_pipeline_settings_cache():
 router = APIRouter()
 
 
+@router.post("/reclassify-48h")
+async def reclassify_48h(background_tasks: BackgroundTasks):
+    """Re-classify the last 48 hours of articles using updated keywords and AI scoring rules.
+
+    Three-phase operation (runs in background):
+    1. Re-fetch all RSS feeds — catches articles never ingested because they failed the old
+       is_ner_relevant() keyword filter (e.g. 'north bengal', 'jalpaiguri' now added).
+    2. Reset stage0_filtered items from last 48h — stored but keyword-rejected; send back
+       through the full pipeline with the updated hard_filter.
+    3. Reset already-analyzed low-score BD/NER articles from last 48h — articles that mention
+       Bangladesh+border+NER geography but scored < 60; will be re-scored with the new +20
+       Bangladesh+Meghalaya boost in the AI prompt.
+    """
+    background_tasks.add_task(_reclassify_48h_task)
+    return {"message": "48-hour re-classification started in background. Check /scan-status for progress."}
+
+
+async def _reclassify_48h_task():
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=48)
+    cutoff_str = cutoff.isoformat()
+
+    # ── Phase 1: re-fetch all feeds with updated keywords ──────────────────────
+    logger.info("[reclassify-48h] Phase 1: re-fetching all RSS feeds with updated keywords")
+    try:
+        await fetch_and_process_news()
+    except Exception as e:
+        logger.error(f"[reclassify-48h] Phase 1 feed fetch error: {e}")
+
+    # ── Phase 2: reset stage0_filtered items from last 48h ────────────────────
+    r2 = await intelligence_col.update_many(
+        {"tags": "stage0_filtered", "published_at": {"$gte": cutoff_str}},
+        {"$set": {"processed": False, "severity": "low", "filter_reason": None},
+         "$pull": {"tags": "stage0_filtered"}},
+    )
+    logger.info(f"[reclassify-48h] Phase 2: reset {r2.modified_count} stage0_filtered items")
+
+    # ── Phase 3: reset under-scored BD/NER articles from last 48h ─────────────
+    # Target: processed=True, priority_score < 60, published in last 48h,
+    # and raw_content/title mentions Bangladesh with a NE geography term.
+    bd_ner_terms = [
+        "bangladesh", "meghalaya", "north bengal", "assam", "tripura",
+        "mizoram", "jalpaiguri", "cooch behar", "siliguri", "alipurduar",
+    ]
+    regex = "|".join(bd_ner_terms)
+    r3 = await intelligence_col.update_many(
+        {
+            "processed": True,
+            "priority_score": {"$lt": 60},
+            "published_at": {"$gte": cutoff_str},
+            "$or": [
+                {"title": {"$regex": regex, "$options": "i"}},
+                {"raw_content": {"$regex": regex, "$options": "i"}},
+            ],
+        },
+        {"$set": {"processed": False}},
+    )
+    logger.info(f"[reclassify-48h] Phase 3: reset {r3.modified_count} under-scored BD/NER items for re-analysis")
+
+    # ── Kick off analysis cycle immediately ───────────────────────────────────
+    logger.info("[reclassify-48h] Triggering analysis cycle")
+    try:
+        await analyze_unprocessed_items()
+    except Exception as e:
+        logger.error(f"[reclassify-48h] Analysis cycle error: {e}")
+
+    logger.info("[reclassify-48h] Complete")
+
+
 @router.post("/repair/reset-stage0-filtered")
 async def reset_stage0_filtered(background_tasks: BackgroundTasks):
     """
