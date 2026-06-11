@@ -1,5 +1,6 @@
 """Pipeline endpoints: fetch, scrape, analyze, scan status."""
 from fastapi import APIRouter, BackgroundTasks
+from pydantic import BaseModel
 from datetime import datetime, timezone, timedelta
 import asyncio
 import json
@@ -159,6 +160,46 @@ async def trigger_elite_scrape(background_tasks: BackgroundTasks):
 async def trigger_fetch(background_tasks: BackgroundTasks):
     background_tasks.add_task(fetch_and_process_news)
     return {"message": "News fetch triggered"}
+
+
+class FetchNamedSourcesRequest(BaseModel):
+    names: list[str]  # case-insensitive substrings matched against source name
+
+
+@router.post("/fetch-named-sources")
+async def fetch_named_sources(body: FetchNamedSourcesRequest, background_tasks: BackgroundTasks):
+    """Fetch and analyze specific RSS feeds identified by name substrings.
+
+    Example: {"names": ["Times of India", "Economic Times"]}
+    Matches are case-insensitive substring checks against the source 'name' field.
+    Useful for backfilling a newly added feed without running all 97 sources.
+    """
+    background_tasks.add_task(_fetch_named_sources_task, body.names)
+    return {"message": f"Targeted fetch started for: {body.names}", "source_patterns": body.names}
+
+
+async def _fetch_named_sources_task(name_patterns: list[str]):
+    from rss_fetcher import fetch_all_feeds, RSS_SOURCES
+
+    patterns_lower = [p.lower() for p in name_patterns]
+    matched = [s for s in RSS_SOURCES if any(p in s.get("name", "").lower() for p in patterns_lower)]
+    if not matched:
+        logger.warning(f"[fetch-named] No sources matched patterns: {name_patterns}")
+        return
+
+    logger.info(f"[fetch-named] Fetching {len(matched)} sources: {[s['name'] for s in matched]}")
+
+    try:
+        from keyword_engine import generate_keywords, get_dynamic_keywords_for_matching
+        keywords = await generate_keywords(db, use_ai=False)
+        dynamic_kw_weights = get_dynamic_keywords_for_matching(keywords)
+    except Exception:
+        dynamic_kw_weights = None
+
+    articles = await fetch_all_feeds(sources=matched, dynamic_keyword_weights=dynamic_kw_weights)
+    logger.info(f"[fetch-named] Fetched {len(articles)} articles — triggering analysis")
+
+    await analyze_unprocessed_items()
 
 
 @router.post("/bulk-scrape")
