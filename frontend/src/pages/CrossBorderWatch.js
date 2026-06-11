@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import {
   Globe, ShieldAlert, AlertTriangle, TrendingUp, TrendingDown,
   Eye, Loader2, ChevronDown, ChevronUp, ExternalLink, Filter,
-  Handshake, Swords, Landmark, BarChart3, Trash2
+  Handshake, Swords, Landmark, BarChart3, Trash2, RefreshCw
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import Tip from "../components/Tip";
@@ -219,23 +219,38 @@ export default function CrossBorderWatch({ api }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [signalFilter, setSignalFilter] = useState("");
+  const [refreshing, setRefreshing] = useState(false);
 
-  useEffect(() => {
-    const fetchData = async () => {
-      setLoading(true);
-      try {
-        const params = new URLSearchParams();
-        if (signalFilter) params.set("min_signal", signalFilter);
-        params.set("limit", "50");
-        const res = await axios.get(`${api}/cross-border/watch?${params.toString()}`);
-        setData(res.data);
-      } catch (e) {
-        console.error("Cross-border fetch failed:", e);
-      }
-      setLoading(false);
-    };
-    fetchData();
-  }, [api, signalFilter]);
+  const fetchData = async () => {
+    setLoading(true);
+    try {
+      const params = new URLSearchParams();
+      if (signalFilter) params.set("min_signal", signalFilter);
+      params.set("limit", "50");
+      const res = await axios.get(`${api}/cross-border/watch?${params.toString()}`);
+      setData(res.data);
+    } catch (e) {
+      console.error("Cross-border fetch failed:", e);
+    }
+    setLoading(false);
+  };
+
+  useEffect(() => { fetchData(); }, [api, signalFilter]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    try {
+      // Trigger fetch + analysis of latest RSS feeds, then reload display
+      await axios.post(`${api}/reclassify-48h`);
+      // Give background task ~3s head start before re-fetching display data
+      await new Promise((r) => setTimeout(r, 3000));
+      await fetchData();
+    } catch (e) {
+      console.error("Cross-border refresh failed:", e);
+      await fetchData();
+    }
+    setRefreshing(false);
+  };
 
   const today = new Date().toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }).toUpperCase();
 
@@ -294,6 +309,18 @@ export default function CrossBorderWatch({ api }) {
               {val || "All"}
             </Button>
           ))}
+          <Button
+            variant="outline"
+            size="sm"
+            className="rounded-none text-[10px] h-6 px-2 uppercase"
+            onClick={handleRefresh}
+            disabled={refreshing}
+            title="Fetch latest news and reload"
+            data-testid="cb-refresh"
+          >
+            <RefreshCw size={11} className={refreshing ? "animate-spin mr-1" : "mr-1"} />
+            {refreshing ? "Scanning…" : "Refresh"}
+          </Button>
         </div>
       </div>
 

@@ -142,9 +142,23 @@ async def detect_patterns(db, window_days: int = WINDOW_DAYS) -> list:
         }
         detected.append(pattern)
 
-    # Sort by escalation risk and event count
+    # Priority geo: Bangladesh actors/border + NE states float to the top
+    # within their escalation tier (same risk level, priority geo comes first).
+    PRIORITY_REGIONS = {"assam", "meghalaya", "tripura", "mizoram", "west bengal", "north bengal"}
+    PRIORITY_TERMS = {"bangladesh", "north bengal", "bgb", "border", "indo-bangladesh"}
+
+    def _geo_priority(p: dict) -> int:
+        region = (p.get("region") or "").lower()
+        detail = (p.get("detail") or "").lower()
+        key = (p.get("pattern_key") or "").lower()
+        if region in PRIORITY_REGIONS:
+            return 0
+        if any(t in detail or t in key for t in PRIORITY_TERMS):
+            return 0
+        return 1
+
     risk_order = {"CRITICAL": 0, "HIGH": 1, "MODERATE": 2, "LOW": 3}
-    detected.sort(key=lambda p: (risk_order.get(p["escalation_risk"], 4), -p["event_count"]))
+    detected.sort(key=lambda p: (risk_order.get(p["escalation_risk"], 4), _geo_priority(p), -p["event_count"]))
 
     # Store patterns in DB
     if detected:

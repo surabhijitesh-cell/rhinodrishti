@@ -11,7 +11,7 @@ GEO_BOOST_INDIA = {"moreh", "champhai", "agartala", "dawki", "sutarkandi", "kari
 GEO_BOOST_BD = {"cox's bazar", "bandarban", "chittagong", "sylhet", "teknaf", "rangamati", "comilla", "brahmanbaria", "dhaka", "moulvibazar", "beanibazar", "bogura", "sherpur"}
 GEO_BOOST_MM = {"chin state", "sagaing", "tamu", "rakhine", "kachin", "shan", "mandalay", "kalay", "hakha", "falam", "nay pyi taw", "yangon", "minbya"}
 
-CATEGORY_ORDER = ["diplomatic", "defence", "internal_politics", "economics"]
+CATEGORY_ORDER = ["defence", "diplomatic", "internal_politics", "economics"]
 CATEGORY_LABELS = {
     "diplomatic": "Diplomatic",
     "defence": "Defence",
