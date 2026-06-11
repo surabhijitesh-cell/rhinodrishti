@@ -783,7 +783,19 @@ export default function FortnightlyBrief({ api }) {
 
   const renderFaultlines = () => {
     const fa = brief?.faultline_analysis;
-    if (!fa || !fa.available) return null;
+    if (!fa || !fa.available) {
+      return (
+        <Card className="border border-border rounded-none bg-card">
+          <CardContent className="p-8 text-center">
+            <Target size={28} className="mx-auto text-muted-foreground mb-3" />
+            <p className="text-sm text-muted-foreground mb-1">No faultline data for this period.</p>
+            <p className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">
+              Regenerate the brief to include faultline analysis.
+            </p>
+          </CardContent>
+        </Card>
+      );
+    }
 
     const states = Object.keys(fa.by_state || {}).sort();
     const rising = fa.rising || [];
