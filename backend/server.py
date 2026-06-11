@@ -55,7 +55,7 @@ from twitter_fetcher import fetch_twitter_accounts, fetch_twitter_searches, seed
 from youtube_fetcher import fetch_youtube_channels, fetch_youtube_searches, seed_youtube_defaults
 from telegram_fetcher import fetch_telegram_channels, seed_telegram_defaults
 from fading_engine import run_fading_pass, delete_expired_low_severity
-from faultline_engine import run_daily_faultline_pass
+from faultline_engine import run_daily_faultline_pass, run_incremental_faultline_pass
 
 
 app = FastAPI(title="Rhino Drishti API")
@@ -406,15 +406,39 @@ async def startup():
             except Exception as e:
                 logger.warning(f"Faultline daily pass failed: {e}")
 
+        # Full LLM pass twice daily: 00:30 UTC (06:00 IST) + 12:30 UTC (18:00 IST)
         scheduler.add_job(
             _run_faultline_pass,
-            CronTrigger(hour=22, minute=30, timezone='UTC'),  # 04:00 IST (UTC+5:30)
-            id='faultline_daily_pass',
+            CronTrigger(hour=0, minute=30, timezone='UTC'),
+            id='faultline_daily_pass_morning',
+            misfire_grace_time=3600,
+        )
+        scheduler.add_job(
+            _run_faultline_pass,
+            CronTrigger(hour=12, minute=30, timezone='UTC'),
+            id='faultline_daily_pass_evening',
             misfire_grace_time=3600,
         )
 
+        # Incremental keyword-only pass every 4 hours — keeps article list current
+        # between LLM passes without triggering expensive scoring calls.
+        async def _run_incremental_faultline_pass():
+            try:
+                result = await run_incremental_faultline_pass(db)
+                logger.info(f"Faultline incremental pass: {result}")
+            except Exception as e:
+                logger.warning(f"Faultline incremental pass failed: {e}")
+
+        scheduler.add_job(
+            _run_incremental_faultline_pass,
+            'interval',
+            hours=4,
+            id='faultline_incremental_pass',
+            misfire_grace_time=600,
+        )
+
         scheduler.start()
-        logger.info("Scheduler: grassroots/60min, standard/30min, established/12hr, retry/15min, brief/0600 IST, embeddings/6hr, fusion/30min, youtube/4hr, telegram/1hr, fading/1hr, relationships/nightly, faultlines/0400 IST [firecrawl+twitter DISABLED]")
+        logger.info("Scheduler: grassroots/60min, standard/30min, established/12hr, retry/15min, brief/0600 IST, embeddings/6hr, fusion/30min, youtube/4hr, telegram/1hr, fading/1hr, relationships/nightly, faultlines/0600+1800 IST + incremental/4hr [firecrawl+twitter DISABLED]")
     except Exception as e:
         logger.warning(f"Scheduler setup failed: {e}")
 

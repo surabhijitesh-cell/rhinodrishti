@@ -41,6 +41,7 @@ from faultline_seed import seed_faultlines, FAULTLINES, STATE_TO_REGIONS
 from priority_areas_seed import seed_priority_areas, PRIORITY_AREAS
 from faultline_engine import (
     run_daily_faultline_pass,
+    run_incremental_faultline_pass,
     run_backfill,
     _score_level,
     ALERT_EXPIRY_HOURS,
@@ -339,6 +340,28 @@ async def trigger_daily_pass(
             logger.exception(f"Manual faultline pass failed: {e}")
     background_tasks.add_task(_bg)
     return {"status": "started", "target_date": target_date or "today"}
+
+
+@router.post("/faultlines/refresh")
+async def trigger_incremental_pass(
+    background_tasks: BackgroundTasks,
+    lookback_hours: int = Query(6, ge=1, le=48, description="How many hours back to scan for new articles"),
+    current_user: dict = Depends(get_current_user),
+):
+    """Keyword-only incremental pass — maps newly processed articles to today's faultlines.
+
+    Fast (seconds). No LLM calls. Use to pull in articles processed since the last
+    full daily pass without waiting for the next scheduled run at 06:00/18:00 IST.
+    Existing LLM-scored mappings are preserved; only new articles are inserted.
+    """
+    async def _bg():
+        try:
+            result = await run_incremental_faultline_pass(db, lookback_hours=lookback_hours)
+            logger.info(f"Manual incremental faultline pass: {result}")
+        except Exception as e:
+            logger.exception(f"Manual incremental faultline pass failed: {e}")
+    background_tasks.add_task(_bg)
+    return {"status": "started", "lookback_hours": lookback_hours}
 
 
 @router.post("/faultlines/backfill")

@@ -733,6 +733,85 @@ async def run_daily_faultline_pass(
     }
 
 
+# ── Incremental pass (no LLM) ─────────────────────────────────────────────────
+async def run_incremental_faultline_pass(db, lookback_hours: int = 6) -> dict:
+    """Keyword-only pass that appends newly processed articles to today's mappings.
+
+    Runs every few hours to keep faultlines current without expensive LLM calls.
+    Only inserts mappings for articles not yet seen today; leaves existing
+    LLM-scored mappings untouched.
+
+    Returns a summary dict.
+    """
+    today = datetime.now(timezone.utc).date().isoformat()
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=lookback_hours)).isoformat()
+
+    faultlines = await db.faultlines.find({"active": True}).to_list(length=500)
+    if not faultlines:
+        return {"date": today, "new_mappings": 0}
+
+    # New articles processed since cutoff
+    articles = await db.intelligence_items.find(
+        {
+            "published_at": {"$gte": cutoff},
+            "processed": True,
+            "is_relevant": {"$ne": False},
+            "is_archived": {"$ne": True},
+        },
+        {
+            "id": 1, "title": 1, "ai_summary": 1, "source": 1, "source_url": 1,
+            "published_at": 1, "severity": 1, "priority_score": 1, "tags": 1,
+            "signal_bucket": 1, "regions": 1, "state": 1, "actors": 1,
+            "entities": 1, "is_cross_border": 1, "threat_trajectory": 1,
+        },
+    ).to_list(length=2000)
+
+    if not articles:
+        logger.info(f"[incr-faultline] No new articles since {cutoff}")
+        return {"date": today, "new_mappings": 0}
+
+    logger.info(f"[incr-faultline] {len(articles)} new articles to map across {len(faultlines)} faultlines")
+
+    # Pre-fetch article IDs already mapped today to skip them
+    existing_today = set()
+    async for m in db.faultline_mappings.find({"date": today}, {"article_id": 1, "_id": 0}):
+        existing_today.add(m["article_id"])
+
+    new_mappings = 0
+    for fl in faultlines:
+        fl_id = fl["id"]
+        candidates = pre_filter_articles(fl, articles)
+        fresh = [a for a in candidates if a["id"] not in existing_today]
+        if not fresh:
+            continue
+
+        for art in fresh:
+            doc = {
+                "id": str(uuid.uuid4()),
+                "faultline_id": fl_id,
+                "article_id": art["id"],
+                "date": today,
+                "impact_score": 50,
+                "direction": "STABLE",
+                "confidence": 30,
+                "rationale": "Keyword match (incremental pass — awaiting LLM score)",
+                "evidence_phrases": [],
+                "article_title": art.get("title", ""),
+                "article_published_at": art.get("published_at", ""),
+                "article_severity": art.get("severity", ""),
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }
+            await db.faultline_mappings.update_one(
+                {"faultline_id": fl_id, "article_id": art["id"], "date": today},
+                {"$setOnInsert": doc},
+                upsert=True,
+            )
+            new_mappings += 1
+
+    logger.info(f"[incr-faultline] Added {new_mappings} new keyword-matched mappings for {today}")
+    return {"date": today, "new_mappings": new_mappings}
+
+
 # ── Backfill ──────────────────────────────────────────────────────────────────
 BACKFILL_DEFAULT_LOOKBACK_DAYS = 90
 BACKFILL_MAX_LOOKBACK_DAYS = 365
