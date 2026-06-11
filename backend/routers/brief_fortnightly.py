@@ -39,6 +39,7 @@ from routers.brief_monthly import (
     _coerce_state_section,
     _build_notebooklm_script,
     _render_pdf,
+    _aggregate_faultline_section,
     NER_STATES_FULL,
     BORDER_COUNTRIES,
 )
@@ -458,6 +459,8 @@ async def _run_fortnightly_generation(year: int, month: int, period: int):
     # PAOI sections — rich on first generation of this period, lean on regen.
     paoi_analysis = await _build_fortnightly_paoi(year, month, period, start_iso, end_iso, period_label)
 
+    faultline_analysis = await _aggregate_faultline_section(year, month)
+
     llm_ok = bool(exec_summary and state_sections)
     if not llm_ok:
         logger.error(
@@ -477,6 +480,7 @@ async def _run_fortnightly_generation(year: int, month: int, period: int):
         "scenarios": scenarios,
         "cross_border_analysis": cross_border_analysis,
         "paoi_analysis": paoi_analysis,
+        "faultline_analysis": faultline_analysis,
         "generation_count": paoi_analysis.pop("_next_generation_count", 1),
     }
     if not llm_ok:

@@ -71,7 +71,8 @@ export default function FortnightlyBrief({ api }) {
   const [loading,    setLoading]    = useState(true);
   const [generating, setGenerating] = useState(false);
   const [error,      setError]      = useState(null);
-  const [pdfLoading, setPdfLoading] = useState(false);
+  const [activeTab,  setActiveTab]  = useState("brief");
+  const [pdfLoading, setPdfLoading] = useState(null);
   const [pdfError,   setPdfError]   = useState(null);
   const [openStates, setOpenStates] = useState({});
   const [openMitig,  setOpenMitig]  = useState({});
@@ -152,14 +153,14 @@ export default function FortnightlyBrief({ api }) {
   };
 
   const handleDownloadPDF = async () => {
-    setPdfLoading(true);
+    setPdfLoading("brief");
     setPdfError(null);
     const result = await downloadPdf(
       axios,
       `${api}/brief/fortnightly/${year}/${month}/${period}/pdf`,
       `ner_fortnightly_${year}_${month}_p${period}.pdf`,
     );
-    setPdfLoading(false);
+    setPdfLoading(null);
     if (!result.ok) {
       setPdfError(`PDF failed${result.status ? ` (${result.status})` : ""}: ${result.error}`);
     }
@@ -216,13 +217,13 @@ export default function FortnightlyBrief({ api }) {
             <div className="flex flex-col items-end gap-1">
               <Button
                 onClick={handleDownloadPDF}
-                disabled={pdfLoading}
+                disabled={!!pdfLoading}
                 variant="outline"
                 className="rounded-none uppercase text-xs tracking-wider"
                 data-testid="download-fortnightly-pdf-btn"
               >
-                <Download size={12} className={`mr-1 ${pdfLoading ? "animate-pulse" : ""}`} />
-                {pdfLoading ? "Generating…" : "PDF"}
+                <Download size={12} className={`mr-1 ${pdfLoading === "brief" ? "animate-pulse" : ""}`} />
+                {pdfLoading === "brief" ? "Generating…" : "PDF"}
               </Button>
               {pdfError && (
                 <p className="text-[10px] text-red-400 font-mono max-w-[260px] text-right leading-tight">{pdfError}</p>
@@ -780,6 +781,157 @@ export default function FortnightlyBrief({ api }) {
     </Card>
   );
 
+  const renderFaultlines = () => {
+    const fa = brief?.faultline_analysis;
+    if (!fa || !fa.available) return null;
+
+    const states = Object.keys(fa.by_state || {}).sort();
+    const rising = fa.rising || [];
+    const critical = fa.critical || [];
+    const narratives = fa.state_narratives || {};
+
+    const handleDownload = async () => {
+      setPdfLoading("faultline");
+      setPdfError(null);
+      const result = await downloadPdf(
+        axios,
+        `${api}/faultlines/report?year=${year}&month=${month}`,
+        `faultline_report_${year}_${month}.pdf`,
+      );
+      setPdfLoading(null);
+      if (!result.ok) {
+        setPdfError(`Faultline PDF failed${result.status ? ` (${result.status})` : ""}: ${result.error}`);
+      }
+    };
+
+    return (
+      <Card className="border border-border rounded-none bg-card" data-testid="faultline-section">
+        <CardHeader className="py-3 px-4 border-b border-border flex flex-row items-center gap-2">
+          <CardTitle className="text-sm uppercase tracking-wider font-['Barlow_Condensed'] font-semibold flex items-center gap-2">
+            <Target size={16} className="text-primary" /> Faultline Analysis
+          </CardTitle>
+          <div className="ml-auto flex flex-col items-end gap-1">
+            <Button
+              variant="outline" size="sm"
+              className="rounded-none text-xs"
+              onClick={handleDownload}
+              disabled={!!pdfLoading}
+              data-testid="download-faultline-pdf-btn"
+            >
+              <Download size={12} className={`mr-1 ${pdfLoading === "faultline" ? "animate-pulse" : ""}`} />
+              {pdfLoading === "faultline" ? "Generating…" : "Faultline Report PDF"}
+            </Button>
+            {pdfError && (
+              <p className="text-[10px] text-red-400 font-mono max-w-[260px] text-right leading-tight">{pdfError}</p>
+            )}
+          </div>
+        </CardHeader>
+        <CardContent className="p-4 space-y-4">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <Stat label="Monitored"  value={fa.total_faultlines || 0} />
+            <Stat label="Critical"   value={critical.length} color={CONCERN_COLOR.CRITICAL} />
+            <Stat label="Rising"     value={rising.length}   color={CONCERN_COLOR.ELEVATED} />
+            <Stat label="States"     value={states.length} />
+          </div>
+
+          {critical.length > 0 && (
+            <div className="border border-red-500/30 bg-red-500/5 p-3">
+              <div className="text-[10px] font-mono uppercase tracking-wider text-red-400 mb-2">
+                Currently CRITICAL (score ≥ 75)
+              </div>
+              <div className="space-y-1">
+                {critical.slice(0, 10).map((c) => (
+                  <div key={c.faultline_id} className="flex items-center gap-2 text-xs">
+                    <span className="font-mono text-[10px] text-muted-foreground w-20 shrink-0">[{c.state}]</span>
+                    <span className="flex-1 truncate">{c.faultline_name}</span>
+                    <span className="font-bold text-red-400 w-12 text-right">{Math.round(c.last)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {rising.length > 0 && (
+            <div className="border border-orange-500/30 bg-orange-500/5 p-3">
+              <div className="text-[10px] font-mono uppercase tracking-wider text-orange-400 mb-2">
+                Rising this period (Δ ≥ +10 pts)
+              </div>
+              <div className="space-y-1">
+                {rising.slice(0, 10).map((r) => (
+                  <div key={r.faultline_id} className="flex items-center gap-2 text-xs">
+                    <span className="font-mono text-[10px] text-muted-foreground w-20 shrink-0">[{r.state}]</span>
+                    <span className="flex-1 truncate">{r.faultline_name}</span>
+                    <span className="text-orange-400 w-12 text-right font-mono text-[10px]">+{r.delta.toFixed(0)}</span>
+                    <span className="font-bold w-12 text-right">{Math.round(r.last)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div>
+            <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground mb-2">
+              State × Faultline heatmap (top 5 per state)
+            </div>
+            <div className="space-y-1">
+              {states.map((st) => {
+                const fls = (fa.by_state[st] || []).slice(0, 5);
+                return (
+                  <div key={st} className="flex items-center gap-2">
+                    <span className="text-xs font-mono uppercase tracking-wider w-24 shrink-0 text-muted-foreground">{st}</span>
+                    <div className="flex-1 flex gap-1">
+                      {fls.map((f) => (
+                        <div
+                          key={f.faultline_id}
+                          className="flex-1 px-2 py-2 text-[10px] font-mono border cursor-pointer hover:opacity-90"
+                          style={{
+                            background: `${CONCERN_COLOR[f.level]}22`,
+                            borderColor: `${CONCERN_COLOR[f.level]}55`,
+                            color: CONCERN_COLOR[f.level],
+                          }}
+                          title={`${f.faultline_name}: ${f.last.toFixed(0)} (${f.level}), Δ ${f.delta.toFixed(0)}`}
+                          onClick={() => window.open(`/faultlines/${f.faultline_id}`, "_blank")}
+                        >
+                          <div className="truncate">{f.faultline_name}</div>
+                          <div className="flex items-center justify-between mt-1">
+                            <span className="font-bold text-base">{Math.round(f.last)}</span>
+                            <span>{f.delta > 0 ? "+" : ""}{f.delta.toFixed(0)}</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {Object.keys(narratives).length > 0 && (
+            <div className="space-y-3">
+              <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">State narratives</div>
+              {states.map((st) => {
+                const n = narratives[st];
+                if (!n || !n.summary) return null;
+                return (
+                  <div key={st} className="border border-border p-3 bg-background">
+                    <div className="text-xs font-mono uppercase tracking-wider text-primary mb-1">{st}</div>
+                    <p className="text-sm leading-relaxed">{renderLabeledText(n.summary)}</p>
+                    {n.manual_review_advisory && (
+                      <p className="text-[11px] text-muted-foreground italic mt-2 pt-2 border-t border-border">
+                        <span className="uppercase tracking-wider font-mono text-[9px] text-amber-400">Manual review:</span>{" "}
+                        {n.manual_review_advisory}
+                      </p>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    );
+  };
+
   // ── Top-level render ─────────────────────────────────────────────────────────
 
   if (loading && !brief) {
@@ -839,7 +991,33 @@ export default function FortnightlyBrief({ api }) {
         </div>
       )}
 
+      {/* Sub-tabs: Fortnightly Brief vs Faultline Analysis */}
       {brief?.status === "ready" && (
+        <div className="flex gap-1 border-b border-border" data-testid="fortnightly-subtabs">
+          <button
+            type="button"
+            className={`px-3 py-1.5 text-xs uppercase tracking-wider font-mono border-b-2 ${
+              activeTab === "brief" ? "border-primary text-primary" : "border-transparent text-muted-foreground"
+            }`}
+            onClick={() => setActiveTab("brief")}
+            data-testid="subtab-brief"
+          >
+            Fortnightly Brief
+          </button>
+          <button
+            type="button"
+            className={`px-3 py-1.5 text-xs uppercase tracking-wider font-mono border-b-2 ${
+              activeTab === "faultlines" ? "border-primary text-primary" : "border-transparent text-muted-foreground"
+            }`}
+            onClick={() => setActiveTab("faultlines")}
+            data-testid="subtab-faultlines"
+          >
+            Faultline Analysis
+          </button>
+        </div>
+      )}
+
+      {brief?.status === "ready" && activeTab === "brief" && (
         <>
           <CommanderDashboard paoiAnalysis={brief?.paoi_analysis} />
           {renderOverview()}
@@ -851,6 +1029,12 @@ export default function FortnightlyBrief({ api }) {
           {renderCrossBorder()}
           {renderScenarios()}
           {renderMitigation()}
+        </>
+      )}
+
+      {brief?.status === "ready" && activeTab === "faultlines" && (
+        <>
+          {renderFaultlines()}
         </>
       )}
     </div>

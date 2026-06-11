@@ -3,8 +3,9 @@ import { useNavigate } from "react-router-dom";
 import {
   Target, AlertTriangle, TrendingUp, TrendingDown, Minus,
   Activity, RefreshCw, ChevronRight, Filter, MapPin, Network,
-  Star, Plus,
+  Star, Plus, Download,
 } from "lucide-react";
+import { downloadPdf } from "../lib/downloadPdf";
 import CustomFaultlineModal from "../components/CustomFaultlineModal";
 import axios from "axios";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
@@ -158,6 +159,11 @@ export default function FaultlineIntelligence({ api }) {
   // watchlist: Map<faultline_id, rank>
   const [watchlist, setWatchlist] = useState(new Map());
   const [showCustomModal, setShowCustomModal] = useState(false);
+  const now = new Date();
+  const [pdfYear,    setPdfYear]    = useState(now.getFullYear());
+  const [pdfMonth,   setPdfMonth]   = useState(now.getMonth() + 1);
+  const [pdfLoading, setPdfLoading] = useState(false);
+  const [pdfError,   setPdfError]   = useState(null);
 
   const fetchFaultlines = useCallback(async () => {
     setLoading(true);
@@ -325,6 +331,20 @@ export default function FaultlineIntelligence({ api }) {
     } catch (e) { console.error(e); setRunning(false); }
   };
 
+  const handleDownloadPdf = async () => {
+    setPdfLoading(true);
+    setPdfError(null);
+    const result = await downloadPdf(
+      axios,
+      `${api}/faultlines/report?year=${pdfYear}&month=${pdfMonth}`,
+      `faultline_report_${pdfYear}_${pdfMonth}.pdf`,
+    );
+    setPdfLoading(false);
+    if (!result.ok) {
+      setPdfError(`PDF failed${result.status ? ` (${result.status})` : ""}: ${result.error}`);
+    }
+  };
+
   return (
     <div className="space-y-4 p-4">
       {/* Header */}
@@ -379,6 +399,44 @@ export default function FaultlineIntelligence({ api }) {
               {seeding ? "Seeding…" : "Seed faultlines"}
             </Button>
           )}
+          {/* PDF download with year/month selectors */}
+          <div className="flex flex-col items-end gap-1">
+            <div className="flex items-center gap-1">
+              <select
+                value={pdfYear}
+                onChange={(e) => setPdfYear(Number(e.target.value))}
+                className="h-7 px-1 text-xs font-mono bg-background border border-border rounded-none"
+              >
+                {[now.getFullYear() - 1, now.getFullYear()].map((y) => (
+                  <option key={y} value={y}>{y}</option>
+                ))}
+              </select>
+              <select
+                value={pdfMonth}
+                onChange={(e) => setPdfMonth(Number(e.target.value))}
+                className="h-7 px-1 text-xs font-mono bg-background border border-border rounded-none"
+              >
+                {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => (
+                  <option key={m} value={m}>
+                    {new Date(2000, m - 1, 1).toLocaleString("en-IN", { month: "short" })}
+                  </option>
+                ))}
+              </select>
+              <Button
+                variant="outline" size="sm"
+                className="rounded-none text-xs"
+                onClick={handleDownloadPdf}
+                disabled={pdfLoading}
+                data-testid="download-faultline-report-btn"
+              >
+                <Download size={12} className={`mr-1 ${pdfLoading ? "animate-pulse" : ""}`} />
+                {pdfLoading ? "Generating…" : "Faultline Report"}
+              </Button>
+            </div>
+            {pdfError && (
+              <p className="text-[10px] text-red-400 font-mono max-w-[280px] text-right leading-tight">{pdfError}</p>
+            )}
+          </div>
         </div>
       </div>
 
