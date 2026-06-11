@@ -37,7 +37,9 @@ RSS_SOURCES = [
     {"name": "The Hindu - National", "url": "https://www.thehindu.com/news/national/feeder/default.rss", "category": "national", "language": "en", "region": "India", "priority": "standard"},
     {"name": "The Hindu - International", "url": "https://www.thehindu.com/news/international/feeder/default.rss", "category": "national", "language": "en", "region": "India", "priority": "standard"},
     {"name": "NDTV India News", "url": "https://feeds.feedburner.com/ndtvnews-india-news", "category": "national", "language": "en", "region": "India", "priority": "standard"},
-    {"name": "Times of India", "url": "https://timesofindia.indiatimes.com/rssfeeds/296589292.cms", "category": "national", "language": "en", "region": "India", "priority": "standard"},
+    {"name": "Times of India - Top News", "url": "https://timesofindia.indiatimes.com/rssfeeds/296589292.cms", "category": "national", "language": "en", "region": "India", "priority": "standard"},
+    {"name": "Times of India - India News", "url": "https://timesofindia.indiatimes.com/rssfeeds/1081479906.cms", "category": "national", "language": "en", "region": "India", "priority": "standard"},
+    {"name": "Economic Times - India", "url": "https://economictimes.indiatimes.com/news/india/rssfeeds/20989204.cms", "category": "national", "language": "en", "region": "India", "priority": "standard"},
     {"name": "News18 India", "url": "https://www.news18.com/rss/india.xml", "category": "national", "language": "en", "region": "India", "priority": "standard"},
 
     # ---- GOVERNMENT (Established - 12hr polling) ----
@@ -212,8 +214,12 @@ NER_KEYWORDS_EN = [
     "infrastructure", "strategic", "military base", "airfield",
     "drone", "surveillance",
 
+    # North Bengal / Siliguri Corridor (gateway to NER — must not miss)
+    "north bengal", "siliguri", "jalpaiguri", "alipurduar", "cooch behar",
+    "darjeeling", "dooars", "terai", "chicken's neck", "chickens neck",
+    "siliguri corridor", "naxalbari", "bagdogra", "dhupguri",
+
     # Bangladesh specific
-    "dhaka", "chittagong", "sylhet", "rajshahi", "rohingya camp",
     "jamaat", "awami league", "bnp", "hasina", "yunus",
     "padma", "teesta", "brahmaputra",
     "bangladesh navy", "bangladesh army", "border guard bangladesh",

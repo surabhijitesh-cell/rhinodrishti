@@ -98,6 +98,8 @@ Boost score if:
 + Military movement (+10)
 + Pattern or trend (not isolated event) (+5)
 + Siliguri Corridor / Chicken's Neck directly involved (+15)
++ Bangladesh AND Meghalaya BOTH mentioned in same article (+20) — HIGHEST PRIORITY CO-MENTION
++ Bangladesh border + any of [North Bengal, Assam, Tripura, Mizoram] (+15)
 
 --------------------------------------------------
 STEP 3: CLASSIFICATION (MULTI-LABEL)
