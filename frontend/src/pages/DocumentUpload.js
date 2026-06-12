@@ -32,7 +32,7 @@ const NER_STATES = [
   "Arunachal Pradesh", "Sikkim", "Bangladesh", "Myanmar", "India", "Multiple", "Unknown",
 ];
 
-function AnalysisCard({ doc, onDelete, onAddToFeed, api }) {
+function AnalysisCard({ doc, onDelete, onAddToFeed, onReanalyze, api }) {
   const [expanded, setExpanded] = useState(false);
   const [selectedKw, setSelectedKw] = useState(new Set());
   const [addingKw, setAddingKw] = useState(false);
@@ -305,8 +305,16 @@ function AnalysisCard({ doc, onDelete, onAddToFeed, api }) {
 
       {expanded && doc.processed && a?.error && (
         <CardContent className="p-4">
-          <div className="text-red-400 text-sm flex items-center gap-2">
+          <div className="text-red-400 text-sm flex items-center gap-2 flex-wrap">
             <AlertTriangle size={14} /> Analysis error: {a.error}
+            {onReanalyze && (
+              <button
+                onClick={(e) => { e.stopPropagation(); onReanalyze(doc.id); }}
+                className="ml-2 text-xs text-amber-400 hover:text-amber-300 underline underline-offset-2"
+              >
+                Retry
+              </button>
+            )}
           </div>
         </CardContent>
       )}
@@ -655,6 +663,16 @@ export default function DocumentUpload({ api }) {
     }
   };
 
+  const handleReanalyze = async (docId) => {
+    try {
+      await axios.post(`${api}/uploaded-documents/${docId}/reanalyze`);
+      toast.success("Re-analysis queued");
+      fetchDocuments();
+    } catch (e) {
+      toast.error("Failed to queue re-analysis");
+    }
+  };
+
   return (
     <div className="space-y-6" data-testid="document-analysis-page">
       <div>
@@ -773,6 +791,7 @@ export default function DocumentUpload({ api }) {
               doc={doc}
               onDelete={handleDelete}
               onAddToFeed={(d) => setFeedModal(d)}
+              onReanalyze={handleReanalyze}
               api={api}
             />
           ))

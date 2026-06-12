@@ -296,6 +296,43 @@ async def delete_uploaded_document(doc_id: str):
     return {"message": "Document deleted"}
 
 
+@router.post("/uploaded-documents/{doc_id}/reanalyze")
+async def reanalyze_document(doc_id: str, background_tasks: BackgroundTasks):
+    """Re-trigger contextual analysis for a single document (e.g. after a previous error)."""
+    doc = await uploads_col.find_one({"id": doc_id}, {"_id": 0})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    # Clear previous error so the UI shows "in progress"
+    await uploads_col.update_one(
+        {"id": doc_id},
+        {"$set": {"processed": False, "analysis": None}}
+    )
+    background_tasks.add_task(_run_contextual_analysis, doc_id)
+    return {"message": "Re-analysis queued", "doc_id": doc_id}
+
+
+@router.post("/reanalyze-errors")
+async def reanalyze_all_errors(background_tasks: BackgroundTasks):
+    """Re-trigger analysis for all documents that previously errored (max 20)."""
+    failed = await uploads_col.find(
+        {"analysis.error": {"$exists": True}},
+        {"_id": 0, "id": 1}
+    ).sort("uploaded_at", -1).limit(20).to_list(20)
+
+    if not failed:
+        return {"message": "No failed documents found", "queued": 0}
+
+    for doc in failed:
+        doc_id = doc["id"]
+        await uploads_col.update_one(
+            {"id": doc_id},
+            {"$set": {"processed": False, "analysis": None}}
+        )
+        background_tasks.add_task(_run_contextual_analysis, doc_id)
+
+    return {"message": f"Re-analysis queued for {len(failed)} documents", "queued": len(failed)}
+
+
 # ============================================================
 # Add URL to Intelligence Feed
 # ============================================================
