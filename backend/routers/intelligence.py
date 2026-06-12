@@ -99,7 +99,7 @@ async def get_dashboard_stats():
             "acknowledged": {"$ne": True},
         },
         {"_id": 0}
-    ).sort("priority_score", -1).limit(50).to_list(50)
+    ).sort("published_at", -1).limit(50).to_list(50)
 
     today = now.strftime("%Y-%m-%d")
     today_count = await intelligence_col.count_documents(

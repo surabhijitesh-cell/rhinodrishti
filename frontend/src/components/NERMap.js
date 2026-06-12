@@ -705,13 +705,14 @@ const InteractiveNERMap = memo(function InteractiveNERMap({
 
       matched.forEach((locKey) => {
         if (!locationSev[locKey]) {
-          locationSev[locKey] = { sev: "medium", count: 0, titles: [], state: item.state, opacity: 0 };
+          locationSev[locKey] = { sev: "medium", count: 0, bySev: { critical: 0, high: 0, medium: 0 }, titles: [], state: item.state, opacity: 0 };
         }
         const existing = locationSev[locKey];
         // Escalate severity (critical > high > medium)
         const rank = { critical: 3, high: 2, medium: 1 };
         if ((rank[sev] || 0) > (rank[existing.sev] || 0)) existing.sev = sev;
         existing.count++;
+        if (existing.bySev[sev] !== undefined) existing.bySev[sev]++;
         // A location's marker opacity = MAX opacity of any item there.
         // If any item at that location is in the active window, the marker is bright.
         if (itemOpacity > existing.opacity) existing.opacity = itemOpacity;
@@ -736,10 +737,16 @@ const InteractiveNERMap = memo(function InteractiveNERMap({
 
       // First title used as the "View in Feed" search query
       const firstTitle = encodeURIComponent((titles[0] || locKey).slice(0, 80));
+      const { bySev } = info;
+      const sevParts = [
+        bySev.critical > 0 ? `<span style="color:#ef4444">${bySev.critical} critical</span>` : "",
+        bySev.high > 0 ? `<span style="color:#f97316">${bySev.high} high</span>` : "",
+        bySev.medium > 0 ? `<span style="color:#06b6d4">${bySev.medium} medium</span>` : "",
+      ].filter(Boolean).join(" · ");
       const popupHtml = `<div class="map-pop">
         <b>${locKey}</b>
-        <div style="margin-top:4px; color:#6b7280; font-size:9px; text-transform:uppercase; letter-spacing:.08em">
-          ${sev} severity · ${count} item${count > 1 ? "s" : ""}${state ? ` · ${state}` : ""}
+        <div style="margin-top:4px; font-size:9px; text-transform:uppercase; letter-spacing:.08em">
+          ${sevParts}${state ? ` <span style="color:#6b7280">· ${state}</span>` : ""}
         </div>
         ${titles.map(t => `<div style="margin-top:3px; color:#d4d4d4; font-size:10px; line-height:1.4">• ${t.slice(0,80)}${t.length>80?"…":""}</div>`).join("")}
         <button class="ner-view-btn" data-title="${firstTitle}">View in Feed →</button>
