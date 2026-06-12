@@ -7,7 +7,7 @@ import uuid
 import os
 import io
 from shared import db, training_col, intelligence_col, activity_log_col, feedback_col, logger
-from llm_client import get_client, MODEL
+from llm_client import get_anthropic_client, ANTHROPIC_MODEL
 
 router = APIRouter()
 
@@ -478,9 +478,9 @@ async def _analyze_training_item(text: str, emergent_key: str = "") -> dict:
     """emergent_key kept for backward compatibility but is no longer used."""
     import json
     try:
-        client = get_client()
+        client = get_anthropic_client()
         response = await client.messages.create(
-            model=MODEL,
+            model=ANTHROPIC_MODEL,
             max_tokens=512,
             system=(
                 "You are a military intelligence analyst. Analyze this content and extract:\n"
@@ -530,9 +530,9 @@ async def _generate_training_impact_summary(
         f"Keywords: {dict(sorted(keywords.items(), key=lambda x: -x[1])[:8])}"
     )
     try:
-        client = get_client()
+        client = get_anthropic_client()
         response = await client.messages.create(
-            model=MODEL,
+            model=ANTHROPIC_MODEL,
             max_tokens=200,
             system=(
                 "You are a military intelligence analyst. Generate a concise 1-2 sentence impact summary "
@@ -578,9 +578,9 @@ async def _generate_feedback_impact_summary(
         f"Low-rated content features (1-2): {low_rated_features}"
     )
     try:
-        client = get_client()
+        client = get_anthropic_client()
         response = await client.messages.create(
-            model=MODEL,
+            model=ANTHROPIC_MODEL,
             max_tokens=200,
             system=(
                 "You are a military intelligence analyst. Generate a concise 1-2 sentence impact summary "

@@ -9,7 +9,7 @@ import uuid
 import json
 import anthropic
 from shared import db, uploads_col, intelligence_col, patterns_col, logger
-from llm_client import get_client, MODEL
+from llm_client import get_anthropic_client, ANTHROPIC_MODEL
 
 router = APIRouter()
 
@@ -431,12 +431,12 @@ async def _run_contextual_analysis(doc_id: str):
             user_prompt += f"=== SPECIFIC ANALYSIS REQUEST ===\n{extra_query}\n\n"
         user_prompt += "Provide your COMPREHENSIVE CONTEXTUAL INTELLIGENCE ASSESSMENT as JSON."
 
-        client = get_client()
+        client = get_anthropic_client()
         # max_tokens raised to 3000 so the full JSON body is never truncated.
         # timeout=90 gives Render-hosted background tasks a generous window
         # while still surfacing a clean error if the API is unresponsive.
         response = await client.messages.create(
-            model=MODEL,
+            model=ANTHROPIC_MODEL,
             max_tokens=3000,
             timeout=90.0,
             system=[
@@ -453,7 +453,7 @@ async def _run_contextual_analysis(doc_id: str):
         # Track token usage and cost
         try:
             from usage_tracker import track_usage
-            await track_usage(response.usage, MODEL)
+            await track_usage(response.usage, ANTHROPIC_MODEL)
         except Exception as e:
             logger.warning(f"track_usage (documents) failed: {e}")
 

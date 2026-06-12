@@ -54,6 +54,9 @@ GEMINI_FLASH_MODEL = MODEL
 GEMINI_FLASH_MODEL_SHORT = "gemini-2.5-flash"
 
 
+# ── Anthropic model constant (used by documents/training analysis endpoints) ──
+ANTHROPIC_MODEL = "claude-haiku-4-5-20251001"
+
 # ── Legacy Anthropic client (no longer primary — kept for emergency rollback) ─
 _anthropic_client = None
 
