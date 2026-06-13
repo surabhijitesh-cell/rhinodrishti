@@ -9,7 +9,11 @@ load_dotenv(ROOT_DIR / '.env')
 
 logger = logging.getLogger(__name__)
 
-from llm_client import get_client, MODEL
+from llm_client import (
+    get_client, MODEL,
+    get_anthropic_client, ANTHROPIC_MODEL,
+    is_openrouter_exhausted,
+)
 
 CLASSIFICATION_PROMPT = """You are a SENIOR MILITARY INTELLIGENCE ANALYST specializing in:
 
@@ -325,34 +329,50 @@ async def classify_and_analyze_article(article, source_hint: str = "") -> dict:
         if bias_context:
             system_text = system_text + "\n\n" + bias_context
 
-        client = get_client()
-        response = await client.chat.completions.create(
-            model=MODEL,
-            max_tokens=4096,  # bumped: Gemini 2.5 Flash thinking uses tokens before JSON
-            temperature=0.0,
-            response_format={"type": "json_object"},
-            messages=[
-                {"role": "system", "content": system_text},
-                {"role": "user", "content": f"Analyze this article:\n\n{article_text}"},
-            ],
-            extra_body={"include_reasoning": False},  # disable thinking — saves tokens + cost
-        )
+        if is_openrouter_exhausted():
+            # OpenRouter quota exhausted — fall back to Anthropic Haiku directly.
+            logger.info("OpenRouter quota exhausted — using Anthropic Haiku fallback for classification")
+            anthropic_client = get_anthropic_client()
+            anth_response = await anthropic_client.messages.create(
+                model=ANTHROPIC_MODEL,
+                max_tokens=4096,
+                system=system_text,
+                messages=[{"role": "user", "content": f"Analyze this article:\n\n{article_text}"}],
+            )
+            response_text = anth_response.content[0].text if anth_response.content else ""
+            try:
+                from usage_tracker import track_usage
+                await track_usage(anth_response.usage, ANTHROPIC_MODEL)
+            except Exception:
+                pass
+        else:
+            client = get_client()
+            response = await client.chat.completions.create(
+                model=MODEL,
+                max_tokens=4096,  # bumped: Gemini 2.5 Flash thinking uses tokens before JSON
+                temperature=0.0,
+                response_format={"type": "json_object"},
+                messages=[
+                    {"role": "system", "content": system_text},
+                    {"role": "user", "content": f"Analyze this article:\n\n{article_text}"},
+                ],
+                extra_body={"include_reasoning": False},  # disable thinking — saves tokens + cost
+            )
 
-        # Track token usage and cost
-        try:
-            from usage_tracker import track_usage_generic
-            usage = response.usage
-            if usage:
-                await track_usage_generic(
-                    input_tokens=getattr(usage, "prompt_tokens", 0) or 0,
-                    output_tokens=getattr(usage, "completion_tokens", 0) or 0,
-                    model=MODEL,
-                )
-        except Exception as e:
-            logger.warning(f"track_usage (classify) failed: {e}")
+            # Track token usage and cost
+            try:
+                from usage_tracker import track_usage_generic
+                usage = response.usage
+                if usage:
+                    await track_usage_generic(
+                        input_tokens=getattr(usage, "prompt_tokens", 0) or 0,
+                        output_tokens=getattr(usage, "completion_tokens", 0) or 0,
+                        model=MODEL,
+                    )
+            except Exception as e:
+                logger.warning(f"track_usage (classify) failed: {e}")
 
-        # Parse JSON from response
-        response_text = response.choices[0].message.content or ""
+            response_text = response.choices[0].message.content or ""
         # Try to extract JSON from the response
         json_start = response_text.find('{')
         json_end = response_text.rfind('}') + 1

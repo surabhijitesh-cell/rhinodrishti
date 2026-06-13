@@ -669,6 +669,10 @@ async def _classify_with_retry_v2(article, max_retries=4):
             await asyncio.sleep(wait)
 
     logger.error(f"  All {max_retries} retries exhausted for: {article.get('title', '')[:50]}")
+    if was_rate_limited:
+        from llm_client import mark_openrouter_exhausted
+        mark_openrouter_exhausted()
+        logger.warning("OpenRouter quota exhausted — activating Anthropic Haiku fallback for 30 min")
     return None, was_rate_limited
 
 

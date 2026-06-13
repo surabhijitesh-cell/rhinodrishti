@@ -159,6 +159,28 @@ async def get_openrouter_credits():
         return {"status": "error", "error": str(e)}
 
 
+@router.get("/admin/openrouter-fallback-status")
+async def get_fallback_status():
+    """Check whether the Anthropic Haiku fallback is currently active."""
+    from llm_client import is_openrouter_exhausted, _openrouter_exhausted_until, clear_openrouter_exhausted
+    import time
+    active = is_openrouter_exhausted()
+    remaining = max(0, round(_openrouter_exhausted_until - time.time())) if active else 0
+    return {
+        "fallback_active": active,
+        "fallback_remaining_sec": remaining,
+        "message": f"Anthropic Haiku fallback active for {remaining}s" if active else "OpenRouter primary active",
+    }
+
+
+@router.post("/admin/openrouter-fallback-clear")
+async def clear_fallback():
+    """Manually clear the OpenRouter exhaustion flag (e.g. after topping up credits)."""
+    from llm_client import clear_openrouter_exhausted
+    clear_openrouter_exhausted()
+    return {"message": "OpenRouter exhaustion flag cleared — pipeline will use OpenRouter on next cycle"}
+
+
 @router.get("/admin/api-usage/providers")
 async def get_today_providers():
     """Today's cost broken down by provider, with sub-alert status."""

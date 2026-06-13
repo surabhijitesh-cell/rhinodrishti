@@ -12,6 +12,7 @@ because Render's US servers are geo-blocked by Gemini's free-tier API restrictio
 OpenRouter routes through globally available infrastructure.
 """
 import os
+import time as _time
 
 # ── Primary model ─────────────────────────────────────────────────────────────
 MODEL = "google/gemini-2.5-flash"
@@ -56,6 +57,26 @@ GEMINI_FLASH_MODEL_SHORT = "gemini-2.5-flash"
 
 # ── Anthropic model constant (used by documents/training analysis endpoints) ──
 ANTHROPIC_MODEL = "claude-haiku-4-5-20251001"
+
+# ── OpenRouter quota-exhaustion fallback state ────────────────────────────────
+# When OpenRouter returns persistent 429s, Stage 2 switches to Anthropic Haiku
+# for OPENROUTER_FALLBACK_DURATION seconds before retrying OpenRouter again.
+OPENROUTER_FALLBACK_DURATION = 1800  # 30 minutes
+_openrouter_exhausted_until: float = 0.0
+
+
+def mark_openrouter_exhausted() -> None:
+    global _openrouter_exhausted_until
+    _openrouter_exhausted_until = _time.time() + OPENROUTER_FALLBACK_DURATION
+
+
+def is_openrouter_exhausted() -> bool:
+    return _time.time() < _openrouter_exhausted_until
+
+
+def clear_openrouter_exhausted() -> None:
+    global _openrouter_exhausted_until
+    _openrouter_exhausted_until = 0.0
 
 # ── Legacy Anthropic client (no longer primary — kept for emergency rollback) ─
 _anthropic_client = None
