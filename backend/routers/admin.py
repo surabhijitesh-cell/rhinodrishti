@@ -123,6 +123,42 @@ async def get_forex():
     return {"usd_to_inr": rate, "source": "exchangerate-api.com", "ttl_hours": 6}
 
 
+@router.get("/admin/openrouter-credits")
+async def get_openrouter_credits():
+    """Live check of OpenRouter account credits and rate-limit status."""
+    import os, httpx
+    key = os.environ.get("OPENROUTER_API_KEY", "")
+    if not key:
+        return {"error": "OPENROUTER_API_KEY not set", "status": "unknown"}
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.get(
+                "https://openrouter.ai/api/v1/auth/key",
+                headers={"Authorization": f"Bearer {key}"},
+            )
+        if r.status_code != 200:
+            return {"status": "api_error", "http_status": r.status_code, "body": r.text[:200]}
+        data = r.json().get("data", {})
+        limit = data.get("limit")          # None means unlimited (paid plan)
+        usage = data.get("usage", 0)
+        label = data.get("label", "")
+        is_free_tier = limit is not None
+        remaining = round(limit - usage, 4) if limit is not None else None
+        exhausted = is_free_tier and remaining is not None and remaining <= 0
+        return {
+            "status": "exhausted" if exhausted else "ok",
+            "label": label,
+            "limit_usd": limit,
+            "usage_usd": usage,
+            "remaining_usd": remaining,
+            "is_free_tier": is_free_tier,
+            "rate_limit_requests_per_interval": data.get("rate_limit", {}).get("requests"),
+            "rate_limit_interval": data.get("rate_limit", {}).get("interval"),
+        }
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
 @router.get("/admin/api-usage/providers")
 async def get_today_providers():
     """Today's cost broken down by provider, with sub-alert status."""
