@@ -227,10 +227,11 @@ function pulseMarkerHtml(severity, count, opacity = 1.0) {
     medium:   { outer: 12, inner:  6, color: "#06b6d4", rings: 1, dur: 3.0 },
   }[severity] || { outer: 10, inner: 5, color: "#6b7280", rings: 0, dur: 3 };
 
-  // When opacity < 1 (item is outside active timeline window) — kill rings,
-  // softer body. Still visible for "ghosting" context but visually de-emphasized.
+  // Rings always show — the outer container's opacity already de-emphasises
+  // ghosted (out-of-window) items. Suppressing rings entirely when opacity < 0.95
+  // was causing ALL markers to appear static whenever news was more than 3 h old.
   const isActive = opacity >= 0.95;
-  const ringsCount = isActive ? cfg.rings : 0;
+  const ringsCount = cfg.rings;   // always generate rings for the marker's severity
 
   const rings = Array.from({ length: ringsCount }, (_, i) => `
     <div class="map-pulse-ring" style="
