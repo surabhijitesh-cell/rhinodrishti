@@ -1198,8 +1198,12 @@ async def generate_brief_for_date(date: str):
     brief_data["international_news"] = intl_built
 
     # 10.5 CROSS-BORDER INTELLIGENCE (Bangladesh & Myanmar)
+    # Use the same cutoff_utc as the rest of the brief (previous brief's generation
+    # time) so the same BD/MM articles never appear in consecutive briefs.
+    # 7-day hard cap kept as safety net for gap days.
     from routers.cross_border import _auto_categorize, CATEGORY_LABELS
-    cb_cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+    seven_days_ago = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+    cb_cutoff = max(cutoff_utc, seven_days_ago)
     cb_query = {
         "processed": True,
         "ai_summary": {"$exists": True, "$ne": ""},
@@ -1211,6 +1215,8 @@ async def generate_brief_for_date(date: str):
             {"state": {"$in": ["Bangladesh", "Myanmar"]}},
         ]
     }
+    if previous_item_ids:
+        cb_query["id"] = {"$nin": list(previous_item_ids)}
     cb_items = await intelligence_col.find(
         cb_query, {"_id": 0}
     ).sort("priority_score", -1).limit(80).to_list(80)
