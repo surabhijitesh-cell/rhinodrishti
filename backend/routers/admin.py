@@ -181,6 +181,18 @@ async def clear_fallback():
     return {"message": "OpenRouter exhaustion flag cleared — pipeline will use OpenRouter on next cycle"}
 
 
+@router.get("/admin/openrouter-credit-warning")
+async def get_credit_warning_status():
+    """Current credit warning level — polled by Dashboard banner every 60 s."""
+    from llm_client import get_credit_warning
+    data = get_credit_warning()
+    return {
+        "level": data["level"],           # "ok" | "low" | "critical"
+        "remaining_usd": data["remaining_usd"],
+        "top_up_url": "https://openrouter.ai/credits",
+    }
+
+
 @router.get("/admin/api-usage/providers")
 async def get_today_providers():
     """Today's cost broken down by provider, with sub-alert status."""

@@ -296,6 +296,40 @@ async def startup():
                 logger.warning(f"Scheduled batch fusion failed: {e}")
         scheduler.add_job(_run_batch_fusion, 'interval', minutes=30, id='batch_fusion')
 
+        # OpenRouter credit monitor — warns at $2 (amber) and $0.50 (red)
+        async def _check_openrouter_credits():
+            try:
+                import os, httpx
+                key = os.environ.get("OPENROUTER_API_KEY", "")
+                if not key:
+                    return
+                async with httpx.AsyncClient(timeout=10) as client:
+                    r = await client.get(
+                        "https://openrouter.ai/api/v1/auth/key",
+                        headers={"Authorization": f"Bearer {key}"},
+                    )
+                if r.status_code != 200:
+                    return
+                data = r.json().get("data", {})
+                limit = data.get("limit")
+                usage = data.get("usage", 0)
+                if limit is None:
+                    return  # unlimited plan — no warning needed
+                remaining = round(limit - usage, 4)
+                from llm_client import set_credit_warning
+                if remaining <= 0.50:
+                    set_credit_warning("critical", remaining)
+                    logger.warning(f"OpenRouter credits CRITICAL: ${remaining:.4f} remaining")
+                elif remaining <= 2.00:
+                    set_credit_warning("low", remaining)
+                    logger.warning(f"OpenRouter credits LOW: ${remaining:.4f} remaining")
+                else:
+                    set_credit_warning("ok", remaining)
+            except Exception as e:
+                logger.warning(f"Credit monitor check failed: {e}")
+
+        scheduler.add_job(_check_openrouter_credits, 'interval', minutes=30, id='credit_monitor')
+
         # Firecrawl jobs — DISABLED (insufficient credits; re-enable when plan upgraded)
         # async def _fetch_web_sources():
         #     try:
@@ -438,7 +472,7 @@ async def startup():
         )
 
         scheduler.start()
-        logger.info("Scheduler: grassroots/60min, standard/30min, established/12hr, retry/15min, brief/0600 IST, embeddings/6hr, fusion/30min, youtube/4hr, telegram/1hr, fading/1hr, relationships/nightly, faultlines/0600+1800 IST + incremental/4hr [firecrawl+twitter DISABLED]")
+        logger.info("Scheduler: grassroots/60min, standard/30min, established/12hr, retry/15min, brief/0600 IST, embeddings/6hr, fusion/30min, youtube/4hr, telegram/1hr, fading/1hr, relationships/nightly, faultlines/0600+1800 IST + incremental/4hr, credit_monitor/30min [firecrawl+twitter DISABLED]")
     except Exception as e:
         logger.warning(f"Scheduler setup failed: {e}")
 

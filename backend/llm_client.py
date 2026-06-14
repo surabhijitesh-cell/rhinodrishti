@@ -78,6 +78,24 @@ def clear_openrouter_exhausted() -> None:
     global _openrouter_exhausted_until
     _openrouter_exhausted_until = 0.0
 
+
+# ── OpenRouter credit-level warning state ─────────────────────────────────────
+# Populated every 30 min by _check_openrouter_credits() in server.py.
+# "ok" → no banner; "low" → amber (≤ $2); "critical" → red (≤ $0.50)
+_credit_warning_level: str = "ok"
+_credit_remaining_usd: float | None = None
+
+
+def set_credit_warning(level: str, remaining: float | None) -> None:
+    global _credit_warning_level, _credit_remaining_usd
+    _credit_warning_level = level
+    _credit_remaining_usd = remaining
+
+
+def get_credit_warning() -> dict:
+    return {"level": _credit_warning_level, "remaining_usd": _credit_remaining_usd}
+
+
 # ── Legacy Anthropic client (no longer primary — kept for emergency rollback) ─
 _anthropic_client = None
 

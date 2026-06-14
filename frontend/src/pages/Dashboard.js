@@ -694,6 +694,74 @@ function FaultlineWarnings({ api }) {
 
 
 /**
+ * OpenRouter credit warning banner.
+ * Polls /admin/openrouter-credit-warning every 60 s.
+ * Amber at ≤$2, red at ≤$0.50. Dismissible per session.
+ */
+function OpenRouterCreditWarning({ api }) {
+  const [status, setStatus] = useState(null);
+  const [dismissed, setDismissed] = useState(false);
+  const { user } = useAuth();
+
+  useEffect(() => {
+    if (user?.role !== "admin") return;
+    const poll = async () => {
+      try {
+        const res = await axios.get(`${api}/admin/openrouter-credit-warning`);
+        setStatus(res.data);
+      } catch (e) { /* silent */ }
+    };
+    poll();
+    const interval = setInterval(poll, 60000);
+    return () => clearInterval(interval);
+  }, [api, user]);
+
+  if (!status || status.level === "ok" || dismissed) return null;
+
+  const isCritical = status.level === "critical";
+  const borderColor = isCritical ? "border-red-500/50" : "border-amber-500/40";
+  const bgColor = isCritical ? "bg-red-950/20" : "bg-amber-950/15";
+  const textColor = isCritical ? "text-red-400" : "text-amber-400";
+  const borderRow = isCritical ? "border-red-500/30" : "border-amber-500/30";
+  const label = isCritical ? "CRITICAL" : "LOW";
+  const remaining = status.remaining_usd != null ? `$${Number(status.remaining_usd).toFixed(2)}` : "Unknown";
+
+  return (
+    <Card className={`border-2 ${borderColor} rounded-none ${bgColor} animate-slide-in`} data-testid="openrouter-credit-warning">
+      <div className={`flex items-center gap-2 px-4 py-2 border-b ${borderRow}`}>
+        <AlertTriangle size={14} className={`${textColor} animate-pulse`} />
+        <span className={`text-xs uppercase tracking-wider font-['Barlow_Condensed'] font-semibold ${textColor}`}>
+          OpenRouter Credits {label} — {remaining} remaining
+        </span>
+        <a
+          href={status.top_up_url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className={`ml-auto text-xs ${textColor} underline underline-offset-2 hover:opacity-80`}
+        >
+          Top up now
+        </a>
+        <Button
+          variant="ghost" size="sm"
+          className={`text-xs ${textColor} ml-2`}
+          onClick={() => setDismissed(true)}
+        >
+          Dismiss
+        </Button>
+      </div>
+      <CardContent className="p-3">
+        <p className="text-xs text-muted-foreground font-mono">
+          {isCritical
+            ? "Pipeline may fall back to Anthropic Haiku (higher cost). Top up OpenRouter to restore normal operation."
+            : "Top up soon to avoid pipeline interruption. Haiku fallback activates when credits are fully exhausted."}
+        </p>
+      </CardContent>
+    </Card>
+  );
+}
+
+
+/**
  * Faultline pulse strip — compact top-N stressed faultlines for dashboard.
  * Polls /api/faultlines/dashboard-summary every 5 min (low churn).
  */
@@ -1352,6 +1420,9 @@ export default function Dashboard({ stats: propStats, api }) {
           </Card>
         </div>
       </div>
+
+      {/* OpenRouter credit warning — admin only, amber/red banner */}
+      <OpenRouterCreditWarning api={api} />
 
       {/* Faultline Warnings - dangerous threshold crossings */}
       <FaultlineWarnings api={api} />
