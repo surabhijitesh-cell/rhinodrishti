@@ -486,6 +486,22 @@ def generate_brief_pdf(brief: dict, date: str, total: int, critical: int, high: 
             clean_title = f'{index}. {title}{sev_label}'.encode('latin-1', 'replace').decode('latin-1')[:180]
             self.multi_cell(0, 5, clean_title, new_x="LMARGIN", new_y="NEXT")
 
+            # Faultline tags from previous 24h cycle assessment
+            fl_tags = item.get('faultline_tags', [])
+            if fl_tags:
+                paoi_tags  = [t for t in fl_tags if t.get('is_priority')]
+                other_tags = [t for t in fl_tags if not t.get('is_priority')]
+                if paoi_tags:
+                    self.set_font('Helvetica', 'B', 7)
+                    self.set_text_color(160, 40, 40)
+                    tag_str = '[PAOI] ' + ' | '.join(t['name'][:28] for t in paoi_tags[:3])
+                    self.cell(0, 4, tag_str.encode('latin-1', 'replace').decode('latin-1'), new_x="LMARGIN", new_y="NEXT")
+                if other_tags:
+                    self.set_font('Helvetica', '', 7)
+                    self.set_text_color(90, 90, 130)
+                    tag_str = 'Faultlines: ' + ' | '.join(t['name'][:28] for t in other_tags[:3])
+                    self.cell(0, 4, tag_str.encode('latin-1', 'replace').decode('latin-1'), new_x="LMARGIN", new_y="NEXT")
+
             if summary:
                 self.set_font('Helvetica', '', 8)
                 self.set_text_color(60, 60, 60)
@@ -649,6 +665,21 @@ def generate_brief_pdf(brief: dict, date: str, total: int, critical: int, high: 
                     pdf.set_font('Helvetica', 'B', 9)
                     pdf.set_text_color(40, 60, 80)
                     pdf.multi_cell(0, 4.5, title_clean, new_x="LMARGIN", new_y="NEXT")
+                    # Faultline tags from previous 24h cycle
+                    fl_tags = item.get('faultline_tags', [])
+                    if fl_tags:
+                        paoi_fl  = [t for t in fl_tags if t.get('is_priority')]
+                        other_fl = [t for t in fl_tags if not t.get('is_priority')]
+                        if paoi_fl:
+                            pdf.set_font('Helvetica', 'B', 7)
+                            pdf.set_text_color(160, 40, 40)
+                            tag_str = '     [PAOI] ' + ' | '.join(t['name'][:28] for t in paoi_fl[:3])
+                            pdf.cell(0, 3.5, tag_str.encode('latin-1', 'replace').decode('latin-1'), new_x="LMARGIN", new_y="NEXT")
+                        if other_fl:
+                            pdf.set_font('Helvetica', '', 7)
+                            pdf.set_text_color(90, 90, 130)
+                            tag_str = '     Faultlines: ' + ' | '.join(t['name'][:28] for t in other_fl[:3])
+                            pdf.cell(0, 3.5, tag_str.encode('latin-1', 'replace').decode('latin-1'), new_x="LMARGIN", new_y="NEXT")
                     summary = item.get('summary', '')
                     if summary:
                         pdf.set_font('Helvetica', '', 8)
