@@ -502,6 +502,12 @@ def generate_brief_pdf(brief: dict, date: str, total: int, critical: int, high: 
                     tag_str = 'Faultlines: ' + ' | '.join(t['name'][:28] for t in other_tags[:3])
                     self.cell(0, 4, tag_str.encode('latin-1', 'replace').decode('latin-1'), new_x="LMARGIN", new_y="NEXT")
 
+            cluster_size = item.get('cluster_size', 0)
+            if cluster_size and cluster_size > 1:
+                self.set_font('Helvetica', 'I', 7)
+                self.set_text_color(110, 110, 110)
+                self.cell(0, 3.5, f'  Reported by {cluster_size} sources', new_x="LMARGIN", new_y="NEXT")
+
             if summary:
                 self.set_font('Helvetica', '', 8)
                 self.set_text_color(60, 60, 60)
@@ -895,9 +901,15 @@ async def generate_brief_for_date(date: str):
     if previous_item_ids:
         base_filter["id"] = {"$nin": list(previous_item_ids)}
 
+    # Exclude non-primary cluster members — each story appears once (the primary)
+    _cluster_primary_filter = {"$nor": [
+        {"cluster_id": {"$exists": True, "$ne": None}, "is_cluster_primary": {"$ne": True}}
+    ]}
+
     critical_high_items = await intelligence_col.find(
         {
             **base_filter,
+            **_cluster_primary_filter,
             "$or": [
                 {"severity": {"$in": ["critical", "high"]}},
                 {"priority_score": {"$gte": 60}}
@@ -955,7 +967,8 @@ async def generate_brief_for_date(date: str):
             {"priority_score": {"$gte": 30}},
             {"tags": {"$exists": True, "$ne": []}},
             {"severity": {"$in": ["critical", "high", "medium"]}}
-        ]
+        ],
+        **_cluster_primary_filter,
     }
     if previous_item_ids:
         ner_query["id"] = {"$nin": list(previous_item_ids)}
@@ -1014,6 +1027,7 @@ async def generate_brief_for_date(date: str):
         "source": {"$in": all_national_sources},
         "state": {"$nin": NER_STATES + ["Bangladesh", "Myanmar", "Multiple"]},
         "severity": {"$in": ["critical", "high", "medium"]},
+        **_cluster_primary_filter,
     }
     if previous_item_ids:
         national_query["id"] = {"$nin": list(previous_item_ids)}
@@ -1073,7 +1087,8 @@ async def generate_brief_for_date(date: str):
                 "Myanmar Instability", "Infrastructure / Logistics"
             ]}}
         ],
-        "state": {"$nin": NER_STATES + ["Multiple", "India", ""]}
+        "state": {"$nin": NER_STATES + ["Multiple", "India", ""]},
+        **_cluster_primary_filter,
     }
     if previous_item_ids:
         intl_query["id"] = {"$nin": list(previous_item_ids)}
@@ -1162,6 +1177,11 @@ async def generate_brief_for_date(date: str):
             "state": item.get("state", ""),
             "source": item.get("source", ""),
         }
+        # Carry cluster metadata so PDF can show "Reported by N sources"
+        cluster_size = item.get("cluster_size", 0)
+        if cluster_size and cluster_size > 1:
+            result["cluster_size"] = cluster_size
+            result["cluster_sources"] = item.get("cluster_sources", [])
         if item.get("why_it_matters"):
             result["why_it_matters"] = item["why_it_matters"]
         if item.get("potential_impact"):
@@ -1185,6 +1205,7 @@ async def generate_brief_for_date(date: str):
 
     key_developments = []
     added_ids = set()
+    cluster_ids_in_brief = set()  # track cluster_ids so we can exclude siblings from next brief
 
     NER_STATES_FULL = NER_STATES + ["Nagaland", "Sikkim", "Multiple"]
     for item in deduped_critical:
@@ -1193,12 +1214,16 @@ async def generate_brief_for_date(date: str):
             if item.get("state") in NER_STATES_FULL:
                 key_developments.append(build_brief_item(item))
                 added_ids.add(item_id)
+                if item.get("cluster_id"):
+                    cluster_ids_in_brief.add(item["cluster_id"])
 
     for item in diverse_ner_items:
         item_id = item.get("id")
         if item_id and item_id not in added_ids:
             key_developments.append(build_brief_item(item))
             added_ids.add(item_id)
+            if item.get("cluster_id"):
+                cluster_ids_in_brief.add(item["cluster_id"])
 
     brief_data["key_developments"] = key_developments
 
@@ -1213,6 +1238,8 @@ async def generate_brief_for_date(date: str):
             seen_entities.append(extract_key_entities(title))
             if item_id:
                 added_ids.add(item_id)
+            if item.get("cluster_id"):
+                cluster_ids_in_brief.add(item["cluster_id"])
     brief_data["national_news"] = national_deduped[:15]
 
     # 10. INTERNATIONAL NEWS
@@ -1226,6 +1253,8 @@ async def generate_brief_for_date(date: str):
             })
             if item_id:
                 added_ids.add(item_id)
+            if item.get("cluster_id"):
+                cluster_ids_in_brief.add(item["cluster_id"])
     brief_data["international_news"] = intl_built
 
     # 10.5 CROSS-BORDER INTELLIGENCE (Bangladesh & Myanmar)
@@ -1244,7 +1273,8 @@ async def generate_brief_for_date(date: str):
             {"is_cross_border": True},
             {"countries_involved": {"$elemMatch": {"$in": ["Bangladesh", "Myanmar"]}}},
             {"state": {"$in": ["Bangladesh", "Myanmar"]}},
-        ]
+        ],
+        **_cluster_primary_filter,
     }
     if previous_item_ids:
         cb_query["id"] = {"$nin": list(previous_item_ids)}
@@ -1293,10 +1323,13 @@ async def generate_brief_for_date(date: str):
     bd_brief_items = _dedup_cb(bd_brief_items)[:15]
     mm_brief_items = _dedup_cb(mm_brief_items)[:15]
 
-    for item in bd_brief_items + mm_brief_items:
-        item_id = item.get("id")
-        if item_id:
-            added_ids.add(item_id)
+    # Track CB items in added_ids (built dicts, cluster_id not present — use cb_items raw list)
+    cb_ids_included = {item.get("id") for item in bd_brief_items + mm_brief_items if item.get("id")}
+    for raw_cb in cb_items:
+        if raw_cb.get("id") in cb_ids_included:
+            added_ids.add(raw_cb["id"])
+            if raw_cb.get("cluster_id"):
+                cluster_ids_in_brief.add(raw_cb["cluster_id"])
 
     brief_data["cross_border_bangladesh"] = bd_brief_items
     brief_data["cross_border_myanmar"] = mm_brief_items
@@ -1329,6 +1362,21 @@ async def generate_brief_for_date(date: str):
     ]
 
     # 12. TRACK INCLUDED ITEM IDS
+    # Expand with cluster siblings so next brief's previous_item_ids also excludes them.
+    # This prevents non-primary cluster members from leaking into tomorrow's brief.
+    if cluster_ids_in_brief:
+        sibling_docs = await intelligence_col.find(
+            {"cluster_id": {"$in": list(cluster_ids_in_brief)}, "id": {"$nin": list(added_ids)}},
+            {"_id": 0, "id": 1}
+        ).to_list(2000)
+        sibling_count = 0
+        for doc in sibling_docs:
+            if doc.get("id"):
+                added_ids.add(doc["id"])
+                sibling_count += 1
+        if sibling_count:
+            logger.info(f"Brief: expanded included_item_ids by {sibling_count} cluster siblings from {len(cluster_ids_in_brief)} clusters")
+
     brief_data["included_item_ids"] = list(added_ids)
 
     # 12b. FAULTLINE TAGS (PAOI overlay) — enrich news items with faultline
