@@ -37,9 +37,11 @@ async def attach_faultline_tags(items: list[dict]) -> None:
         return
 
     try:
-        # All confident mappings for these articles (any date)
+        # All mappings for these articles that passed the engine's noise gate (confidence >= 25).
+        # Keyword-matched incremental mappings store confidence=30 and are valid signals;
+        # the previous threshold of 45 excluded them all.
         cursor = db.faultline_mappings.find(
-            {"article_id": {"$in": article_ids}, "confidence": {"$gte": 45}},
+            {"article_id": {"$in": article_ids}, "confidence": {"$gte": 25}},
             {"_id": 0, "article_id": 1, "faultline_id": 1, "impact_score": 1},
         )
         mappings = [m async for m in cursor]
