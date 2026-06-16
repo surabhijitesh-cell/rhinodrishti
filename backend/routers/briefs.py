@@ -119,6 +119,14 @@ async def get_daily_brief_pdf(date: Optional[str] = None):
     if not brief:
         brief = await generate_brief_for_date(date)
 
+    # Re-attach faultline tags so the PDF always reflects current mappings,
+    # even when the stored brief predates faultline mapping data.
+    for section in ("key_developments", "national_news", "international_news",
+                    "cross_border_bangladesh", "cross_border_myanmar"):
+        items = brief.get(section) or []
+        if items:
+            await attach_faultline_tags(items)
+
     # NOTE: translation removed — translate_brief_for_pdf made N sequential
     # external API calls (one per non-Latin field) causing 40-60s response times
     # that exceeded Render's load-balancer timeout → connection drop → "Network Error".
@@ -703,6 +711,60 @@ def generate_brief_pdf(brief: dict, date: str, total: int, critical: int, high: 
 
         _render_cb_section("BANGLADESH", bd_items)
         _render_cb_section("MYANMAR", mm_items)
+        pdf.ln(2)
+
+    # NATIONAL & INTERNATIONAL NEWS
+    national_items_pdf = brief.get('national_news', [])
+    intl_items_pdf = brief.get('international_news', [])
+    if national_items_pdf or intl_items_pdf:
+        pdf.section_title('NATIONAL & INTERNATIONAL INTELLIGENCE')
+        pdf.ln(1)
+        all_ni = [("National", national_items_pdf), ("International", intl_items_pdf)]
+        for sub_label, sub_items in all_ni:
+            if not sub_items:
+                continue
+            if pdf.get_y() > 250:
+                pdf.add_page()
+            pdf.set_font('Helvetica', 'B', 11)
+            pdf.set_text_color(30, 50, 80)
+            pdf.cell(0, 6, sub_label, new_x="LMARGIN", new_y="NEXT")
+            pdf.ln(1)
+            for idx, item in enumerate(sub_items, 1):
+                if pdf.get_y() > 260:
+                    pdf.add_page()
+                severity = (item.get('severity', '') or '').upper()
+                sev_marker = f"[{severity}] " if severity and severity not in ("MEDIUM", "LOW") else ""
+                raw_title = item.get('title', '')
+                title_clean = f"  {idx}. {sev_marker}{raw_title}".encode('latin-1', 'replace').decode('latin-1')[:160]
+                pdf.set_font('Helvetica', 'B', 9)
+                pdf.set_text_color(40, 60, 80)
+                pdf.multi_cell(0, 4.5, title_clean, new_x="LMARGIN", new_y="NEXT")
+                # Faultline tags
+                fl_tags = item.get('faultline_tags', [])
+                if fl_tags:
+                    paoi_fl = [t for t in fl_tags if t.get('is_priority')]
+                    other_fl = [t for t in fl_tags if not t.get('is_priority')]
+                    if paoi_fl:
+                        pdf.set_font('Helvetica', 'B', 7)
+                        pdf.set_text_color(160, 40, 40)
+                        tag_str = '     [PAOI] ' + ' | '.join(t['name'][:28] for t in paoi_fl[:3])
+                        pdf.cell(0, 3.5, tag_str.encode('latin-1', 'replace').decode('latin-1'), new_x="LMARGIN", new_y="NEXT")
+                    if other_fl:
+                        pdf.set_font('Helvetica', '', 7)
+                        pdf.set_text_color(90, 90, 130)
+                        tag_str = '     Faultlines: ' + ' | '.join(t['name'][:28] for t in other_fl[:3])
+                        pdf.cell(0, 3.5, tag_str.encode('latin-1', 'replace').decode('latin-1'), new_x="LMARGIN", new_y="NEXT")
+                summary = item.get('summary', '')
+                if summary:
+                    pdf.set_font('Helvetica', '', 8)
+                    pdf.set_text_color(40, 40, 40)
+                    pdf.multi_cell(0, 4, f"     {summary[:280].encode('latin-1', 'replace').decode('latin-1')}", new_x="LMARGIN", new_y="NEXT")
+                source = item.get('source', '')
+                if source:
+                    pdf.set_font('Helvetica', 'I', 7)
+                    pdf.set_text_color(100, 100, 100)
+                    pdf.cell(0, 3.5, f"     Source: {str(source)[:80].encode('latin-1', 'replace').decode('latin-1')}", new_x="LMARGIN", new_y="NEXT")
+                pdf.ln(1)
         pdf.ln(2)
 
     # UPLOADED DOCUMENT INSIGHTS
