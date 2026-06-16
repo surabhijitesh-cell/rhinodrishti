@@ -150,9 +150,149 @@ async def resolve_system_notification_recipients(db, notif_type: str, item: dict
             if prefs and not prefs.get("notify_paoi_impact", True):
                 continue
 
+        elif notif_type == "STATE_ESCALATION":
+            if prefs and not prefs.get("notify_state_escalations", True):
+                continue
+            # Filter by region of interest if configured
+            if prefs and prefs.get("regions_of_interest") and item:
+                if item.get("state") not in prefs["regions_of_interest"]:
+                    continue
+
         recipients.append(uid)
 
     return recipients
+
+
+_CONCERN_RANK = {"STABLE": 0, "MONITOR": 1, "ELEVATED": 2, "CRITICAL": 3}
+
+
+async def _compute_state_concern(db, state: str) -> tuple[str, int]:
+    """
+    Recompute concern level for a single state using the same formula as trends.py.
+    Returns (concern_level, stability_score).
+    Uses a rolling 7-day window (matching the Dashboard's default view).
+    """
+    from datetime import timedelta
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+
+    SEV_WEIGHTS = {"critical": 4, "high": 2, "medium": 1, "low": 0.3}
+    metrics = {
+        "sev_weight": 0.0,
+        "early_count": 0,
+        "late_count": 0,
+        "actors": set(),
+        "cross_border_count": 0,
+        "total": 0,
+    }
+
+    from shared import intelligence_col
+    mid_cutoff = (datetime.now(timezone.utc) - timedelta(days=3)).isoformat()
+
+    async for item in intelligence_col.find(
+        {"state": state, "published_at": {"$gte": cutoff}},
+        {"severity": 1, "actors": 1, "is_cross_border": 1, "published_at": 1, "_id": 0}
+    ):
+        metrics["total"] += 1
+        metrics["sev_weight"] += SEV_WEIGHTS.get(item.get("severity", "low"), 0.3)
+        for a in (item.get("actors") or []):
+            metrics["actors"].add(a)
+        if item.get("is_cross_border"):
+            metrics["cross_border_count"] += 1
+        if item.get("published_at", "") >= mid_cutoff:
+            metrics["late_count"] += 1
+        else:
+            metrics["early_count"] += 1
+
+    if metrics["total"] == 0:
+        return "STABLE", 100
+
+    max_sev = max(metrics["sev_weight"], 1)
+    max_actors = max(len(metrics["actors"]), 1)
+    severity_load = metrics["sev_weight"] / max_sev
+    velocity = 0.0
+    if metrics["early_count"] > 0:
+        velocity = min((metrics["late_count"] / max(metrics["early_count"], 1)) / 3, 1.0)
+    elif metrics["late_count"] > 0:
+        velocity = 0.8
+    actor_spread = len(metrics["actors"]) / max_actors
+    cross_border = metrics["cross_border_count"] / metrics["total"]
+
+    concern = severity_load * 0.40 + velocity * 0.25 + actor_spread * 0.20 + cross_border * 0.15
+    stability = max(0, round(100 - concern * 100))
+
+    if stability >= 75:
+        level = "STABLE"
+    elif stability >= 50:
+        level = "MONITOR"
+    elif stability >= 25:
+        level = "ELEVATED"
+    else:
+        level = "CRITICAL"
+
+    return level, stability
+
+
+async def check_and_notify_state_escalations(db, affected_states: list) -> None:
+    """
+    Compare current concern_level for each affected state against the last stored
+    level. If it moved upward (e.g. STABLE→MONITOR), dispatch a STATE_ESCALATION
+    notification and update the stored snapshot.
+    """
+    if not affected_states:
+        return
+
+    for state in set(affected_states):
+        try:
+            current_level, stability = await _compute_state_concern(db, state)
+            current_rank = _CONCERN_RANK.get(current_level, 0)
+
+            snapshot = await db.state_severity_snapshots.find_one({"state": state})
+            prev_level = snapshot["concern_level"] if snapshot else "STABLE"
+            prev_rank = _CONCERN_RANK.get(prev_level, 0)
+
+            if current_rank > prev_rank:
+                # Escalated — dispatch notification
+                recipients = await resolve_system_notification_recipients(
+                    db, "STATE_ESCALATION", {"state": state}
+                )
+                if recipients:
+                    await create_and_dispatch_notification(
+                        notif_type="STATE_ESCALATION",
+                        title=f"State Alert: {state}",
+                        body=(
+                            f"{state} concern level has risen from {prev_level} "
+                            f"to {current_level} (stability score: {stability})"
+                        ),
+                        payload={
+                            "state": state,
+                            "previous_level": prev_level,
+                            "current_level": current_level,
+                            "stability_score": stability,
+                        },
+                        deep_link=f"/trends?state={state}",
+                        source_type="system",
+                        source_id=None,
+                        created_by=None,
+                        recipient_user_ids=recipients,
+                    )
+                    logger.info(
+                        f"STATE_ESCALATION notification: {state} {prev_level}→{current_level}"
+                    )
+
+            # Always update snapshot (persist latest level)
+            now = datetime.now(timezone.utc).isoformat()
+            await db.state_severity_snapshots.update_one(
+                {"state": state},
+                {"$set": {
+                    "state": state,
+                    "concern_level": current_level,
+                    "stability_score": stability,
+                    "updated_at": now,
+                }},
+                upsert=True,
+            )
+        except Exception as e:
+            logger.warning(f"State escalation check failed for {state}: {e}")
 
 
 async def _log_attempt(db, notification_id, recipient_id, user_id, channel, status, error=None):

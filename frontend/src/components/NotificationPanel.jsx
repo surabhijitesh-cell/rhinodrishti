@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   X, Bell, BellOff, CheckCheck, ChevronRight,
-  Flag, AlertTriangle, TrendingUp, Info,
+  Flag, AlertTriangle, TrendingUp, Info, MapPin,
 } from "lucide-react";
 import { Button } from "./ui/button";
 import { useNotifications } from "../hooks/useNotifications";
@@ -12,6 +12,7 @@ const TYPE_ICON = {
   HIGH_PRIORITY_ARTICLE: TrendingUp,
   PAOI_IMPACT: Bell,
   FLAGGED_NEWS: Flag,
+  STATE_ESCALATION: MapPin,
 };
 
 const TYPE_COLOR = {
@@ -19,6 +20,7 @@ const TYPE_COLOR = {
   HIGH_PRIORITY_ARTICLE: "text-orange-400",
   PAOI_IMPACT: "text-amber-400",
   FLAGGED_NEWS: "text-violet-400",
+  STATE_ESCALATION: "text-rose-400",
 };
 
 function timeAgo(isoStr) {

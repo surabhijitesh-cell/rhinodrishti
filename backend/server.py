@@ -264,6 +264,7 @@ async def startup():
         await db.push_subscriptions.create_index([("user_id", 1), ("active", 1)])
         await db.user_notification_prefs.create_index("user_id", unique=True)
         await db.news_flags.create_index([("flagged_by", 1), ("article_id", 1), ("created_at", -1)])
+        await db.state_severity_snapshots.create_index("state", unique=True)
     except Exception as idx_err:
         logger.warning(f"Notification index setup failed (non-fatal): {idx_err}")
 

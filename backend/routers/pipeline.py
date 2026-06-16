@@ -463,6 +463,7 @@ async def fetch_and_process_news(source_filter: str = None):
         fail_count = 0
         skip_count = 0
         rate_limit_hits = 0
+        states_with_new_articles: set = set()
 
         for batch_start in range(0, len(new_articles), BATCH_SIZE):
             batch = new_articles[batch_start:batch_start + BATCH_SIZE]
@@ -517,6 +518,8 @@ async def fetch_and_process_news(source_filter: str = None):
                     await intelligence_col.insert_one(doc)
                     success_count += 1
                     invalidate_stats_cache()
+                    if doc.get("state"):
+                        states_with_new_articles.add(doc["state"])
 
                     try:
                         from embedding_service import generate_embedding
@@ -625,6 +628,15 @@ async def fetch_and_process_news(source_filter: str = None):
             asyncio.create_task(detect_patterns(db))
         except Exception as e:
             logger.warning(f"Pattern detection trigger failed: {e}")
+
+        if states_with_new_articles:
+            try:
+                from utils.notifications import check_and_notify_state_escalations
+                asyncio.create_task(
+                    check_and_notify_state_escalations(db, list(states_with_new_articles))
+                )
+            except Exception as e:
+                logger.warning(f"State escalation check trigger failed: {e}")
 
         try:
             await ws_manager.broadcast({
