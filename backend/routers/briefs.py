@@ -801,28 +801,31 @@ async def generate_brief_for_date(date: str):
 
     prev_day_brief = await briefs_col.find_one(
         {"date": previous_date},
-        {"_id": 0, "generated_at": 1, "included_item_ids": 1, "date": 1},
+        {"_id": 0, "generated_at": 1, "included_item_ids": 1, "date": 1, "event_fingerprints": 1},
         sort=[("generated_at", -1)]
     )
 
     any_previous_brief = await briefs_col.find_one(
         {"date": {"$lt": date}},
-        {"_id": 0, "generated_at": 1, "included_item_ids": 1, "date": 1},
+        {"_id": 0, "generated_at": 1, "included_item_ids": 1, "date": 1, "event_fingerprints": 1},
         sort=[("date", -1)]
     )
 
     previous_item_ids = set()
     today_0600_ist = now_ist.replace(hour=6, minute=0, second=0, microsecond=0)
 
+    prev_brief_for_fingerprints = None
     if prev_day_brief and prev_day_brief.get("generated_at"):
         cutoff_utc = prev_day_brief["generated_at"]
         if prev_day_brief.get("included_item_ids"):
             previous_item_ids.update(prev_day_brief["included_item_ids"])
+        prev_brief_for_fingerprints = prev_day_brief
         logger.info(f"Brief window: prev day brief ({previous_date}) generated at {cutoff_utc} -> now")
     elif any_previous_brief and any_previous_brief.get("generated_at"):
         cutoff_utc = any_previous_brief["generated_at"]
         if any_previous_brief.get("included_item_ids"):
             previous_item_ids.update(any_previous_brief["included_item_ids"])
+        prev_brief_for_fingerprints = any_previous_brief
         logger.info(f"Brief window: last brief ({any_previous_brief.get('date')}) generated at {cutoff_utc} -> now")
     else:
         cutoff_ist = today_0600_ist - timedelta(days=1)
@@ -850,8 +853,16 @@ async def generate_brief_for_date(date: str):
         t = (title or "").lower()
         entities = set()
         known_orgs = ['ulfa', 'nscn', 'rpf', 'pla', 'hnlc', 'gnla', 'kla', 'mnf', 'unlf', 'prepak', 'knf', 'arsa', 'tnla', 'mndaa', 'assam rifles', 'bsf', 'crpf', 'army']
-        known_places = ['manipur', 'assam', 'meghalaya', 'mizoram', 'tripura', 'arunachal', 'nagaland', 'tinsukia', 'changlang', 'tamenglong', 'imphal', 'dimapur', 'guwahati', 'silchar', 'agartala', 'shillong', 'aizawl', 'itanagar', 'kohima', 'myanmar', 'bangladesh', 'dhaka', 'chittagong', 'cox']
-        known_events = ['rpg', 'grenade', 'gunfire', 'gunfight', 'bomb', 'blast', 'attack', 'ambush', 'shootout', 'firing', 'seized', 'arrested', 'killed', 'injured', 'rally', 'protest', 'blockade', 'bandh']
+        known_places = ['manipur', 'assam', 'meghalaya', 'mizoram', 'tripura', 'arunachal', 'nagaland',
+                        'tinsukia', 'changlang', 'tamenglong', 'imphal', 'dimapur', 'guwahati', 'silchar',
+                        'agartala', 'shillong', 'aizawl', 'itanagar', 'kohima', 'myanmar', 'bangladesh',
+                        'dhaka', 'chittagong', 'cox', 'kangpokpi', 'churachandpur', 'jiribam', 'moreh',
+                        'silchar', 'cachar', 'jorhat', 'dibrugarh', 'numaligarh', 'barak']
+        # Use stems so "injures/injured", "kills/killed", "arrests/arrested", "seizes/seized" all match
+        known_event_stems = ['rpg', 'grenade', 'gunfire', 'gunfight', 'bomb', 'blast', 'attack', 'ambush',
+                             'shootout', 'firing', 'seiz', 'arrest', 'kill', 'injur', 'rally', 'protest',
+                             'blockade', 'bandh', 'crackdown', 'highway', 'smuggl']
+        known_people = ['gadkari', 'himanta', 'sarma', 'jaishankar', 'doval', 'shah']
 
         for org in known_orgs:
             if org in t:
@@ -859,15 +870,22 @@ async def generate_brief_for_date(date: str):
         for place in known_places:
             if place in t:
                 entities.add(place)
-        for event in known_events:
-            if event in t:
-                entities.add(event)
-        numbers = re.findall(r'\b(\d+)\s*(?:killed|injured|arrested|seized|dead)\b', t)
-        for n in numbers:
-            entities.add(f"count_{n}")
+        for stem in known_event_stems:
+            if stem in t:
+                entities.add(stem)
+        for person in known_people:
+            if person in t:
+                entities.add(person)
+        # Significant numbers: count ≥ 5 or appearing next to casualty/people words
+        numbers = re.findall(r'\b(\d+)\s*(?:killed|injur|arrest|seiz|dead|bangladeshi|bangladeshis|people|person|soldier|militant|worker|member|crore|lakh)\b', t)
+        for n in re.findall(r'\b(\d+)\b', t):
+            if int(n) >= 5:
+                numbers.append(n)
+        for n in set(numbers):
+            entities.add(f"n_{n}")
         return entities
 
-    def is_duplicate_title(new_title, seen_titles, seen_entities_list, threshold=0.55):
+    def is_duplicate_title(new_title, seen_titles, seen_entities_list, threshold=0.40):
         norm_new = normalize_title(new_title)
         if not norm_new or len(norm_new) < 10:
             return False
@@ -885,16 +903,32 @@ async def generate_brief_for_date(date: str):
             seen_ents = seen_entities_list[i] if i < len(seen_entities_list) else set()
             if new_entities and seen_ents:
                 ent_overlap = len(new_entities & seen_ents)
-                ent_total = max(len(new_entities), len(seen_ents))
 
                 if ent_overlap >= 3:
                     return True
-                if ent_overlap >= 2 and word_sim >= 0.35:
+                if ent_overlap >= 2 and word_sim >= 0.20:
                     return True
 
             if word_sim >= threshold:
                 return True
         return False
+
+    # Build inter-brief fingerprints from previous brief to catch same-story re-coverage
+    prev_fp_titles: list = []
+    prev_fp_entities: list = []
+    if prev_brief_for_fingerprints:
+        for fp in (prev_brief_for_fingerprints.get("event_fingerprints") or []):
+            words = fp.get("words") or []
+            ents = set(fp.get("entities") or [])
+            if words:
+                prev_fp_titles.append(" ".join(words))
+                prev_fp_entities.append(ents)
+
+    def is_cross_brief_duplicate(title: str) -> bool:
+        """Returns True if this title is already covered in the previous brief."""
+        if not prev_fp_titles:
+            return False
+        return is_duplicate_title(title, prev_fp_titles, prev_fp_entities, threshold=0.55)
 
     # 1. GET CRITICAL/HIGH ITEMS
     base_filter = {"processed": True, "published_at": {"$gte": cutoff_utc}}
@@ -1001,6 +1035,8 @@ async def generate_brief_for_date(date: str):
         title = item.get("title", "")
         source = item.get("source", "Unknown")
         if is_duplicate_title(title, seen_titles, seen_entities):
+            continue
+        if is_cross_brief_duplicate(title):
             continue
         if source not in seen_sources:
             seen_sources[source] = 0
@@ -1130,6 +1166,8 @@ async def generate_brief_for_date(date: str):
         source = item.get("source", "Unknown")
         if is_duplicate_title(title, seen_titles, seen_entities):
             continue
+        if is_cross_brief_duplicate(title):
+            continue
         if source not in seen_intl_sources:
             seen_intl_sources[source] = 0
         if seen_intl_sources[source] < 3:
@@ -1232,7 +1270,7 @@ async def generate_brief_for_date(date: str):
     for item in military_national:
         title = item.get("title", "")
         item_id = item.get("id")
-        if item_id not in added_ids and not is_duplicate_title(title, seen_titles, seen_entities):
+        if item_id not in added_ids and not is_duplicate_title(title, seen_titles, seen_entities) and not is_cross_brief_duplicate(title):
             national_deduped.append(build_brief_item(item))
             seen_titles.append(normalize_title(title))
             seen_entities.append(extract_key_entities(title))
@@ -1303,12 +1341,15 @@ async def generate_brief_for_date(date: str):
         elif state_val == "myanmar" or any(kw in text_all for kw in MM_KW):
             mm_brief_items.append(brief_item)
 
-    # Deduplicate by title within each section
+    # Deduplicate by title within each section, also applying cross-brief filter
     def _dedup_cb(items):
         seen = []
         result = []
         for item in items:
-            norm = normalize_title(item.get("title", ""))
+            title = item.get("title", "")
+            norm = normalize_title(title)
+            if is_cross_brief_duplicate(title):
+                continue
             if not any(title_similarity(norm, s) > 0.5 for s in seen):
                 result.append(item)
                 seen.append(norm)
@@ -1379,6 +1420,22 @@ async def generate_brief_for_date(date: str):
 
     brief_data["included_item_ids"] = list(added_ids)
 
+    # 12a. STORE EVENT FINGERPRINTS for next brief's inter-brief dedup
+    # Collect titles from all news sections so tomorrow's brief can detect re-coverage
+    _all_brief_items = (
+        brief_data.get("key_developments", []) +
+        brief_data.get("national_news", []) +
+        brief_data.get("international_news", []) +
+        brief_data.get("cross_border_bangladesh", []) +
+        brief_data.get("cross_border_myanmar", [])
+    )
+    brief_data["event_fingerprints"] = [
+        {"words": list(set(normalize_title(it.get("title", "")).split())),
+         "entities": list(extract_key_entities(it.get("title", "")))}
+        for it in _all_brief_items
+        if it.get("title")
+    ]
+
     # 12b. FAULTLINE TAGS (PAOI overlay) — enrich news items with faultline
     #      chips; RED in UI when the faultline belongs to a Priority Area.
     await attach_faultline_tags(brief_data.get("key_developments", []))
@@ -1391,6 +1448,8 @@ async def generate_brief_for_date(date: str):
     brief = DailyBrief(**brief_data)
     doc = brief.model_dump()
     doc.pop("twitter_highlights", None)
+    # Persist fingerprints (not in DailyBrief schema; stored directly for next brief's dedup)
+    doc["event_fingerprints"] = brief_data.get("event_fingerprints", [])
     await briefs_col.replace_one({"date": date}, doc, upsert=True)
 
     logger.info(f"Brief generated: {len(key_developments)} NER developments, {len(brief_data.get('national_news', []))} national, {len(brief_data.get('international_news', []))} international, {len(brief_data.get('pattern_insights', []))} patterns, {len(added_ids)} items tracked")
