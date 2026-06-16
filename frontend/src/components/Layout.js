@@ -13,6 +13,7 @@ import { Button } from "../components/ui/button";
 import { Badge } from "../components/ui/badge";
 import Tip from "./Tip";
 import { useTour } from "../contexts/TourContext";
+import NotificationBell from "./NotificationBell";
 
 const ALL_NAV_ITEMS = [
   {
@@ -98,7 +99,7 @@ function useLoginCount(username) {
   try { return parseInt(localStorage.getItem(`rd_login_count_${username}`) || "0", 10); } catch { return 0; }
 }
 
-export default function Layout({ children, alertCount = 0, onSearch }) {
+export default function Layout({ children, alertCount = 0, onSearch, notifUnreadCount = 0, onResetNotifUnread }) {
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [searchVal, setSearchVal] = useState("");
@@ -258,6 +259,8 @@ export default function Layout({ children, alertCount = 0, onSearch }) {
                 {theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}
               </Button>
             </Tip>
+
+            <NotificationBell unreadCount={notifUnreadCount} onResetUnread={onResetNotifUnread} />
 
             <Tip text={alertCount > 0 ? `${alertCount} unacknowledged critical/high alerts` : "No active alerts"} side="bottom">
               <Link to="/alerts">

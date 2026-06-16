@@ -30,6 +30,7 @@ import { Toaster } from "./components/ui/sonner";
 import { TooltipProvider } from "./components/ui/tooltip";
 import { TourProvider } from "./contexts/TourContext";
 import AppTour from "./components/AppTour";
+import { useNotifications } from "./hooks/useNotifications";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
@@ -39,6 +40,8 @@ function AppRoutes() {
   const [stats, setStats] = useState(null);
   const navigate = useNavigate();
   const { isAuthenticated } = useAuth();
+  const { unreadCount: notifUnreadCount, setUnreadCount: setNotifUnreadCount } = useNotifications();
+
 
   const fetchStats = useCallback(async () => {
     if (!isAuthenticated) return;
@@ -70,7 +73,12 @@ function AppRoutes() {
         path="/*"
         element={
           <ProtectedRoute>
-            <Layout alertCount={alertCount} onSearch={handleSearch}>
+            <Layout
+              alertCount={alertCount}
+              onSearch={handleSearch}
+              notifUnreadCount={notifUnreadCount}
+              onResetNotifUnread={() => setNotifUnreadCount(0)}
+            >
               <Routes>
                 <Route path="/" element={<Dashboard stats={stats} api={API} />} />
                 <Route path="/feed" element={<IntelligenceFeed api={API} />} />

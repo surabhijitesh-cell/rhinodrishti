@@ -156,15 +156,27 @@ class TwitterFeed(BaseModel):
 class ConnectionManager:
     def __init__(self):
         self.active_connections: List[WebSocket] = []
+        self.user_connections: Dict[str, List[WebSocket]] = {}
 
-    async def connect(self, websocket: WebSocket):
+    async def connect(self, websocket: WebSocket, user_id: Optional[str] = None):
         await websocket.accept()
         self.active_connections.append(websocket)
+        if user_id:
+            websocket._rd_user_id = user_id  # type: ignore[attr-defined]
+            self.user_connections.setdefault(user_id, []).append(websocket)
         logger.info(f"WebSocket connected. Active: {len(self.active_connections)}")
 
     def disconnect(self, websocket: WebSocket):
         if websocket in self.active_connections:
             self.active_connections.remove(websocket)
+        user_id = getattr(websocket, "_rd_user_id", None)
+        if user_id and user_id in self.user_connections:
+            try:
+                self.user_connections[user_id].remove(websocket)
+            except ValueError:
+                pass
+            if not self.user_connections[user_id]:
+                del self.user_connections[user_id]
         logger.info(f"WebSocket disconnected. Active: {len(self.active_connections)}")
 
     async def broadcast(self, message: dict):
@@ -176,6 +188,18 @@ class ConnectionManager:
                 disconnected.append(conn)
         for conn in disconnected:
             self.disconnect(conn)
+
+    async def send_to_user(self, user_id: str, message: dict):
+        """Send a message only to all active connections for a specific user."""
+        conns = list(self.user_connections.get(user_id, []))
+        dead = []
+        for ws in conns:
+            try:
+                await ws.send_json(message)
+            except Exception:
+                dead.append(ws)
+        for ws in dead:
+            self.disconnect(ws)
 
 ws_manager = ConnectionManager()
 

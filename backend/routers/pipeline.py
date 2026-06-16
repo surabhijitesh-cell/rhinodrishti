@@ -557,6 +557,38 @@ async def fetch_and_process_news(source_filter: str = None):
                             ws_msg["type"] = "elite_alert"
                             ws_msg["sifter_triggers"] = sift_result["triggers"]
                         await ws_manager.broadcast(ws_msg)
+
+                        # Dispatch notification for high-priority articles
+                        if doc.get("priority_score", 0) >= 90:
+                            try:
+                                from utils.notifications import (
+                                    create_and_dispatch_notification,
+                                    resolve_system_notification_recipients,
+                                )
+                                recipients = await resolve_system_notification_recipients(
+                                    db, "HIGH_PRIORITY_ARTICLE",
+                                    {"priority_score": doc.get("priority_score", 0)}
+                                )
+                                if recipients:
+                                    await create_and_dispatch_notification(
+                                        notif_type="HIGH_PRIORITY_ARTICLE",
+                                        title=f"Critical Intelligence — Priority {doc.get('priority_score')}",
+                                        body=(doc.get("title") or "")[:100],
+                                        payload={
+                                            "article_id": doc.get("id"),
+                                            "priority_score": doc.get("priority_score"),
+                                            "severity": doc.get("severity"),
+                                            "state": doc.get("state", ""),
+                                        },
+                                        deep_link=f"/feed?highlight={doc.get('id')}",
+                                        source_type="system",
+                                        source_id=doc.get("id"),
+                                        created_by=None,
+                                        recipient_user_ids=recipients,
+                                    )
+                            except Exception as _ne:
+                                logger.debug(f"Notification dispatch error: {_ne}")
+
                     except Exception as ws_err:
                         logger.debug(f"WS broadcast error: {ws_err}")
                 else:

@@ -57,6 +57,16 @@ async def get_me(user: dict = Depends(get_current_user)):
 # User Management (Admin only)
 # ============================================================
 
+@router.get("/users/active")
+async def list_active_users(user: dict = Depends(get_current_user)):
+    """Return minimal user info for all active users — used by flag recipient selector."""
+    users = await users_col.find(
+        {"is_active": True},
+        {"_id": 0, "password_hash": 0, "email": 0, "created_at": 0}
+    ).sort("username", 1).to_list(500)
+    return {"users": users}
+
+
 @router.get("/users")
 async def list_users(admin: dict = Depends(require_admin_role)):
     users = await users_col.find(

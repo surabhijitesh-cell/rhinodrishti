@@ -1,4 +1,4 @@
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query
 from datetime import datetime, timezone
 from starlette.middleware.cors import CORSMiddleware
 import os
@@ -41,6 +41,8 @@ from routers.relationships import router as relationships_router
 from routers.brief_fortnightly import router as brief_fortnightly_router
 from routers.faultlines import router as faultlines_router
 from routers.watchlist import router as watchlist_router
+from routers.notifications import router as notifications_router
+from routers.flags import router as flags_router
 
 # Import scheduler functions
 from routers.pipeline import (
@@ -88,6 +90,8 @@ app.include_router(relationships_router, prefix="/api")
 app.include_router(brief_fortnightly_router, prefix="/api")
 app.include_router(faultlines_router, prefix="/api")
 app.include_router(watchlist_router, prefix="/api")
+app.include_router(notifications_router, prefix="/api")
+app.include_router(flags_router, prefix="/api")
 
 
 # ============================================================
@@ -108,8 +112,16 @@ async def health():
 # WebSocket Endpoint
 # ============================================================
 @app.websocket("/api/ws/intelligence")
-async def websocket_intelligence(websocket: WebSocket):
-    await ws_manager.connect(websocket)
+async def websocket_intelligence(websocket: WebSocket, token: str = Query(default=None)):
+    user_id = None
+    if token:
+        try:
+            from utils.auth import verify_token
+            payload = verify_token(token)
+            user_id = payload.get("sub")
+        except Exception:
+            pass  # anonymous WS still connects; targeted delivery won't work
+    await ws_manager.connect(websocket, user_id)
     try:
         while True:
             data = await websocket.receive_text()
@@ -244,6 +256,17 @@ async def startup():
     KEEP THIS FAST — Render kills the process if the port is not open
     within ~5 s of startup.  Heavy work goes into _deferred_init().
     """
+    # Notification collection indexes (idempotent)
+    try:
+        await db.notification_recipients.create_index([("user_id", 1), ("is_read", 1), ("created_at", -1)])
+        await db.notification_recipients.create_index([("notification_id", 1), ("user_id", 1)], unique=True)
+        await db.push_subscriptions.create_index("endpoint", unique=True)
+        await db.push_subscriptions.create_index([("user_id", 1), ("active", 1)])
+        await db.user_notification_prefs.create_index("user_id", unique=True)
+        await db.news_flags.create_index([("flagged_by", 1), ("article_id", 1), ("created_at", -1)])
+    except Exception as idx_err:
+        logger.warning(f"Notification index setup failed (non-fatal): {idx_err}")
+
     # Admin user seed (one count + maybe one insert — <100 ms)
     user_count = await db.users.count_documents({})
     if user_count == 0:

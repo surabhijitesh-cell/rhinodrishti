@@ -497,6 +497,37 @@ async def evaluate_alerts(
         "acknowledged_by": None,
     }
     await db.faultline_alerts.insert_one(alert)
+
+    # Dispatch in-app + push notification for this alert
+    try:
+        from utils.notifications import create_and_dispatch_notification, resolve_system_notification_recipients
+        recipients = await resolve_system_notification_recipients(
+            db, "FAULTLINE_ESCALATION", {"faultline_id": fl_id}
+        )
+        if recipients:
+            await create_and_dispatch_notification(
+                notif_type="FAULTLINE_ESCALATION",
+                title=f"Faultline Alert: {faultline['name']}",
+                body=reason,
+                payload={
+                    "faultline_id": fl_id,
+                    "faultline_name": faultline["name"],
+                    "alert_type": alert_type,
+                    "score": today_score,
+                    "state": faultline.get("state", ""),
+                },
+                deep_link=f"/faultlines/{fl_id}",
+                source_type="system",
+                source_id=fl_id,
+                created_by=None,
+                recipient_user_ids=recipients,
+            )
+    except Exception as _notif_err:
+        import logging as _log
+        _log.getLogger("faultline_engine").warning(
+            f"Notification dispatch failed for faultline alert {fl_id}: {_notif_err}"
+        )
+
     return alert
 
 

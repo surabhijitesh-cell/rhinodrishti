@@ -11,6 +11,7 @@ import { Button } from "../components/ui/button";
 import FeedbackWidget from "./FeedbackWidget";
 import Tip from "./Tip";
 import { useAuth } from "../contexts/AuthContext";
+import FlagButton from "./FlagButton";
 
 const THREAT_ICONS = {
   "Insurgency": Target,
@@ -312,6 +313,9 @@ export default function IntelligenceCard({ item, compact = false, api, feedbackD
               </Badge>
             </Tip>
           )}
+
+          {/* Flag */}
+          <FlagButton item={item} api={api} />
 
           {/* Reprocess */}
           {api && (
