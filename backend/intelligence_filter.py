@@ -91,8 +91,15 @@ HARD_ACCEPT_KEYWORDS = [
     'communal', 'communal tension', 'riot', 'mob lynch', 'lynching', 'curfew',
     'section 144', 'prohibitory order', 'ethnic clash', 'tribal clash',
     'kuki', 'meitei', 'naga', 'bodo', 'karbi', 'dimasa', 'hmar', 'zomi',
+    # Meghalaya ethnic communities (previously missing — critical for local coverage)
+    'khasi', 'garo', 'jaintia', 'hajong', 'koch', 'biate', 'pnar', 'war tribe',
+    'rabha', 'boro kachari',
     'inter-community', 'land dispute', 'ilp', 'inner line permit', 'caa', 'nrc',
     'illegal settler', 'mob attack',
+    # Meghalaya-specific social unrest triggers
+    'murder in meghalaya', 'killing in meghalaya', 'shillong unrest',
+    'meghalaya bandh', 'meghalaya protest', 'shillong violence',
+    'local vs non-local', 'settler issue meghalaya', 'indigenous meghalaya',
 
     # ============================================================
     # E. POLITICAL UNREST

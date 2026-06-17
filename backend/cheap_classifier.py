@@ -103,6 +103,20 @@ PASS (relevant=true) — strict allowlist. Item must clearly fit one of:
    epidemic declared by state/central authority in NER states.
    (National health campaigns, AIIMS news, routine advisories → REJECT)
 
+9. MEGHALAYA / NER COMMUNITY INCIDENT: Any of the following IN Meghalaya or
+   other NER states, reported by a local/regional outlet:
+   • Murder, killing, or suspicious death involving ethnic communities
+     (Khasi, Garo, Jaintia, Hajong, Koch, Biate, Pnar, Karbi, Dimasa, Rabha)
+   • Local (indigenous) vs non-local / immigrant tension or violence
+   • Veterans, ex-servicemen, or defence personnel grievances or incidents
+   • Social unrest, community mobilisation, or strikes with unrest potential
+   • Bangladesh border area crimes, illegal settler confrontations
+   • Major crimes (armed robbery, gang conflict, organised crime) with
+     potential to trigger community protests or ethnic polarisation
+   • Economic disruption, road blockades, or supply chain disruption
+     affecting Meghalaya districts
+   (Purely personal disputes, traffic accidents, routine theft → REJECT)
+
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ALWAYS REJECT — regardless of NER mention:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -121,6 +135,7 @@ ALWAYS REJECT — regardless of NER mention:
 • Bangladesh/Myanmar political or economic news without armed-group/border angle
 • National vaccination drives, health awareness, hospital openings
 • Routine police crime: theft, fraud, domestic violence, cybercrime (generic)
+  EXCEPTION: Murder/killing involving ethnic communities in Meghalaya/NER → PASS (category 9)
 • NE India cultural festivals, tourism, film festivals, brand campaigns
 • MGNREGA, PM-KISAN, welfare disbursement news
 • Political protests/bandhs ANNOUNCED (no violence confirmed)

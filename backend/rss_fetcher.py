@@ -19,7 +19,9 @@ RSS_SOURCES = [
     {"name": "EastMojo", "url": "https://www.eastmojo.com/feed/", "category": "regional", "language": "en", "region": "NER", "priority": "grassroots"},
     {"name": "North East Live", "url": "https://northeastlivetv.com/feed/", "category": "regional", "language": "en", "region": "NER", "priority": "grassroots"},
     {"name": "Nagaland Post", "url": "https://www.nagalandpost.com/feed/", "category": "regional", "language": "en", "region": "NER", "priority": "grassroots"},
-    {"name": "The Shillong Times", "url": "https://theshillongtimes.com/feed/", "category": "regional", "language": "en", "region": "NER", "priority": "grassroots"},
+    {"name": "The Shillong Times", "url": "https://theshillongtimes.com/feed/", "category": "regional", "language": "en", "region": "Meghalaya", "priority": "grassroots"},
+    {"name": "Meghalaya Guardian", "url": "https://meghalayaguardian.com/feed/", "category": "regional", "language": "en", "region": "Meghalaya", "priority": "grassroots"},
+    {"name": "Hills Post", "url": "https://hillspost.in/feed/", "category": "regional", "language": "en", "region": "Meghalaya", "priority": "grassroots"},
     {"name": "Imphal Free Press", "url": "https://www.ifp.co.in/feed", "category": "regional", "language": "en", "region": "NER", "priority": "grassroots"},
     {"name": "The Morung Express", "url": "https://morungexpress.com/feed", "category": "regional", "language": "en", "region": "NER", "priority": "grassroots"},
     {"name": "The Sangai Express", "url": "https://www.thesangaiexpress.com/Encyc/rss.aspx", "category": "regional", "language": "en", "region": "NER", "priority": "grassroots"},
@@ -196,6 +198,8 @@ NER_KEYWORDS_EN = [
     "insurgent", "insurgency", "militant", "militancy", "separatist",
     "ulfa", "nscn", "ndfb", "klo", "hnlc", "nlft", "attf", "bnlf",
     "bodo", "meitei", "kuki", "naga", "chin", "rohingya",
+    # Meghalaya ethnic communities
+    "khasi", "garo", "jaintia", "hajong", "koch", "biate", "pnar", "rabha",
     "ied", "ambush", "encounter", "ceasefire", "peace accord",
     "extortion", "kidnapping", "abduction",
 
@@ -321,7 +325,9 @@ def is_ner_relevant(article: dict, dynamic_keyword_weights: list = None) -> bool
         return True
 
     # All content from NER regional feeds is relevant
-    if category == "regional" or region == "NER":
+    if category == "regional" or region in ("NER", "Meghalaya", "Manipur", "Assam",
+                                             "Nagaland", "Mizoram", "Tripura",
+                                             "Arunachal Pradesh", "Sikkim"):
         return True
 
     # For national/international sources, apply keyword filtering
