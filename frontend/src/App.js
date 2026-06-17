@@ -47,6 +47,8 @@ function AppRoutes() {
     subscribe,
     pushSupported,
     pushSubscribed,
+    isIOS,
+    isStandalone,
   } = useNotifications();
 
 
@@ -84,6 +86,8 @@ function AppRoutes() {
               pushSupported={pushSupported}
               pushSubscribed={pushSubscribed}
               subscribe={subscribe}
+              isIOS={isIOS}
+              isStandalone={isStandalone}
             />
             <Layout
               alertCount={alertCount}

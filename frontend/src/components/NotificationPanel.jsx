@@ -4,7 +4,7 @@ import axios from "axios";
 import {
   X, Bell, BellOff, CheckCheck, ChevronRight,
   Flag, AlertTriangle, TrendingUp, Info, MapPin,
-  Filter, Settings, ToggleLeft, ToggleRight,
+  Filter, Settings, ToggleLeft, ToggleRight, Send,
 } from "lucide-react";
 import { Button } from "./ui/button";
 import { useNotifications } from "../hooks/useNotifications";
@@ -145,6 +145,7 @@ export default function NotificationPanel({ onClose }) {
   const [total, setTotal] = useState(0);
   const [tab, setTab] = useState("all");
   const [pushError, setPushError] = useState(null);
+  const [testPushStatus, setTestPushStatus] = useState(null); // null | "sending" | "ok" | "error"
 
   const load = useCallback(async (p = 1, unreadOnly = false) => {
     setLoading(true);
@@ -204,38 +205,95 @@ export default function NotificationPanel({ onClose }) {
 
         {/* iOS install prompt */}
         {showIOSPrompt && (
-          <div className="px-4 py-2 bg-amber-500/10 border-b border-amber-500/20 text-xs text-amber-300 flex items-start gap-2">
+          <div className="px-4 py-3 bg-amber-500/10 border-b border-amber-500/20 text-xs text-amber-300 flex items-start gap-2">
             <Info size={13} className="mt-0.5 shrink-0" />
-            <span>
-              For push on iOS, tap <strong>Share → Add to Home Screen</strong>, then enable notifications here.
-            </span>
+            <div className="space-y-1">
+              <p className="font-semibold">Background push requires PWA install</p>
+              <p className="text-amber-300/80">
+                1. Tap the <strong>Share</strong> icon in Safari<br />
+                2. Tap <strong>"Add to Home Screen"</strong><br />
+                3. Open from your Home Screen<br />
+                4. Come back here and enable push
+              </p>
+            </div>
           </div>
         )}
 
         {/* Push toggle */}
         {pushSupported && !isIOS && (
-          <div className="px-4 py-2 border-b border-border">
+          <div className="px-4 py-2 border-b border-border space-y-1.5">
             <div className="flex items-center justify-between">
-              <span className="text-xs text-muted-foreground">Push notifications</span>
-              <Button
-                variant="ghost"
-                size="sm"
-                className={`text-xs h-7 ${pushSubscribed ? "text-green-400" : "text-muted-foreground"}`}
-                onClick={async () => {
-                  setPushError(null);
-                  const result = pushSubscribed ? await unsubscribe() : await subscribe();
-                  if (result && !result.ok) setPushError(result.error);
-                }}
-              >
-                {pushSubscribed ? (
-                  <><Bell size={12} className="mr-1" /> On</>
-                ) : (
-                  <><BellOff size={12} className="mr-1" /> Off</>
+              <div>
+                <span className="text-xs text-muted-foreground">Background push</span>
+                {pushSubscribed && (
+                  <span className="ml-2 text-[10px] text-green-400 font-mono">ACTIVE</span>
                 )}
-              </Button>
+              </div>
+              <div className="flex items-center gap-1">
+                {pushSubscribed && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="text-xs h-7 text-muted-foreground hover:text-primary"
+                    title="Send a test push to verify background delivery"
+                    onClick={async () => {
+                      setTestPushStatus("sending");
+                      try {
+                        const token = localStorage.getItem("rd_token");
+                        const res = await fetch(`${API}/notifications/test-push`, {
+                          method: "POST",
+                          headers: { Authorization: `Bearer ${token}` },
+                        });
+                        if (res.ok) {
+                          setTestPushStatus("ok");
+                        } else {
+                          const d = await res.json().catch(() => ({}));
+                          setPushError(d.detail || "Test push failed");
+                          setTestPushStatus("error");
+                        }
+                      } catch {
+                        setPushError("Test push failed — check connection");
+                        setTestPushStatus("error");
+                      }
+                      setTimeout(() => setTestPushStatus(null), 4000);
+                    }}
+                    disabled={testPushStatus === "sending"}
+                  >
+                    <Send size={11} className="mr-1" />
+                    {testPushStatus === "sending" ? "Sending…" : testPushStatus === "ok" ? "Sent!" : "Test"}
+                  </Button>
+                )}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className={`text-xs h-7 ${pushSubscribed ? "text-green-400" : "text-muted-foreground"}`}
+                  onClick={async () => {
+                    setPushError(null);
+                    setTestPushStatus(null);
+                    const result = pushSubscribed ? await unsubscribe() : await subscribe();
+                    if (result && !result.ok) setPushError(result.error);
+                  }}
+                >
+                  {pushSubscribed ? (
+                    <><Bell size={12} className="mr-1" /> On</>
+                  ) : (
+                    <><BellOff size={12} className="mr-1" /> Off</>
+                  )}
+                </Button>
+              </div>
             </div>
+            {testPushStatus === "ok" && (
+              <p className="text-[10px] text-green-400 leading-tight">
+                Test sent — you should receive an OS notification within a few seconds, even if this tab is minimised.
+              </p>
+            )}
             {pushError && (
-              <p className="text-[10px] text-red-400 mt-1 leading-tight">{pushError}</p>
+              <p className="text-[10px] text-red-400 leading-tight">{pushError}</p>
+            )}
+            {!pushSubscribed && (
+              <p className="text-[10px] text-muted-foreground leading-tight">
+                Enable to receive alerts when the app is closed or minimised.
+              </p>
             )}
           </div>
         )}

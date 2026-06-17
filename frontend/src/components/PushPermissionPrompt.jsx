@@ -5,7 +5,7 @@ import { Button } from "./ui/button";
 const SNOOZE_KEY = "rd_push_snoozed_until";
 const SNOOZE_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
-export default function PushPermissionPrompt({ pushSupported, pushSubscribed, subscribe }) {
+export default function PushPermissionPrompt({ pushSupported, pushSubscribed, subscribe, isIOS, isStandalone }) {
   const [visible, setVisible] = useState(false);
   const [loading, setLoading] = useState(false);
 
@@ -13,6 +13,8 @@ export default function PushPermissionPrompt({ pushSupported, pushSubscribed, su
     if (!pushSupported || pushSubscribed) return;
     if (typeof Notification === "undefined") return;
     if (Notification.permission !== "default") return;
+    // iOS only supports push in standalone (PWA) mode — don't prompt in browser tab
+    if (isIOS && !isStandalone) return;
 
     const snoozedUntil = localStorage.getItem(SNOOZE_KEY);
     if (snoozedUntil && Date.now() < Number(snoozedUntil)) return;
@@ -20,7 +22,7 @@ export default function PushPermissionPrompt({ pushSupported, pushSubscribed, su
     // 3-second delay so it doesn't flash on page load
     const t = setTimeout(() => setVisible(true), 3000);
     return () => clearTimeout(t);
-  }, [pushSupported, pushSubscribed]);
+  }, [pushSupported, pushSubscribed, isIOS, isStandalone]);
 
   if (!visible) return null;
 

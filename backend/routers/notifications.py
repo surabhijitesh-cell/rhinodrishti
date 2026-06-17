@@ -216,6 +216,31 @@ async def mark_all_read(user: dict = Depends(get_current_user)):
     return {"updated": result.modified_count}
 
 
+@router.post("/notifications/test-push")
+async def test_push(user: dict = Depends(get_current_user)):
+    """Send a test push to all active subscriptions for the requesting user."""
+    from utils.push import send_push_to_user
+    subs = await db.push_subscriptions.find(
+        {"user_id": user["id"], "active": True}
+    ).to_list(None)
+    if not subs:
+        raise HTTPException(status_code=404, detail="No active push subscriptions found for this account. Enable push notifications first.")
+    test_doc = {
+        "title": "Rhino Drishti — Test Push",
+        "body": "Background push is working. You will receive alerts even when the app is closed.",
+        "deep_link": "/",
+        "id": "test-push",
+    }
+    await send_push_to_user(db, user["id"], test_doc)
+    # Check if any subs are still active after the attempt (failures mark them inactive)
+    still_active = await db.push_subscriptions.count_documents(
+        {"user_id": user["id"], "active": True}
+    )
+    if still_active == 0:
+        raise HTTPException(status_code=502, detail="Push delivery failed — your subscription may have expired. Try unsubscribing and re-enabling push notifications.")
+    return {"status": "sent", "subscriptions": len(subs)}
+
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _default_prefs(user_id: str) -> dict:
