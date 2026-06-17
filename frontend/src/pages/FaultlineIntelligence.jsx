@@ -6,6 +6,7 @@ import {
   Star, Plus, Download,
 } from "lucide-react";
 import CustomFaultlineModal from "../components/CustomFaultlineModal";
+import PAOIManager from "../components/PAOIManager";
 import axios from "axios";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Badge } from "../components/ui/badge";
@@ -158,6 +159,7 @@ export default function FaultlineIntelligence({ api }) {
   // watchlist: Map<faultline_id, rank>
   const [watchlist, setWatchlist] = useState(new Map());
   const [showCustomModal, setShowCustomModal] = useState(false);
+  const [showPAOIManager, setShowPAOIManager] = useState(false);
 
   const fetchFaultlines = useCallback(async () => {
     setLoading(true);
@@ -340,6 +342,14 @@ export default function FaultlineIntelligence({ api }) {
           </p>
         </div>
         <div className="flex gap-2">
+          <Button
+            variant="outline" size="sm"
+            className="rounded-none text-xs"
+            onClick={() => setShowPAOIManager(true)}
+          >
+            <Target size={12} className="mr-1" />
+            Manage PAOIs
+          </Button>
           <Button
             variant="outline" size="sm"
             className="rounded-none text-xs"
@@ -542,6 +552,10 @@ export default function FaultlineIntelligence({ api }) {
             </div>
           </CardContent>
         </Card>
+      )}
+
+      {showPAOIManager && (
+        <PAOIManager onClose={() => setShowPAOIManager(false)} />
       )}
 
       {showCustomModal && (

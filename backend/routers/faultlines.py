@@ -64,6 +64,31 @@ class FaultlinePatch(BaseModel):
     manual_review_required: Optional[bool] = None
 
 
+class PAOICreate(BaseModel):
+    name: str
+    description: Optional[str] = ""
+    rank: Optional[int] = None
+    geography: Optional[list] = []
+    actors_of_interest: Optional[list] = []
+    linked_faultline_ids: Optional[list] = []
+    keyword_pull: Optional[dict] = None  # {keywords: [], regions: []}
+    watch_geography: Optional[list] = []
+    color: Optional[str] = "red"
+
+
+class PAOIUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    rank: Optional[int] = None
+    geography: Optional[list] = None
+    actors_of_interest: Optional[list] = None
+    linked_faultline_ids: Optional[list] = None
+    keyword_pull: Optional[dict] = None
+    watch_geography: Optional[list] = None
+    color: Optional[str] = None
+    enabled: Optional[bool] = None
+
+
 # ── Auth helper ───────────────────────────────────────────────────────────────
 def _require_analyst_or_admin(current_user: dict) -> None:
     """Gate state-changing endpoints to analyst/admin roles only."""
@@ -203,6 +228,109 @@ async def list_priority_areas(
             }
 
     return {"total": len(paois), "priority_areas": paois}
+
+
+async def _retag_faultlines(now: str) -> int:
+    """Re-derive faultline.priority_area_ids from current enabled PAOIs."""
+    all_paois = await priority_areas_col.find({"enabled": True}, {"_id": 0}).to_list(None)
+    await db.faultlines.update_many({}, {"$set": {"priority_area_ids": []}})
+    fl_to_paois: dict[str, list] = {}
+    for pa in all_paois:
+        for fl_id in pa.get("linked_faultline_ids", []):
+            fl_to_paois.setdefault(fl_id, []).append(pa["id"])
+    tagged = 0
+    for fl_id, paoi_ids in fl_to_paois.items():
+        r = await db.faultlines.update_one(
+            {"id": fl_id},
+            {"$set": {"priority_area_ids": paoi_ids, "updated_at": now}},
+        )
+        if r.matched_count:
+            tagged += 1
+    return tagged
+
+
+@router.post("/priority-areas")
+async def create_priority_area(
+    data: PAOICreate,
+    current_user: dict = Depends(get_current_user),
+):
+    _require_analyst_or_admin(current_user)
+    now = datetime.now(timezone.utc).isoformat()
+
+    # Auto-assign rank if not provided
+    if data.rank is None:
+        count = await priority_areas_col.count_documents({})
+        data.rank = count + 1
+
+    # Generate a URL-safe id from name
+    import re
+    slug = re.sub(r"[^a-z0-9]+", "_", data.name.lower()).strip("_")
+    pa_id = f"custom_{slug}"
+    # Ensure unique
+    existing = await priority_areas_col.find_one({"id": pa_id})
+    if existing:
+        pa_id = f"{pa_id}_{int(datetime.now(timezone.utc).timestamp())}"
+
+    doc = {
+        "id": pa_id,
+        "rank": data.rank,
+        "name": data.name,
+        "description": data.description or "",
+        "geography": data.geography or [],
+        "actors_of_interest": data.actors_of_interest or [],
+        "linked_faultline_ids": data.linked_faultline_ids or [],
+        "keyword_pull": data.keyword_pull,
+        "watch_geography": data.watch_geography or [],
+        "color": data.color or "red",
+        "enabled": True,
+        "created_by": current_user.get("id"),
+        "created_at": now,
+        "updated_at": now,
+    }
+    await priority_areas_col.insert_one({**doc, "_id": pa_id})
+    await _retag_faultlines(now)
+    return doc
+
+
+@router.put("/priority-areas/{pa_id}")
+async def update_priority_area(
+    pa_id: str,
+    data: PAOIUpdate,
+    current_user: dict = Depends(get_current_user),
+):
+    _require_analyst_or_admin(current_user)
+    existing = await priority_areas_col.find_one({"id": pa_id})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Priority area not found")
+
+    now = datetime.now(timezone.utc).isoformat()
+    update = {k: v for k, v in data.model_dump().items() if v is not None}
+    update["updated_at"] = now
+
+    await priority_areas_col.update_one({"id": pa_id}, {"$set": update})
+    await _retag_faultlines(now)
+
+    updated = await priority_areas_col.find_one({"id": pa_id}, {"_id": 0})
+    return updated
+
+
+@router.delete("/priority-areas/{pa_id}")
+async def delete_priority_area(
+    pa_id: str,
+    current_user: dict = Depends(get_current_user),
+):
+    _require_analyst_or_admin(current_user)
+    existing = await priority_areas_col.find_one({"id": pa_id})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Priority area not found")
+
+    now = datetime.now(timezone.utc).isoformat()
+    await priority_areas_col.update_one(
+        {"id": pa_id},
+        {"$set": {"enabled": False, "updated_at": now}},
+    )
+    await _retag_faultlines(now)
+    return {"status": "disabled", "id": pa_id}
 
 
 # ── List ──────────────────────────────────────────────────────────────────────
