@@ -415,7 +415,17 @@ export default function DailyBrief({ api }) {
             <CardContent className="p-4" data-testid="key-developments">
               {brief.key_developments && brief.key_developments.length > 0 ? (
                 <ul className="space-y-3">
-                  {brief.key_developments.map((dev, i) => renderNewsItem(dev, i))}
+                  {(() => {
+                    const isPriority = (item) =>
+                      item.state === "Meghalaya" ||
+                      (item.faultline_tags || []).some(ft => ft.is_priority) ||
+                      (item.title || "").toLowerCase().includes("bangladesh") ||
+                      (item.summary || "").toLowerCase().includes("bangladesh border") ||
+                      (item.special_flags || []).some(f => /bangladesh|border/i.test(f));
+                    const priority = brief.key_developments.filter(isPriority);
+                    const rest = brief.key_developments.filter(item => !isPriority(item));
+                    return [...priority, ...rest].map((dev, i) => renderNewsItem(dev, i));
+                  })()}
                 </ul>
               ) : (
                 <p className="text-sm text-muted-foreground">No key developments recorded.</p>

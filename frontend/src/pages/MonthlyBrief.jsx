@@ -1275,7 +1275,7 @@ export default function MonthlyBrief({ api }) {
         </div>
       )}
 
-      {/* Sub-tabs inside Monthly Strategic — Brief vs Faultline Analysis */}
+      {/* Sub-tab header */}
       {(brief?.status === "ready" || brief?.status === "partial") && (
         <div className="flex gap-1 border-b border-border" data-testid="monthly-subtabs">
           <button
@@ -1288,39 +1288,23 @@ export default function MonthlyBrief({ api }) {
           >
             Monthly Brief
           </button>
-          <button
-            type="button"
-            className={`px-3 py-1.5 text-xs uppercase tracking-wider font-mono border-b-2 ${
-              activeTab === "faultlines" ? "border-primary text-primary" : "border-transparent text-muted-foreground"
-            }`}
-            onClick={() => setActiveTab("faultlines")}
-            data-testid="subtab-faultlines"
-          >
-            Faultline Analysis
-          </button>
         </div>
       )}
 
-      {/* MONTHLY BRIEF TAB — everything except faultline analysis section */}
+      {/* MONTHLY BRIEF TAB */}
       {(brief?.status === "ready" || brief?.status === "partial") && activeTab === "brief" && (
         <>
           {renderCommanderDashboard()}
+          {renderPaoiDeepDives()}
+          {renderFaultlines()}
           {renderOverview()}
           {renderStability()}
           {renderStabilityHistory()}
           {renderExecSummary()}
-          {renderPaoiDeepDives()}
           {renderStateSections()}
           {renderCrossBorder()}
           {renderScenarios()}
           {renderMitigation()}
-        </>
-      )}
-
-      {/* FAULTLINE ANALYSIS TAB — faultline section only, with dedicated PDF */}
-      {(brief?.status === "ready" || brief?.status === "partial") && activeTab === "faultlines" && (
-        <>
-          {renderFaultlines()}
         </>
       )}
     </div>

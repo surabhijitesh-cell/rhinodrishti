@@ -1261,34 +1261,7 @@ def _render_pdf(brief: dict, prev_brief: dict = None, include_faultlines: bool =
                 pdf.cell(w, row_h, _ascii(str(v))[:int(w * 1.4)], fill=True, border=1, **kw)
 
     # ══════════════════════════════════════════════════════════════════════════
-    # 1. REGIONAL OVERVIEW — stat boxes + severity chart + stability table
-    # ══════════════════════════════════════════════════════════════════════════
-    pdf.section_title("REGIONAL OVERVIEW", display_period)
-
-    draw_stat_boxes(
-        ["TOTAL ITEMS", "CRITICAL", "HIGH PRIORITY", "CROSS-BORDER"],
-        [str(total), str(crit), str(high_), str(cross)],
-        [(50, 80, 60), (180, 40, 40), (180, 100, 30), (50, 100, 160)],
-    )
-
-    draw_severity_bars(sev_counts)
-
-    if stability:
-        pdf.ln(2)
-        pdf.set_font("Helvetica", "B", 9)
-        pdf.set_text_color(*C_SEC_TEXT)
-        pdf.cell(0, 5, "State Stability Index", **NL)
-        stable_rows = [
-            [s.get("state", ""), s.get("score", "?"), s.get("level", ""),
-             stats.get("states", {}).get(s.get("state", ""), {}).get("total", 0)]
-            for s in stability
-        ]
-        draw_table(["State", "Score/100", "Level", "Intel Items"], [65, 32, 55, 38], stable_rows)
-
-    pdf.ln(4)
-
-    # ══════════════════════════════════════════════════════════════════════════
-    # 2. COMMANDER'S PRIORITY DASHBOARD + PAOI DEEP DIVES
+    # 1. COMMANDER'S PRIORITY DASHBOARD + PAOI DEEP DIVES
     # ══════════════════════════════════════════════════════════════════════════
     paoi = brief.get("paoi_analysis") or {}
     if paoi.get("available"):
@@ -1395,285 +1368,8 @@ def _render_pdf(brief: dict, prev_brief: dict = None, include_faultlines: bool =
             pdf.ln(2)
 
     # ══════════════════════════════════════════════════════════════════════════
-    # 3. PREVIOUS PERIOD RECAP (if available)
+    # 2. FAULTLINE ANALYSIS
     # ══════════════════════════════════════════════════════════════════════════
-    if prev_brief:
-        pdf.add_page()
-        prev_year_  = prev_brief.get("year", year)
-        prev_month_ = prev_brief.get("month", month - 1)
-        try:
-            prev_month_name = datetime(prev_year_, prev_month_, 1).strftime("%B %Y")
-        except Exception:
-            prev_month_name = "Previous Period"
-
-        pdf.section_title("PREVIOUS PERIOD RECAP", prev_month_name)
-
-        prev_stats  = prev_brief.get("stats", {})
-        prev_sev    = prev_stats.get("sev_counts", {})
-        prev_total  = prev_stats.get("total", 0)
-        prev_crit   = prev_sev.get("critical", 0)
-        prev_high   = prev_sev.get("high", 0)
-        prev_cross  = prev_stats.get("cross_border_count", 0)
-
-        def _delta(curr, prev):
-            d = curr - prev
-            return f"+{d}" if d > 0 else str(d)
-
-        # Delta stat boxes — show prev values with deltas vs current
-        box_h2 = 22
-        y0 = pdf.get_y()
-        box_data = [
-            ("TOTAL",   str(prev_total), _delta(total, prev_total),  (70, 90,  70)),
-            ("CRITICAL",str(prev_crit),  _delta(crit, prev_crit),    (160, 50, 50)),
-            ("HIGH",    str(prev_high),  _delta(high_, prev_high),   (160, 90, 30)),
-            ("X-BORDER",str(prev_cross), _delta(cross, prev_cross),  (50, 100, 150)),
-        ]
-        box_w2 = 46
-        for i, (lbl, val, delta, col) in enumerate(box_data):
-            bx = 10 + i * (box_w2 + 1)
-            pdf.set_fill_color(*col)
-            pdf.rect(bx, y0, box_w2, box_h2, "F")
-            pdf.set_xy(bx, y0 + 2)
-            pdf.set_font("Helvetica", "B", 13)
-            pdf.set_text_color(255, 255, 255)
-            pdf.cell(box_w2, 7, val, align="C")
-            pdf.set_xy(bx, y0 + 10)
-            pdf.set_font("Helvetica", "", 6)
-            pdf.set_text_color(210, 210, 210)
-            pdf.cell(box_w2, 4, lbl, align="C")
-            pdf.set_xy(bx, y0 + 15)
-            pdf.set_font("Helvetica", "I", 6)
-            d_num = int(delta.replace("+", "") or "0")
-            d_col = (140, 255, 140) if d_num > 0 else (255, 160, 160) if d_num < 0 else (210, 210, 210)
-            pdf.set_text_color(*d_col)
-            pdf.cell(box_w2, 5, _ascii(f"Now: {delta}"), align="C")
-        pdf.set_y(y0 + box_h2 + 4)
-
-        # Stability comparison table
-        prev_stability  = prev_stats.get("stability", [])
-        curr_stable_map = {s["state"]: s for s in stability}
-        prev_stable_map = {s["state"]: s for s in prev_stability}
-        all_states      = list(dict.fromkeys(
-            [s["state"] for s in prev_stability] + [s["state"] for s in stability]
-        ))[:10]
-
-        if all_states:
-            pdf.ln(3)
-            pdf.set_font("Helvetica", "B", 9)
-            pdf.set_text_color(*C_SEC_TEXT)
-            pdf.cell(0, 5, _ascii(f"Stability Comparison: {prev_month_name} → {month_name}"), **NL)
-            cmp_rows = []
-            for st in all_states:
-                p = prev_stable_map.get(st, {})
-                c = curr_stable_map.get(st, {})
-                p_sc = p.get("score", 0) or 0
-                c_sc = c.get("score", 0) or 0
-                d    = c_sc - p_sc
-                trend = f"+{d}" if d > 0 else str(d)
-                cmp_rows.append([st, str(p_sc), p.get("level", "-"), str(c_sc), c.get("level", "-"), trend])
-            draw_table(
-                ["State", f"Score ({prev_month_name[:3]})", "Level", f"Score ({month_name[:3]})", "Level", "Trend"],
-                [50, 27, 33, 27, 33, 20],
-                cmp_rows,
-            )
-
-        # Exec summary excerpt from previous period
-        prev_exec = prev_brief.get("executive_summary", "")
-        if prev_exec:
-            pdf.ln(4)
-            pdf.set_font("Helvetica", "B", 9)
-            pdf.set_text_color(*C_SEC_TEXT)
-            pdf.cell(0, 5, _ascii(f"Strategic Assessment — {prev_month_name}"), **NL)
-            pdf.set_fill_color(248, 252, 245)
-            pdf.set_font("Helvetica", "I", 8)
-            pdf.set_text_color(70, 80, 60)
-            excerpt = _ascii(prev_exec[:700]) + ("..." if len(prev_exec) > 700 else "")
-            pdf.multi_cell(0, 4, excerpt, fill=True, **NL)
-
-    # ══════════════════════════════════════════════════════════════════════════
-    # 4. PERIOD OVERVIEW
-    # ══════════════════════════════════════════════════════════════════════════
-    if pdf.get_y() > 220:
-        pdf.add_page()
-    else:
-        pdf.ln(4)
-
-    pdf.section_title("PERIOD OVERVIEW", display_period)
-    pdf.set_font("Helvetica", "", 9)
-    pdf.set_text_color(40, 40, 40)
-    pdf.multi_cell(0, 5, _ascii(brief.get("executive_summary", "")), **NL)
-    pdf.ln(3)
-
-    # ══════════════════════════════════════════════════════════════════════════
-    # 5. STATE SECTIONS
-    # ══════════════════════════════════════════════════════════════════════════
-    for state, st_brief in brief.get("state_sections", {}).items():
-        if pdf.get_y() > 230:
-            pdf.add_page()
-        else:
-            pdf.ln(2)
-
-        st_stats = stats.get("states", {}).get(state, {})
-        st_sev   = st_stats.get("sev_counts", {})
-
-        pdf.set_fill_color(*C_TBL_HDR)
-        pdf.set_text_color(255, 255, 255)
-        pdf.set_font("Helvetica", "B", 11)
-        pdf.cell(0, 7, _ascii(f"  {state.upper()}"), fill=True, **NL)
-
-        sev_parts = [f"{k.capitalize()}: {v}" for k, v in st_sev.items() if v]
-        sev_str   = "  |  ".join(sev_parts) if sev_parts else "No incidents recorded"
-        pdf.set_font("Helvetica", "", 8)
-        pdf.set_text_color(80, 80, 80)
-        pdf.cell(0, 4, _ascii(f"  Items: {st_stats.get('total', 0)}   {sev_str}"), **NL)
-        pdf.ln(1)
-
-        for k, label in [
-            ("severity_summary",    "Severity Profile"),
-            ("escalation_pattern",  "Escalation Pattern"),
-            ("key_actors",          "Key Actors"),
-            ("district_hotspots",   "District Hotspots"),
-            ("operational_concerns","Operational Concerns"),
-        ]:
-            v = st_brief.get(k)
-            if not v:
-                continue
-            if pdf.get_y() > 265:
-                pdf.add_page()
-            pdf.set_font("Helvetica", "B", 8)
-            pdf.set_text_color(*C_SEC_TEXT)
-            pdf.cell(0, 5, _ascii(f"  {label}"), **NL)
-            pdf.set_font("Helvetica", "", 8)
-            pdf.set_text_color(40, 40, 40)
-            pdf.multi_cell(0, 4, _ascii(str(v)), **NL)
-            pdf.ln(1)
-
-        note = st_brief.get("analyst_note")
-        if note:
-            pdf.set_fill_color(255, 248, 220)
-            pdf.set_text_color(120, 80, 20)
-            pdf.set_font("Helvetica", "I", 8)
-            pdf.multi_cell(0, 4, _ascii(f"  Analyst Note: {note}"), fill=True, **NL)
-
-        pdf.ln(2)
-
-    # ══════════════════════════════════════════════════════════════════════════
-    # 6. PREDICTIVE SCENARIOS
-    # ══════════════════════════════════════════════════════════════════════════
-    if brief.get("scenarios"):
-        if pdf.get_y() > 220:
-            pdf.add_page()
-        else:
-            pdf.ln(4)
-        pdf.section_title("PREDICTIVE SCENARIOS")
-
-        for sc in brief["scenarios"]:
-            if pdf.get_y() > 250:
-                pdf.add_page()
-            conf    = sc.get("confidence_pct", "?")
-            horizon = sc.get("horizon", "H+30")
-            title_s = _ascii(sc.get("title", "Scenario"))
-
-            pdf.set_fill_color(240, 245, 235)
-            pdf.set_font("Helvetica", "B", 9)
-            pdf.set_text_color(45, 65, 40)
-            pdf.cell(0, 6, _ascii(f"  {title_s}  |  Confidence: {conf}%  |  Horizon: {horizon}"), fill=True, **NL)
-            pdf.set_font("Helvetica", "", 8)
-            pdf.set_text_color(40, 40, 40)
-            pdf.multi_cell(0, 4, _ascii(sc.get("narrative", "")), **NL)
-
-            if sc.get("warning_indicators"):
-                pdf.set_font("Helvetica", "B", 7)
-                pdf.set_text_color(180, 60, 30)
-                pdf.cell(0, 4, "  Warning Indicators:", **NL)
-                pdf.set_font("Helvetica", "", 7)
-                pdf.set_text_color(150, 50, 30)
-                for w in sc["warning_indicators"][:5]:
-                    pdf.cell(0, 4, _ascii(f"    > {w}"), **NL)
-            pdf.ln(3)
-
-    # ══════════════════════════════════════════════════════════════════════════
-    # 7. MITIGATION PLAYBOOK  (unchanged — section number kept)
-    # ══════════════════════════════════════════════════════════════════════════
-    if brief.get("mitigation_playbook"):
-        pdf.add_page()
-        pdf.section_title("MITIGATION PLAYBOOK")
-
-        for state, plan in brief["mitigation_playbook"].items():
-            if pdf.get_y() > 250:
-                pdf.add_page()
-            pdf.set_font("Helvetica", "B", 10)
-            pdf.set_text_color(45, 65, 40)
-            pdf.cell(0, 5, _ascii(state), **NL)
-
-            for horizon, label in [
-                ("immediate",   "IMMEDIATE"),
-                ("short_term",  "SHORT TERM"),
-                ("medium_term", "MEDIUM TERM"),
-                ("long_term",   "LONG TERM"),
-            ]:
-                actions = plan.get(horizon, [])
-                if not actions:
-                    continue
-                pdf.set_font("Helvetica", "B", 8)
-                pdf.set_text_color(80, 100, 60)
-                pdf.cell(0, 4, f"  {label}:", **NL)
-                pdf.set_font("Helvetica", "", 8)
-                pdf.set_text_color(40, 40, 40)
-                for a in actions:
-                    action_txt = _ascii(a.get("action", ""))
-                    lead       = _ascii(a.get("lead_agency", ""))
-                    pdf.multi_cell(0, 4, f"    - {action_txt}  [Lead: {lead}]", **NL)
-            pdf.ln(2)
-
-    # ══════════════════════════════════════════════════════════════════════════
-    # 8. CROSS-BORDER THREAT ANALYSIS
-    # ══════════════════════════════════════════════════════════════════════════
-    cba = brief.get("cross_border_analysis") or {}
-    if cba:
-        pdf.add_page()
-        pdf.section_title("CROSS-BORDER THREAT ANALYSIS")
-
-        for border_key, border_label in [
-            ("bangladesh_border", "INDO-BANGLADESH BORDER"),
-            ("myanmar_border",    "INDO-MYANMAR BORDER"),
-        ]:
-            b = cba.get(border_key) or {}
-            if not b:
-                continue
-            if pdf.get_y() > 240:
-                pdf.add_page()
-
-            tl     = _ascii(b.get("threat_level", "?"))
-            tl_col = SEV_COLORS.get(tl.lower(), (80, 80, 80))
-
-            pdf.set_fill_color(50, 70, 45)
-            pdf.set_font("Helvetica", "B", 10)
-            pdf.set_text_color(255, 255, 255)
-            pdf.cell(140, 6, _ascii(f"  {border_label}"), fill=True)
-            pdf.set_fill_color(*tl_col)
-            pdf.cell(50, 6, _ascii(f"Threat: {tl}"), fill=True, align="C", **NL)
-
-            for field, label in [
-                ("overview",              "Overview"),
-                ("primary_threats",       "Primary Threats"),
-                ("hotspot_corridors",     "Hotspot Corridors"),
-                ("key_actors",            "Key Actors"),
-                ("indo_bd_dimension",     "Indo-Bangladesh Dimension"),
-                ("displacement_pressure", "Displacement Pressure"),
-                ("operational_concerns",  "Operational Concerns"),
-            ]:
-                v = b.get(field)
-                if v:
-                    pdf.set_font("Helvetica", "B", 8)
-                    pdf.set_text_color(*C_SEC_TEXT)
-                    pdf.cell(0, 4, _ascii(f"  {label}:"), **NL)
-                    pdf.set_font("Helvetica", "", 8)
-                    pdf.set_text_color(40, 40, 40)
-                    pdf.multi_cell(0, 4, _ascii(str(v)), **NL)
-            pdf.ln(3)
-
-    # ── Faultline Analysis (Phase 5b) ──────────────────────────────────────────
     fl_section = brief.get("faultline_analysis") or {}
     if include_faultlines and fl_section.get("available"):
         pdf.add_page()
@@ -1769,5 +1465,315 @@ def _render_pdf(brief: dict, prev_brief: dict = None, include_faultlines: bool =
             "(Assamese, Bengali, Manipuri, Mizo, Naga), Twitter/X and Telegram narrative spikes, influencer "
             "amplification patterns, and repeated cross-posted claims aligned with foreign-influence indicators."
         ), **NL)
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # 3. REGIONAL OVERVIEW — stat boxes + severity chart + stability table
+    # ══════════════════════════════════════════════════════════════════════════
+    if pdf.get_y() > 220:
+        pdf.add_page()
+    else:
+        pdf.ln(4)
+    pdf.section_title("REGIONAL OVERVIEW", display_period)
+
+    draw_stat_boxes(
+        ["TOTAL ITEMS", "CRITICAL", "HIGH PRIORITY", "CROSS-BORDER"],
+        [str(total), str(crit), str(high_), str(cross)],
+        [(50, 80, 60), (180, 40, 40), (180, 100, 30), (50, 100, 160)],
+    )
+
+    draw_severity_bars(sev_counts)
+
+    if stability:
+        pdf.ln(2)
+        pdf.set_font("Helvetica", "B", 9)
+        pdf.set_text_color(*C_SEC_TEXT)
+        pdf.cell(0, 5, "State Stability Index", **NL)
+        stable_rows = [
+            [s.get("state", ""), s.get("score", "?"), s.get("level", ""),
+             stats.get("states", {}).get(s.get("state", ""), {}).get("total", 0)]
+            for s in stability
+        ]
+        draw_table(["State", "Score/100", "Level", "Intel Items"], [65, 32, 55, 38], stable_rows)
+
+    pdf.ln(4)
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # 4. PREVIOUS PERIOD RECAP (if available)
+    # ══════════════════════════════════════════════════════════════════════════
+    if prev_brief:
+        pdf.add_page()
+        prev_year_  = prev_brief.get("year", year)
+        prev_month_ = prev_brief.get("month", month - 1)
+        try:
+            prev_month_name = datetime(prev_year_, prev_month_, 1).strftime("%B %Y")
+        except Exception:
+            prev_month_name = "Previous Period"
+
+        pdf.section_title("PREVIOUS PERIOD RECAP", prev_month_name)
+
+        prev_stats  = prev_brief.get("stats", {})
+        prev_sev    = prev_stats.get("sev_counts", {})
+        prev_total  = prev_stats.get("total", 0)
+        prev_crit   = prev_sev.get("critical", 0)
+        prev_high   = prev_sev.get("high", 0)
+        prev_cross  = prev_stats.get("cross_border_count", 0)
+
+        def _delta(curr, prev):
+            d = curr - prev
+            return f"+{d}" if d > 0 else str(d)
+
+        # Delta stat boxes — show prev values with deltas vs current
+        box_h2 = 22
+        y0 = pdf.get_y()
+        box_data = [
+            ("TOTAL",   str(prev_total), _delta(total, prev_total),  (70, 90,  70)),
+            ("CRITICAL",str(prev_crit),  _delta(crit, prev_crit),    (160, 50, 50)),
+            ("HIGH",    str(prev_high),  _delta(high_, prev_high),   (160, 90, 30)),
+            ("X-BORDER",str(prev_cross), _delta(cross, prev_cross),  (50, 100, 150)),
+        ]
+        box_w2 = 46
+        for i, (lbl, val, delta, col) in enumerate(box_data):
+            bx = 10 + i * (box_w2 + 1)
+            pdf.set_fill_color(*col)
+            pdf.rect(bx, y0, box_w2, box_h2, "F")
+            pdf.set_xy(bx, y0 + 2)
+            pdf.set_font("Helvetica", "B", 13)
+            pdf.set_text_color(255, 255, 255)
+            pdf.cell(box_w2, 7, val, align="C")
+            pdf.set_xy(bx, y0 + 10)
+            pdf.set_font("Helvetica", "", 6)
+            pdf.set_text_color(210, 210, 210)
+            pdf.cell(box_w2, 4, lbl, align="C")
+            pdf.set_xy(bx, y0 + 15)
+            pdf.set_font("Helvetica", "I", 6)
+            d_num = int(delta.replace("+", "") or "0")
+            d_col = (140, 255, 140) if d_num > 0 else (255, 160, 160) if d_num < 0 else (210, 210, 210)
+            pdf.set_text_color(*d_col)
+            pdf.cell(box_w2, 5, _ascii(f"Now: {delta}"), align="C")
+        pdf.set_y(y0 + box_h2 + 4)
+
+        # Stability comparison table
+        prev_stability  = prev_stats.get("stability", [])
+        curr_stable_map = {s["state"]: s for s in stability}
+        prev_stable_map = {s["state"]: s for s in prev_stability}
+        all_states      = list(dict.fromkeys(
+            [s["state"] for s in prev_stability] + [s["state"] for s in stability]
+        ))[:10]
+
+        if all_states:
+            pdf.ln(3)
+            pdf.set_font("Helvetica", "B", 9)
+            pdf.set_text_color(*C_SEC_TEXT)
+            pdf.cell(0, 5, _ascii(f"Stability Comparison: {prev_month_name} → {month_name}"), **NL)
+            cmp_rows = []
+            for st in all_states:
+                p = prev_stable_map.get(st, {})
+                c = curr_stable_map.get(st, {})
+                p_sc = p.get("score", 0) or 0
+                c_sc = c.get("score", 0) or 0
+                d    = c_sc - p_sc
+                trend = f"+{d}" if d > 0 else str(d)
+                cmp_rows.append([st, str(p_sc), p.get("level", "-"), str(c_sc), c.get("level", "-"), trend])
+            draw_table(
+                ["State", f"Score ({prev_month_name[:3]})", "Level", f"Score ({month_name[:3]})", "Level", "Trend"],
+                [50, 27, 33, 27, 33, 20],
+                cmp_rows,
+            )
+
+        # Exec summary excerpt from previous period
+        prev_exec = prev_brief.get("executive_summary", "")
+        if prev_exec:
+            pdf.ln(4)
+            pdf.set_font("Helvetica", "B", 9)
+            pdf.set_text_color(*C_SEC_TEXT)
+            pdf.cell(0, 5, _ascii(f"Strategic Assessment — {prev_month_name}"), **NL)
+            pdf.set_fill_color(248, 252, 245)
+            pdf.set_font("Helvetica", "I", 8)
+            pdf.set_text_color(70, 80, 60)
+            excerpt = _ascii(prev_exec[:700]) + ("..." if len(prev_exec) > 700 else "")
+            pdf.multi_cell(0, 4, excerpt, fill=True, **NL)
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # 5. PERIOD OVERVIEW
+    # ══════════════════════════════════════════════════════════════════════════
+    if pdf.get_y() > 220:
+        pdf.add_page()
+    else:
+        pdf.ln(4)
+
+    pdf.section_title("PERIOD OVERVIEW", display_period)
+    pdf.set_font("Helvetica", "", 9)
+    pdf.set_text_color(40, 40, 40)
+    pdf.multi_cell(0, 5, _ascii(brief.get("executive_summary", "")), **NL)
+    pdf.ln(3)
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # 6. STATE SECTIONS
+    # ══════════════════════════════════════════════════════════════════════════
+    for state, st_brief in brief.get("state_sections", {}).items():
+        if pdf.get_y() > 230:
+            pdf.add_page()
+        else:
+            pdf.ln(2)
+
+        st_stats = stats.get("states", {}).get(state, {})
+        st_sev   = st_stats.get("sev_counts", {})
+
+        pdf.set_fill_color(*C_TBL_HDR)
+        pdf.set_text_color(255, 255, 255)
+        pdf.set_font("Helvetica", "B", 11)
+        pdf.cell(0, 7, _ascii(f"  {state.upper()}"), fill=True, **NL)
+
+        sev_parts = [f"{k.capitalize()}: {v}" for k, v in st_sev.items() if v]
+        sev_str   = "  |  ".join(sev_parts) if sev_parts else "No incidents recorded"
+        pdf.set_font("Helvetica", "", 8)
+        pdf.set_text_color(80, 80, 80)
+        pdf.cell(0, 4, _ascii(f"  Items: {st_stats.get('total', 0)}   {sev_str}"), **NL)
+        pdf.ln(1)
+
+        for k, label in [
+            ("severity_summary",    "Severity Profile"),
+            ("escalation_pattern",  "Escalation Pattern"),
+            ("key_actors",          "Key Actors"),
+            ("district_hotspots",   "District Hotspots"),
+            ("operational_concerns","Operational Concerns"),
+        ]:
+            v = st_brief.get(k)
+            if not v:
+                continue
+            if pdf.get_y() > 265:
+                pdf.add_page()
+            pdf.set_font("Helvetica", "B", 8)
+            pdf.set_text_color(*C_SEC_TEXT)
+            pdf.cell(0, 5, _ascii(f"  {label}"), **NL)
+            pdf.set_font("Helvetica", "", 8)
+            pdf.set_text_color(40, 40, 40)
+            pdf.multi_cell(0, 4, _ascii(str(v)), **NL)
+            pdf.ln(1)
+
+        note = st_brief.get("analyst_note")
+        if note:
+            pdf.set_fill_color(255, 248, 220)
+            pdf.set_text_color(120, 80, 20)
+            pdf.set_font("Helvetica", "I", 8)
+            pdf.multi_cell(0, 4, _ascii(f"  Analyst Note: {note}"), fill=True, **NL)
+
+        pdf.ln(2)
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # 7. CROSS-BORDER THREAT ANALYSIS
+    # ══════════════════════════════════════════════════════════════════════════
+    cba = brief.get("cross_border_analysis") or {}
+    if cba:
+        pdf.add_page()
+        pdf.section_title("CROSS-BORDER THREAT ANALYSIS")
+
+        for border_key, border_label in [
+            ("bangladesh_border", "INDO-BANGLADESH BORDER"),
+            ("myanmar_border",    "INDO-MYANMAR BORDER"),
+        ]:
+            b = cba.get(border_key) or {}
+            if not b:
+                continue
+            if pdf.get_y() > 240:
+                pdf.add_page()
+
+            tl     = _ascii(b.get("threat_level", "?"))
+            tl_col = SEV_COLORS.get(tl.lower(), (80, 80, 80))
+
+            pdf.set_fill_color(50, 70, 45)
+            pdf.set_font("Helvetica", "B", 10)
+            pdf.set_text_color(255, 255, 255)
+            pdf.cell(140, 6, _ascii(f"  {border_label}"), fill=True)
+            pdf.set_fill_color(*tl_col)
+            pdf.cell(50, 6, _ascii(f"Threat: {tl}"), fill=True, align="C", **NL)
+
+            for field, label in [
+                ("overview",              "Overview"),
+                ("primary_threats",       "Primary Threats"),
+                ("hotspot_corridors",     "Hotspot Corridors"),
+                ("key_actors",            "Key Actors"),
+                ("indo_bd_dimension",     "Indo-Bangladesh Dimension"),
+                ("displacement_pressure", "Displacement Pressure"),
+                ("operational_concerns",  "Operational Concerns"),
+            ]:
+                v = b.get(field)
+                if v:
+                    pdf.set_font("Helvetica", "B", 8)
+                    pdf.set_text_color(*C_SEC_TEXT)
+                    pdf.cell(0, 4, _ascii(f"  {label}:"), **NL)
+                    pdf.set_font("Helvetica", "", 8)
+                    pdf.set_text_color(40, 40, 40)
+                    pdf.multi_cell(0, 4, _ascii(str(v)), **NL)
+            pdf.ln(3)
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # 8. PREDICTIVE SCENARIOS
+    # ══════════════════════════════════════════════════════════════════════════
+    if brief.get("scenarios"):
+        if pdf.get_y() > 220:
+            pdf.add_page()
+        else:
+            pdf.ln(4)
+        pdf.section_title("PREDICTIVE SCENARIOS")
+
+        for sc in brief["scenarios"]:
+            if pdf.get_y() > 250:
+                pdf.add_page()
+            conf    = sc.get("confidence_pct", "?")
+            horizon = sc.get("horizon", "H+30")
+            title_s = _ascii(sc.get("title", "Scenario"))
+
+            pdf.set_fill_color(240, 245, 235)
+            pdf.set_font("Helvetica", "B", 9)
+            pdf.set_text_color(45, 65, 40)
+            pdf.cell(0, 6, _ascii(f"  {title_s}  |  Confidence: {conf}%  |  Horizon: {horizon}"), fill=True, **NL)
+            pdf.set_font("Helvetica", "", 8)
+            pdf.set_text_color(40, 40, 40)
+            pdf.multi_cell(0, 4, _ascii(sc.get("narrative", "")), **NL)
+
+            if sc.get("warning_indicators"):
+                pdf.set_font("Helvetica", "B", 7)
+                pdf.set_text_color(180, 60, 30)
+                pdf.cell(0, 4, "  Warning Indicators:", **NL)
+                pdf.set_font("Helvetica", "", 7)
+                pdf.set_text_color(150, 50, 30)
+                for w in sc["warning_indicators"][:5]:
+                    pdf.cell(0, 4, _ascii(f"    > {w}"), **NL)
+            pdf.ln(3)
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # 9. MITIGATION PLAYBOOK
+    # ══════════════════════════════════════════════════════════════════════════
+    if brief.get("mitigation_playbook"):
+        pdf.add_page()
+        pdf.section_title("MITIGATION PLAYBOOK")
+
+        for state, plan in brief["mitigation_playbook"].items():
+            if pdf.get_y() > 250:
+                pdf.add_page()
+            pdf.set_font("Helvetica", "B", 10)
+            pdf.set_text_color(45, 65, 40)
+            pdf.cell(0, 5, _ascii(state), **NL)
+
+            for horizon, label in [
+                ("immediate",   "IMMEDIATE"),
+                ("short_term",  "SHORT TERM"),
+                ("medium_term", "MEDIUM TERM"),
+                ("long_term",   "LONG TERM"),
+            ]:
+                actions = plan.get(horizon, [])
+                if not actions:
+                    continue
+                pdf.set_font("Helvetica", "B", 8)
+                pdf.set_text_color(80, 100, 60)
+                pdf.cell(0, 4, f"  {label}:", **NL)
+                pdf.set_font("Helvetica", "", 8)
+                pdf.set_text_color(40, 40, 40)
+                for a in actions:
+                    action_txt = _ascii(a.get("action", ""))
+                    lead       = _ascii(a.get("lead_agency", ""))
+                    pdf.multi_cell(0, 4, f"    - {action_txt}  [Lead: {lead}]", **NL)
+            pdf.ln(2)
 
     return bytes(pdf.output())

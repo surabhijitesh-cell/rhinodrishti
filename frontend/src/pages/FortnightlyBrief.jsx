@@ -1003,7 +1003,7 @@ export default function FortnightlyBrief({ api }) {
         </div>
       )}
 
-      {/* Sub-tabs: Fortnightly Brief vs Faultline Analysis */}
+      {/* Sub-tab header */}
       {brief?.status === "ready" && (
         <div className="flex gap-1 border-b border-border" data-testid="fortnightly-subtabs">
           <button
@@ -1016,37 +1016,22 @@ export default function FortnightlyBrief({ api }) {
           >
             Fortnightly Brief
           </button>
-          <button
-            type="button"
-            className={`px-3 py-1.5 text-xs uppercase tracking-wider font-mono border-b-2 ${
-              activeTab === "faultlines" ? "border-primary text-primary" : "border-transparent text-muted-foreground"
-            }`}
-            onClick={() => setActiveTab("faultlines")}
-            data-testid="subtab-faultlines"
-          >
-            Faultline Analysis
-          </button>
         </div>
       )}
 
       {brief?.status === "ready" && activeTab === "brief" && (
         <>
           <CommanderDashboard paoiAnalysis={brief?.paoi_analysis} />
+          <PaoiDeepDives paoiAnalysis={brief?.paoi_analysis} />
+          {renderFaultlines()}
           {renderOverview()}
           {renderStability()}
           {renderStabilityHistory()}
           {renderExecSummary()}
-          <PaoiDeepDives paoiAnalysis={brief?.paoi_analysis} />
           {renderStateSections()}
           {renderCrossBorder()}
           {renderScenarios()}
           {renderMitigation()}
-        </>
-      )}
-
-      {brief?.status === "ready" && activeTab === "faultlines" && (
-        <>
-          {renderFaultlines()}
         </>
       )}
     </div>
