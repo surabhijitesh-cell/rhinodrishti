@@ -25,6 +25,7 @@ Design constraints:
 import asyncio
 import json
 import logging
+import math
 import re
 import uuid
 from collections import defaultdict
@@ -289,12 +290,17 @@ async def score_article_faultline_impact(
 # the score. A pre-filter keyword hit is NOT enough — the LLM must assign real
 # impact + confidence. This is what stops "every state article → score 100".
 SIG_IMPACT_MIN = 45      # LLM impact_score floor to count
+DECAY_LAMBDA   = 0.35   # exponential time-decay rate (λ): e^(-λ*age_days)
 SIG_CONF_MIN = 45        # LLM confidence floor to count
 VELOCITY_PER_ARTICLE = 8 # 12.5 significant articles → velocity caps (was 5 = 20)
 
 
 # ── Daily score computation (mirrors stability formula in trends.py) ──────────
-def compute_faultline_score(matched_articles: list[dict], mappings: list[dict]) -> dict:
+def compute_faultline_score(
+    matched_articles: list[dict],
+    mappings: list[dict],
+    target_date: Optional[str] = None,
+) -> dict:
     """
     Compute composite faultline score from matched articles + their LLM impact mappings.
 
@@ -306,8 +312,11 @@ def compute_faultline_score(matched_articles: list[dict], mappings: list[dict]) 
          so day-to-day variance from the LLM actually shows in the trendline.
       3. Velocity de-capped: 12.5 significant articles to max (was 20 raw → cap
          at n=20 meant every busy day pegged 100).
+      4. Exponential time-decay (λ=0.35) prevents stale articles in the 7-day
+         window from holding a faultline at CRITICAL when no new news arrived.
+         Day-0 article = weight 1.0; Day-6 article = weight 0.12.
 
-    Formula backbone (unchanged weights, scoped to SIGNIFICANT articles):
+    Formula backbone (weights scoped to SIGNIFICANT articles, decay-weighted):
       raw = severity_load×0.40 + velocity×0.25 + actor_spread×0.20 + cross_border×0.15
       final = 0.5×raw + 0.5×avg_llm_impact
 
@@ -333,8 +342,7 @@ def compute_faultline_score(matched_articles: list[dict], mappings: list[dict]) 
 
     n = len(sig_articles)
     if n == 0:
-        # Nothing significant today — faultline quiet. Low score from any
-        # residual sub-threshold signal, not zero, so the line isn't jagged.
+        # Nothing significant today — faultline quiet.
         return {
             "raw_score": 0.0, "severity_load": 0.0, "velocity": 0.0,
             "actor_spread": 0.0, "cross_border": 0.0,
@@ -342,14 +350,39 @@ def compute_faultline_score(matched_articles: list[dict], mappings: list[dict]) 
             "avg_impact": 0.0, "avg_confidence": 0.0,
         }
 
-    # Severity load (0-100): weighted average severity × 25 (weights 1-4)
-    sev_sum = sum(_SEV_WEIGHT.get(a.get("severity", "low"), 1) for a in sig_articles)
-    severity_load = (sev_sum / n) * 25
+    # ── Time-decay weights ────────────────────────────────────────────────────
+    # e^(-λ * age_days): Day 0=1.0, Day 1=0.70, Day 2=0.49 … Day 6=0.12
+    ref_date = None
+    if target_date:
+        try:
+            ref_date = datetime.fromisoformat(target_date).date()
+        except Exception:
+            pass
 
-    # Velocity (0-100): significant article count, de-capped
-    velocity = min(100, n * VELOCITY_PER_ARTICLE)
+    def _decay(art: dict) -> float:
+        if ref_date is None:
+            return 1.0
+        pub = art.get("published_at", "")
+        if not pub:
+            return 1.0
+        try:
+            age = (ref_date - datetime.fromisoformat(pub[:10]).date()).days
+            return math.exp(-DECAY_LAMBDA * max(0, age))
+        except Exception:
+            return 1.0
 
-    # Actor spread (0-100): unique actors + locations across significant articles
+    weights = [_decay(a) for a in sig_articles]
+    total_w = sum(weights) or 1.0
+
+    # Severity load (0-100): decay-weighted average severity × 25
+    sev_sum = sum(_SEV_WEIGHT.get(a.get("severity", "low"), 1) * w
+                  for a, w in zip(sig_articles, weights))
+    severity_load = (sev_sum / total_w) * 25
+
+    # Velocity (0-100): decay-weighted effective article count
+    velocity = min(100, total_w * VELOCITY_PER_ARTICLE)
+
+    # Actor spread (0-100): unique actors + locations — presence-based, not decayed
     actors = set()
     for a in sig_articles:
         for actor in (a.get("actors") or []):
@@ -359,17 +392,17 @@ def compute_faultline_score(matched_articles: list[dict], mappings: list[dict]) 
             actors.add(loc)
     actor_spread = min(100, len(actors) * 10)
 
-    # Cross-border share (0-100) of significant articles
+    # Cross-border share (0-100) — ratio, not decayed
     cb_count = sum(1 for a in sig_articles if a.get("is_cross_border"))
     cross_border = (cb_count / n) * 100
 
-    # LLM impact over significant mappings
+    # LLM impact — decay-weighted mean over significant mappings
     impacts = [m.get("impact_score", 0) for m in sig_mappings]
     confidences = [m.get("confidence", 0) for m in sig_mappings]
-    avg_impact = sum(impacts) / len(impacts) if impacts else 0
+    avg_impact = sum(imp * w for imp, w in zip(impacts, weights)) / total_w
     avg_confidence = sum(confidences) / len(confidences) if confidences else 0
 
-    # Composite — same weight structure as stability, on significant articles
+    # Composite
     raw_score = (
         severity_load * W_SEVERITY_LOAD
         + velocity * W_VELOCITY
@@ -611,7 +644,7 @@ async def run_daily_faultline_pass(
 
         if not candidates:
             raw_scores[fl_id] = 0.0
-            breakdowns[fl_id] = compute_faultline_score([], [])
+            breakdowns[fl_id] = compute_faultline_score([], [], target_date=target_date)
             continue
 
         # Score each candidate via LLM (parallel within concurrency limit)
@@ -697,7 +730,7 @@ async def run_daily_faultline_pass(
             })
             all_mappings_count += len(mapping_docs)
 
-        breakdown = compute_faultline_score(kept_articles, mappings)
+        breakdown = compute_faultline_score(kept_articles, mappings, target_date=target_date)
         raw_scores[fl_id] = breakdown["raw_score"]
         breakdowns[fl_id] = breakdown
 

@@ -954,7 +954,9 @@ async def get_faultline_articles(
             return {"faultline_id": fl_id, "articles": [], "date": None}
         q["date"] = latest["date"]
 
-    cursor = mappings_col.find(q, {"_id": 0}).sort("impact_score", -1).limit(limit)
+    cursor = mappings_col.find(q, {"_id": 0}).sort(
+        [("article_published_at", -1), ("impact_score", -1)]
+    ).limit(limit)
     mappings = [m async for m in cursor]
 
     # Fetch source article URLs for navigation
