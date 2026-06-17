@@ -124,6 +124,16 @@ async def create_flag(
     return {"flag_id": flag_id, "notification_id": flag_doc.get("notification_id")}
 
 
+@router.get("/flags/sent-article-ids")
+async def get_sent_flag_article_ids(user: dict = Depends(get_current_user)):
+    """Return all article IDs the current user has ever flagged (for UI highlighting)."""
+    docs = await db.news_flags.find(
+        {"flagged_by": user["id"]},
+        {"article_id": 1, "_id": 0},
+    ).to_list(None)
+    return {"article_ids": list({d["article_id"] for d in docs})}
+
+
 @router.get("/flags/sent")
 async def get_sent_flags(
     page: int = 1,

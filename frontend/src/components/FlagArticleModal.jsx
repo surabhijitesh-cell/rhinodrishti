@@ -7,7 +7,7 @@ import { Button } from "./ui/button";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 
-export default function FlagArticleModal({ item, api, onClose }) {
+export default function FlagArticleModal({ item, api, onClose, onFlagged }) {
   const [users, setUsers] = useState([]);
   const [selected, setSelected] = useState([]);
   const [note, setNote] = useState("");
@@ -65,6 +65,7 @@ export default function FlagArticleModal({ item, api, onClose }) {
         { headers: { Authorization: `Bearer ${token}` } }
       );
       toast.success(`Flagged for ${selected.length} recipient${selected.length > 1 ? "s" : ""}`);
+      onFlagged?.();
       onClose();
     } catch (err) {
       toast.error(err.response?.data?.detail || "Flag failed");
