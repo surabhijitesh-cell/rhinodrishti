@@ -1288,7 +1288,114 @@ def _render_pdf(brief: dict, prev_brief: dict = None, include_faultlines: bool =
     pdf.ln(4)
 
     # ══════════════════════════════════════════════════════════════════════════
-    # 2. PREVIOUS PERIOD RECAP (if available)
+    # 2. COMMANDER'S PRIORITY DASHBOARD + PAOI DEEP DIVES
+    # ══════════════════════════════════════════════════════════════════════════
+    paoi = brief.get("paoi_analysis") or {}
+    if paoi.get("available"):
+        pdf.add_page()
+        pdf.set_fill_color(150, 30, 30)  # red header — priority
+        pdf.set_text_color(255, 255, 255)
+        pdf.set_font("Helvetica", "B", 13)
+        pdf.cell(0, 8, _ascii("  COMMANDER'S PRIORITY DASHBOARD"), fill=True, **NL)
+        pdf.ln(2)
+
+        # Dashboard table
+        dash = paoi.get("commander_dashboard", [])
+        pdf.set_font("Helvetica", "B", 8)
+        pdf.set_fill_color(*C_TBL_HDR)
+        pdf.set_text_color(255, 255, 255)
+        pdf.cell(12, 5, "  #", fill=True)
+        pdf.cell(95, 5, "Priority Area", fill=True)
+        pdf.cell(20, 5, "Score", fill=True, align="C")
+        pdf.cell(25, 5, "Level", fill=True, align="C")
+        pdf.cell(20, 5, "Trend", fill=True, align="C", **NL)
+        for i, r in enumerate(dash):
+            if pdf.get_y() > 270:
+                pdf.add_page()
+            pdf.set_text_color(40, 40, 40)
+            pdf.set_font("Helvetica", "", 8)
+            fill = i % 2 == 0
+            if fill:
+                pdf.set_fill_color(*C_TBL_ALT)
+            score = r.get("score")
+            score_str = f"{score:.0f}" if score is not None else "-"
+            trend = f"{r.get('trend', '')} {r.get('delta', 0):+.0f}"
+            pdf.cell(12, 5, _ascii(f"  P{r.get('rank', '')}"), fill=fill)
+            pdf.cell(95, 5, _ascii(r.get("name", "")[:55]), fill=fill)
+            pdf.cell(20, 5, score_str, fill=fill, align="C")
+            pdf.cell(25, 5, _ascii(r.get("level", "")), fill=fill, align="C")
+            pdf.cell(20, 5, _ascii(trend), fill=fill, align="C", **NL)
+        pdf.ln(2)
+
+        # Bottom line + focus next period (rich LLM analysis)
+        overall = (paoi.get("synthesis") or {}).get("overall", {})
+        if overall.get("bottom_line"):
+            pdf.set_fill_color(240, 230, 230)
+            pdf.set_font("Helvetica", "B", 10)
+            pdf.set_text_color(150, 30, 30)
+            pdf.cell(0, 6, _ascii("  BOTTOM LINE"), fill=True, **NL)
+            pdf.set_fill_color(252, 245, 245)
+            pdf.set_font("Helvetica", "", 9)
+            pdf.set_text_color(40, 40, 40)
+            pdf.multi_cell(0, 5, _ascii(str(overall["bottom_line"])), fill=True, **NL)
+            pdf.ln(2)
+        focus = overall.get("top_3_focus_next") or []
+        if focus:
+            pdf.set_fill_color(240, 245, 235)
+            pdf.set_font("Helvetica", "B", 9)
+            pdf.set_text_color(*C_SEC_TEXT)
+            pdf.cell(0, 6, _ascii("  FOCUS NEXT PERIOD"), fill=True, **NL)
+            pdf.set_font("Helvetica", "", 9)
+            pdf.set_text_color(40, 40, 40)
+            for i, f in enumerate(focus, 1):
+                pdf.multi_cell(0, 5, _ascii(f"  {i}. {f}"), **NL)
+            pdf.ln(2)
+
+        # Per-PAOI deep-dives
+        per = (paoi.get("synthesis") or {}).get("per_paoi", {})
+        if paoi.get("paois"):
+            pdf.set_fill_color(150, 30, 30)
+            pdf.set_text_color(255, 255, 255)
+            pdf.set_font("Helvetica", "B", 11)
+            pdf.cell(0, 7, _ascii("  PRIORITY AREA DEEP DIVES"), fill=True, **NL)
+            pdf.ln(2)
+        for p in paoi.get("paois", []):
+            if pdf.get_y() > 245:
+                pdf.add_page()
+            mv = p.get("faultline_movement", {})
+            syn = per.get(p["id"], {})
+            pdf.set_fill_color(50, 70, 45)
+            pdf.set_text_color(255, 255, 255)
+            pdf.set_font("Helvetica", "B", 10)
+            score = mv.get("last")
+            hdr = f"  P{p.get('rank')} {p.get('name', '')}"
+            if score is not None:
+                hdr += f"   [{score:.0f} {mv.get('level', '')}]"
+            pdf.cell(0, 6, _ascii(hdr), fill=True, **NL)
+
+            # Top faultlines in this PAOI
+            pdf.set_font("Helvetica", "", 8)
+            pdf.set_text_color(60, 60, 60)
+            for f in (mv.get("per_faultline") or [])[:5]:
+                line = f"    {f['name'][:50]:50s} {f['last']:5.0f} ({f['level']}) {f['delta']:+.0f}"
+                pdf.cell(0, 4, _ascii(line), **NL)
+
+            if syn.get("period_impact"):
+                pdf.set_font("Helvetica", "", 9)
+                pdf.set_text_color(40, 40, 40)
+                pdf.multi_cell(0, 5, _ascii(str(syn["period_impact"])), **NL)
+            if syn.get("forward_concerns"):
+                pdf.set_font("Helvetica", "I", 8)
+                pdf.set_text_color(120, 80, 20)
+                pdf.multi_cell(0, 4, _ascii(f"Watch next: {syn['forward_concerns']}"), **NL)
+            if syn.get("manual_review"):
+                pdf.set_font("Helvetica", "I", 8)
+                pdf.set_text_color(40, 90, 110)
+                pdf.multi_cell(0, 4, _ascii(f"Manual review: {syn['manual_review']}"), **NL)
+            pdf.ln(2)
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # 3. PREVIOUS PERIOD RECAP (if available)
     # ══════════════════════════════════════════════════════════════════════════
     if prev_brief:
         pdf.add_page()
@@ -1384,21 +1491,21 @@ def _render_pdf(brief: dict, prev_brief: dict = None, include_faultlines: bool =
             pdf.multi_cell(0, 4, excerpt, fill=True, **NL)
 
     # ══════════════════════════════════════════════════════════════════════════
-    # 3. EXECUTIVE SUMMARY
+    # 4. PERIOD OVERVIEW
     # ══════════════════════════════════════════════════════════════════════════
     if pdf.get_y() > 220:
         pdf.add_page()
     else:
         pdf.ln(4)
 
-    pdf.section_title("EXECUTIVE STRATEGIC ASSESSMENT")
+    pdf.section_title("PERIOD OVERVIEW", display_period)
     pdf.set_font("Helvetica", "", 9)
     pdf.set_text_color(40, 40, 40)
     pdf.multi_cell(0, 5, _ascii(brief.get("executive_summary", "")), **NL)
     pdf.ln(3)
 
     # ══════════════════════════════════════════════════════════════════════════
-    # 4. STATE SECTIONS
+    # 5. STATE SECTIONS
     # ══════════════════════════════════════════════════════════════════════════
     for state, st_brief in brief.get("state_sections", {}).items():
         if pdf.get_y() > 230:
@@ -1451,7 +1558,7 @@ def _render_pdf(brief: dict, prev_brief: dict = None, include_faultlines: bool =
         pdf.ln(2)
 
     # ══════════════════════════════════════════════════════════════════════════
-    # 5. PREDICTIVE SCENARIOS
+    # 6. PREDICTIVE SCENARIOS
     # ══════════════════════════════════════════════════════════════════════════
     if brief.get("scenarios"):
         if pdf.get_y() > 220:
@@ -1486,7 +1593,7 @@ def _render_pdf(brief: dict, prev_brief: dict = None, include_faultlines: bool =
             pdf.ln(3)
 
     # ══════════════════════════════════════════════════════════════════════════
-    # 7. MITIGATION PLAYBOOK
+    # 7. MITIGATION PLAYBOOK  (unchanged — section number kept)
     # ══════════════════════════════════════════════════════════════════════════
     if brief.get("mitigation_playbook"):
         pdf.add_page()
@@ -1565,102 +1672,6 @@ def _render_pdf(brief: dict, prev_brief: dict = None, include_faultlines: bool =
                     pdf.set_text_color(40, 40, 40)
                     pdf.multi_cell(0, 4, _ascii(str(v)), **NL)
             pdf.ln(3)
-
-    # ── Commander Priority Dashboard + PAOI deep-dives (Phase G) ───────────────
-    paoi = brief.get("paoi_analysis") or {}
-    if paoi.get("available"):
-        pdf.add_page()
-        pdf.set_fill_color(150, 30, 30)  # red header — priority
-        pdf.set_text_color(255, 255, 255)
-        pdf.set_font("Helvetica", "B", 13)
-        pdf.cell(0, 8, _ascii("  COMMANDER'S PRIORITY DASHBOARD"), fill=True, **NL)
-        pdf.ln(2)
-
-        # Dashboard table
-        dash = paoi.get("commander_dashboard", [])
-        pdf.set_font("Helvetica", "B", 8)
-        pdf.set_fill_color(*C_TBL_HDR)
-        pdf.set_text_color(255, 255, 255)
-        pdf.cell(12, 5, "  #", fill=True)
-        pdf.cell(95, 5, "Priority Area", fill=True)
-        pdf.cell(20, 5, "Score", fill=True, align="C")
-        pdf.cell(25, 5, "Level", fill=True, align="C")
-        pdf.cell(20, 5, "Trend", fill=True, align="C", **NL)
-        for i, r in enumerate(dash):
-            if pdf.get_y() > 270:
-                pdf.add_page()
-            pdf.set_text_color(40, 40, 40)
-            pdf.set_font("Helvetica", "", 8)
-            fill = i % 2 == 0
-            if fill:
-                pdf.set_fill_color(*C_TBL_ALT)
-            score = r.get("score")
-            score_str = f"{score:.0f}" if score is not None else "-"
-            trend = f"{r.get('trend', '')} {r.get('delta', 0):+.0f}"
-            pdf.cell(12, 5, _ascii(f"  P{r.get('rank', '')}"), fill=fill)
-            pdf.cell(95, 5, _ascii(r.get("name", "")[:55]), fill=fill)
-            pdf.cell(20, 5, score_str, fill=fill, align="C")
-            pdf.cell(25, 5, _ascii(r.get("level", "")), fill=fill, align="C")
-            pdf.cell(20, 5, _ascii(trend), fill=fill, align="C", **NL)
-        pdf.ln(2)
-
-        # Bottom line + focus next
-        overall = (paoi.get("synthesis") or {}).get("overall", {})
-        if overall.get("bottom_line"):
-            pdf.set_font("Helvetica", "B", 10)
-            pdf.set_text_color(150, 30, 30)
-            pdf.cell(0, 6, _ascii("  Bottom Line"), **NL)
-            pdf.set_font("Helvetica", "", 9)
-            pdf.set_text_color(40, 40, 40)
-            pdf.multi_cell(0, 5, _ascii(str(overall["bottom_line"])), **NL)
-            pdf.ln(1)
-        focus = overall.get("top_3_focus_next") or []
-        if focus:
-            pdf.set_font("Helvetica", "B", 9)
-            pdf.set_text_color(*C_SEC_TEXT)
-            pdf.cell(0, 5, _ascii("  Focus Next Period:"), **NL)
-            pdf.set_font("Helvetica", "", 9)
-            pdf.set_text_color(40, 40, 40)
-            for i, f in enumerate(focus, 1):
-                pdf.multi_cell(0, 5, _ascii(f"  {i}. {f}"), **NL)
-            pdf.ln(1)
-
-        # Per-PAOI deep-dives
-        per = (paoi.get("synthesis") or {}).get("per_paoi", {})
-        for p in paoi.get("paois", []):
-            if pdf.get_y() > 245:
-                pdf.add_page()
-            mv = p.get("faultline_movement", {})
-            syn = per.get(p["id"], {})
-            pdf.set_fill_color(50, 70, 45)
-            pdf.set_text_color(255, 255, 255)
-            pdf.set_font("Helvetica", "B", 10)
-            score = mv.get("last")
-            hdr = f"  P{p.get('rank')} {p.get('name', '')}"
-            if score is not None:
-                hdr += f"   [{score:.0f} {mv.get('level', '')}]"
-            pdf.cell(0, 6, _ascii(hdr), fill=True, **NL)
-
-            # Top faultlines
-            pdf.set_font("Helvetica", "", 8)
-            pdf.set_text_color(60, 60, 60)
-            for f in (mv.get("per_faultline") or [])[:5]:
-                line = f"    {f['name'][:50]:50s} {f['last']:5.0f} ({f['level']}) {f['delta']:+.0f}"
-                pdf.cell(0, 4, _ascii(line), **NL)
-
-            if syn.get("period_impact"):
-                pdf.set_font("Helvetica", "", 9)
-                pdf.set_text_color(40, 40, 40)
-                pdf.multi_cell(0, 5, _ascii(str(syn["period_impact"])), **NL)
-            if syn.get("forward_concerns"):
-                pdf.set_font("Helvetica", "I", 8)
-                pdf.set_text_color(120, 80, 20)
-                pdf.multi_cell(0, 4, _ascii(f"Watch next: {syn['forward_concerns']}"), **NL)
-            if syn.get("manual_review"):
-                pdf.set_font("Helvetica", "I", 8)
-                pdf.set_text_color(40, 90, 110)
-                pdf.multi_cell(0, 4, _ascii(f"Manual review: {syn['manual_review']}"), **NL)
-            pdf.ln(2)
 
     # ── Faultline Analysis (Phase 5b) ──────────────────────────────────────────
     fl_section = brief.get("faultline_analysis") or {}
