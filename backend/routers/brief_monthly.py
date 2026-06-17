@@ -1198,7 +1198,6 @@ def _render_pdf(brief: dict, prev_brief: dict = None, include_faultlines: bool =
     pdf.alias_nb_pages()
     pdf.set_margins(10, 10, 10)
     pdf.set_auto_page_break(auto=True, margin=18)
-    pdf.add_page()
 
     # ── Helper: draw 4 colored stat boxes across the page ─────────────────────
     def draw_stat_boxes(labels, values, colors, box_h=18):
@@ -1469,7 +1468,7 @@ def _render_pdf(brief: dict, prev_brief: dict = None, include_faultlines: bool =
     # ══════════════════════════════════════════════════════════════════════════
     # 3. REGIONAL OVERVIEW — stat boxes + severity chart + stability table
     # ══════════════════════════════════════════════════════════════════════════
-    if pdf.get_y() > 220:
+    if pdf.page == 0 or pdf.get_y() > 220:
         pdf.add_page()
     else:
         pdf.ln(4)
