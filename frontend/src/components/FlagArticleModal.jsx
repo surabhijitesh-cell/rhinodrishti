@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { createPortal } from "react-dom";
 import axios from "axios";
 import { toast } from "sonner";
 import { Flag, X, Send, Users } from "lucide-react";
@@ -71,9 +72,9 @@ export default function FlagArticleModal({ item, api, onClose }) {
     setSubmitting(false);
   };
 
-  return (
+  const modal = (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      className="fixed inset-0 z-[200] flex items-center justify-center p-4"
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
       data-testid="flag-modal"
     >
@@ -180,4 +181,6 @@ export default function FlagArticleModal({ item, api, onClose }) {
       </div>
     </div>
   );
+
+  return createPortal(modal, document.body);
 }
