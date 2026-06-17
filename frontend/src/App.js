@@ -31,6 +31,7 @@ import { TooltipProvider } from "./components/ui/tooltip";
 import { TourProvider } from "./contexts/TourContext";
 import AppTour from "./components/AppTour";
 import { useNotifications } from "./hooks/useNotifications";
+import PushPermissionPrompt from "./components/PushPermissionPrompt";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
@@ -40,7 +41,13 @@ function AppRoutes() {
   const [stats, setStats] = useState(null);
   const navigate = useNavigate();
   const { isAuthenticated } = useAuth();
-  const { unreadCount: notifUnreadCount, setUnreadCount: setNotifUnreadCount } = useNotifications();
+  const {
+    unreadCount: notifUnreadCount,
+    setUnreadCount: setNotifUnreadCount,
+    subscribe,
+    pushSupported,
+    pushSubscribed,
+  } = useNotifications();
 
 
   const fetchStats = useCallback(async () => {
@@ -73,6 +80,11 @@ function AppRoutes() {
         path="/*"
         element={
           <ProtectedRoute>
+            <PushPermissionPrompt
+              pushSupported={pushSupported}
+              pushSubscribed={pushSubscribed}
+              subscribe={subscribe}
+            />
             <Layout
               alertCount={alertCount}
               onSearch={handleSearch}
