@@ -165,7 +165,7 @@ async def seed_faultline_registry(
 
 
 # ── Priority Areas of Interest (PAOI) ─────────────────────────────────────────
-@router.post("/priority-areas/seed")
+@router.post("/faultlines/priority-areas/seed")
 async def seed_priority_area_registry(
     current_user: dict = Depends(get_current_user),
 ):
@@ -176,7 +176,7 @@ async def seed_priority_area_registry(
     return {"status": "ok", **result}
 
 
-@router.get("/priority-areas")
+@router.get("/faultlines/priority-areas")
 async def list_priority_areas(
     include_scores: bool = Query(True),
     current_user: dict = Depends(get_current_user),
@@ -249,7 +249,7 @@ async def _retag_faultlines(now: str) -> int:
     return tagged
 
 
-@router.post("/priority-areas")
+@router.post("/faultlines/priority-areas")
 async def create_priority_area(
     data: PAOICreate,
     current_user: dict = Depends(get_current_user),
@@ -292,7 +292,7 @@ async def create_priority_area(
     return doc
 
 
-@router.put("/priority-areas/{pa_id}")
+@router.put("/faultlines/priority-areas/{pa_id}")
 async def update_priority_area(
     pa_id: str,
     data: PAOIUpdate,
@@ -314,7 +314,7 @@ async def update_priority_area(
     return updated
 
 
-@router.delete("/priority-areas/{pa_id}")
+@router.delete("/faultlines/priority-areas/{pa_id}")
 async def delete_priority_area(
     pa_id: str,
     current_user: dict = Depends(get_current_user),

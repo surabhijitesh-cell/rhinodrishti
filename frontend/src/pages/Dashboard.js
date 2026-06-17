@@ -700,7 +700,6 @@ function FaultlineWarnings({ api }) {
  */
 function OpenRouterCreditWarning({ api }) {
   const [status, setStatus] = useState(null);
-  const [dismissed, setDismissed] = useState(false);
   const { user } = useAuth();
 
   useEffect(() => {
@@ -716,47 +715,27 @@ function OpenRouterCreditWarning({ api }) {
     return () => clearInterval(interval);
   }, [api, user]);
 
-  if (!status || status.level === "ok" || dismissed) return null;
+  if (!status || status.level === "ok") return null;
 
   const isCritical = status.level === "critical";
-  const borderColor = isCritical ? "border-red-500/50" : "border-amber-500/40";
-  const bgColor = isCritical ? "bg-red-950/20" : "bg-amber-950/15";
   const textColor = isCritical ? "text-red-400" : "text-amber-400";
-  const borderRow = isCritical ? "border-red-500/30" : "border-amber-500/30";
+  const borderColor = isCritical ? "border-red-500/40" : "border-amber-500/30";
   const label = isCritical ? "CRITICAL" : "LOW";
-  const remaining = status.remaining_usd != null ? `$${Number(status.remaining_usd).toFixed(2)}` : "Unknown";
+  const remaining = status.remaining_usd != null ? `$${Number(status.remaining_usd).toFixed(2)}` : "?";
 
   return (
-    <Card className={`border-2 ${borderColor} rounded-none ${bgColor} animate-slide-in`} data-testid="openrouter-credit-warning">
-      <div className={`flex items-center gap-2 px-4 py-2 border-b ${borderRow}`}>
-        <AlertTriangle size={14} className={`${textColor} animate-pulse`} />
-        <span className={`text-xs uppercase tracking-wider font-['Barlow_Condensed'] font-semibold ${textColor}`}>
-          OpenRouter Credits {label} — {remaining} remaining
-        </span>
-        <a
-          href={status.top_up_url}
-          target="_blank"
-          rel="noopener noreferrer"
-          className={`ml-auto text-xs ${textColor} underline underline-offset-2 hover:opacity-80`}
-        >
-          Top up now
-        </a>
-        <Button
-          variant="ghost" size="sm"
-          className={`text-xs ${textColor} ml-2`}
-          onClick={() => setDismissed(true)}
-        >
-          Dismiss
-        </Button>
-      </div>
-      <CardContent className="p-3">
-        <p className="text-xs text-muted-foreground font-mono">
-          {isCritical
-            ? "Pipeline may fall back to Anthropic Haiku (higher cost). Top up OpenRouter to restore normal operation."
-            : "Top up soon to avoid pipeline interruption. Haiku fallback activates when credits are fully exhausted."}
-        </p>
-      </CardContent>
-    </Card>
+    <Tip text={isCritical ? "Pipeline falling back to Haiku — top up OpenRouter now" : "Top up soon to avoid pipeline interruption"} side="bottom">
+      <a
+        href={status.top_up_url}
+        target="_blank"
+        rel="noopener noreferrer"
+        className={`flex items-center gap-1.5 border ${borderColor} px-2 py-0.5 rounded-sm ${textColor} hover:opacity-80 transition-opacity`}
+        data-testid="openrouter-credit-warning"
+      >
+        <AlertTriangle size={11} className={isCritical ? "animate-pulse" : ""} />
+        <span className="text-[10px] font-mono uppercase tracking-wider">Credits {label} · {remaining}</span>
+      </a>
+    </Tip>
   );
 }
 
@@ -1153,6 +1132,7 @@ export default function Dashboard({ stats: propStats, api }) {
           </p>
         </div>
         <div className="flex items-center gap-3">
+          <OpenRouterCreditWarning api={api} />
           <Tip text={wsConnected ? "WebSocket live — new intel items arrive instantly without a page refresh" : "WebSocket offline — data updates on manual refresh only"} side="bottom">
             <div className="flex items-center gap-1.5 text-[10px] font-mono cursor-default" data-testid="ws-status">
               {wsConnected ? (
@@ -1420,9 +1400,6 @@ export default function Dashboard({ stats: propStats, api }) {
           </Card>
         </div>
       </div>
-
-      {/* OpenRouter credit warning — admin only, amber/red banner */}
-      <OpenRouterCreditWarning api={api} />
 
       {/* Faultline Warnings - dangerous threshold crossings */}
       <FaultlineWarnings api={api} />
