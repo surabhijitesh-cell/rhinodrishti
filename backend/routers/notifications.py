@@ -35,7 +35,10 @@ class NotificationPrefsUpdate(BaseModel):
     notify_faultline_escalations: Optional[bool] = None
     notify_paoi_impact: Optional[bool] = None
     notify_flagged_news: Optional[bool] = None
-    regions: Optional[List[str]] = None
+    notify_state_escalations: Optional[bool] = None
+    notify_high_priority: Optional[bool] = None
+    notify_user_filter_match: Optional[bool] = None
+    regions: Optional[List[str]] = None          # regions of interest for filtering
     actors: Optional[List[str]] = None
     faultline_ids: Optional[List[str]] = None
     signal_buckets: Optional[List[str]] = None
@@ -179,6 +182,17 @@ async def list_notifications(
     return {"notifications": results, "total": total, "page": page}
 
 
+@router.post("/notifications/seen")
+async def mark_seen(user: dict = Depends(get_current_user)):
+    """Mark all unread notifications as seen (viewed in panel but not clicked)."""
+    now = datetime.now(timezone.utc).isoformat()
+    await db.notification_recipients.update_many(
+        {"user_id": user["id"], "seen_at": None},
+        {"$set": {"seen_at": now}}
+    )
+    return {"status": "ok"}
+
+
 @router.post("/notifications/{notification_id}/read")
 async def mark_read(
     notification_id: str,
@@ -214,9 +228,12 @@ def _default_prefs(user_id: str) -> dict:
         "notify_faultline_escalations": True,
         "notify_paoi_impact": True,
         "notify_flagged_news": True,
-        "regions": [],
-        "actors": [],
-        "faultline_ids": [],
-        "signal_buckets": [],
+        "notify_state_escalations": True,
+        "notify_high_priority": True,
+        "notify_user_filter_match": True,
+        "regions": [],          # empty = all regions; populated = only these states
+        "actors": [],           # empty = all actors; populated = only these actor names
+        "faultline_ids": [],    # empty = all faultlines
+        "signal_buckets": [],   # empty = all buckets
         "updated_at": None,
     }

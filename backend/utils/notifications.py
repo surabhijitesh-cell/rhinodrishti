@@ -153,10 +153,43 @@ async def resolve_system_notification_recipients(db, notif_type: str, item: dict
         elif notif_type == "STATE_ESCALATION":
             if prefs and not prefs.get("notify_state_escalations", True):
                 continue
-            # Filter by region of interest if configured
-            if prefs and prefs.get("regions_of_interest") and item:
-                if item.get("state") not in prefs["regions_of_interest"]:
+            # Filter by regions list if configured (field is "regions" in prefs)
+            if prefs and prefs.get("regions") and item:
+                if item.get("state") not in prefs["regions"]:
                     continue
+
+        elif notif_type == "USER_FILTER_MATCH":
+            if prefs and not prefs.get("notify_user_filter_match", True):
+                continue
+            if not item:
+                continue
+            # At least one of the user's configured filters must match the article
+            matched = False
+            if prefs:
+                if prefs.get("regions") and item.get("state") in prefs["regions"]:
+                    matched = True
+                if prefs.get("actors"):
+                    item_actors = set(item.get("actors") or [])
+                    if item_actors & set(prefs["actors"]):
+                        matched = True
+                if prefs.get("faultline_ids") and item.get("faultline_id") in prefs["faultline_ids"]:
+                    matched = True
+                if prefs.get("signal_buckets") and item.get("signal_bucket") in prefs["signal_buckets"]:
+                    matched = True
+                # If user has no filters configured, receive all USER_FILTER_MATCH events
+                has_filters = any([
+                    prefs.get("regions"), prefs.get("actors"),
+                    prefs.get("faultline_ids"), prefs.get("signal_buckets"),
+                ])
+                if not has_filters:
+                    matched = True
+            else:
+                matched = True  # no prefs = no filters = receive all
+            if not matched:
+                continue
+
+        elif notif_type == "REPORT_READY":
+            pass  # broadcast to all enabled users; no additional filtering
 
         recipients.append(uid)
 

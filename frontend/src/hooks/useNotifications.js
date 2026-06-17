@@ -114,12 +114,15 @@ export function useNotifications() {
   }, []);
 
   const subscribe = useCallback(async () => {
-    if (!pushSupported) return;
+    if (!pushSupported) return { ok: false, error: "Push not supported in this browser" };
     try {
       const token = localStorage.getItem("rd_token");
       const keyRes = await axios.get(`${API}/notifications/vapid-public-key`);
       const publicKey = keyRes.data.public_key;
-      if (!publicKey) return;
+      if (!publicKey) return { ok: false, error: "VAPID keys not configured on server. Add VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY to backend .env and restart." };
+
+      const permission = await Notification.requestPermission();
+      if (permission !== "granted") return { ok: false, error: "Notification permission denied" };
 
       const reg = swRegRef.current || (await navigator.serviceWorker.ready);
       swRegRef.current = reg;
@@ -143,13 +146,15 @@ export function useNotifications() {
       );
       setPushSubscribed(true);
       await savePrefs({ push_enabled: true });
+      return { ok: true };
     } catch (err) {
       console.warn("Push subscribe failed:", err);
+      return { ok: false, error: err?.message || "Push subscription failed" };
     }
   }, [pushSupported, isIOS, savePrefs]);
 
   const unsubscribe = useCallback(async () => {
-    if (!pushSupported) return;
+    if (!pushSupported) return { ok: false, error: "Push not supported" };
     try {
       const token = localStorage.getItem("rd_token");
       const reg = swRegRef.current || (await navigator.serviceWorker.ready);
@@ -163,8 +168,10 @@ export function useNotifications() {
       }
       setPushSubscribed(false);
       await savePrefs({ push_enabled: false });
+      return { ok: true };
     } catch (err) {
       console.warn("Push unsubscribe failed:", err);
+      return { ok: false, error: err?.message || "Unsubscribe failed" };
     }
   }, [pushSupported, savePrefs]);
 

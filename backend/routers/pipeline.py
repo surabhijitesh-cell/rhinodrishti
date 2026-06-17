@@ -592,6 +592,44 @@ async def fetch_and_process_news(source_filter: str = None):
                             except Exception as _ne:
                                 logger.debug(f"Notification dispatch error: {_ne}")
 
+                        # Dispatch USER_FILTER_MATCH for articles matching user-configured interests
+                        try:
+                            from utils.notifications import (
+                                create_and_dispatch_notification,
+                                resolve_system_notification_recipients,
+                            )
+                            filter_recipients = await resolve_system_notification_recipients(
+                                db, "USER_FILTER_MATCH", {
+                                    "state": doc.get("state"),
+                                    "actors": doc.get("actors") or [],
+                                    "faultline_id": doc.get("faultline_id"),
+                                    "signal_bucket": doc.get("signal_bucket"),
+                                }
+                            )
+                            # Exclude users already notified via HIGH_PRIORITY_ARTICLE for same article
+                            hp_recipients = set(recipients) if doc.get("priority_score", 0) >= 90 else set()
+                            filter_only = [u for u in filter_recipients if u not in hp_recipients]
+                            if filter_only:
+                                await create_and_dispatch_notification(
+                                    notif_type="USER_FILTER_MATCH",
+                                    title=f"Intelligence match: {doc.get('state', 'Unknown')}",
+                                    body=(doc.get("title") or "")[:100],
+                                    payload={
+                                        "article_id": doc.get("id"),
+                                        "priority_score": doc.get("priority_score"),
+                                        "severity": doc.get("severity"),
+                                        "state": doc.get("state", ""),
+                                        "actors": (doc.get("actors") or [])[:5],
+                                    },
+                                    deep_link=f"/feed?highlight={doc.get('id')}",
+                                    source_type="system",
+                                    source_id=doc.get("id"),
+                                    created_by=None,
+                                    recipient_user_ids=filter_only,
+                                )
+                        except Exception as _fm:
+                            logger.debug(f"USER_FILTER_MATCH dispatch error: {_fm}")
+
                     except Exception as ws_err:
                         logger.debug(f"WS broadcast error: {ws_err}")
                 else:

@@ -262,19 +262,6 @@ export default function Layout({ children, alertCount = 0, onSearch, notifUnread
 
             <NotificationBell unreadCount={notifUnreadCount} onResetUnread={onResetNotifUnread} />
 
-            <Tip text={alertCount > 0 ? `${alertCount} unacknowledged critical/high alerts` : "No active alerts"} side="bottom">
-              <Link to="/alerts">
-                <Button variant="ghost" size="sm" className="relative" data-testid="alerts-bell">
-                  <Bell size={18} />
-                  {alertCount > 0 && (
-                    <span className="absolute -top-0.5 -right-0.5 w-4 h-4 bg-red-500 text-white text-[10px] rounded-full flex items-center justify-center">
-                      {alertCount > 9 ? "9+" : alertCount}
-                    </span>
-                  )}
-                </Button>
-              </Link>
-            </Tip>
-
             {/* Tour button — visible to all users */}
             <Tip text="Start guided walkthrough for this page" side="bottom">
               <Button

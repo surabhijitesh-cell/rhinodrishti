@@ -244,112 +244,104 @@ export default function IntelligenceCard({ item, compact = false, api, feedbackD
           </div>
         </div>
         <div className="flex flex-col items-end gap-1 shrink-0">
-          {/* Severity badge */}
-          <Tip
-            text={
-              item.severity === "critical" ? "CRITICAL — Immediate threat requiring urgent analyst action" :
-              item.severity === "high"     ? "HIGH — Significant event warranting priority review" :
-              item.severity === "medium"   ? "MEDIUM — Notable but non-urgent; monitor closely" :
-                                            "LOW — Informational; relevant background context"
-            }
-            side="left"
-          >
-            <Badge
-              className={`${severityClass} rounded-none uppercase tracking-widest text-[10px] px-2 py-0.5 border cursor-default`}
-              data-testid="card-severity"
-            >
-              {item.severity}
-            </Badge>
-          </Tip>
-
-          {/* Priority score */}
-          {priorityScore > 0 && (
-            <Tip
-              text={`Priority Score ${priorityScore}/100 — AI-computed urgency combining severity, source credibility and strategic relevance. ≥80 critical (red), ≥60 elevated (orange), <60 routine.`}
-              side="left"
-            >
-              <span className={`text-[10px] font-mono cursor-default ${priorityScore >= 80 ? 'text-red-400' : priorityScore >= 60 ? 'text-orange-400' : 'text-muted-foreground'}`}>
-                P{priorityScore}
-              </span>
-            </Tip>
-          )}
-
-          {/* Confidence score */}
-          {item.confidence_score && (
-            <Tip
-              text={`Confidence Score ${item.confidence_score}% — AI's certainty in its classification. ≥90 high confidence (green), ≥70 moderate (blue), <70 uncertain — verify manually.`}
-              side="left"
-            >
-              <span className={`text-[10px] font-mono cursor-default ${item.confidence_score >= 90 ? 'text-green-400' : item.confidence_score >= 70 ? 'text-blue-400' : 'text-muted-foreground'}`}>
-                C{item.confidence_score}%
-              </span>
-            </Tip>
-          )}
-
-          {/* Fading / Visibility score */}
-          <FadingBadge item={item} />
-
-          {/* Threat trajectory */}
-          {item.threat_trajectory && item.threat_trajectory !== "INDETERMINATE" && (
+          {/* Row 1: severity + scores + trajectory */}
+          <div className="flex items-center gap-1.5 flex-wrap justify-end">
             <Tip
               text={
-                item.threat_trajectory === "ESCALATING"    ? "ESC — Threat is ESCALATING: recent reporting shows increasing severity or frequency" :
-                item.threat_trajectory === "DE-ESCALATING" ? "DE-ESC — Threat is DE-ESCALATING: situation appears to be cooling or resolving" :
-                item.threat_trajectory === "NEW_THREAT"    ? "NEW — First-time or newly identified threat pattern with no prior baseline" :
-                                                             "STABLE — Threat level holding steady with no significant change detected"
+                item.severity === "critical" ? "CRITICAL — Immediate threat requiring urgent analyst action" :
+                item.severity === "high"     ? "HIGH — Significant event warranting priority review" :
+                item.severity === "medium"   ? "MEDIUM — Notable but non-urgent; monitor closely" :
+                                              "LOW — Informational; relevant background context"
               }
               side="left"
             >
-              <Badge variant="outline" className={`rounded-none text-[9px] px-1 py-0 cursor-default ${
-                item.threat_trajectory === "ESCALATING"    ? "text-red-400 border-red-500/30" :
-                item.threat_trajectory === "DE-ESCALATING" ? "text-green-400 border-green-500/30" :
-                item.threat_trajectory === "NEW_THREAT"    ? "text-amber-400 border-amber-500/30" :
-                "text-muted-foreground border-border"
-              }`} data-testid="card-trajectory">
-                {item.threat_trajectory === "ESCALATING"    ? "ESC" :
-                 item.threat_trajectory === "DE-ESCALATING" ? "DE-ESC" :
-                 item.threat_trajectory === "NEW_THREAT"    ? "NEW" :
-                 item.threat_trajectory === "STABLE"        ? "STABLE" : ""}
+              <Badge
+                className={`${severityClass} rounded-none uppercase tracking-widest text-[10px] px-2 py-0.5 border cursor-default`}
+                data-testid="card-severity"
+              >
+                {item.severity}
               </Badge>
             </Tip>
-          )}
 
-          {/* Flag */}
-          <FlagButton item={item} api={api} />
+            {priorityScore > 0 && (
+              <Tip text={`Priority Score ${priorityScore}/100 — AI-computed urgency combining severity, source credibility and strategic relevance. ≥80 critical (red), ≥60 elevated (orange), <60 routine.`} side="left">
+                <span className={`text-[10px] font-mono cursor-default ${priorityScore >= 80 ? 'text-red-400' : priorityScore >= 60 ? 'text-orange-400' : 'text-muted-foreground'}`}>
+                  P{priorityScore}
+                </span>
+              </Tip>
+            )}
 
-          {/* Reprocess */}
-          {api && (
-            <Tip text="Re-run AI classification on this item (e.g. after severity rule changes)" side="left">
-              <button
-                onClick={handleReprocess}
-                disabled={reprocessing}
-                className="p-1 text-muted-foreground/40 hover:text-violet-400 transition-colors mt-0.5"
-                data-testid={`reprocess-intel-${item.id}`}
+            {item.confidence_score && (
+              <Tip text={`Confidence Score ${item.confidence_score}% — AI's certainty in its classification. ≥90 high confidence (green), ≥70 moderate (blue), <70 uncertain — verify manually.`} side="left">
+                <span className={`text-[10px] font-mono cursor-default ${item.confidence_score >= 90 ? 'text-green-400' : item.confidence_score >= 70 ? 'text-blue-400' : 'text-muted-foreground'}`}>
+                  C{item.confidence_score}%
+                </span>
+              </Tip>
+            )}
+
+            <FadingBadge item={item} />
+
+            {item.threat_trajectory && item.threat_trajectory !== "INDETERMINATE" && (
+              <Tip
+                text={
+                  item.threat_trajectory === "ESCALATING"    ? "ESC — Threat is ESCALATING: recent reporting shows increasing severity or frequency" :
+                  item.threat_trajectory === "DE-ESCALATING" ? "DE-ESC — Threat is DE-ESCALATING: situation appears to be cooling or resolving" :
+                  item.threat_trajectory === "NEW_THREAT"    ? "NEW — First-time or newly identified threat pattern with no prior baseline" :
+                                                               "STABLE — Threat level holding steady with no significant change detected"
+                }
+                side="left"
               >
-                <RefreshCw size={12} className={reprocessing ? "animate-spin text-violet-400" : ""} />
-              </button>
-            </Tip>
-          )}
+                <Badge variant="outline" className={`rounded-none text-[9px] px-1 py-0 cursor-default ${
+                  item.threat_trajectory === "ESCALATING"    ? "text-red-400 border-red-500/30" :
+                  item.threat_trajectory === "DE-ESCALATING" ? "text-green-400 border-green-500/30" :
+                  item.threat_trajectory === "NEW_THREAT"    ? "text-amber-400 border-amber-500/30" :
+                  "text-muted-foreground border-border"
+                }`} data-testid="card-trajectory">
+                  {item.threat_trajectory === "ESCALATING"    ? "ESC" :
+                   item.threat_trajectory === "DE-ESCALATING" ? "DE-ESC" :
+                   item.threat_trajectory === "NEW_THREAT"    ? "NEW" :
+                   item.threat_trajectory === "STABLE"        ? "STABLE" : ""}
+                </Badge>
+              </Tip>
+            )}
+          </div>
 
-          {/* Delete */}
-          {onDelete && (
-            <Tip text="Permanently delete this intelligence item" side="left">
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  if (window.confirm("Delete this intelligence item? This cannot be undone.")) {
-                    setDeleting(true);
-                    onDelete(item.id);
-                  }
-                }}
-                disabled={deleting}
-                className="p-1 text-muted-foreground/40 hover:text-red-400 transition-colors mt-0.5"
-                data-testid={`delete-intel-${item.id}`}
-              >
-                <Trash2 size={12} />
-              </button>
-            </Tip>
-          )}
+          {/* Row 2: action icons */}
+          <div className="flex items-center gap-0.5">
+            <FlagButton item={item} api={api} />
+
+            {api && (
+              <Tip text="Re-run AI classification on this item (e.g. after severity rule changes)" side="left">
+                <button
+                  onClick={handleReprocess}
+                  disabled={reprocessing}
+                  className="p-1 text-muted-foreground/40 hover:text-violet-400 transition-colors"
+                  data-testid={`reprocess-intel-${item.id}`}
+                >
+                  <RefreshCw size={12} className={reprocessing ? "animate-spin text-violet-400" : ""} />
+                </button>
+              </Tip>
+            )}
+
+            {onDelete && (
+              <Tip text="Permanently delete this intelligence item" side="left">
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (window.confirm("Delete this intelligence item? This cannot be undone.")) {
+                      setDeleting(true);
+                      onDelete(item.id);
+                    }
+                  }}
+                  disabled={deleting}
+                  className="p-1 text-muted-foreground/40 hover:text-red-400 transition-colors"
+                  data-testid={`delete-intel-${item.id}`}
+                >
+                  <Trash2 size={12} />
+                </button>
+              </Tip>
+            )}
+          </div>
         </div>
       </div>
 
