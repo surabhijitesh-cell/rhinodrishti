@@ -122,9 +122,15 @@ export function useNotifications() {
       if (!publicKey) return { ok: false, error: "VAPID keys not configured on server. Add VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY to backend .env and restart." };
 
       const permission = await Notification.requestPermission();
-      if (permission !== "granted") return { ok: false, error: "Notification permission denied" };
+      if (permission !== "granted") return { ok: false, error: "Notification permission denied. Enable notifications in browser/OS settings." };
 
-      const reg = swRegRef.current || (await navigator.serviceWorker.ready);
+      // Timeout so a hung SW registration surfaces as an error instead of silence
+      const reg = swRegRef.current || await Promise.race([
+        navigator.serviceWorker.ready,
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error("Service worker not ready — check DevTools → Application → Service Workers")), 8000)
+        ),
+      ]);
       swRegRef.current = reg;
 
       const sub = await reg.pushManager.subscribe({
