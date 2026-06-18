@@ -20,6 +20,8 @@ self.addEventListener("push", (event) => {
     },
     tag: data.notification_id || "rd-notification",
     renotify: false,
+    requireInteraction: true,   // stays in drawer until user taps/dismisses
+    silent: false,              // play default system sound
   };
 
   event.waitUntil(self.registration.showNotification(title, options));

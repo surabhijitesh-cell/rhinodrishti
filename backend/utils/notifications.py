@@ -49,7 +49,20 @@ async def create_and_dispatch_notification(
             continue
 
         in_app = (prefs is None) or bool(prefs.get("in_app_enabled", True))
-        push = bool(prefs and prefs.get("push_enabled", False))
+        # Send push if: pref explicitly enabled, OR user has an active subscription
+        # and has NOT explicitly disabled push (push_enabled != False).
+        # Default (no prefs doc, or no push_enabled key) → check subscription.
+        push_pref = prefs.get("push_enabled") if prefs else None  # None = unset
+        if push_pref is False:
+            push = False  # user explicitly disabled
+        elif push_pref is True:
+            push = True   # user explicitly enabled
+        else:
+            # Unset: fire push if active subscription exists
+            has_sub = await db.push_subscriptions.count_documents(
+                {"user_id": user_id, "active": True}
+            )
+            push = has_sub > 0
 
         channels = []
         if in_app:
