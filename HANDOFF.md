@@ -1,113 +1,53 @@
-# Handoff — feature/multi-stage-filter — 2026-05-17
+# Handoff — feature/notifications-and-flagging — 2026-06-19
 
 ## What We Were Doing
-
-Building the Intelligence Relationship Map for Rhino Drishti — a NER military
-intelligence platform. Phase 1 (named militant group extraction + KG alias
-normalization) shipped last session. Phase 2 (cascade/snowball incident pattern
-detection) shipped this session. Phase 3B (KG "View on Map" button) is next.
+Completed the `feature/notifications-and-flagging` branch with push notifications, red-flag flagging indicator, faultline time-decay scoring, and PAOI monitoring. Updated USER_HANDBOOK.md to v12.0 and generated a 27-slide PPTX presentation explaining the full application. Also raised the keyword fetch limit from 300 to 500.
 
 ## Work Completed This Session
-
-- **Phase 2 — cascade_incident**: Pass 6 added to `relationship_engine.py`
-  - Pass A: both items `threat_trajectory=ESCALATING`, same state, ≤14 days → strength 0.70–0.92
-  - Pass B: same state + same `threat_category`, `priority_score` rises ≥15, ≤14 days → strength 0.50–0.90
-  - `cascade_root_id` stored in meta to preserve true directionality through canonical pair key
-  - `cascade_pass` ("A"/"B") and `score_delta` also stored for audit/display
-  - `get_edges_for_items` projection updated to return these meta fields
-- **NERMap.js**: `cascade_incident` added
-  - `REL_STYLE`: deep-orange `#ea580c`, dashed `8 3`, weight 2.5, opacity 0.88, label "Cascade ↑"
-  - `relTypes` default: **enabled** (unlike same_pattern/semantic which are off)
-  - Popup: shows ⬆/🔺 icons with `+{score_delta} priority · Pass {A|B}` line
-  - Uses `cascade_root_id` to correctly identify root vs peak item in the popup
+- `acf8410` docs: update handbook to v12.0 + increase keyword fetch limit to 500
+- `0f0fcfa` fix(notifications): fire push when active subscription exists regardless of pref
+- `91e4eaa` feat(flagging): red flag icon for previously flagged articles
+- `f0116c6` fix(flagging): portal modal to document.body to fix z-index clipping
+- `ff78656` feat(notifications): test-push endpoint + background push UX improvements
+- `9136e9b` feat(faultlines): time-decay scoring + newest-articles-first display
+- `62eb4fa` feat(notifications): auto push permission prompt on app launch
+- Handbook updated from v11.0 → v12.0 (new sections: Push Notifications, Faultline Intelligence/PAOI, Flagging, time-decay scoring, monthly report)
+- PPT generated: `RhinoDrishti_Command_Intelligence_v2.pptx` (27 slides, 10 embedded screenshots)
+- Keyword fetch limit raised: `frontend/src/pages/KeywordEngine.js` line 42 → `limit=500`
 
 ## Current State
-
-**Working:**
-- Relationship engine: 6 passes (same_incident, same_actor, same_hotspot, same_pattern, semantic, cascade_incident)
-- cascade_incident edges will be computed on next nightly batch or manual trigger
-- NERMap shows cascade edges as deep-orange dashed lines, enabled by default, correct direction in popup
-
-**Pending / low numbers:**
-- `cascade_incident: 0` until next batch runs — trigger manually if needed (see Commands)
-- `same_actor: 3` — grows naturally as new articles arrive with fixed prompt
-- Animated line drawing (SVG stroke-dashoffset) — discussed but not built
-- KG "View on Map" button (Phase 3B) — not yet built
-
-**Branch:** `feature/multi-stage-filter` on `surabhijitesh-cell/rhinodrishti`
-**Deployed:** Render (backend) + Vercel (frontend)
-**Render URL:** `https://rhino-drishti-api.onrender.com`
-**Vercel URL:** `https://rhinodrishti.vercel.app`
+- Branch `feature/notifications-and-flagging` is fully up to date with remote, all changes pushed
+- All features on this branch are working: push notifications (Android background + iOS PWA), red flag icon, faultline time-decay scoring, PAOI manager, monthly faultline PDF report
+- Keyword backend already had `MAX_KEYWORDS = 500` in `backend/keyword_engine.py`; frontend now matches
+- PPT file is untracked at `RhinoDrishti_Command_Intelligence_v2.pptx` (2.9 MB) — not committed to git (large binary)
+- `write_handbook.py` temp script is untracked at project root — safe to delete
 
 ## Immediately Next Steps
-
-1. **KG "View on Map" button** (Phase 3B)
-   - When KG actor card has ≥2 articles → show "📍 View on Map" button
-   - Click → map zooms to actor's locations, timeline sets to actor's date range
-   - Filters LINKS to only that actor's edges
-   - Likely involves: KG panel component sending a prop/event to the parent Dashboard,
-     which passes it down to NERMap as `focusActorId` or similar
-
-2. **Animated line drawing** (discussed but not yet built)
-   - SVG `stroke-dashoffset` animation when user clicks a pattern type
-   - Sequential reveal: same_actor = chronological, cascade = depth-first from root
-   - 120–200ms stagger between lines per type
-
-3. **Run nightly batch after next deploy** to pick up cascade_incident edges
-   - Trigger manually with the fetch snippet below
-
-4. **BERTopic semantic clustering** (Phase 4): requires bertopic + umap-learn + hdbscan
-   - Not started; needs dependency additions in requirements.txt
+1. **Merge or PR** — `feature/notifications-and-flagging` is complete; consider merging to `main`
+2. **Faultline prioritisation feature** — user asked: "add a feature in the faultlines page where I can add a new faultline or prioritise my faultlines of interest from the existing ones — allow me to rate 10 faultlines" — queued but NOT yet implemented; this is the next feature
+3. **Delete temp files** — `write_handbook.py` can be deleted; it was a workaround for a context-compaction issue during handbook update
+4. **Verify keyword limit** — confirm 500-limit working correctly on Keyword Engine page in browser
+5. **Next branch** — create `feature/faultline-prioritisation` for the watchlist/ranking feature
 
 ## Key Files Touched
-
-| File | Change |
-|------|--------|
-| `backend/ai_pipeline.py` | Step 4: exact militant group name requirement; Step 5: `militant_groups` entity; JSON schema updated |
-| `backend/knowledge_graph.py` | `MILITANT_ALIASES` dict (80+ entries); `normalize_actor()` rebuilt on alias table; KG build loop merges `entities.militant_groups` |
-| `backend/relationship_engine.py` | 6-pass batch engine; Pass 6 = cascade_incident (two-pass A/B); projection includes cascade_root_id |
-| `backend/routers/relationships.py` | Full REST API: GET/POST/PATCH edges, GET stats, GET explain, POST compute |
-| `backend/shared.py` | Added `relationships_col = db.item_relationships` |
-| `backend/server.py` | Relationships router mounted; nightly batch at 21:30 UTC (03:00 IST) |
-| `frontend/src/components/NERMap.js` | Phase 3 relationship polylines; LINKS toggle; filter panel; cascade_incident style + default; cascade direction in popup |
-| `frontend/src/pages/Dashboard.js` | `windowStateStats` added to compact NERMap; `api` prop added to both NERMap instances |
-| `FEATURE_SUMMARY.md` | 868-line complete feature reference v10.0 |
+- `USER_HANDBOOK.md` — rewritten to v12.0; 5 new sections (15.1 Push Notifications, 16 Faultline Intelligence, 16.1 PAOI, 16.2 Faultline Cards, 16.3 Scoring, 16.4 Monthly Report, 17 Flagging)
+- `frontend/src/pages/KeywordEngine.js` — line 42: `limit=300` → `limit=500`
+- `RhinoDrishti_Command_Intelligence_v2.pptx` — new 27-slide PPTX (untracked, stays local)
+- `build_rhino_ppt.js` — Node.js pptxgenjs script used to generate the PPTX (untracked)
 
 ## Commands to Know
-
-**Trigger relationship batch manually** (run from `rhinodrishti.vercel.app` console tab):
-```javascript
-fetch("https://rhino-drishti-api.onrender.com/api/admin/relationships/compute?rebuild_kg=true", {
-  method: "POST",
-  headers: { "Authorization": "Bearer " + localStorage.getItem("token") }
-}).then(r => r.json()).then(console.log)
-```
-Takes ~9 min. After it completes, check `cascade_incident` count in the result.
-
-**Check relationship stats:**
-```javascript
-fetch("https://rhino-drishti-api.onrender.com/api/relationships/stats",{
-  headers:{"Authorization":"Bearer "+localStorage.getItem("token")}
-}).then(r=>r.json()).then(console.log)
-```
-
-**Wake Render** (free tier sleeps after 15 min idle):
-Open `https://rhino-drishti-api.onrender.com/api/` in browser, wait for JSON response.
+- Start dev: `cd frontend && npm start` (or use `start-dev.bat`)
+- Backend: `cd backend && uvicorn server:app --reload --port 8000`
+- Regenerate PPT: `node build_rhino_ppt.js` (requires `npm install pptxgenjs` if not installed)
+- Push notifications test: `POST /api/test-push` with auth header
+- Faultline scoring manual trigger: `POST /api/faultlines/trigger-daily-pass` with auth header
+- Keyword limit is now 500: `GET /api/keywords?limit=500`
 
 ## Open Questions / Decisions Pending
-
-- **Cascade detection root identification**: Currently earliest `published_at` in the
-  state+category cluster is the root. Alternative: highest priority_score item as root.
-  Current approach is more intuitive (chronological causation).
-- **Adjacent threat categories** (Pass B improvement): Currently requires exact category
-  match. A category adjacency map (e.g. Insurgency ↔ Arms Trafficking) would catch more
-  chains. Deferred until real cascade edge counts are known.
-- **Animated line drawing**: Design agreed (SVG stroke-dashoffset, staggered by type).
-  Not implemented. Build after Phase 3B or alongside it.
-- **BERTopic semantic clustering** (Phase 4): Needs deps added. Discussed but not started.
-- **Smuggling route detection** (Phase 5): DBSCAN spatial clustering on border items.
-  Not started.
+- Should `feature/notifications-and-flagging` be merged to `main` now? All features are stable.
+- Faultline prioritisation feature (rate/rank up to 10 faultlines from the Faultlines page) — was queued but not started. Needs a new branch.
+- Should the PPTX files be committed to git or kept local only? They are large binaries (~3 MB each).
+- `write_handbook.py` — delete or keep as utility for future handbook updates?
 
 ## Optional Note from Outgoing Session
-
-Phase 2 cascade_incident complete. Next: Phase 3B KG "View on Map" button.
+None
