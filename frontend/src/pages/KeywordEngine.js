@@ -39,7 +39,7 @@ export default function KeywordEngine({ api }) {
 
   const fetchKeywords = useCallback(async () => {
     try {
-      const res = await axios.get(`${api}/keywords?limit=300`);
+      const res = await axios.get(`${api}/keywords?limit=500`);
       setKeywords(res.data.keywords || []);
       setTypeBreakdown(res.data.type_breakdown || {});
     } catch (e) { console.error(e); }

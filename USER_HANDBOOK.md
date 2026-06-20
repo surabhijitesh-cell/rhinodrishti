@@ -9,8 +9,6 @@
 1. [Authentication & Access Control](#1-authentication--access-control)
 2. [Getting Started](#2-getting-started)
 3. [Dashboard](#3-dashboard)
-   - 3.1 [Intelligence Source Monitor Panel](#31-intelligence-source-monitor-panel)
-   - 3.2 [Tooltips & Guided Walkthrough](#32-tooltips--guided-walkthrough)
 4. [Intelligence Feed](#4-intelligence-feed)
 5. [Cross-Border Intelligence](#5-cross-border-intelligence)
 6. [Daily Brief](#6-daily-brief)
@@ -23,13 +21,20 @@
 13. [Manual Intelligence Uploads](#13-manual-intelligence-uploads)
 14. [Reports & PDF Generation](#14-reports--pdf-generation)
 15. [Platform Updates & Notifications](#15-platform-updates--notifications)
-16. [User Management](#16-user-management)
-17. [Settings](#17-settings)
-    - 17.1 [Local Database Storage Card](#171-local-database-storage-card)
-    - 17.2 [Source Effectiveness Card](#172-source-effectiveness-card)
-18. [Local Database Setup Wizard](#18-local-database-setup-wizard)
-19. [How the AI Pipeline Works](#19-how-the-ai-pipeline-works)
-20. [Glossary](#20-glossary)
+    - 15.1 [Push Notifications (Mobile & Desktop)](#151-push-notifications-mobile--desktop)
+16. [Faultline Intelligence & PAOI Monitoring](#16-faultline-intelligence--paoi-monitoring)
+    - 16.1 [Priority Areas of Interest (PAOI)](#161-priority-areas-of-interest-paoi)
+    - 16.2 [Faultline Cards & Watchlist](#162-faultline-cards--watchlist)
+    - 16.3 [Faultline Scoring & Time Decay](#163-faultline-scoring--time-decay)
+    - 16.4 [Monthly Faultline Analysis Report](#164-monthly-faultline-analysis-report)
+17. [Flagging Intelligence to Commanders](#17-flagging-intelligence-to-commanders)
+18. [User Management](#18-user-management)
+19. [Settings](#19-settings)
+    - 19.1 [Local Database Storage Card](#191-local-database-storage-card)
+    - 19.2 [Source Effectiveness Card](#192-source-effectiveness-card)
+20. [Local Database Setup Wizard](#20-local-database-setup-wizard)
+21. [How the AI Pipeline Works](#21-how-the-ai-pipeline-works)
+22. [Glossary](#22-glossary)
 
 ---
 
@@ -50,8 +55,6 @@ On first deployment, the system automatically creates an admin account:
 
 ### Roles & Permissions
 
-The platform uses Role-Based Access Control (RBAC) with three roles:
-
 | Feature | Admin | Analyst | Viewer |
 |---------|-------|---------|--------|
 | View Dashboard, Feeds, Briefs | Yes | Yes | Yes |
@@ -60,55 +63,44 @@ The platform uses Role-Based Access Control (RBAC) with three roles:
 | Generate Briefs, Train AI | Yes | Yes | No |
 | Upload/Analyze/Add to Feed | Yes | Yes | No |
 | Run Keyword Refresh | Yes | Yes | No |
+| Flag Articles to Commanders | Yes | Yes | No |
 | User Management | Yes | No | No |
 | Settings | Yes | No | No |
 
-**Admin** — Full access to all features including user creation, password resets, and system settings.
+**Admin** — Full access including user creation, password resets, and system settings.
 
-**Analyst** — Can access all intelligence features (feeds, briefs, training, uploads, feedback). Cannot access User Management or Settings. Redirects to Intelligence Feed after login.
+**Analyst** — Can access all intelligence features (feeds, briefs, training, uploads, feedback, flagging). Cannot access User Management or Settings.
 
-**Viewer** — Read-only access. Can view all intelligence data, dashboards, and download PDFs. All action buttons (generate, train, upload, rate) are disabled. Redirects to Dashboard after login.
+**Viewer** — Read-only access. Can view all intelligence data and download PDFs. All action buttons are disabled.
 
 ### Session Management
 - Sessions last **24 hours** (JWT token expiry)
 - Token persists across page refreshes (stored in browser)
 - If your session expires, you'll be automatically redirected to the Login page
-- Click the **Logout** button (top-right, next to your name) to end your session
-
-### Sidebar Navigation
-The sidebar menu adapts to your role:
-- **Admin**: All menu items visible (including User Management and Settings)
-- **Analyst**: User Management and Settings are hidden
-- **Viewer**: User Management and Settings are hidden
 
 ---
 
 ## 2. Getting Started
 
 ### What is Rhino Drishti?
-Rhino Drishti is an AI-powered military intelligence aggregation and analysis platform designed for monitoring India's North Eastern Region (NER), Bangladesh, and Myanmar. It automatically collects news from 72+ RSS sources, runs AI classification using a military intelligence framework with dynamic analyst feedback bias, detects patterns, and generates daily intelligence briefs.
-
-### First-time Access
-- Open the application URL in your browser (Chrome, Firefox, or Edge recommended)
-- You will be presented with the **Login** screen — enter your credentials (see Section 1)
-- After login, the Dashboard loads as your home screen (Admin/Viewer) or Intelligence Feed (Analyst)
-- The left sidebar provides navigation to all features
+Rhino Drishti is an AI-powered military intelligence aggregation and analysis platform for monitoring India's North Eastern Region (NER), Bangladesh, and Myanmar. It automatically collects news from 89 RSS sources, runs AI classification using a military intelligence framework with dynamic analyst feedback bias, detects patterns, monitors strategic faultlines within Priority Areas of Interest (PAOI), and generates daily intelligence briefs.
 
 ### Navigation
-The sidebar contains all pages (visibility depends on your role):
+The sidebar contains all pages:
 - **Dashboard** — Overview of intelligence landscape
-- **Intelligence Feed** — Full searchable list of classified items with analyst rating
+- **Intelligence Feed** — Full searchable list of classified items
 - **Cross-Border** — Items specifically involving cross-border activity
 - **Daily Brief** — Automated daily intelligence summary
 - **Weekly Trends** — 7-day severity and threat type charts
 - **Patterns** — Detected threat patterns across regions
 - **Knowledge Graph** — Actor-location relationship mapping
 - **Alerts** — Critical and high-severity items requiring attention
+- **Faultline Intelligence** — PAOI-linked faultline monitoring with scoring and monthly reports
 - **Keyword Engine** — AI-powered keyword management for detection
 - **Training & Feedback** — Rate articles, upload training data, monitor AI learning
-- **Manual Int Uploads** — Analyze articles (AI threat assessment), upload documents, or add URLs directly to the intelligence feed with custom parameters
-- **User Management** — Create/manage users and reset passwords (Admin only)
-- **Settings** — Configure retention, feedback limits, and AI bias settings (Admin only)
+- **Manual Int Uploads** — Analyze articles, upload documents, or add URLs directly to the feed
+- **User Management** — Create/manage users (Admin only)
+- **Settings** — Configure retention, feedback limits, AI bias (Admin only)
 - **User Handbook** — This guide
 
 ---
@@ -118,81 +110,34 @@ The sidebar contains all pages (visibility depends on your role):
 The Dashboard is your command center showing the current intelligence landscape at a glance.
 
 ### Stat Cards (Top Row)
-- **Total Items**: Total intelligence items within the retention window
-- **Critical**: Items classified as CRITICAL severity (immediate threat to personnel/operations)
-- **High**: Items classified as HIGH severity (significant security concern)
-- **Medium**: Items classified as MEDIUM severity (monitoring required)
-- **Low**: Items of LOW security significance
-- Click any stat card to filter the Intelligence Feed by that severity level
+- **Total Items / Critical / High / Medium / Low**: Click any stat card to filter the Intelligence Feed by that severity level
 
 ### Intelligence Source Monitor Panel
+The collapsible panel shows real-time status for all **6 intelligence source types**.
 
-The collapsible panel below the stat cards shows real-time status for all **6 intelligence source types**. It is open by default — click the header row to collapse it.
-
-**Two fetch buttons in the panel header:**
-- **FETCH INTEL** (top-right of Dashboard header) — triggers ALL 6 sources simultaneously (RSS + all 5 social/web sources via `Promise.allSettled` — one failing never blocks the others)
-- **SCAN SOCIAL MEDIA** (inside the panel header) — triggers the 5 non-RSS sources only (YouTube, Facebook, Telegram, X/Twitter, Firecrawl)
-
-Each of the 6 source cards shows:
-- **Status badge**: SCANNING / FETCHING / CRAWLING (animated) | IDLE | SETUP (not yet configured)
-- **Progress bar**: Shows fill level based on number of active sources
-- **Stats**: Channel count, page count, or article count depending on source type
-- **Last fetched**: Time elapsed since most recent successful fetch
-- **FETCH button**: Manual per-source trigger (disabled if source is not configured)
-- **Drill-down**: Click a card to expand the panel below, listing every individual site, channel or account being monitored for that source
+**Two fetch buttons:**
+- **FETCH INTEL** — triggers ALL 6 sources simultaneously
+- **SCAN SOCIAL MEDIA** — triggers the 5 non-RSS sources only (YouTube, Facebook, Telegram, X/Twitter, Firecrawl)
 
 **Source types:**
-| Source | Color | What it monitors |
-|--------|-------|-----------------|
-| **RSS Feeds** | Green | 89 curated news feeds (regional NER, national, Bangladesh, Myanmar, government PIBs) |
-| **YouTube** | Red | Subscribed channels and keyword searches — requires `YOUTUBE_API_KEY` |
-| **Facebook** | Blue | Configured Facebook pages — requires Facebook App credentials |
-| **Telegram** | Sky | Monitored Telegram channels via Telethon session — requires `telegram_setup.py` |
-| **X / Twitter** | Slate | Twitter accounts and keyword searches — via official API or Nitter fallback |
-| **Firecrawl** | Orange | Deep-crawls websites without RSS, plus keyword web searches — requires `FIRECRAWL_API_KEY` |
+| Source | What it monitors |
+|--------|-----------------|
+| **RSS Feeds** | 89 curated news feeds (regional NER, national, Bangladesh, Myanmar, government PIBs) |
+| **YouTube** | Subscribed channels and keyword searches — requires `YOUTUBE_API_KEY` |
+| **Facebook** | Configured pages — requires Facebook App credentials |
+| **Telegram** | Monitored channels via Telethon session |
+| **X / Twitter** | Accounts and keyword searches — via official API or Nitter fallback |
+| **Firecrawl** | Deep-crawls websites without RSS, plus keyword web searches — requires `FIRECRAWL_API_KEY` |
 
-See Section 18 for Render and Tailscale configuration details.
+### Tooltips & Guided Walkthrough
+Tooltips appear on every UI element (hover to see, auto-dismisses after 3 seconds). Each page has a built-in guided tour — re-trigger via the **?** button in the top-right bar. Admins can reset all tours with the **↺** button.
 
-### 3.1 Intelligence Source Monitor Panel
-
-*(See the full description in the sub-section above)*
-
-### 3.2 Tooltips & Guided Walkthrough
-
-**Tooltips** appear on every button, label, stat card, chart heading, source scanner card, and intelligence card parameter throughout the platform. Hover your cursor over any item to see a contextual explanation (auto-dismisses after 3 seconds).
-
-**Guided Page Walkthrough:**
-- Each page has a built-in step-by-step tour powered by **Joyride** — it spotlights key UI elements and provides a short brief on what each section does
-- The tour **auto-starts automatically** the first time any user visits each page (after a 1-second delay so the page can finish loading)
-- Once seen, the tour does NOT auto-repeat. It tracks whether you've seen each page's tour via browser localStorage (keyed to your username)
-- **Re-trigger the tour at any time** by clicking the **? (Help Circle)** button in the top-right bar of any page
-- **Admin only**: The **↺ (Reset Tours)** button next to the ? button clears the seen-state for all pages and immediately restarts the tour for the current page — useful for demonstrating the platform to new analysts
-
----
-
-### NER Threat Map
-Visual map of India's Northeast showing threat concentration by state. Hover over states to see item counts and severity breakdown.
-
-### Unacknowledged Critical Alerts
-Sticky panel showing CRITICAL and HIGH items that haven't been acknowledged yet. Click **ACK** to mark an alert as handled. This prevents alert fatigue by tracking which items have been reviewed.
-
-### Live Feed Panel
-Real-time updates via WebSocket — new items appear here as they are processed by the AI pipeline without needing to refresh the page. Shows the LIVE/OFFLINE indicator in the top-right.
-
-### Pattern Insights
-Summary of the most significant detected threat patterns, showing escalation risk levels (CRITICAL, HIGH, MODERATE, LOW).
-
-### Latest Intelligence (Priority Filter & Sort)
-The bottom section shows the 6 most recent intelligence items. Two controls let you customize the view:
-- **Priority Filter** dropdown: Filter by minimum priority score — All Priority, 80+ (Critical), 60+ (High), 40+ (Medium)
-- **Sort By** dropdown: Sort items by Most Recent (date) or Highest Priority (priority score descending)
-
-Click **View Full Feed** to open the complete Intelligence Feed.
-
-Each item card also includes a **delete button** (trash icon) — click to permanently remove an item after confirmation.
-
-### Trend Charts
-7-day severity distribution showing whether threat levels are increasing or decreasing.
+### Other Dashboard Sections
+- **NER Threat Map** — Visual map of India's Northeast with threat concentration by state
+- **Unacknowledged Critical Alerts** — Sticky panel of CRITICAL/HIGH items pending acknowledgement
+- **Live Feed Panel** — Real-time WebSocket updates of new intelligence items
+- **Pattern Insights** — Summary of the most significant detected threat patterns
+- **Latest Intelligence** — 6 most recent items with Priority Filter and Sort By controls
 
 ---
 
@@ -201,1019 +146,613 @@ Each item card also includes a **delete button** (trash icon) — click to perma
 The full searchable, filterable list of all classified intelligence items.
 
 ### Search
-- **Keyword Search** (default): Type any keyword to find matching items in titles and content
-- **Semantic Search** (toggle): Switch to AI-powered search that finds contextually related items even if the exact words don't match. Example: searching "border infiltration" also finds articles about "cross-border movement" or "unauthorized entry"
+- **Keyword Search** (default): Searches titles and content
+- **Semantic Search** (toggle): AI-powered search that finds contextually related items
 
 ### Filters
-- **Severity**: Filter by Critical, High, Medium, or Low
-- **State/Region**: Filter by specific NER states (Assam, Manipur, Nagaland, etc.)
-- **Threat Category**: Filter by threat type (Insurgency, Drug Trafficking, etc.)
-- **Date Range**: Filter by publication date
+Severity, State/Region, Threat Category, Date Range
 
 ### Item Cards
 Each intelligence item shows:
-- **Relevance Rating** (top of card): 1-6 scale for analyst feedback (see Section 11)
-- **Title** with severity badge (color-coded: red=Critical, orange=High, yellow=Medium)
-- **Priority Score** (0-100): AI-assigned importance score. Higher = more urgent
-- **Confidence Score** (0-100): How confident the AI is in its classification
+- **Relevance Rating** (top): 1-6 scale for analyst feedback
+- **Flag Icon** (top-right): Click to flag the article and send to a commander. If already flagged, the icon appears **red and filled**
+- **Title** with severity badge (red=Critical, orange=High, yellow=Medium)
+- **Priority Score** (0-100) and **Confidence Score** (0-100)
 - **Threat Trajectory**: ESCALATING / STABLE / DE-ESCALATING / NEW_THREAT
-- **AI Summary**: Concise intelligence summary
-- **Why It Matters**: Strategic significance explanation
-- **Early Warning Signal**: Potential future implications
+- **AI Summary**, **Why It Matters**, **Early Warning Signal**
 - **Special Flags**: PLA_PAKISTAN_PRESENCE, COORDINATED_NARRATIVE, etc.
-- **Tags**: Classification labels (Military Movement, Border Security, etc.)
-- **Actors**: Named organizations/groups involved
-- **Source**: Original news source with link
-- **Fused Sources Badge** (if applicable): Shows "X sources" when multiple outlets cover the same story. Click to expand and see all covering sources with links.
-- **Delete** (trash icon): Small trash icon in the top-right corner of each card. Click to permanently delete the item after confirmation. The item is removed from the feed, dashboard, and all views immediately.
+- **Tags**, **Actors**, **Source** with link
+- **Fused Sources Badge**: Shows "X sources" when multiple outlets cover the same story
 
 ### Feed Quality Filter
-The Intelligence Feed automatically excludes:
-- **LOW severity** items — noise and low-value articles are hidden
-- **Unprocessed** items — articles still awaiting AI classification are kept in the background
-- **Duplicate articles** — when multiple sources cover the same story, only the best summary is shown (see Multi-Article Fusion below)
-
-Only fully processed, medium-to-critical severity, deduplicated intelligence items appear in the feed.
+- **LOW severity** items are hidden
+- **Unprocessed** items are hidden
+- **Duplicate articles** are deduplicated — only the best summary is shown
 
 ### Multi-Article Fusion
-When multiple news sources cover the same event, the system automatically detects and clusters them:
-- A blue **"X sources"** badge appears on the card showing how many outlets covered the story
-- Click the badge to expand a panel listing every source with the original article title and clickable link
-- The system picks the **longest/best summary** as the primary display and cites all others
-- Fusion runs both **in real-time** (as articles arrive) and as a **scheduled batch** every 30 minutes
-- Detection uses 6 methods: exact title matching, source URL deduplication, title word overlap, named entity overlap (organizations, places, events), compound keyphrase matching (e.g., "ULFA-I chief", "shots fired", "bunkers destroyed"), and same-source geographic clustering
-
-### Rating Banner
-At the top of the Intelligence Feed, a guide banner explains: "Rate each article 1 (Entirely Irrelevant) to 6 (Extremely Relevant) to train the system." This feedback directly shapes how the AI prioritizes future intelligence.
-
-### Sorting
-- By publication date (newest first)
-- By priority score (highest first)
+When multiple sources cover the same event, a blue **"X sources"** badge appears. Click to expand and see all sources. Detection uses 6 methods: exact title matching, URL deduplication, title word overlap, named entity overlap, compound keyphrase matching, and geographic clustering.
 
 ### Export PDF
-Click the green **Export PDF** button in the feed header to generate a PDF brief of your currently filtered results:
-- The PDF includes a summary section (total items, severity breakdown, filters applied) followed by all matching intelligence items in priority order
-- Each item shows title, severity, priority score, source, threat category, AI summary, and source URL
-- The downloaded filename includes the date in ddmmyyyy format aligned to IST (e.g., `Rhino_Drishti_Filtered_25042026.pdf`)
-- If date filters are applied, both dates appear in the filename (e.g., `Rhino_Drishti_Filtered_01042026_to_24042026.pdf`)
-- The PDF format matches the Daily Brief style for consistency
+Click the green **Export PDF** button in the feed header to generate a PDF brief of currently filtered results.
 
 ### Pagination
-- Results are paginated (20 items per page)
-- Use **Previous / Next** buttons at the bottom
-- The page automatically scrolls to the top when navigating to a new page
-
-### Deleting Items
-Each item card has a small **trash icon** (top-right). Click to permanently delete after confirmation. The item is removed from all views immediately.
+20 items per page with Previous / Next navigation.
 
 ---
 
 ## 5. Cross-Border Intelligence
 
-A dedicated module for monitoring intelligence involving India's borders with Bangladesh and Myanmar. The view is **split into two sections** — Bangladesh and Myanmar — with strict quality filters applied.
+Dedicated module for monitoring intelligence involving India's borders with Bangladesh and Myanmar.
 
 ### Geographic Split
-- **Bangladesh**: Items involving India-Bangladesh border incidents, Rohingya movement, BGP/BGB activity, Dhaka politics with NER impact, economic relations
-- **Myanmar**: Items involving India-Myanmar border activity, Tatmadaw operations, Chin/Sagaing/Rakhine spillover, NSCN-K cross-border operations
+- **Bangladesh**: Border incidents, Rohingya movement, BGP/BGB activity, Dhaka politics with NER impact
+- **Myanmar**: Border activity, Tatmadaw operations, Chin/Sagaing/Rakhine spillover, NSCN-K cross-border operations
 
 ### Category Classification
-Each item is auto-categorized into one of four intelligence domains:
-- **Diplomatic**: Bilateral relations, diplomatic outreach, treaties, high-level engagements
-- **Defence**: Military operations, border force activity, arms seizures, armed encounters
-- **Internal Politics**: Domestic political events with cross-border implications (elections, arrests, protests)
-- **Economics**: Trade, smuggling, economic agreements, sanctions impact
+Each item is auto-categorized: **Diplomatic**, **Defence**, **Internal Politics**, or **Economics**
 
 ### Quality Filters
-The Cross-Border view enforces strict quality standards:
-- **No LOW severity items** — only Medium, High, and Critical intelligence appears
-- **No untranslated content** — items with Bengali, Assamese, or Hindi script that failed translation are hidden
-- **Processed only** — items awaiting AI classification are excluded
-
-### Feedback Integration
-Analyst feedback ratings on cross-border items are factored into the display scores. Items with high analyst ratings are prioritized within their section.
-
-### Deleting Items
-Each signal item in both the Bangladesh and Myanmar sections has a small **trash icon** on the right side. Click it to permanently delete that intelligence item after confirmation. The item is removed from the Cross-Border view and all other pages immediately.
+No LOW severity items. No untranslated content. Processed items only.
 
 ---
 
 ## 6. Daily Brief
 
-Automated daily intelligence summary generated at 0600 IST each day.
-
-### Analyst Assessment
-AI-generated strategic overview summarizing the day's most significant developments, identifying trends, and highlighting items requiring immediate attention.
+Automated daily intelligence summary generated at **0600 IST** each day.
 
 ### Sections
-- **NER Key Developments**: Top intelligence items strictly from Northeast Indian states (Assam, Manipur, Mizoram, Meghalaya, Nagaland, Tripura, Arunachal Pradesh, Sikkim). No international or non-NER items appear here
-- **Cross-Border Intelligence**: Categorized Bangladesh and Myanmar news (Diplomatic, Defence, Internal Politics, Economics) — only items with India-facing relevance are included
-- **National News**: Relevant national-level developments affecting NER security
+- **NER Key Developments**: Top items from Northeast Indian states only
+- **Cross-Border Intelligence**: Categorized Bangladesh and Myanmar news
+- **National News**: National-level developments affecting NER security
 - **International News**: Strategic international items
-- **Pattern Insights**: Detected escalation patterns from the Pattern Detection Engine
-- **Document Insights**: Analysis from documents uploaded during the current brief period only. Older document analyses do not carry over to new briefs
+- **Pattern Insights**: Detected escalation patterns
+- **Faultline Section**: HIGH/CRITICAL faultlines with PAOI tags
+- **Document Insights**: Analysis from documents uploaded during the current brief period
 
 ### Actions
-- **REGENERATE BRIEF**: Force regenerate today's brief with the latest data. The brief runs automatically at 0600 IST, but you can manually trigger it anytime
-- **EXPORT PDF**: Download the brief as a PDF document with RESTRICTED classification headers. Suitable for distribution within authorized channels
+- **REGENERATE BRIEF**: Force regenerate with latest data
+- **EXPORT PDF**: Download as RESTRICTED-header PDF
 
 ### Cross-Brief Deduplication
-News items included in one day's brief are NOT repeated in subsequent briefs. Each brief contains only new intelligence.
+Items included in one day's brief are NOT repeated in subsequent briefs.
 
 ---
 
 ## 7. Weekly Trends
 
-Visual analytics showing intelligence trends over the past 7 days.
-
-### Charts
-- **Severity Distribution**: Bar chart showing Critical/High/Medium/Low counts per day
-- **Threat Type Breakdown**: Which threat categories are most active
-- **Regional Distribution**: Which NER states have the most activity
-- **Cross-Border Activity**: Trend line for cross-border flagged items
-
-Use this page to identify whether the overall threat environment is escalating, stable, or de-escalating over the week.
+Visual analytics showing intelligence trends over the past 7 days: Severity Distribution, Threat Type Breakdown, Regional Distribution, Cross-Border Activity trend line.
 
 ---
 
 ## 8. Pattern Detection
 
-The Pattern Detection Engine automatically groups intelligence items to identify recurring threats and escalation corridors.
+The Pattern Detection Engine automatically groups intelligence items to identify recurring threats.
 
 ### How Patterns Are Detected
-The system looks for clusters of items sharing:
-- Same region + threat type (e.g., "Manipur Insurgency")
-- Same region + actor (e.g., "Assam ULFA")
-- Same region + tag combination
-- Cross-border activity keys
-
-When 3+ items share a pattern key within a 7-day window, a pattern is flagged.
+Clusters of 3+ items sharing same region + threat type, same region + actor, or cross-border activity keys within a 7-day window.
 
 ### Escalation Risk Levels
 - **CRITICAL**: 2+ critical-severity events in the pattern
-- **HIGH**: 5+ events in the pattern cluster
-- **MODERATE**: 4+ events
-- **LOW**: 3+ events
-
-### Pattern Cards
-Each pattern shows:
-- Region and threat detail
-- Event count and time window
-- Average priority score
-- Severity breakdown
-- Source diversity
-- Sample article titles
+- **HIGH**: 5+ events, **MODERATE**: 4+ events, **LOW**: 3+ events
 
 ---
 
 ## 9. Knowledge Graph
 
-Entity relationship mapping that cross-references actors, locations, and contexts across the entire intelligence corpus. This surfaces connections that no single article reveals.
+Entity relationship mapping that surfaces connections across the entire intelligence corpus.
 
-### Actors Tab
-Lists all identified actors (organizations, security forces, militant groups) with:
-- Activity count (total events)
-- Article count (how many articles mention them)
-- Locations where they've been active
-- Threat types associated with them
-- Cross-border flag
+**Actors Tab**: Lists identified actors with activity count, locations, threat types, and cross-border flag.
+**Locations Tab**: Lists locations with activity count, actors, border zone flag.
+**Actor Detail View**: Full profile with timeline, locations, threat types, co-occurring actors, movement edges, and related articles.
 
-### Locations Tab
-Lists all identified locations with:
-- Activity count
-- Actors seen at that location
-- Border zone flag
-- Associated states
-
-### Actor Detail View
-Click any actor card to see their full profile:
-- **Timeline**: First seen and last seen dates
-- **Locations**: All locations with event counts
-- **Threat Types**: What types of activity they're involved in
-- **Co-occurring Actors**: Other actors that appear in the same articles
-- **Movement Edges**: Actor-to-location connections with frequency
-- **Related Articles**: Sample article titles
-
-### Filters
-- **Cross-border only**: Show only actors with cross-border activity
-- **Border zones only**: Show only locations near borders
-- **Search**: Find specific actors or locations
-
-### Rebuilding
-Click **Rebuild Graph** to regenerate the knowledge graph from the latest data.
+Click **Rebuild Graph** to regenerate from latest data.
 
 ---
 
 ## 10. Alerts
 
-Filtered view of CRITICAL and HIGH severity items. This is effectively the Intelligence Feed filtered to only show items requiring immediate attention.
-
-### Acknowledgement
-Each alert has an **ACK** button. Clicking it marks the alert as reviewed/handled. Acknowledged alerts move out of the "Unacknowledged" panel on the Dashboard but remain accessible in the full feed.
+Filtered view of CRITICAL and HIGH severity items. Each alert has an **ACK** button to mark as reviewed/handled.
 
 ---
 
 ## 11. Keyword Engine
 
-The Dynamic Keyword Engine generates and manages intelligence-relevant keywords that drive RSS detection and filtering.
+The Dynamic Keyword Engine manages intelligence-relevant keywords that drive RSS detection and filtering.
 
 ### Keyword Types
-- **Primary Threat** (Red): Direct threat terms like "insurgency", "arms smuggling", "drone activity"
-- **Entity/Actor** (Blue): Named organizations and actor-action combinations like "ULFA movement Assam"
-- **Geographic** (Yellow): Region-specific combinations like "Manipur violence", "Tripura border tension"
-- **Cross-Border** (Purple): Cross-border intelligence terms like "India Bangladesh border issue"
-- **AI Emerging Signal** (Green): AI-generated keywords from recent patterns like "drug-militant nexus expansion"
-- **AI Expanded** (Grey): Synonym expansions of high-score keywords like "unauthorized border crossing" for "border infiltration"
-
-### Keyword Scores (0-100)
-Each keyword has a relevance score based on:
-- Frequency in recent intelligence items
-- Association with high/critical severity articles
-- Cross-border relevance
-- Recency (time decay — recent matches score higher)
-
-### Adaptive Learning
-Keywords automatically adjust based on AI classification results:
-- When an article is classified as HIGH or CRITICAL, keywords that matched it get **boosted**
-- When an article is classified as LOW relevance, matching keywords get **decayed**
-- New keywords are automatically extracted from high-priority articles
+- **Primary Threat** (Red): Direct threat terms — "insurgency", "arms smuggling"
+- **Entity/Actor** (Blue): Named organizations
+- **Geographic** (Yellow): Region-specific combinations
+- **Cross-Border** (Purple): Cross-border intelligence terms
+- **AI Emerging Signal** (Green): AI-generated keywords from recent patterns
+- **AI Expanded** (Grey): Synonym expansions
 
 ### AI Refresh
-Click **AI Refresh Keywords** to trigger Claude AI to:
-1. Analyze recent high-priority intelligence
-2. Generate emerging signal keywords (new threat patterns)
-3. Expand top keywords into synonyms and related phrases
+Click **AI Refresh Keywords** to trigger Claude AI to generate emerging signal keywords and expand top keywords into synonyms.
 
 ### Manual Keyword Addition
-If you search for a keyword and it doesn't exist in the system:
-1. Type the keyword in the search bar (minimum 2 characters)
-2. When no results are found, an **"Add it manually?"** prompt appears
-3. Select the **Type** (Primary Threat, Entity/Actor, Geographic, Cross-Border, Emerging Signal)
-4. Select the **Score** (90 = Critical, 75 = High, 60 = Medium, 40 = Low)
-5. Click **+ Add Keyword**
-6. The keyword is immediately added and appears in the grid with source labeled "Manually Added"
-
-Duplicate keywords are rejected — the system performs case-insensitive matching to prevent adding keywords that already exist.
-
-### How Keywords Drive Detection
-During each RSS fetch cycle, the system uses these keywords for weighted matching against article titles and content. High-scoring keywords give articles higher priority, ensuring important intelligence is not missed.
+Type a keyword in the search bar. When no results are found, an **"Add it manually?"** prompt appears with Type and Score (90=Critical, 75=High, 60=Medium, 40=Low) selectors.
 
 ---
 
 ## 12. Training & Feedback
 
-The Training & Feedback page is the central hub for shaping the AI's intelligence priorities. It combines analyst feedback ratings, training data uploads, and AI learning analytics into a single operational view.
+The central hub for shaping the AI's intelligence priorities.
 
 ### Analyst Feedback (1-6 Rating Scale)
-
-Every intelligence item on the Intelligence Feed has a numbered rating bar (1-6) at the top of the card. Rating an article tells the system what you consider relevant.
 
 | Rating | Label | Effect |
 |--------|-------|--------|
 | 1 | Entirely Irrelevant | Suppresses similar content |
-| 2 | Mostly Irrelevant | Reduces weight for this category |
+| 2 | Mostly Irrelevant | Reduces weight |
 | 3 | Slightly Relevant | Neutral signal |
 | 4 | Moderately Relevant | Mild positive signal |
 | 5 | Highly Relevant | Boosts similar content |
 | 6 | Extremely Relevant | Strongly prioritizes this type |
 
-- **One rating per device per item**: The system uses device fingerprinting to prevent duplicate manipulation. You can update your rating at any time.
-- **Max ratings cap**: An admin-configurable limit controls how many total ratings each item can receive (default: 20). Once reached, no further ratings are accepted for that item.
-
-### Key Metrics (Top Row)
-
-The Training page shows five summary metrics:
-- **Total Ratings**: All feedback ratings submitted across all analysts
-- **Items Rated**: How many unique intelligence items have been rated
-- **Analysts**: Number of distinct devices that have submitted ratings
-- **Avg Rating**: Global average rating across all feedback
-- **Training Queue**: Items waiting to be processed by the training pipeline
-
-### Training Effectiveness Score
-
-A prominent metric showing how well the AI's classifications align with analyst feedback.
-
-- **Score (0-100%)**: Measures agreement between AI severity levels and analyst ratings
-- **Grade**: EXCELLENT (80+), GOOD (65+), MODERATE (50+), NEEDS_IMPROVEMENT (35+), POOR (<35)
-- **Biggest Gaps**: The 5 items where AI and analyst ratings disagree the most — useful for identifying where the AI needs improvement
-- **Best Alignments**: The 5 items where AI and analyst ratings agree the most
-- **Trend**: Historical scores captured after each training run, showing whether the system is improving over time
-- **Delta**: Change from the last recorded score (e.g., "+3.2% since last run")
-
-### Upload Intelligence URLs
-
-Paste any news URL into the input field to add it to the training queue. The system will scrape the article content and run AI analysis on it.
-
-- **Relevance Tag (1-6)**: Before adding a URL, optionally tag it with a relevance score (1-6) using the numbered buttons below the input. This tells the system how important you consider this source.
-- Press Enter or click **Add** to submit
-
-### Upload Documents
-
-Click the upload area to browse for PDF, DOCX, or TXT files. The system extracts text and adds it to the training queue.
-
-### Training Queue
-
-The right panel shows all items awaiting processing:
-- **Status badges**: Pending (yellow), Ready (blue), Processing (amber), Completed (green)
-- **REL badge**: Shows the relevance tag if one was assigned (e.g., "REL: 5/6")
-- Click the trash icon to remove an item from the queue
+Rating uses device fingerprinting (one rating per device per item). Admin-configurable max ratings per item (default: 20).
 
 ### Train Rhino Drishti
+Click to start the training pipeline: scrape pending URLs, extract text from uploaded documents, run AI analysis (Claude Haiku), extract regions/actors/keywords.
 
-Click this button to start the training pipeline. The system will:
-1. Scrape content from any pending URLs
-2. Extract text from uploaded documents
-3. Run AI analysis (Claude Haiku) on each item using the military intelligence framework
-4. Extract regions, actors, threat categories, and keywords
-5. Store results for the Training Pipeline Insights
+### Active Feedback Bias (Live AI Pipeline)
+When status badge reads **ACTIVE**, analyst preferences are injected into every new article classification.
 
-A progress tracker shows real-time status: items processed, current item title, and percentage complete.
+**How it works:**
+1. Analysts rate articles 1-6 on the Intelligence Feed
+2. System aggregates ratings into a bias profile (upweight/downweight patterns)
+3. Bias is appended to the Claude AI classification prompt as "Analyst Feedback Calibration"
+4. New articles are scored with analyst-driven adjustments (bias recalculates every 5 minutes)
 
-**Live Queue Clearing**: As each item is processed, it automatically disappears from the Training Queue in real-time. You can watch items clear sequentially without needing to refresh the page.
-
-### Analyst Preferences (Feedback)
-
-Aggregated view of what highly-rated content has in common:
-- **Preferred Regions**: Regions that analysts consistently rate highly
-- **Preferred Threats**: Threat categories that analysts consider most relevant
-
-### Noise Patterns (Low-Rated)
-
-Shows content characteristics that analysts consistently rate as irrelevant. Helps identify what the AI should deprioritize.
-
-### Training Pipeline Insights
-
-After running training, this section shows what the AI learned from uploaded content:
-- **Priority Regions**: Regions mentioned in processed training data
-- **Key Signals**: Keywords extracted from training articles
-
-### Activity Log
-
-The Activity Log is a clean, session-level table showing the outcome of training and feedback activity. Individual uploads and ratings are NOT logged — only meaningful sessions are recorded.
-
-| Column | Description |
-|--------|-------------|
-| **Timestamp** | When the session occurred |
-| **Device** | Analyst device ID (last 6 characters, for feedback sessions only) |
-| **Activity Type** | "URL/Article Training" or "Rating Feedback" |
-| **Volume** | Item count with breakdown (e.g., "12 items (8 URLs, 4 documents)" or "5 ratings (1x3, 2x4, 1x5, 1x6)") |
-| **Impact** | AI-generated summary of what the system learned from this session |
-
-**Training Sessions** are logged when you click "Train Rhino Drishti". The impact summary describes which regions, actors, and threat categories were strengthened.
-
-**Feedback Sessions** are automatically created when an analyst submits 5 or more ratings. The impact summary describes what content types were upweighted or suppressed based on the rating distribution.
+### Training Effectiveness Score
+Shows how well AI classifications align with analyst feedback. Grade: EXCELLENT (80+), GOOD (65+), MODERATE (50+), NEEDS_IMPROVEMENT (35+), POOR (<35).
 
 ### Scoring Integration
-
-The Scoring Integration panel shows the formula used to combine AI and analyst feedback:
 ```
 final_score = base_ai_score + training_bias + feedback_bias
 training_bias = log(total_ratings + 1) * (avg_rating - 3.5)
 ```
 
-This means items with high analyst ratings get boosted in the intelligence feed, while low-rated items are deprioritized.
-
-### Active Feedback Bias (Live AI Pipeline)
-
-This card shows whether analyst feedback is actively influencing the AI classification pipeline. When the status badge reads **ACTIVE**, the system is dynamically injecting analyst preferences into every new article classification.
-
-**What it shows:**
-- **Status**: ACTIVE (enough data) or NEEDS DATA (below minimum threshold)
-- **Upweighted by Analysts**: Regions, threat categories, and actors that analysts consistently rate highly. These get a priority score boost of +3 to +20 points (depending on the influence setting)
-- **Downweighted by Analysts**: Regions and categories that analysts consistently rate as irrelevant. These get a priority score reduction
-- **Pipeline Formula**: Shows the live equation: `pipeline_prompt = base_classification + feedback_bias_context`
-- **Configuration Summary**: Current influence level and feedback window (configurable in Settings)
-
-**How it works:**
-1. Analysts rate articles 1-6 on the Intelligence Feed
-2. The system aggregates ratings into a bias profile (upweight/downweight patterns)
-3. This bias is appended to the Claude AI's classification prompt as "Analyst Feedback Calibration"
-4. New articles are scored with these analyst-driven adjustments factored in
-5. The bias recalculates every 5 minutes (cache TTL)
-
-The influence level and feedback window are configurable in **Settings > Feedback Bias Configuration** (see Section 17).
-
 ---
 
 ## 13. Manual Intelligence Uploads
 
-Upload offline intelligence materials, analyze article URLs with AI, or add news directly to the intelligence feed with custom parameters.
-
-### Three Workflows
-
-This page (sidebar: **Manual Int Uploads**) supports three distinct workflows:
-
-1. **Upload File** — Upload a PDF, Word, Excel, or TXT file for AI contextual threat analysis
-2. **Analyze URL** — Paste an article URL for AI-powered contextual assessment against the current NER security environment
-3. **Add to Feed** — Add a URL directly to the Intelligence Feed with user-defined severity, priority, threat category, region, and summary — bypassing AI analysis entirely
-
-### Workflow 1: Upload File
-
-1. Click **Manual Int Uploads** in the sidebar
-2. Select the **Upload File** tab
-3. Drag and drop a file, or click **Select File**
-4. Supported formats: PDF (.pdf), Word (.docx), Excel (.xlsx), Text (.txt)
-5. The system extracts text and begins contextual analysis automatically
-
-### Workflow 2: Analyze URL
-
-1. Select the **Analyze URL** tab
-2. Paste the article/report URL
-3. Optionally enter a **Specific Analysis Query** (e.g., "Assess implications for Manipur border security")
-4. Click **Analyze** — the system fetches the article, extracts content, and runs AI analysis
-5. After analysis completes, you can optionally click **Add to Feed** on the analysis card to push it to the Intelligence Feed (see below)
-
-### Workflow 3: Add to Feed (Direct)
-
-Use this when you want to immediately add an article to the Intelligence Feed without waiting for AI analysis.
-
-1. Select the **Analyze URL** tab
-2. Paste the article URL
-3. Click the **Add to Feed** button (green, next to the Analyze button)
-4. An inline form expands with the following fields:
-
-| Field | Description | Default |
-|-------|-------------|---------|
-| **Title** | Article headline — leave blank to auto-scrape from the URL | Auto-detected |
-| **Severity** | CRITICAL / HIGH / MEDIUM / LOW | Medium |
-| **Priority Score** | 0-100 numeric score for feed ranking | 50 |
-| **Threat Category** | One of 18 categories: Military Movement, Insurgency/Militancy, Drug Trafficking, Arms Smuggling, Border Incursion, Ethnic/Tribal Tension, Political Instability, Cyber Threat, Infrastructure/Strategic, Cross-border Crime, Ceasefire Violation, Counter-terrorism Ops, Diplomatic Tension, Immigration/Refugees, Environmental Security, Economic Security, Intelligence Activity, Unclassified | Unclassified |
-| **Region / State** | Assam, Manipur, Meghalaya, Mizoram, Tripura, Nagaland, Arunachal Pradesh, Sikkim, Bangladesh, Myanmar, India, Multiple, Unknown | Unknown |
-| **Summary** | Brief intelligence summary for the feed card | Optional |
-| **Cross-Border** | Checkbox — mark if the article involves cross-border activity | Unchecked |
-
-5. Click **+ Add to Feed** to submit
-6. The article appears immediately in the Intelligence Feed and Dashboard with source labeled as "Manual Upload"
-
-**Note:** The system performs best-effort URL scraping. If the website blocks scraping (403/paywall), the article is still added using the title and summary you provided. If scraping fails and no title is provided, you'll be prompted to enter one.
-
-### Add to Feed After Analysis
-
-If you first **Analyze** a URL and then decide to add it to the feed:
-
-1. Expand the analysis card in **Analysis History**
-2. Click the green **Add to Feed** button on the card header
-3. A modal opens pre-filled with the AI's classification:
-   - Title from the scraped article
-   - Severity from AI threat classification
-   - Priority score derived from relevance score (relevance × 10)
-   - Threat category from AI classification
-   - Region from AI relevance assessment
-   - Summary from AI executive summary
-4. Review and adjust any fields as needed
-5. Click **Add to Feed** to confirm
-
-This "analyze first, then decide" workflow lets you use the AI's assessment to inform your manual parameters before pushing to the feed.
-
-### What the AI Analysis Produces
-
-Each analyzed document/URL receives a comprehensive **Contextual Intelligence Assessment** containing:
-
-| Section | Description |
-|---------|-------------|
-| **Executive Summary** | 3-4 sentence overview of the document and its significance |
-| **Threat Classification** | Severity (CRITICAL/HIGH/MEDIUM/LOW), threat category, and confidence level |
-| **Pattern Analysis** | Whether the document matches any emerging patterns, with escalation indicator (ESCALATING/STABLE/DE-ESCALATING/NEW_THREAT) |
-| **Relevance Assessment** | Score (1-10) indicating relevance to current NER security, with primary and secondary affected regions |
-| **Key Entities** | Named actors, locations, and events extracted from the document |
-| **Recommended Actions** | Prioritized actionable recommendations (IMMEDIATE/HIGH/MEDIUM/LOW) |
-| **Cross-References** | How the document connects to the platform's existing intelligence (may include primary, secondary, tertiary connections and strategic context) |
-| **Intelligence Gaps** | What additional information would improve the assessment |
-
-### How It Works Internally
-The AI analyzes the submitted document **in context** of the last 7 days of intelligence collected by the platform — including high-priority developments, detected patterns, and threat trends. This means the assessment is not just about the document itself, but about how it fits into the **current operational picture**.
-
-### Analysis Cards
-Each analysis appears as a card in the **Analysis History** showing:
-- **Severity badge** (color-coded: red=CRITICAL, orange=HIGH, yellow=MEDIUM, green=LOW)
-- **Threat category badge**
-- **Region** with map pin
-- **Escalation indicator**
-- **Add to Feed** button (green, for URL-type analyses)
-- Click to **expand** for full assessment details
-
-### Adding Keywords from Analysis Results
-
-When you expand an analysis card, the **Key Entities** section displays extracted actors (red), locations (blue), and events (amber) as clickable badges.
-
-**How to add keywords:**
-1. Expand any completed analysis card
-2. In the **Key Entities** section, click any badge to select it — it highlights with a ring in its color
-3. Click multiple badges to select several at once
-4. A bar appears at the bottom showing **"3 selected → + ADD TO KEYWORD BANK"**
-5. Click **+ Add to Keyword Bank** to add all selected keywords
-6. A toast confirms how many were added and how many were skipped (duplicates)
-
-**How keywords are processed:**
-- Parenthetical descriptions are automatically stripped (e.g., "Assam Rifles (paramilitary force)" becomes "Assam Rifles")
-- **Actors** are added as type `entity` (blue in Keyword Engine)
-- **Locations** are added as type `geo` (yellow in Keyword Engine)
-- **Events** are added as type `primary` (red in Keyword Engine)
-- All are added with score 70 (High)
-- Duplicate keywords are silently skipped
-- Keywords shorter than 2 characters are ignored
-
-### Duplicate Detection
-When adding a URL to the feed, the system checks for duplicate URLs. If the same URL already exists in the Intelligence Feed, you'll receive a "This URL already exists" error to prevent duplicates.
+Three workflows:
+1. **Upload File** — PDF, Word, Excel, or TXT for AI contextual threat analysis
+2. **Analyze URL** — Paste article URL for AI-powered contextual assessment
+3. **Add to Feed** — Add a URL directly with user-defined severity, priority, threat category, region, and summary
 
 ### Use Cases
-- Paste a breaking news URL → **Add to Feed** immediately with your own severity assessment
-- Paste a complex article → **Analyze** first to get AI assessment → review → **Add to Feed** with AI-informed parameters
 - Upload field reports from ground units for threat classification
-- Analyze intercepted communications transcripts against known patterns
+- Analyze intercepted communications transcripts
 - Process seized document scans for relevance to ongoing operations
-- Assess foreign intelligence reports for NER implications
-- Upload border checkpoint logs for pattern detection
+- Paste breaking news URL → Add to Feed immediately with your own severity assessment
+
+### Adding Keywords from Analysis
+When you expand an analysis card, Key Entities (actors, locations, events) are shown as clickable badges. Select multiple and click **+ Add to Keyword Bank** to add them.
 
 ---
 
 ## 14. Reports & PDF Generation
 
-Generate downloadable PDF reports from archived intelligence data. Access via **Reports** in the sidebar (available to all roles).
-
 ### Report Types
+1. **Regional Threat Summary** — Threat assessment for a specific NER state
+2. **Cross-Border SITREP** — Border situation report for Bangladesh or Myanmar
+3. **Custom Filtered Report** — Any combination of region, threat, severity, source, date, keywords
 
-**1. Regional Threat Summary**
-Generate a threat assessment for a specific NER state:
-- Select a **Region** (Assam, Manipur, Meghalaya, Mizoram, Tripura, Nagaland, Arunachal Pradesh, Sikkim)
-- Optionally set a **date range**
-- Click **Generate Regional Threat Report**
-- PDF includes: Executive summary with severity breakdown, threat category distribution, items grouped by Critical/High/Medium priority
-
-**2. Cross-Border SITREP (Situation Report)**
-Generate a border situation report for Bangladesh or Myanmar:
-- Select **Country** (Bangladesh or Myanmar)
-- Optionally set a **date range**
-- Click **Generate Cross-Border SITREP**
-- PDF includes: Situation overview with cross-border signal count, threat distribution, items grouped by category (Diplomatic, Defence, Internal Politics, Economics)
-
-**3. Custom Filtered Report**
-Build a fully customized report with any combination of filters:
-
-| Filter | Options |
-|--------|---------|
-| Report Title | Free text (appears in PDF header and filename) |
-| Region | Any NER state + Bangladesh, Myanmar, India |
-| Threat Category | 14 threat types |
-| Severity | Critical / High / Medium |
-| Search Keywords | Free text search across titles and summaries |
-| Source Name | Filter by news source (e.g., "NDTV", "NE Now") |
-| Min Priority | 80+ (Critical), 60+ (High), 40+ (Medium) |
-| Date Range | From/To date selectors |
-| Cross-Border Only | Checkbox to show only cross-border items |
-
-PDF includes: Executive summary, regional distribution, threat category distribution, all items grouped by severity.
-
-### PDF Filename Convention
-All report filenames use **ddmmyyyy** format aligned to **IST (Indian Standard Time)**:
-- `Rhino_Drishti_Manipur_Threat_01042026_24042026.pdf`
-- `Rhino_Drishti_Myanmar_SITREP_15042026_24042026.pdf`
-- `Rhino_Drishti_Custom_Report_01042026_to_20042026.pdf`
-- `Rhino_Drishti_Filtered_25042026.pdf` (no date range → current IST date)
-
-### Quick Export from Intelligence Feed
-The **Export PDF** button on the Intelligence Feed page (see Section 4) provides a quick way to export your currently filtered view without navigating to the Reports page.
+All report filenames use **ddmmyyyy** format aligned to **IST**.
 
 ---
 
 ## 15. Platform Updates & Notifications
 
-Stay informed about new features and platform changes.
-
 ### How Update Notifications Work
-
-When you log in, the system checks if any updates have been published since your last visit. Notifications appear as **toast messages** at the top-center of the screen.
-
-**Notification behaviour:**
 
 | Scenario | What Happens |
 |----------|-------------|
 | 1-3 major updates | All shown as sequential toasts (oldest → newest) |
-| 4+ major updates (long gap) | Latest 3 shown as toasts → "More Updates Available" modal with link to full history |
+| 4+ major updates | Latest 3 toasts → "More Updates Available" modal |
 | Only minor updates | One generic toast: "Performance improvements and bug fixes" |
-| Mixed major + minor | Minor updates are ignored; only major updates shown |
 | No new updates | No notification |
 
-Each toast appears for **5 seconds** before the next one in the queue. Toasts do not stack — they display one at a time.
-
-### "More Updates Available" Modal
-If you've missed more than 3 major updates, a modal appears after the toast sequence:
-- **"View All Updates"** — opens the Platform Updates page with full history
-- **"Dismiss"** — closes the modal
-
 ### Platform Updates Page
-Access via **Platform Updates** in the sidebar (available to all roles).
-
-Shows a **timeline of all updates** with:
-- Version number and **MAJOR/MINOR** badge
-- Full update message
-- Date/time and author
-- **Preview** button — click to see exactly what the toast notification would look like for any update
-
-### Admin Controls (Admin only)
-Expand the **"Admin — Manage Updates"** panel to:
-
-**Create Update:**
-1. Enter **Version** (e.g., "9.8")
-2. Select **Priority**: Major (shown as individual toast with actual message) or Minor (shown as generic "bug fixes" toast)
-3. Enter **Message** describing the update
-4. Click **Publish Update**
-
-**Preview:**
-Enter any version number and click **Preview** to see the toast notification without affecting any user's notification state.
+Access via **Platform Updates** in the sidebar. Shows a timeline of all updates with version, priority badge, message, date, and preview button.
 
 ---
 
-## 16. User Management
+## 15.1 Push Notifications (Mobile & Desktop)
 
-*Admin only — not visible to Analyst or Viewer roles.*
+Rhino Drishti supports **Web Push notifications** that appear on your device even when the browser tab is closed or the screen is locked.
 
-### Accessing User Management
-Click **User Management** in the sidebar (visible to Admin users only).
+### What Triggers a Push Notification
+
+| Event | Description |
+|-------|-------------|
+| **CRITICAL_ITEM** | A new CRITICAL severity article arrives in the intelligence feed |
+| **STATE_ESCALATION** | The concern level for a monitored NER state rises |
+| **PATTERN_SURGE** | A detected threat pattern crosses the CRITICAL threshold |
+| **USER_FILTER_MATCH** | A new article matches keywords you have configured |
+
+### Enabling Push Notifications
+
+**On Android / Desktop (Chrome, Firefox, Edge):**
+1. Open the app in your browser
+2. A permission prompt appears automatically on first visit
+3. Click **Allow** in the browser's permission dialog
+4. Notifications fire even when the tab is minimised or the browser is in the background
+
+**On iPhone / iPad (iOS Safari — requires PWA install):**
+iOS push only works from an installed PWA. The in-app prompt guides you:
+1. Open the app in **Safari** (not Chrome)
+2. Tap the **Share** button → select **"Add to Home Screen"** → tap **Add**
+3. Open the app **from the home screen icon** (not from Safari)
+4. The push permission prompt now appears — tap **Allow**
+
+Note: The push prompt is intentionally suppressed on iOS browser tabs — it only appears after PWA installation.
+
+### Notification Panel
+
+Click the **Bell icon** in the top navigation bar:
+- **In-app notification feed** — all recent alerts with timestamp, event type, article title
+- **Push Notifications toggle** — enable or disable push delivery to this device
+- **Test button** — sends an immediate test push to verify your device is working
+- **iOS install guide** — appears automatically if iOS without PWA is detected
+
+### Notification Persistence (Android)
+On Android, push notifications **stay in the notification drawer until you explicitly dismiss them** — they do not auto-disappear. This ensures critical alerts are not missed when the phone is face-down or in a meeting.
+
+### Managing Notification Preferences
+Each device's subscription is managed separately. Enabling push on your phone does not affect your desktop.
+
+---
+
+## 16. Faultline Intelligence & PAOI Monitoring
+
+The **Faultline Intelligence** module continuously monitors defined societal, political, and security fault lines within the Commander's **Priority Areas of Interest (PAOI)** and scores them based on recent intelligence activity.
+
+### What is a Faultline?
+A faultline is a persistent structural tension that can escalate into an active threat if not monitored. Examples:
+- "Disinformation on border security and incursions" (P1)
+- "Indigenous vs immigrant sentiment" (P4)
+- "Drug-militant nexus in NER"
+- "Bangladesh political instability spillover"
+
+Unlike individual intelligence items (event-based), faultlines track the **underlying condition** over time. A rising score signals intensifying structural tension even without a single dramatic event.
+
+---
+
+## 16.1 Priority Areas of Interest (PAOI)
+
+The Commander defines **Priority Areas of Interest** that group related faultlines for aggregate monitoring.
+
+**Default PAOIs:**
+
+| ID | Name | Description |
+|----|------|-------------|
+| P1 | Information Operations & Border Narrative | Disinformation, narrative warfare, border security messaging |
+| P2 | Militant & Insurgent Activity | Active insurgent groups, ceasefire violations, arms movement |
+| P3 | Lines of Communication | Road, rail, and infrastructure threats in NER |
+| P4 | Ethnic & Social Cohesion | Inter-community tensions, indigenous vs immigrant dynamics |
+| P5 | Cross-Border Influence Operations | Foreign-backed influence, proxy actors, subversion |
+
+**Managing PAOIs:**
+1. Click **Manage PAOIs** (top-right of Faultline Intelligence page)
+2. The PAOI Manager modal shows all active Priority Areas
+3. **Create**: Add new PAOI with name, description, rank, and linked faultline IDs
+4. **Edit**: Update name, description, or linked faultlines
+5. **Disable**: Temporarily remove from monitoring without deleting
+6. **Delete**: Permanently remove a PAOI
+
+Rank determines display order (P1 = highest priority, shown first).
+
+---
+
+## 16.2 Faultline Cards & Watchlist
+
+Each faultline card shows:
+
+| Field | Description |
+|-------|-------------|
+| **Name** | The faultline label |
+| **PAOI Tag** | Which Priority Area it belongs to (P1, P2, etc.) |
+| **Score** | Current faultline score (0-100) |
+| **Severity Band** | CRITICAL (≥75) / HIGH (≥55) / MODERATE (≥35) / LOW (<35) |
+| **Trend** | 7-day sparkline showing score trajectory |
+| **Delta (7d)** | Score change over last 7 days (green=rising, red=falling) |
+| **Article Count** | Number of intelligence items driving this score |
+
+**Faultline Watchlist (Commander's Priorities):**
+Pin up to **10 faultlines** as personal priorities, ranked 1-10.
+- Click the **★ (star)** icon to add to watchlist
+- Use the **rank selector** to set its priority rank (1 = top priority)
+- Watchlisted faultlines appear at the **top of the page** in rank order
+- If two faultlines are assigned the same rank, they swap — ranks are always unique
+- Remove from watchlist by clicking the star again
+
+**Creating a New Faultline:**
+1. Click **+ New Faultline** (top-right)
+2. Fill in: Name, Region, Category, PAOI, and optional Notes
+3. Click **Create** — the faultline begins scoring on the next daily pass
+
+**Faultline Detail View:**
+Click any faultline card to see: 30-day score history chart, contributing articles (newest first), analyst notes (editable), and acknowledgement log.
+
+---
+
+## 16.3 Faultline Scoring & Time Decay
+
+Scores are calculated by the **Daily Faultline Engine** running twice daily at **06:00 IST** and **18:00 IST**.
+
+**Scoring formula:**
+```
+faultline_score = SUM(article_weight x e^(-0.35 x age_days))
+```
+
+- Each article's weight is derived from its AI priority score and severity
+- The exponential decay factor `e^(-0.35 x age_days)` reduces older articles' contribution:
+  - Today: 100% weight
+  - 7 days ago: ~9% weight
+  - 14+ days ago: negligible
+- Scores reflect **current conditions**, not historical spikes
+
+**Why time decay matters:** Without decay, a single event from 2 months ago would permanently inflate a faultline score. Decay ensures scores normalize after events subside.
+
+**Manual re-score:** Click **Run Daily Pass** on the Faultline Intelligence page.
+
+**Score interpretation:**
+| Score | Band | Meaning |
+|-------|------|---------|
+| 75-100 | CRITICAL | Active escalation — immediate attention required |
+| 55-74 | HIGH | Significant tension — elevated monitoring |
+| 35-54 | MODERATE | Background activity — routine watch |
+| 0-34 | LOW | Quiet — minimal recent activity |
+
+---
+
+## 16.4 Monthly Faultline Analysis Report
+
+The primary instrument for presenting faultline status to the Commander.
+
+**How to generate:**
+1. Navigate to **Faultline Intelligence** in the sidebar
+2. Click **Monthly Report** (or access via the briefs page)
+
+**Report structure:**
+1. **Commander's Priority Dashboard** — All PAOI-linked faultlines with scores, month-on-month delta, and severity colour coding
+2. **Top Movers** — Faultlines with the largest score changes (fastest rising = highest concern)
+3. **Per-Faultline Deep Dives** — Score trend chart, contributing articles, AI-generated narrative
+4. **Strategic Assessment** — AI synthesis of cross-faultline patterns and priority recommendations
+
+**In Daily Brief:** Active HIGH/CRITICAL faultlines appear automatically in the daily brief's faultline section. PAOI-linked faultlines are tagged with a **red PAOI badge** to draw the Commander's attention.
+
+---
+
+## 17. Flagging Intelligence to Commanders
+
+Any intelligence item in the feed can be **flagged** — sent directly to a commander for immediate attention.
+
+### Flagging an Article
+
+1. Find the article in the **Intelligence Feed**, **Dashboard Latest Items**, or **Alerts** page
+2. Click the **Flag icon** in the top-right corner of the item card
+3. A modal opens with:
+   - **Recipient** — select the commander (dropdown of all registered users)
+   - **Message** — optional context
+   - **Priority** — URGENT / HIGH / ROUTINE
+4. Click **Send Flag** to submit
+5. The recipient receives an in-app notification and (if enabled) a push notification
+
+### Red Flag Indicator
+
+Once you flag an article, the **flag icon turns red and filled** on the card. This persists across sessions — the red icon tells you it has already been escalated, preventing duplicate flagging.
+
+### Viewing Flags Received
+
+Recipients view flagged articles in their **Notification Panel** (bell icon). Each flagged item shows article title, sender, timestamp, priority level, and message.
+
+---
+
+## 18. User Management
+
+*Admin only.*
 
 ### User List
-Displays all registered users with:
-- **Username** — login identifier
-- **Name** — display name
-- **Role** — Admin / Analyst / Viewer (color-coded badges)
-- **Status** — Active (green) or Inactive (red). Click to toggle.
-- **Last Login** — timestamp of most recent login
-- **Actions** — Reset password, Delete user
+All registered users with username, name, role (Admin/Analyst/Viewer), status (Active/Inactive), last login, and actions.
 
 ### Creating a New User
 1. Click **Create User** (top-right)
-2. Fill in the form:
-   - **Username** (required) — unique login identifier
-   - **Email** — optional but useful for login flexibility (users can log in with either)
-   - **Full Name** — display name shown in the interface
-   - **Role** — select Admin, Analyst, or Viewer
-   - **Password** (required, min 8 characters)
-3. Use **Generate** button to create a strong 14-character random password
-4. Use **Copy** button to copy the password to clipboard
-5. Click **Create User** to save
+2. Fill in: Username, Email (optional), Full Name, Role, Password
+3. Use **Generate** for a strong 14-character random password; **Copy** to save it
+4. Click **Create User** to save
 
-**WARNING:** Passwords are shown only once during creation. Copy the password before closing the form.
+**WARNING:** Passwords are shown only once during creation.
 
 ### Resetting a Password
-1. Click the **Key** icon next to any user in the table
-2. Enter a new password manually, or click **Generate** for a random one
-3. Click **Copy** to save the password to clipboard
-4. Click **Reset** to apply
-5. Share the new password securely with the user
+Click the **Key** icon next to any user → enter new password → **Copy** → **Reset**
 
-**Passwords cannot be retrieved** — they can only be reset. This is by design for security.
-
-### Deactivating a User
-Click the **Active/Inactive** status text for any user to toggle their access. Deactivated users cannot log in but their account is preserved.
-
-### Deleting a User
-Click the **Trash** icon to permanently delete a user. You cannot delete your own account. This action cannot be undone.
+### Deactivating / Deleting
+- **Active/Inactive** toggle — preserves the account but blocks login
+- **Trash** icon — permanently deletes the user (cannot delete your own account)
 
 ---
 
-## 17. Settings
+## 19. Settings
 
-*Admin only — not visible to Analyst or Viewer roles. Viewers are redirected to the Dashboard if they navigate to /settings directly.*
+*Admin only.*
 
-The Settings page uses a **side-by-side card layout** for quick access to all configuration options without excessive scrolling.
-
-### 17.1 Local Database Storage Card
-
-The first card on the Settings page shows where the platform is currently storing intelligence data:
+### 19.1 Local Database Storage Card
 
 | Mode | Indicator | Meaning |
 |------|-----------|---------|
-| **MongoDB Atlas** | Cloud icon (blue) | Data stored on Atlas cloud — default for Render deployments |
-| **Local — Tailscale** | Shield icon (green) | Data stored on local hard disk, connected via Tailscale VPN tunnel |
+| **MongoDB Atlas** | Cloud icon (blue) | Data stored on Atlas cloud |
+| **Local — Tailscale** | Shield icon (green) | Data stored on local hard disk via Tailscale VPN |
 | **Local — Direct** | Server icon (amber) | Data stored on local machine on same network |
 
-The card displays:
-- Current database mode (Atlas / Local via Tailscale / Local Direct)
-- Total documents stored
-- Database size on disk
-- Migration log (last 5 migration events)
-- **Setup Wizard button** — click to see the step-by-step instructions for migrating to local storage (see Section 18)
+### 19.2 Source Effectiveness Card
 
-### 17.2 Source Effectiveness Card
-
-Shows which non-RSS intelligence sources are producing actionable intelligence. Located below the Bias Impact Report.
-
-Each source row shows:
-- **Source name** with type icon (YouTube / Facebook / Telegram / Twitter / Firecrawl)
-- **Item count** — total intelligence items produced by this source in the retention window
-- **Severity bar** — horizontal bar showing proportion of Critical (red), High (orange), Medium (amber), Low (green) items
-- **AI processing rate** — percentage of items that completed AI classification
-- **Latest catch** — title and severity of the most recent item from this source
-- **High-value score** — combined count of Critical + High items (the most operationally useful output)
-
-Use this card to assess whether a configured source is actually contributing to the intelligence picture. A source with 0 items may need re-configuration.
+Shows which non-RSS sources are producing actionable intelligence:
+Item count, Severity bar, AI processing rate, Latest catch, High-value score (Critical + High count).
 
 ### News Retention Window
-Controls how far back the system looks when displaying intelligence items.
-
-Options: 7 / 14 / 30 / 60 / 90 / 180 / 365 days
-
-- **Shorter window** (7-14 days): See only recent intelligence, faster page loads
-- **Longer window** (90-365 days): See historical trends, more items to search through
-
-Changing the retention window immediately affects Dashboard statistics, Intelligence Feed item count, alert counts, and pattern detection window.
-
-### Pipeline Status
-Shows current system health: total items, AI processing rate, RSS source count, and scheduler configuration.
+Options: 7 / 14 / 30 / 60 / 90 / 180 / 365 days. Affects all pages immediately.
 
 ### Feedback Bias Configuration
 
-Controls how analyst feedback influences the AI classification pipeline. Two settings:
+**Feedback Window:**
+- **Rolling 30 Days** (default) — most adaptive
+- **All Time** — cumulative learning
 
-**Feedback Window** — Determines which ratings the system uses:
-- **Rolling 30 Days** (default): Only recent feedback counts. Most adaptive — the system responds quickly to changing analyst preferences. Older ratings expire and stop influencing classifications.
-- **All Time**: Every rating ever submitted counts. Cumulative learning — builds a comprehensive picture but slower to adapt to changing priorities.
-
-**Influence Level** — How strongly feedback overrides the AI's independent judgment:
-
-| Level | Weight | Score Adjustment | Best For |
-|-------|--------|-----------------|----------|
-| **Light** | ~10-15% | +/-3 to 5 points | Minimal correction — let the AI lead |
-| **Moderate** | ~20-25% | +/-5 to 10 points | Balanced — noticeable impact from analyst consensus |
-| **High** | ~35-40% | +/-10 to 20 points | Heavy override — analyst ratings strongly reshape priorities |
-
-After saving, the bias cache is immediately invalidated so the next RSS fetch cycle uses the new settings.
-
-### Training Controls
-Sets the maximum number of feedback ratings allowed per intelligence item (default: 20). Once reached, no further ratings are accepted for that item. This prevents over-rating or manipulation.
+**Influence Level:**
+| Level | Score Adjustment | Best For |
+|-------|-----------------|----------|
+| **Light** | +/-3 to 5 pts | Minimal correction |
+| **Moderate** | +/-5 to 10 pts | Balanced |
+| **High** | +/-10 to 20 pts | Heavy analyst override |
 
 ### Bias Impact Report
-
-A full-width analytics table showing **exactly how analyst feedback changes article scores**. This is the most direct way to see the real-world effect of the bias system.
-
-**Summary Row** (top):
-- **Influence**: Current influence level and percentage weight
-- **Boosted**: Number of items whose priority score increased due to feedback
-- **Reduced**: Number of items whose priority score decreased
-- **Unchanged**: Items not affected (their region/threat doesn't match any bias pattern)
-- **Avg Delta**: Average absolute score change across all items
-
-**Items Table**:
-Each row shows a rated article with:
-
-| Column | Description |
-|--------|-------------|
-| **Article** | Title and threat category |
-| **Region** | NER state or country |
-| **Original** | Priority score as assigned by the AI alone |
-| **Biased** | Score after applying feedback bias adjustments |
-| **Delta** | Point difference. Green ↑ = boosted, Red ↓ = reduced, — = unchanged |
-| **Rating** | Average analyst rating (1-6) with number of ratings in parentheses |
-| **Reason** | Specific explanation of why the score changed (e.g., "Region 'Manipur' upweighted; Threat 'Ethnic / Tribal Tension' upweighted") |
-
-**How to read the report:**
-- If you see many items **boosted** with high analyst ratings, the system is correctly amplifying content that analysts find important
-- If **Avg Delta** is very low, consider switching from Light to Moderate or High influence
-- Items showing **"No bias match"** in the Reason column are unaffected because their region/threat category doesn't appear in any strong analyst consensus pattern
-- Use the **Refresh** button to recalculate after changing bias settings
+Full-width analytics table showing exactly how analyst feedback changes article scores — Original vs. Biased vs. Delta per item with reasons.
 
 ---
 
-## 18. Local Database Setup Wizard
+## 20. Local Database Setup Wizard
 
-Rhino Drishti can store collected intelligence on a **local 1 TB hard disk** at your intelligence collection centre instead of MongoDB Atlas. The frontend (Vercel) and backend (Render) remain in the cloud — only the database moves on-premises.
+Rhino Drishti can store collected intelligence on a **local 1 TB hard disk** at your intelligence collection centre.
 
 ### Architecture
-
 ```
-┌─────────────────────────────────────┐
-│  CLOUD (unchanged)                  │
-│  Frontend: Vercel                   │
-│  Backend:  Render                   │
-└───────────────────┬─────────────────┘
-                    │ MongoDB driver connection
-                    │ (encrypted WireGuard tunnel)
-                    ▼
-┌─────────────────────────────────────┐
-│  ON-PREMISES (your Windows 11 PC)   │
-│  MongoDB 7.0 Community              │
-│  Tailscale Agent                    │
-│  1 TB local storage                 │
-└─────────────────────────────────────┘
+CLOUD (unchanged): Frontend: Vercel | Backend: Render
+         | (MongoDB driver via WireGuard tunnel)
+ON-PREMISES (Windows 11 PC):
+  MongoDB 7.0 Community + Tailscale Agent + 1 TB storage
 ```
-
-**Why Tailscale?** Tailscale uses WireGuard — a modern, audited VPN protocol. It creates a private overlay network between your Render backend and local machine without opening firewall ports, requiring a static IP, or complex NAT configuration. It is free for up to 3 devices.
 
 ### Setup Steps (Automated via PowerShell Wizard)
+The wizard at `local-setup/setup-wizard.ps1`:
+1. Installs MongoDB 7.0 Community (via winget)
+2. Configures authentication
+3. Creates database users
+4. Installs and authenticates Tailscale
+5. Sets Windows Firewall rules
+6. Optionally migrates all data from Atlas to local
 
-The wizard at `local-setup/setup-wizard.ps1` automates the entire installation. Run it in an elevated PowerShell terminal on your Windows 11 machine.
-
-**The wizard performs:**
-1. Checks for and installs **MongoDB 7.0 Community** (via winget)
-2. Configures MongoDB to listen on `0.0.0.0:27017` with authentication enabled
-3. Creates the `rhinodrishti_admin` and `rhinodrishti_user` database users
-4. Installs **Tailscale** (via winget) and authenticates it to your Tailscale account
-5. Sets Windows Firewall rules to allow MongoDB traffic only from Tailscale IP range (`100.x.x.x`)
-6. Optionally runs `migrate_atlas_to_local.py` to copy all existing intelligence data from Atlas to local storage
-
-**After setup:**
-1. Note your machine's Tailscale IP (e.g., `100.x.x.x`)
-2. Update the `MONGO_URL` environment variable on Render to: `mongodb://rhinodrishti_user:PASSWORD@100.x.x.x:27017/rhinodrishti?authSource=rhinodrishti`
-3. Redeploy the Render service
-4. The Settings page Local Database Card will switch from "Atlas" to "Local — Tailscale"
-
-### Prerequisites
-- Windows 11 machine with 1 TB+ storage
-- Administrator PowerShell access
-- Tailscale account (free at tailscale.com)
-- Existing MongoDB Atlas credentials (for migration)
-
-### One-Button Migration
-When migration is enabled in the wizard, `migrate_atlas_to_local.py`:
-1. Connects to MongoDB Atlas
-2. Reads all collections (`intelligence`, `users`, `settings`, `keywords`, etc.)
-3. Writes them to local MongoDB in batch mode
-4. Verifies document counts match before declaring success
-
-The migration script is located at `local-setup/migrate_atlas_to_local.py`. Run independently with: `python migrate_atlas_to_local.py --atlas-url "<ATLAS_URL>" --local-url "mongodb://localhost:27017"`
+After setup, update `MONGO_URL` on Render and redeploy. Settings page switches from "Atlas" to "Local — Tailscale".
 
 ---
 
-## 19. How the AI Pipeline Works
+## 21. How the AI Pipeline Works
 
 ### Data Flow
 ```
-┌─────── 6 INTELLIGENCE SOURCES (parallel ingest) ───────┐
-│  RSS Feeds (89)    YouTube    Facebook                  │
-│  Telegram          X/Twitter  Firecrawl Web Crawler     │
-└──────────────────────────────┬──────────────────────────┘
-                               │
-                               v
-           Manual Uploads (PDF, DOCX, URL, images)
-                               │
-                               v
-    Deduplication (URL + title similarity + entity overlap)
-                               │
-                               v
-    Hard Filter (reject sports, entertainment, lifestyle)
-                               │
-                               v
-    Dynamic Keyword Matching (weighted relevance scoring)
-                               │
-                               v
-    Language Detection & Translation
-    (Bengali, Assamese, Hindi, Burmese/Myanmar, Thai,
-     Chinese, Arabic, Japanese, Korean → English)
-                               │
-                               v
-    Level 1 Sifter (pre-filter for border instability, militant activity)
-                               │
-                               v
-    Level 2 Deep Analyst (10-step Claude AI classification + feedback bias injection)
-                               │
-                               v
-    Vector Embedding (OpenAI text-embedding-3-small)
-                               │
-                               v
-    Adaptive Keyword Feedback (boost/decay keyword scores)
-                               │
-                               v
-    Analyst Feedback Integration (rating-based bias adjustment)
-                               │
-                               v
-    WebSocket Broadcast (real-time push to connected clients)
-                               │
-                               v
-    Pattern Detection (sliding-window cluster analysis)
+6 INTELLIGENCE SOURCES (parallel)
+→ Manual Uploads (PDF, DOCX, URL)
+→ Deduplication
+→ Hard Filter (reject sports/entertainment)
+→ Dynamic Keyword Matching
+→ Language Detection & Translation
+  (Bengali, Assamese, Hindi, Burmese, Thai, Chinese, Arabic, Japanese, Korean → English)
+→ Level 1 Sifter (border instability pre-filter)
+→ Level 2 Deep Analyst (10-step Claude AI + feedback bias injection)
+→ Vector Embedding (OpenAI text-embedding-3-small)
+→ Adaptive Keyword Feedback (boost/decay keyword scores)
+→ Analyst Feedback Integration
+→ WebSocket Broadcast + Push Notification Dispatch
+→ Pattern Detection (sliding-window cluster analysis)
+→ Faultline Scoring (time-decay weighted aggregation)
 ```
 
-### Social Media & Web Source Configuration
-
-| Source | Env Variables Required | What you get |
-|--------|----------------------|--------------|
-| **YouTube** | `YOUTUBE_API_KEY` | Video transcripts and metadata from subscribed channels and keyword searches |
-| **Facebook** | `FACEBOOK_APP_ID`, `FACEBOOK_APP_SECRET` | Posts from monitored pages |
-| **Telegram** | Telethon session file (run `telegram_setup.py`) | Messages from monitored channels including private/restricted channels |
-| **X/Twitter** | Optional: `TWITTER_BEARER_TOKEN` | Account tweets and keyword searches (falls back to Nitter scraping without API key) |
-| **Firecrawl** | `FIRECRAWL_API_KEY` | Deep-crawled website content and keyword-triggered web searches |
-
-All source configurations are managed from the **Settings > Intelligence Source Monitors** panel on the Dashboard.
+### AI Classification (10-Step Military Intelligence Prompt)
+1. Relevance Filter: Strict rejection of sports, entertainment, lifestyle
+2. Priority Scoring (0-100) with boost rules (cross-border +10, China/Pakistan +15)
+3. Multi-label Classification: 19 threat categories
+4. Contextual Extraction: Regions, cross-border flag, countries, actors
+5. Named Entity Extraction: Persons, organizations, locations
+6. Intelligence Output: Summary, why it matters, early warning signal
+7. Special Detection: PLA_PAKISTAN_PRESENCE, COORDINATED_NARRATIVE
+8. India-Relevance Scoring: Cross-border items scored 0-20
+9. Signal Classification: Cross-border signal bucket and strength
+10. Language Rule: All output in English regardless of input language
 
 ### RSS Source Breakdown (89 Sources)
-
 | Category | Count | Examples |
 |----------|-------|---------|
-| **Regional (NER)** | 12 | NE Now, Assam Tribune, EastMojo, Sentinel, North East Live |
-| **National** | 19 | NDTV, Hindu, India Today, HT, The Wire, Scroll, Print, Quint, Firstpost |
-| **Bangladesh** | 19 | Prothom Alo, Daily Star, Dhaka Tribune, BD News |
-| **Myanmar** | 14 | Myanmar Now, Irrawaddy, Mizzima, DVB, Frontier Myanmar |
-| **International** | 5 | BBC, Al Jazeera, Reuters |
-| **Government** | 20 | PIB (all 8 NER states + Delhi), MEA, NIA, MHA, DoNER, NDMA, State DIPRs |
-
-**Government feeds include:**
-- PIB offices for all 8 NER states (Guwahati, Imphal, Kohima, Agartala, Itanagar, Shillong, Aizawl, Gangtok)
-- PIB Delhi National (MHA, PMO, Defence policy)
-- MEA Press Releases (Bangladesh/Myanmar diplomacy)
-- NIA RSS (terror/insurgency case tracking)
-- Ministry of DoNER (NE development)
-- NDMA (disaster alerts)
-- Manipur DIPR, Assam CM Office, Nagaland DIPR
-
-### Auto-Translation
-
-The platform automatically detects and translates non-English content before it enters the intelligence feed. This applies to both RSS-ingested articles and manually uploaded URLs.
-
-**Supported scripts:**
-- Indian: Bengali, Hindi, Assamese, Gujarati, Tamil, Telugu, Kannada, Malayalam, Odia, Punjabi
-- Southeast Asian: Burmese/Myanmar, Thai
-- East Asian: Chinese (CJK), Japanese, Korean
-- Middle Eastern: Arabic
-
-When a non-English article is detected (via Unicode script analysis), the title, summary, and content are translated to English using the AI translation pipeline before classification and display. The original language content is never shown in the feed.
-
-### AI Classification (10-Step Military Intelligence Prompt)
-The AI operates as a Senior Military Intelligence Analyst and performs:
-
-1. **Relevance Filter**: Strict rejection of sports, entertainment, lifestyle content
-2. **Priority Scoring** (0-100): With boost rules (cross-border +10, China/Pakistan +15)
-3. **Multi-label Classification**: 19 threat categories (Military Movement, Insurgency, Drug Trafficking, etc.)
-4. **Contextual Extraction**: Regions, cross-border flag, countries, actors
-5. **Named Entity Extraction**: Persons, organizations, locations
-6. **Intelligence Output**: Summary, why it matters, early warning signal, attention level
-7. **Special Detection**: PLA_PAKISTAN_PRESENCE, COORDINATED_NARRATIVE, etc.
-8. **India-Relevance Scoring**: Cross-border items scored 0-20 for India-facing impact
-9. **Signal Classification**: Cross-border signal bucket and strength assignment
-10. **Language Rule**: All output in English regardless of input language
-
-**Feedback Bias Injection**: When sufficient analyst ratings exist, a dynamic "Analyst Feedback Calibration" section is appended to the classification prompt. This tells the AI which regions, threat categories, and actors analysts have consistently rated highly or poorly — causing the AI to adjust priority scores accordingly (see Section 15 for configuration).
+| Regional (NER) | 12 | NE Now, Assam Tribune, EastMojo |
+| National | 19 | NDTV, Hindu, India Today, HT, The Wire |
+| Bangladesh | 19 | Prothom Alo, Daily Star, Dhaka Tribune |
+| Myanmar | 14 | Myanmar Now, Irrawaddy, Mizzima, DVB |
+| International | 5 | BBC, Al Jazeera, Reuters |
+| Government | 20 | PIB (all 8 NER states + Delhi), MEA, NIA, MHA, DoNER, NDMA |
 
 ### Scheduler (Automated Tasks)
 | Task | Frequency | Purpose |
 |------|-----------|---------|
 | Grassroots Source Fetch | Every 60 min | Small/hard-to-reach NER news sources |
-| Standard Source Fetch | Every 30 min | Main RSS feeds (national + international) |
+| Standard Source Fetch | Every 30 min | Main RSS feeds |
 | Established Source Fetch | Every 12 hours | Stable large sources (PIB, MHA) |
-| AI Retry | Every 15 min | Reprocess any items that failed AI classification |
-| Daily Brief | 0600 IST daily | Auto-generate the daily intelligence brief |
-| Embedding Backfill | Every 6 hours | Generate vector embeddings for semantic search |
-| Article Fusion | Every 30 min | Detect and cluster duplicate articles across sources |
+| AI Retry | Every 15 min | Reprocess failed items |
+| Daily Brief | 0600 IST daily | Auto-generate daily brief |
+| Embedding Backfill | Every 6 hours | Vector embeddings for semantic search |
+| Article Fusion | Every 30 min | Detect and cluster duplicate articles |
+| **Faultline Daily Pass** | **06:00 + 18:00 IST** | **Re-score all faultlines with time-decay formula** |
 
 ---
 
-## 20. Glossary
+## 22. Glossary
 
 | Term | Definition |
 |------|-----------|
 | **ACK** | Acknowledge — mark an alert as reviewed |
-| **Activity Log** | Session-level record of training runs and feedback sessions with AI-generated impact summaries |
-| **Auto-Translation** | Automatic detection and translation of non-English content (Bengali, Burmese, Hindi, Thai, Chinese, Arabic, etc.) to English before display |
-| **Bias Impact Report** | Analytics view showing how analyst feedback changes article priority scores — before vs after comparison |
-| **Bias Window** | Time range of analyst feedback used by the bias engine — Rolling 30 Days or All Time |
-| **Cross-Border SITREP** | Situation Report focused on Bangladesh or Myanmar border intelligence, grouped by Diplomatic/Defence/Politics/Economics |
-| **Custom Report** | User-configured PDF report with any combination of region, threat, severity, source, date range, and keyword filters |
-| **Delta** | The point difference between an article's original AI score and its feedback-adjusted score. Positive = boosted, negative = reduced |
-| **Export PDF** | Button on Intelligence Feed that generates a PDF brief of currently filtered items |
-| **Feedback Bias** | Dynamic analyst-driven adjustment injected into the AI classification prompt, causing the AI to upweight or downweight certain regions and threat categories |
-| **Influence Level** | Controls how strongly feedback overrides AI judgment — Light (~10-15%), Moderate (~20-25%), High (~35-40%) |
-| **JWT** | JSON Web Token — authentication token used for session management |
-| **Major Update** | Platform update shown as an individual toast notification with its actual message |
-| **Minor Update** | Platform update shown as a generic "Performance improvements and bug fixes" toast |
-| **RBAC** | Role-Based Access Control — restricts features based on user role |
-| **Regional Threat Summary** | PDF report covering a specific NER state with severity breakdown and categorized intelligence items |
-| **Cluster / Fusion** | Group of similar articles from multiple sources merged into a single intelligence item |
+| **Activity Log** | Session-level record of training runs and feedback sessions |
+| **Auto-Translation** | Automatic translation of non-English content to English before display |
+| **Bias Impact Report** | Analytics table showing how analyst feedback changes article priority scores |
+| **C-Score** | Confidence Score (0-100%) — AI's certainty in its own classification |
+| **Cluster / Fusion** | Group of similar articles from multiple sources merged into one intelligence item |
 | **Cross-border** | Activity involving more than one country |
-| **Device Fingerprint** | Unique identifier generated per browser/device to prevent duplicate ratings |
+| **Cross-Border SITREP** | Situation Report for Bangladesh or Myanmar border intelligence |
+| **Device Fingerprint** | Unique identifier per browser/device to prevent duplicate ratings |
 | **DIPR** | Department of Information and Public Relations — state government press release office |
-| **Effectiveness Score** | Percentage (0-100) measuring alignment between AI classifications and analyst feedback ratings |
 | **Escalation Risk** | Likelihood that a pattern of events will intensify |
-| **Feedback Session** | Aggregated log entry created after an analyst submits 5+ ratings, with AI-generated impact summary |
+| **Faultline** | A persistent structural tension (ethnic, political, security) monitored over time, scored with time-decay weighted article aggregation |
+| **Faultline Daily Pass** | Scheduled re-scoring of all faultlines at 06:00 IST and 18:00 IST |
+| **Faultline Decay** | Exponential decay formula `e^(-0.35 x age_days)` applied to each article's contribution to a faultline score |
+| **Feedback Bias** | Dynamic analyst-driven adjustment injected into the AI classification prompt |
+| **Feedback Session** | Aggregated log entry created after an analyst submits 5+ ratings |
+| **Flag** | Escalation action — sends a specific intelligence article to a commander with priority level and message |
+| **Flag Icon (Red)** | Red, filled flag icon on an item card indicating the article has already been flagged to a commander |
+| **Guided Tour** | Step-by-step page walkthrough. Re-trigger via the ? button; admin can reset all tours |
 | **Hard Filter** | Rule-based rejection of irrelevant content (sports, entertainment) |
-| **Impact Summary** | AI-generated description of what the system learned from a training run or feedback session |
+| **Impact Summary** | AI-generated description of what the system learned from a training or feedback session |
+| **Influence Level** | Controls feedback override strength — Light (~10-15%), Moderate (~20-25%), High (~35-40%) |
+| **JWT** | JSON Web Token — authentication token used for session management |
 | **Knowledge Graph** | Network of relationships between actors and locations |
+| **Local Database** | On-premises MongoDB 7.0 installation connected to Render backend via Tailscale VPN |
+| **Monthly Faultline Analysis Report** | Multi-page PDF summarising faultline scores, month-on-month changes, top movers, and AI strategic narrative |
 | **NER** | North Eastern Region of India (Assam, Manipur, Meghalaya, Mizoram, Tripura, Nagaland, Arunachal Pradesh, Sikkim) |
-| **Pattern** | Cluster of 3+ intelligence items sharing the same region, threat type, or actor |
-| **PIB** | Press Information Bureau — Government of India's official communication agency with regional offices in all NER states |
+| **Nitter** | Open-source Twitter/X front-end used as fallback scraper without official API key |
+| **P-Score** | Priority Score (0-100) — AI-computed urgency combining severity, source credibility and strategic relevance |
+| **PAOI** | Priority Area of Interest — a strategic topic defined by the Commander grouping related faultlines |
+| **PAOI Manager** | Modal interface for creating, editing, and reordering Priority Areas of Interest |
+| **Pattern** | Cluster of 3+ intelligence items sharing region, threat type, or actor |
+| **PIB** | Press Information Bureau — Government of India's official communication agency |
 | **Priority Score** | AI-assigned importance score from 0-100, adjusted by feedback bias |
+| **Push Notification** | Web push alert delivered to a device's notification tray even when the app is closed |
+| **PWA** | Progressive Web App — Rhino Drishti installed to a mobile home screen, enabling push notifications on iOS |
+| **RBAC** | Role-Based Access Control — restricts features based on user role |
 | **Relevance Tag** | Optional 1-6 score an analyst assigns to a URL when adding it to the training queue |
 | **Semantic Search** | AI-powered search using vector embeddings that finds related concepts |
 | **Severity** | Classification level: Critical > High > Medium > Low |
 | **Sifter** | Level 1 pre-filter that screens articles for border/militant relevance |
+| **Source Effectiveness** | Settings card showing intelligence yield per non-RSS source |
 | **Special Flags** | AI-detected indicators: PLA_PAKISTAN_PRESENCE, COORDINATED_NARRATIVE, INFRASTRUCTURE_DUAL_USE |
+| **Tailscale** | WireGuard-based VPN mesh network for secure local database connection |
+| **Telethon** | Python Telegram client library for reading messages from Telegram channels |
 | **Threat Trajectory** | Direction of a threat: ESCALATING, STABLE, DE-ESCALATING, NEW_THREAT |
-| **Toast Notification** | Brief popup message that appears at the top-center of the screen for platform updates and system feedback |
+| **Toast Notification** | Brief popup message at the top-center of the screen |
 | **Training Pipeline** | Process of scraping, analyzing, and learning from analyst-submitted URLs and documents |
-| **Training Session** | Log entry created when "Train Rhino Drishti" is clicked, capturing volume breakdown and AI impact |
-| **Upweight / Downweight** | Bias adjustments applied to article scores — upweight boosts priority, downweight reduces it |
+| **VAPID** | Voluntary Application Server Identification — standard used for secure web push delivery |
 | **Vector Embedding** | Mathematical representation of text meaning, enabling semantic similarity search |
-| **C-Score** | Confidence Score (0-100%) — AI's certainty in its own classification. ≥90 = high confidence (green), ≥70 = moderate (blue), <70 = uncertain (verify manually) |
-| **P-Score** | Priority Score (0-100) — AI-computed urgency combining severity, source credibility and strategic relevance. ≥80 = critical (red), ≥60 = elevated (orange), <60 = routine |
-| **Firecrawl** | Web crawling service that deep-crawls websites without RSS feeds and performs keyword-triggered web searches. Requires `FIRECRAWL_API_KEY` |
-| **Tailscale** | WireGuard-based VPN mesh network used to securely connect the Render backend to a local MongoDB database without opening firewall ports |
-| **Joyride** | react-joyride library powering the guided page walkthrough — spotlights UI elements and shows contextual explanations |
-| **Guided Tour** | Step-by-step page walkthrough that auto-starts on first visit per page. Re-trigger via the ? button; admin can reset all tours |
-| **Source Effectiveness** | Settings card showing intelligence yield per non-RSS source — item count, severity distribution, AI processing rate and latest catch |
-| **Local Database** | On-premises MongoDB 7.0 installation on a local hard disk, connected to the Render backend via Tailscale VPN tunnel |
-| **Nitter** | Open-source Twitter/X front-end used as a fallback scraper when no official Twitter Bearer Token is configured |
-| **Telethon** | Python Telegram client library used to read messages from Telegram channels. Requires a user session file generated by `telegram_setup.py` |
-| **Attention Level** | AI-assigned operational attention required: MONITOR (routine), ELEVATED (increased vigilance), IMMEDIATE_ACTION (urgent response needed) |
-| **SCAN SOCIAL MEDIA** | Dashboard button that triggers all 5 non-RSS sources simultaneously (YouTube, Facebook, Telegram, Twitter, Firecrawl) |
-| **Tip / Tooltip** | Hover-activated contextual explanation that appears for 3 seconds over any button, label, parameter or section heading |
+| **Watchlist** | Commander's personal priority list of up to 10 faultlines, ranked 1-10, pinned to the top of the Faultline Intelligence page |
 
 ---
 
-*Rhino Drishti v11.0 — Elite OSINT Intelligence Platform — 6-Source Ingest, Local DB Wizard, Guided Tours & Comprehensive Tooltips*
-*Handbook updated: 28 April 2026*
+*Rhino Drishti v12.0 — Elite OSINT Intelligence Platform — Faultline & PAOI Monitoring, Push Notifications, Commander Flagging*
+*Handbook updated: 19 June 2026*
