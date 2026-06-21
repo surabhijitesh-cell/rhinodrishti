@@ -8,10 +8,99 @@
 
 import { useAuth } from "../contexts/AuthContext";
 import { Navigate } from "react-router-dom";
+import { useState, useEffect } from "react";
 import ApiUsageWidget from "../components/ApiUsageWidget";
 import FilterCascadeWidget from "../components/FilterCascadeWidget";
 import FilterThresholdSimulator from "../components/FilterThresholdSimulator";
-import { Shield } from "lucide-react";
+import { Shield, Database, Trash2 } from "lucide-react";
+
+function StorageCleanupPanel({ api }) {
+  const [stats, setStats] = useState(null);
+  const [days, setDays] = useState(60);
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState(null);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    api.get("/admin/storage/stats").then(r => setStats(r.data)).catch(() => {});
+  }, [api]);
+
+  async function runCleanup() {
+    setLoading(true);
+    setResult(null);
+    setError(null);
+    try {
+      const r = await api.post("/admin/storage/cleanup-articles", { older_than_days: days });
+      setResult(r.data);
+      // refresh counts
+      const s = await api.get("/admin/storage/stats");
+      setStats(s.data);
+    } catch (e) {
+      setError(e?.response?.data?.detail || e.message || "Cleanup failed");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="rounded-lg border border-border bg-card p-4 space-y-4">
+      <div className="flex items-center gap-2">
+        <Database size={14} className="text-amber-400" />
+        <h2 className="text-sm font-semibold uppercase tracking-widest font-['Barlow_Condensed']">
+          Storage Cleanup
+        </h2>
+        <span className="text-[10px] font-mono text-muted-foreground ml-auto">MongoDB Atlas free tier: 512 MB</span>
+      </div>
+
+      {/* Collection counts */}
+      {stats && (
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+          {Object.entries(stats.counts).map(([name, count]) => (
+            <div key={name} className="bg-background rounded p-2 text-center">
+              <div className="text-xs font-mono text-muted-foreground truncate">{name}</div>
+              <div className="text-sm font-semibold font-mono mt-0.5">
+                {typeof count === "number" ? count.toLocaleString() : count}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Controls */}
+      <div className="flex items-center gap-3 flex-wrap">
+        <label className="text-xs text-muted-foreground">Delete articles older than</label>
+        <select
+          value={days}
+          onChange={e => setDays(Number(e.target.value))}
+          className="text-xs bg-background border border-border rounded px-2 py-1 font-mono"
+        >
+          {[30, 45, 60, 90, 120].map(d => (
+            <option key={d} value={d}>{d} days</option>
+          ))}
+        </select>
+        <button
+          onClick={runCleanup}
+          disabled={loading}
+          className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded bg-red-600 hover:bg-red-500 disabled:opacity-50 text-white font-semibold transition-colors"
+        >
+          <Trash2 size={12} />
+          {loading ? "Cleaning…" : "Run Cleanup"}
+        </button>
+      </div>
+
+      {result && (
+        <div className="text-xs font-mono bg-green-950/40 border border-green-800/40 rounded p-2 text-green-300">
+          ✓ {result.message} · API usage logs deleted: {result.api_usage_deleted} · cutoff: {result.cutoff_date}
+        </div>
+      )}
+      {error && (
+        <div className="text-xs font-mono bg-red-950/40 border border-red-800/40 rounded p-2 text-red-300">
+          ✗ {error}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function AdminMonitoring({ api }) {
   const { user } = useAuth();
@@ -35,6 +124,9 @@ export default function AdminMonitoring({ api }) {
           </p>
         </div>
       </div>
+
+      {/* ── Storage Cleanup ── */}
+      <StorageCleanupPanel api={api} />
 
       {/* ── Two-column panels ── */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">

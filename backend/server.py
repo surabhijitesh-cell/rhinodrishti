@@ -138,14 +138,17 @@ async def websocket_intelligence(websocket: WebSocket, token: str = Query(defaul
 # ============================================================
 async def initialize_sources():
     from rss_fetcher import RSS_SOURCES
-    for source in RSS_SOURCES:
-        await sources_col.update_one(
-            {"url": source["url"]},
-            {"$set": {**source, "id": str(uuid.uuid4())}},
-            upsert=True
-        )
-    count = await sources_col.count_documents({})
-    logger.info(f"RSS sources synced: {count} total ({len(RSS_SOURCES)} configured)")
+    try:
+        for source in RSS_SOURCES:
+            await sources_col.update_one(
+                {"url": source["url"]},
+                {"$set": {**source, "id": str(uuid.uuid4())}},
+                upsert=True
+            )
+        count = await sources_col.count_documents({})
+        logger.info(f"RSS sources synced: {count} total ({len(RSS_SOURCES)} configured)")
+    except Exception as e:
+        logger.warning(f"initialize_sources failed (non-fatal): {e}")
 
 
 async def _deferred_init(item_count: int):

@@ -21,7 +21,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Optional
 from datetime import datetime, timezone
-from shared import db
+from shared import db, intelligence_col
 
 router = APIRouter()
 
@@ -421,3 +421,67 @@ async def set_filter_settings(body: FilterSettingsBody):
         pass
 
     return {"message": "Filter settings updated", "settings": new_settings}
+
+
+# ── Storage cleanup ───────────────────────────────────────────────────────────
+
+class CleanupBody(BaseModel):
+    older_than_days: int = 60  # delete articles older than this many days
+
+
+@router.get("/admin/storage/stats")
+async def storage_stats():
+    """Collection row counts — quick proxy for storage usage."""
+    collections = [
+        "intelligence_items", "api_usage", "filter_metrics",
+        "notifications", "news_flags", "knowledge_graph",
+        "actor_relationships", "faultline_articles",
+    ]
+    result = {}
+    for name in collections:
+        try:
+            result[name] = await db[name].count_documents({})
+        except Exception as e:
+            result[name] = f"error: {e}"
+    return {"counts": result}
+
+
+@router.post("/admin/storage/cleanup-articles")
+async def cleanup_old_articles(body: CleanupBody):
+    """
+    Delete intelligence_items older than N days.
+    Also trims api_usage logs older than 30 days.
+    Returns deleted counts.
+    """
+    if body.older_than_days < 7:
+        raise HTTPException(status_code=422, detail="older_than_days must be >= 7")
+
+    cutoff = (
+        datetime.now(timezone.utc).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        - __import__("datetime").timedelta(days=body.older_than_days)
+    ).strftime("%Y-%m-%d")
+
+    # Delete old articles (published_at is ISO string "YYYY-MM-DD...")
+    articles_result = await intelligence_col.delete_many(
+        {"published_at": {"$lt": cutoff}}
+    )
+
+    # Also trim api_usage logs older than 30 days
+    usage_cutoff = (
+        datetime.now(timezone.utc).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        - __import__("datetime").timedelta(days=30)
+    ).strftime("%Y-%m-%d")
+    usage_result = await db.api_usage.delete_many(
+        {"date": {"$lt": usage_cutoff}}
+    )
+
+    return {
+        "articles_deleted": articles_result.deleted_count,
+        "api_usage_deleted": usage_result.deleted_count,
+        "cutoff_date": cutoff,
+        "message": f"Deleted {articles_result.deleted_count} articles older than {body.older_than_days} days",
+    }

@@ -31,10 +31,13 @@ async def login(data: UserLogin):
 
     token = create_access_token({"sub": user["id"], "role": user.get("role", "viewer")})
 
-    await users_col.update_one(
-        {"id": user["id"]},
-        {"$set": {"last_login": datetime.now(timezone.utc).isoformat()}}
-    )
+    try:
+        await users_col.update_one(
+            {"id": user["id"]},
+            {"$set": {"last_login": datetime.now(timezone.utc).isoformat()}}
+        )
+    except Exception:
+        pass  # DB quota full — last_login update non-fatal
 
     return {
         "token": token,
