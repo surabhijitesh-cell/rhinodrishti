@@ -498,8 +498,33 @@ async def startup():
             misfire_grace_time=600,
         )
 
+        async def _strip_old_raw_content():
+            try:
+                from datetime import timedelta
+                cutoff = (datetime.now(timezone.utc) - timedelta(days=45)).strftime("%Y-%m-%d")
+                result = await intelligence_col.update_many(
+                    {
+                        "published_at": {"$lt": cutoff},
+                        "processed": True,
+                        "raw_content": {"$exists": True, "$ne": None},
+                    },
+                    {"$unset": {"raw_content": ""}}
+                )
+                if result.modified_count:
+                    logger.info(f"Storage cleanup: stripped raw_content from {result.modified_count} articles older than 45 days")
+            except Exception as e:
+                logger.warning(f"raw_content strip job failed: {e}")
+
+        scheduler.add_job(
+            _strip_old_raw_content,
+            'interval',
+            hours=24,
+            id='strip_raw_content',
+            misfire_grace_time=3600,
+        )
+
         scheduler.start()
-        logger.info("Scheduler: grassroots/60min, standard/30min, established/12hr, retry/15min, brief/0600 IST, embeddings/6hr, fusion/30min, youtube/4hr, telegram/1hr, fading/1hr, relationships/nightly, faultlines/0600+1800 IST + incremental/4hr, credit_monitor/30min [firecrawl+twitter DISABLED]")
+        logger.info("Scheduler: grassroots/60min, standard/30min, established/12hr, retry/15min, brief/0600 IST, embeddings/6hr, fusion/30min, youtube/4hr, telegram/1hr, fading/1hr, relationships/nightly, faultlines/0600+1800 IST + incremental/4hr, credit_monitor/30min, strip_raw/24hr [firecrawl+twitter DISABLED]")
     except Exception as e:
         logger.warning(f"Scheduler setup failed: {e}")
 

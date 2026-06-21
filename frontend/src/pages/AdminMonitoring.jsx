@@ -17,28 +17,42 @@ import { Shield, Database, Trash2 } from "lucide-react";
 function StorageCleanupPanel({ api }) {
   const [stats, setStats] = useState(null);
   const [days, setDays] = useState(60);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(null); // "strip" | "delete" | null
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
 
-  useEffect(() => {
+  const refreshStats = () =>
     api.get("/admin/storage/stats").then(r => setStats(r.data)).catch(() => {});
-  }, [api]);
 
-  async function runCleanup() {
-    setLoading(true);
+  useEffect(() => { refreshStats(); }, [api]);
+
+  async function runStrip() {
+    setLoading("strip");
+    setResult(null);
+    setError(null);
+    try {
+      const r = await api.post("/admin/storage/strip-raw-content", { older_than_days: days });
+      setResult({ type: "strip", ...r.data });
+      await refreshStats();
+    } catch (e) {
+      setError(e?.response?.data?.detail || e.message || "Strip failed");
+    } finally {
+      setLoading(null);
+    }
+  }
+
+  async function runDelete() {
+    setLoading("delete");
     setResult(null);
     setError(null);
     try {
       const r = await api.post("/admin/storage/cleanup-articles", { older_than_days: days });
-      setResult(r.data);
-      // refresh counts
-      const s = await api.get("/admin/storage/stats");
-      setStats(s.data);
+      setResult({ type: "delete", ...r.data });
+      await refreshStats();
     } catch (e) {
       setError(e?.response?.data?.detail || e.message || "Cleanup failed");
     } finally {
-      setLoading(false);
+      setLoading(null);
     }
   }
 
@@ -49,7 +63,7 @@ function StorageCleanupPanel({ api }) {
         <h2 className="text-sm font-semibold uppercase tracking-widest font-['Barlow_Condensed']">
           Storage Cleanup
         </h2>
-        <span className="text-[10px] font-mono text-muted-foreground ml-auto">MongoDB Atlas free tier: 512 MB</span>
+        <span className="text-[10px] font-mono text-muted-foreground ml-auto">Flex — 5 GB included</span>
       </div>
 
       {/* Collection counts */}
@@ -68,7 +82,7 @@ function StorageCleanupPanel({ api }) {
 
       {/* Controls */}
       <div className="flex items-center gap-3 flex-wrap">
-        <label className="text-xs text-muted-foreground">Delete articles older than</label>
+        <label className="text-xs text-muted-foreground">Articles older than</label>
         <select
           value={days}
           onChange={e => setDays(Number(e.target.value))}
@@ -78,19 +92,38 @@ function StorageCleanupPanel({ api }) {
             <option key={d} value={d}>{d} days</option>
           ))}
         </select>
+
         <button
-          onClick={runCleanup}
-          disabled={loading}
+          onClick={runStrip}
+          disabled={!!loading}
+          title="Remove raw body text — keeps source link + all AI analysis"
+          className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white font-semibold transition-colors"
+        >
+          <Database size={12} />
+          {loading === "strip" ? "Stripping…" : "Strip Raw Content"}
+        </button>
+
+        <button
+          onClick={runDelete}
+          disabled={!!loading}
+          title="Permanently delete articles — cannot be undone"
           className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded bg-red-600 hover:bg-red-500 disabled:opacity-50 text-white font-semibold transition-colors"
         >
           <Trash2 size={12} />
-          {loading ? "Cleaning…" : "Run Cleanup"}
+          {loading === "delete" ? "Deleting…" : "Delete Articles"}
         </button>
       </div>
 
+      <p className="text-[10px] font-mono text-muted-foreground">
+        Strip Raw Content — removes body text, keeps source URL + AI analysis. Pipeline auto-strips articles &gt;45 days daily.
+      </p>
+
       {result && (
         <div className="text-xs font-mono bg-green-950/40 border border-green-800/40 rounded p-2 text-green-300">
-          ✓ {result.message} · API usage logs deleted: {result.api_usage_deleted} · cutoff: {result.cutoff_date}
+          {result.type === "strip"
+            ? `✓ ${result.message}`
+            : `✓ ${result.message} · API usage logs deleted: ${result.api_usage_deleted} · cutoff: ${result.cutoff_date}`
+          }
         </div>
       )}
       {error && (

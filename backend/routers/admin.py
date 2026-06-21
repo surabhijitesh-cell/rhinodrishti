@@ -446,6 +446,37 @@ async def storage_stats():
     return {"counts": result}
 
 
+@router.post("/admin/storage/strip-raw-content")
+async def strip_raw_content(body: CleanupBody):
+    """
+    Remove raw_content field from processed articles older than N days.
+    Keeps title, source_url, published_at, ai_summary, entities, tags — all analysis fields intact.
+    Safe to run repeatedly (unset on docs that already have it removed is a no-op).
+    """
+    if body.older_than_days < 7:
+        raise HTTPException(status_code=422, detail="older_than_days must be >= 7")
+
+    cutoff = (
+        datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+        - __import__("datetime").timedelta(days=body.older_than_days)
+    ).strftime("%Y-%m-%d")
+
+    result = await intelligence_col.update_many(
+        {
+            "published_at": {"$lt": cutoff},
+            "processed": True,
+            "raw_content": {"$exists": True, "$ne": None, "$ne": ""},
+        },
+        {"$unset": {"raw_content": ""}}
+    )
+
+    return {
+        "stripped": result.modified_count,
+        "cutoff_date": cutoff,
+        "message": f"Stripped raw_content from {result.modified_count} articles older than {body.older_than_days} days",
+    }
+
+
 @router.post("/admin/storage/cleanup-articles")
 async def cleanup_old_articles(body: CleanupBody):
     """
