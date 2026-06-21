@@ -27,6 +27,8 @@ from datetime import datetime, timezone
 
 logger = logging.getLogger("paoi_brief")
 
+_SEV_SCORE = {"LOW": 25, "MEDIUM": 50, "HIGH": 75, "CRITICAL": 100}
+
 
 def _concern_level(score: float) -> str:
     """Concern band (higher = worse). Mirrors faultline_engine._score_level."""
@@ -84,7 +86,7 @@ async def aggregate_paoi_period(db, start_iso: str, end_iso: str) -> dict:
     score_cursor = db.faultline_scores.find(
         {"date": {"$gte": start_date, "$lte": end_date}},
         {"_id": 0, "faultline_id": 1, "faultline_name": 1, "date": 1,
-         "score": 1, "level": 1},
+         "score": 1, "level": 1, "dominant_subissues": 1, "loc_risk": 1},
     ).sort("date", 1)
     by_fl: dict[str, list] = defaultdict(list)
     async for s in score_cursor:
@@ -99,15 +101,18 @@ async def aggregate_paoi_period(db, start_iso: str, end_iso: str) -> dict:
         last = series[-1]["score"]
         peak = max(s["score"] for s in series)
         avg = sum(s["score"] for s in series) / len(series)
+        latest = series[-1]
         return {
             "id": fl_id,
-            "name": series[-1].get("faultline_name", fl_id),
+            "name": latest.get("faultline_name", fl_id),
             "first": round(first, 1),
             "last": round(last, 1),
             "peak": round(peak, 1),
             "avg": round(avg, 1),
             "delta": round(last - first, 1),
             "level": _concern_level(last),
+            "dominant_subissues": latest.get("dominant_subissues") or [],
+            "loc_risk": bool(latest.get("loc_risk")),
         }
 
     out_paois = []
@@ -127,6 +132,16 @@ async def aggregate_paoi_period(db, start_iso: str, end_iso: str) -> dict:
             agg_last = max(lasts)              # PAOI status = worst faultline
             agg_first = max(firsts)
             agg_peak = max(peaks)
+
+            # Collect dominant sub-issues across all faultlines, dedup by name
+            all_si: dict[str, dict] = {}
+            for fs in fl_summaries:
+                for si in fs.get("dominant_subissues") or []:
+                    key = si.get("name", "")
+                    if key and si.get("contribution", 0) > all_si.get(key, {}).get("contribution", -1):
+                        all_si[key] = si
+            top_subissues = sorted(all_si.values(), key=lambda x: -x.get("contribution", 0))[:4]
+
             movement = {
                 "first": round(agg_first, 1),
                 "last": round(agg_last, 1),
@@ -142,12 +157,15 @@ async def aggregate_paoi_period(db, start_iso: str, end_iso: str) -> dict:
                     "delta": fl_summaries[0]["delta"],
                 },
                 "per_faultline": fl_summaries[:8],
+                "top_subissues": top_subissues,
+                "loc_risk": any(fs.get("loc_risk") for fs in fl_summaries),
             }
         else:
             movement = {
                 "first": None, "last": None, "peak": None, "avg": None,
                 "delta": 0.0, "level": "STABLE", "n_faultlines": 0,
                 "dominant": None, "per_faultline": [],
+                "top_subissues": [], "loc_risk": False,
             }
 
         # Keyword article pull (covers keyword-driven PAOIs like P3 LOC, and
@@ -196,8 +214,10 @@ async def _keyword_article_pull(db, keyword_pull: dict, start_iso: str, end_iso:
 
     cursor = db.intelligence_items.find(
         q,
-        {"_id": 0, "id": 1, "title": 1, "ai_summary": 1, "source": 1,
-         "source_url": 1, "published_at": 1, "severity": 1, "priority_score": 1},
+        {"_id": 0, "id": 1, "title": 1, "ai_summary": 1, "why_it_matters": 1,
+         "entities": 1, "state": 1, "district": 1, "threat_trajectory": 1,
+         "source": 1, "source_url": 1, "published_at": 1,
+         "severity": 1, "priority_score": 1},
     ).sort("priority_score", -1).limit(300)
 
     matched = []
@@ -218,11 +238,69 @@ async def _keyword_article_pull(db, keyword_pull: dict, start_iso: str, end_iso:
             "source": a.get("source", ""),
             "published_at": (a.get("published_at") or "")[:10],
             "severity": a.get("severity", ""),
+            "priority_score": a.get("priority_score") or 0,
             "url": a.get("source_url", ""),
+            "ai_summary": a.get("ai_summary", ""),
+            "why_it_matters": a.get("why_it_matters", ""),
+            "state": a.get("state", ""),
+            "district": a.get("district", ""),
+            "threat_trajectory": a.get("threat_trajectory", ""),
         }
-        for a in matched[:8]
+        for a in matched[:20]
     ]
     return {"n_articles": len(matched), "top_articles": top}
+
+
+def select_top_events_for_paoi(
+    articles: list[dict], pa: dict, n: int = 5, period_end: str = ""
+) -> list[dict]:
+    """Score and select top n articles for a PAOI, with sub-region diversity."""
+    if not articles:
+        return []
+    geo_lower = set(
+        g.lower() for g in pa.get("geography", []) + pa.get("watch_geography", [])
+    )
+
+    def _score(a: dict) -> float:
+        ps = min(float(a.get("priority_score") or 0), 100) / 100
+        sv = _SEV_SCORE.get((a.get("severity") or "").upper(), 50) / 100
+        art_state = (a.get("state") or "").lower()
+        paoi_rel = 1.0 if (art_state and art_state in geo_lower) else 0.4
+        rec = 0.5
+        if period_end:
+            try:
+                from datetime import datetime as _dt
+                pub = (a.get("published_at") or "")[:10]
+                end = period_end[:10]
+                if pub and end:
+                    days_gap = (_dt.fromisoformat(end) - _dt.fromisoformat(pub)).days
+                    rec = max(0.0, 1.0 - days_gap / 30)
+            except Exception:
+                pass
+        return 0.4 * ps + 0.3 * sv + 0.2 * paoi_rel + 0.1 * rec
+
+    scored = sorted(articles, key=_score, reverse=True)
+
+    # Sub-region diversity: prefer articles from different states
+    selected: list[dict] = []
+    seen_states: set[str] = set()
+    remainder: list[dict] = []
+    for a in scored:
+        st = a.get("state") or "unknown"
+        if st not in seen_states:
+            selected.append(a)
+            seen_states.add(st)
+        else:
+            remainder.append(a)
+        if len(selected) >= n:
+            break
+
+    for a in remainder:
+        if len(selected) >= n:
+            break
+        selected.append(a)
+
+    return selected[:n]
 
 
 # ── 2. Commander Priority Dashboard (deterministic) ───────────────────────────
@@ -290,23 +368,71 @@ def _paoi_context_block(pa: dict) -> str:
     return "\n".join(lines)
 
 
-def rich_paoi_prompt(pa: dict, period_label: str) -> str:
-    """One PAOI, deep synthesis."""
-    return f"""You are writing the analysis for ONE commander priority area in an NER strategic intelligence brief.
+def narrative_paoi_prompt(pa: dict, events: list[dict], period_label: str) -> str:
+    """One PAOI, narrative synthesis grounded in concrete events."""
+    mv = pa["faultline_movement"]
+    level = mv.get("level", "MONITOR")
+    trend = _trend_arrow(mv.get("delta", 0))
+    dominant_name = (mv.get("dominant") or {}).get("name", "")
+    fl_verbal = f"{level} and {trend.lower()}"
+    if dominant_name:
+        fl_verbal += f", led by {dominant_name}"
+
+    subissues_block = ""
+    top_si = mv.get("top_subissues") or []
+    if top_si:
+        si_lines = "\n".join(
+            f"  - {si.get('name','')}: {si.get('description', si.get('rationale', ''))[:80]}"
+            for si in top_si
+        )
+        subissues_block = f"\nActive sub-issues:\n{si_lines}"
+
+    event_lines = []
+    for i, ev in enumerate(events, 1):
+        body = (ev.get("why_it_matters") or ev.get("ai_summary") or "")[:250]
+        event_lines.append(
+            f"EVENT {i}: {ev.get('title','')[:120]}\n"
+            f"  Date: {ev.get('published_at','')[:10]}  "
+            f"State: {ev.get('state','n/a')}  District: {ev.get('district','n/a')}\n"
+            f"  Summary: {body}\n"
+            f"  Severity: {ev.get('severity','n/a')}  Trajectory: {ev.get('threat_trajectory','n/a')}"
+        )
+    events_block = "\n\n".join(event_lines) if event_lines else "No specific events retrieved."
+
+    n_events = len(events)
+    return f"""You are writing the PAOI narrative section for a commander intelligence brief.
 
 Period: {period_label}
+Priority Area: P{pa.get('rank')} {pa['name']}
+Geography: {', '.join(pa.get('geography', []))}
+Actors of interest: {', '.join(pa.get('actors_of_interest', [])[:6])}
+Faultline status: {fl_verbal}{subissues_block}
 
-{_paoi_context_block(pa)}
+Most impactful events this period:
+{events_block}
 
-Write a tight analysis. Use claim labels: [CONFIRMED] for direct data points,
-[ASSESSED] for inference, [SPECULATIVE] for forecasts.
+Write a tight narrative. Use: [CONFIRMED] for direct data points, [ASSESSED] for inference, [SPECULATIVE] for forecasts.
+Do NOT include raw faultline scores or numbers.
 
 Return strict JSON:
 {{
-  "period_impact": "3-5 sentences: how this priority area's faultlines moved this period and WHY, citing the data above",
-  "forward_concerns": "2-4 sentences: what to watch in this area next period",
-  "manual_review": "1-2 sentences: specific OSINT/social-media checks to validate weak signals here"
-}}"""
+  "situation_overview": "3-5 sentences: overall situation for this PAOI this period",
+  "events": [
+    {{
+      "heading": "short action-headline (under 10 words)",
+      "location": "State, District or sector",
+      "what_happened": "2-3 sentences",
+      "why_it_matters": "1-2 sentences on operational or strategic significance",
+      "linkages": "1 sentence connecting to a faultline, sub-issue, or cross-border dynamic"
+    }}
+  ],
+  "overall_assessment": "2-3 sentences on trajectory and concern level",
+  "risk_trajectory": "IMPROVING or STABLE or DETERIORATING",
+  "commander_focus": ["specific watch or action item 1", "item 2", "item 3"]
+}}
+
+Generate one events entry for each of the {n_events} EVENT(s) in the input above.
+"""
 
 
 def lean_all_paoi_prompt(paois: list[dict], period_label: str) -> str:
@@ -366,17 +492,27 @@ async def run_paoi_synthesis(
     paois = paoi_agg.get("paois", [])
     per_paoi: dict = {}
 
+    period_end = paoi_agg.get("as_of", "")
+
     if tier == "rich":
-        tasks = [call_llm_json(rich_paoi_prompt(pa, period_label), 700) for pa in paois]
+        def _rich_prompt(pa):
+            events = select_top_events_for_paoi(
+                pa["keyword_hits"]["top_articles"], pa, n=5, period_end=period_end
+            )
+            return narrative_paoi_prompt(pa, events, period_label)
+
+        tasks = [call_llm_json(_rich_prompt(pa), 900) for pa in paois]
         results = await asyncio.gather(*tasks, return_exceptions=True)
         for pa, res in zip(paois, results):
             if isinstance(res, Exception):
                 logger.warning(f"PAOI rich synthesis call failed for {pa['id']}: {res}")
             elif isinstance(res, dict) and res:
                 per_paoi[pa["id"]] = {
-                    "period_impact": res.get("period_impact", ""),
-                    "forward_concerns": res.get("forward_concerns", ""),
-                    "manual_review": res.get("manual_review", ""),
+                    "situation_overview": res.get("situation_overview", ""),
+                    "events": res.get("events") or [],
+                    "overall_assessment": res.get("overall_assessment", ""),
+                    "risk_trajectory": res.get("risk_trajectory", "STABLE"),
+                    "commander_focus": res.get("commander_focus") or [],
                 }
             else:
                 logger.warning(f"PAOI rich synthesis empty for {pa['id']}")

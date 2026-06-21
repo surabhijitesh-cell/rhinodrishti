@@ -1271,33 +1271,18 @@ def _render_pdf(brief: dict, prev_brief: dict = None, include_faultlines: bool =
         pdf.cell(0, 8, _ascii("  COMMANDER'S PRIORITY DASHBOARD"), fill=True, **NL)
         pdf.ln(2)
 
-        # Dashboard table
+        # Verbal status strip (no raw numbers)
         dash = paoi.get("commander_dashboard", [])
-        pdf.set_font("Helvetica", "B", 8)
-        pdf.set_fill_color(*C_TBL_HDR)
-        pdf.set_text_color(255, 255, 255)
-        pdf.cell(12, 5, "  #", fill=True)
-        pdf.cell(95, 5, "Priority Area", fill=True)
-        pdf.cell(20, 5, "Score", fill=True, align="C")
-        pdf.cell(25, 5, "Level", fill=True, align="C")
-        pdf.cell(20, 5, "Trend", fill=True, align="C", **NL)
-        for i, r in enumerate(dash):
-            if pdf.get_y() > 270:
-                pdf.add_page()
-            pdf.set_text_color(40, 40, 40)
+        if dash:
+            parts = [
+                f"P{r.get('rank')} {r.get('name','')[:22]}: {r.get('level','')} {r.get('trend','')}"
+                for r in dash
+            ]
             pdf.set_font("Helvetica", "", 8)
-            fill = i % 2 == 0
-            if fill:
-                pdf.set_fill_color(*C_TBL_ALT)
-            score = r.get("score")
-            score_str = f"{score:.0f}" if score is not None else "-"
-            trend = f"{r.get('trend', '')} {r.get('delta', 0):+.0f}"
-            pdf.cell(12, 5, _ascii(f"  P{r.get('rank', '')}"), fill=fill)
-            pdf.cell(95, 5, _ascii(r.get("name", "")[:55]), fill=fill)
-            pdf.cell(20, 5, score_str, fill=fill, align="C")
-            pdf.cell(25, 5, _ascii(r.get("level", "")), fill=fill, align="C")
-            pdf.cell(20, 5, _ascii(trend), fill=fill, align="C", **NL)
-        pdf.ln(2)
+            pdf.set_text_color(40, 40, 40)
+            pdf.set_fill_color(245, 248, 242)
+            pdf.multi_cell(0, 5, _ascii("   |   ".join(parts)), fill=True, **NL)
+            pdf.ln(2)
 
         # Bottom line + focus next period (rich LLM analysis)
         overall = (paoi.get("synthesis") or {}).get("overall", {})
@@ -1323,7 +1308,7 @@ def _render_pdf(brief: dict, prev_brief: dict = None, include_faultlines: bool =
                 pdf.multi_cell(0, 5, _ascii(f"  {i}. {f}"), **NL)
             pdf.ln(2)
 
-        # Per-PAOI deep-dives
+        # Per-PAOI narrative deep-dives
         per = (paoi.get("synthesis") or {}).get("per_paoi", {})
         if paoi.get("paois"):
             pdf.set_fill_color(150, 30, 30)
@@ -1332,39 +1317,109 @@ def _render_pdf(brief: dict, prev_brief: dict = None, include_faultlines: bool =
             pdf.cell(0, 7, _ascii("  PRIORITY AREA DEEP DIVES"), fill=True, **NL)
             pdf.ln(2)
         for p in paoi.get("paois", []):
-            if pdf.get_y() > 245:
+            if pdf.get_y() > 230:
                 pdf.add_page()
             mv = p.get("faultline_movement", {})
             syn = per.get(p["id"], {})
-            pdf.set_fill_color(50, 70, 45)
-            pdf.set_text_color(255, 255, 255)
+            level = mv.get("level", "STABLE")
+            risk_traj = syn.get("risk_trajectory", "")
+
+            # PAOI header band
+            pdf.set_fill_color(30, 60, 40)
+            pdf.set_text_color(200, 230, 80)
             pdf.set_font("Helvetica", "B", 10)
-            score = mv.get("last")
-            hdr = f"  P{p.get('rank')} {p.get('name', '')}"
-            if score is not None:
-                hdr += f"   [{score:.0f} {mv.get('level', '')}]"
-            pdf.cell(0, 6, _ascii(hdr), fill=True, **NL)
+            hdr = _ascii(f"  P{p.get('rank')} {p.get('name', '')}")
+            level_tag = _ascii(f"  [{level}{('  ' + risk_traj) if risk_traj else ''}]")
+            pdf.cell(155, 7, hdr, fill=True)
+            pdf.set_font("Helvetica", "B", 9)
+            pdf.cell(0, 7, level_tag, fill=True, align="R", **NL)
 
-            # Top faultlines in this PAOI
-            pdf.set_font("Helvetica", "", 8)
-            pdf.set_text_color(60, 60, 60)
-            for f in (mv.get("per_faultline") or [])[:5]:
-                line = f"    {f['name'][:50]:50s} {f['last']:5.0f} ({f['level']}) {f['delta']:+.0f}"
-                pdf.cell(0, 4, _ascii(line), **NL)
-
-            if syn.get("period_impact"):
+            if syn.get("situation_overview"):
+                # A: Situation Overview
+                pdf.set_fill_color(230, 240, 220)
+                pdf.set_font("Helvetica", "B", 8)
+                pdf.set_text_color(50, 70, 40)
+                pdf.cell(0, 5, _ascii("  A. SITUATION OVERVIEW"), fill=True, **NL)
                 pdf.set_font("Helvetica", "", 9)
                 pdf.set_text_color(40, 40, 40)
-                pdf.multi_cell(0, 5, _ascii(str(syn["period_impact"])), **NL)
-            if syn.get("forward_concerns"):
-                pdf.set_font("Helvetica", "I", 8)
-                pdf.set_text_color(120, 80, 20)
-                pdf.multi_cell(0, 4, _ascii(f"Watch next: {syn['forward_concerns']}"), **NL)
-            if syn.get("manual_review"):
-                pdf.set_font("Helvetica", "I", 8)
-                pdf.set_text_color(40, 90, 110)
-                pdf.multi_cell(0, 4, _ascii(f"Manual review: {syn['manual_review']}"), **NL)
-            pdf.ln(2)
+                pdf.multi_cell(0, 5, _ascii(str(syn["situation_overview"])), **NL)
+                pdf.ln(1)
+
+                # B: Events
+                events = syn.get("events") or []
+                if events:
+                    pdf.set_fill_color(235, 235, 245)
+                    pdf.set_font("Helvetica", "B", 8)
+                    pdf.set_text_color(30, 30, 80)
+                    pdf.cell(0, 5, _ascii(f"  B. MOST IMPACTFUL EVENTS ({len(events)})"), fill=True, **NL)
+                    for ei, ev in enumerate(events, 1):
+                        if pdf.get_y() > 258:
+                            pdf.add_page()
+                        pdf.set_fill_color(210, 215, 228)
+                        pdf.set_font("Helvetica", "B", 8)
+                        pdf.set_text_color(20, 20, 60)
+                        pdf.cell(0, 5, _ascii(f"  EVENT {ei} — {(ev.get('heading') or '')[:78]}"), fill=True, **NL)
+                        if ev.get("location"):
+                            pdf.set_font("Helvetica", "I", 7)
+                            pdf.set_text_color(80, 80, 100)
+                            pdf.cell(0, 4, _ascii(f"  Location: {ev['location'][:80]}"), **NL)
+                        if ev.get("what_happened"):
+                            pdf.set_font("Helvetica", "", 8)
+                            pdf.set_text_color(40, 40, 40)
+                            pdf.multi_cell(0, 4, _ascii(f"  What happened: {ev['what_happened']}"), **NL)
+                        if ev.get("why_it_matters"):
+                            pdf.set_font("Helvetica", "B", 8)
+                            pdf.set_text_color(120, 60, 20)
+                            pdf.multi_cell(0, 4, _ascii(f"  Why it matters: {ev['why_it_matters']}"), **NL)
+                        if ev.get("linkages"):
+                            pdf.set_font("Helvetica", "I", 7)
+                            pdf.set_text_color(60, 100, 80)
+                            pdf.multi_cell(0, 4, _ascii(f"  Linkages: {ev['linkages']}"), **NL)
+                        pdf.ln(1)
+
+                # C: Overall Assessment
+                if syn.get("overall_assessment"):
+                    pdf.set_fill_color(255, 243, 200)
+                    pdf.set_font("Helvetica", "B", 8)
+                    pdf.set_text_color(120, 80, 0)
+                    pdf.cell(0, 5, _ascii("  C. OVERALL ASSESSMENT"), fill=True, **NL)
+                    pdf.set_font("Helvetica", "", 9)
+                    pdf.set_text_color(60, 40, 0)
+                    pdf.multi_cell(0, 5, _ascii(str(syn["overall_assessment"])), **NL)
+                    pdf.ln(1)
+
+                # D: Commander Focus
+                focus = syn.get("commander_focus") or []
+                if focus:
+                    pdf.set_fill_color(250, 230, 230)
+                    pdf.set_font("Helvetica", "B", 8)
+                    pdf.set_text_color(150, 30, 30)
+                    pdf.cell(0, 5, _ascii("  D. COMMANDER FOCUS"), fill=True, **NL)
+                    pdf.set_font("Helvetica", "", 8)
+                    pdf.set_text_color(40, 40, 40)
+                    for fi, fitem in enumerate(focus, 1):
+                        pdf.multi_cell(0, 4, _ascii(f"  {fi}. {fitem}"), **NL)
+
+            else:
+                # Fallback: lean tier or synthesis unavailable
+                pdf.set_font("Helvetica", "", 8)
+                pdf.set_text_color(60, 60, 60)
+                for f in (mv.get("per_faultline") or [])[:4]:
+                    pdf.cell(0, 4, _ascii(f"    {f['name'][:55]}  ({f['level']}) {f['delta']:+.0f}"), **NL)
+                if syn.get("period_impact"):
+                    pdf.set_font("Helvetica", "", 9)
+                    pdf.set_text_color(40, 40, 40)
+                    pdf.multi_cell(0, 5, _ascii(str(syn["period_impact"])), **NL)
+                if syn.get("forward_concerns"):
+                    pdf.set_font("Helvetica", "I", 8)
+                    pdf.set_text_color(120, 80, 20)
+                    pdf.multi_cell(0, 4, _ascii(f"Watch next: {syn['forward_concerns']}"), **NL)
+                if syn.get("manual_review"):
+                    pdf.set_font("Helvetica", "I", 8)
+                    pdf.set_text_color(40, 90, 110)
+                    pdf.multi_cell(0, 4, _ascii(f"Manual review: {syn['manual_review']}"), **NL)
+
+            pdf.ln(3)
 
     # ══════════════════════════════════════════════════════════════════════════
     # 2. FAULTLINE ANALYSIS

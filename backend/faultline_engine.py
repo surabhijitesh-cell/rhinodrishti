@@ -132,11 +132,179 @@ def pre_filter_articles(faultline: dict, articles: list[dict]) -> list[dict]:
         ])
         kw_match = any(kw in haystack for kw in fl_keywords)
 
-        # Require state match + at least one of {tag, bucket, keyword}
-        if state_match and (tag_match or bucket_match or kw_match):
+        # LOC focus match (extra keywords from faultline.loc_focus, if present)
+        loc_kw = [l.lower() for l in faultline.get("loc_focus", [])]
+        loc_match = any(lk in haystack for lk in loc_kw) if loc_kw else False
+
+        # Require state match + at least one of {tag, bucket, keyword, loc_focus}
+        if state_match and (tag_match or bucket_match or kw_match or loc_match):
             candidates.append(art)
 
     return candidates
+
+
+# ── Stage 2: sub-issue structured matching ───────────────────────────────────
+# Threshold below which an (article, subissue) pair is dropped before LLM.
+# Set low enough to catch weak-but-real signals; Stage 3 LLM filters further.
+SUBISSUE_STRUCTURED_THRESHOLD = 25
+
+# Tags → actor_type mapping (extend as new tags are introduced)
+_TAG_TO_ACTOR_TYPE: dict[str, str] = {
+    "Ethnic / Tribal Tension":                  "ethnic_org",
+    "Insurgency / Militancy":                   "insurgent_group",
+    "Foreign Influence (China/Pakistan/USA)":   "chinese_entity",
+    "Border Security":                          "border_force",
+    "Arms Smuggling":                           "smuggler_network",
+    "Drug Trafficking":                         "smuggler_network",
+    "Radicalization Indicator":                 "isl_outfit",
+    "Infrastructure / Logistics Disruption":    "road_authority",
+    "Floods / Climate Impact":                  "flood_authority",
+    "Military Movement":                        "paramilitary",
+    "Political Developments":                   "political_party",
+    "Information Warfare / Narrative":          "political_party",
+}
+
+# Tags → event_type mapping
+_TAG_TO_EVENT_TYPE: dict[str, str] = {
+    "Civil Unrest":                             "protest",
+    "Insurgency / Militancy":                   "militant_attack",
+    "Infrastructure / Logistics Disruption":    "road_closure",
+    "Floods / Climate Impact":                  "flood",
+    "Arms Smuggling":                           "smuggling_case",
+    "Drug Trafficking":                         "smuggling_case",
+    "Illegal Immigration":                      "illegal_migration_case",
+}
+
+# threat_trajectory → coarse event_type
+_TRAJ_TO_EVENT_TYPE: dict[str, str] = {
+    "ESCALATING": "militant_attack",
+    "DE_ESCALATING": "protest",
+}
+
+
+def match_subissues_to_article(
+    faultline: dict,
+    article: dict,
+    subissues: list[dict],
+) -> list[dict]:
+    """
+    Stage 2: deterministic sub-issue matching — no LLM.
+
+    Scores each (article, subissue) pair using keyword, LOC, actor-type,
+    event-type, and narrative-marker overlap. Returns only sub-issues
+    that scored >= SUBISSUE_STRUCTURED_THRESHOLD, sorted desc.
+
+    Each returned item: {subissue, structured_score, matched_features}
+    """
+    haystack = " ".join([
+        (article.get("title") or "").lower(),
+        (article.get("ai_summary") or "").lower(),
+        (article.get("why_it_matters") or "").lower(),
+    ])
+
+    # Infer article actor_types from tags
+    art_tags = set(article.get("tags") or [])
+    art_actor_types = {_TAG_TO_ACTOR_TYPE[t] for t in art_tags if t in _TAG_TO_ACTOR_TYPE}
+
+    # Infer article event_types from tags + threat_trajectory
+    art_event_types = {_TAG_TO_EVENT_TYPE[t] for t in art_tags if t in _TAG_TO_EVENT_TYPE}
+    traj = article.get("threat_trajectory") or ""
+    if traj in _TRAJ_TO_EVENT_TYPE:
+        art_event_types.add(_TRAJ_TO_EVENT_TYPE[traj])
+
+    # Build article location corpus for loc_focus matching
+    loc_corpus: set[str] = set()
+    for loc in (article.get("locations_mentioned") or []):
+        loc_corpus.add(loc.lower())
+    entities = article.get("entities") or {}
+    for loc in (entities.get("locations") or []):
+        loc_corpus.add(loc.lower())
+    if article.get("district"):
+        loc_corpus.add(article["district"].lower())
+
+    results = []
+    for si in subissues:
+        if not si.get("enabled", True):
+            continue
+
+        # Keyword hits
+        si_kw = [k.lower() for k in si.get("keywords", [])]
+        kw_hit = [k for k in si_kw if k in haystack]
+
+        # LOC hits (haystack + entity locations)
+        loc_hit = [
+            loc for loc in si.get("loc_focus", [])
+            if loc.lower() in haystack or loc.lower() in loc_corpus
+        ]
+
+        # Actor type hits
+        actor_hit = [a for a in si.get("actor_types", []) if a in art_actor_types]
+
+        # Event type hits
+        event_hit = [e for e in si.get("event_types", []) if e in art_event_types]
+
+        # Narrative marker hits
+        marker_hit = [
+            m for m in si.get("narrative_markers", [])
+            if m.lower() in haystack
+        ]
+
+        # Weighted score (weights sum to 100)
+        keyword_score = min(40, len(kw_hit) * 10)
+        loc_score     = min(25, len(loc_hit) * 12)
+        actor_score   = min(15, len(actor_hit) * 8)
+        event_score   = min(12, len(event_hit) * 6)
+        marker_score  = min(8,  len(marker_hit) * 4)
+        structured_score = keyword_score + loc_score + actor_score + event_score + marker_score
+
+        if structured_score >= SUBISSUE_STRUCTURED_THRESHOLD:
+            results.append({
+                "subissue": si,
+                "structured_score": structured_score,
+                "matched_features": {
+                    "keywords_hit": kw_hit[:6],
+                    "actor_types_hit": actor_hit,
+                    "event_types_hit": event_hit,
+                    "narrative_markers_hit": marker_hit[:4],
+                    "loc_hits": loc_hit[:5],
+                },
+            })
+
+    return sorted(results, key=lambda x: x["structured_score"], reverse=True)
+
+
+async def _fetch_subissues(db, faultline_id: str) -> list[dict]:
+    """Load enabled sub-issues for a faultline from db.faultline_subissues."""
+    return await db.faultline_subissues.find(
+        {"faultline_id": faultline_id, "enabled": True},
+        {"_id": 1, "faultline_id": 1, "name": 1, "description": 1, "keywords": 1,
+         "actor_types": 1, "event_types": 1, "narrative_markers": 1, "loc_focus": 1,
+         "default_weight": 1, "cross_border_relevance": 1, "enabled": 1},
+    ).to_list(length=50)
+
+
+def _build_subissues_block(matched: list[dict]) -> str:
+    """Format matched sub-issues list for LLM prompt injection."""
+    lines = []
+    for m in matched[:5]:
+        si = m["subissue"]
+        feat = m["matched_features"]
+        sid = str(si.get("_id", si.get("name", "unknown")))
+        parts = []
+        if feat["keywords_hit"]:
+            parts.append(f"keywords={feat['keywords_hit'][:3]}")
+        if feat["loc_hits"]:
+            parts.append(f"loc={feat['loc_hits'][:3]}")
+        if feat["actor_types_hit"]:
+            parts.append(f"actors={feat['actor_types_hit']}")
+        if feat["event_types_hit"]:
+            parts.append(f"events={feat['event_types_hit']}")
+        line = (
+            f"- [{sid}] {si['name']}: {si.get('description', '')}\n"
+            f"  Matched: {' | '.join(parts) or 'keyword overlap'}"
+        )
+        lines.append(line)
+    return "\n".join(lines) if lines else "None"
 
 
 # ── LLM impact scoring ────────────────────────────────────────────────────────
@@ -165,9 +333,52 @@ Return strict JSON only:
 Be conservative on confidence. If the article is only tangentially related, set confidence below 40.
 """
 
+# Sub-issue-aware prompt (Stage 3). Used when matched_subissues is provided.
+FAULTLINE_IMPACT_PROMPT_V2 = """You are assessing how a news article affects a specific security faultline and its sub-issues.
+
+FAULTLINE: {fl_name} | State/Region: {fl_state}
+{fl_description}
+
+MATCHED SUB-ISSUES (deterministic pre-screening found these relevant):
+{subissues_block}
+
+ARTICLE:
+Title: {title}
+Summary: {summary}
+Severity: {severity} | Priority: {priority}/100 | Trajectory: {trajectory}
+Signal Strength: {signal_strength}/100 | India Relevance: {india_relevance}/100
+
+Score how much this article impacts each matched sub-issue and the overall faultline.
+0 = no impact, 50 = moderate signal, 100 = direct major escalation of that sub-issue.
+loc_risk_flag = true ONLY if the article directly confirms NH/railway/bridge/river disruption.
+
+Return strict JSON only, no prose:
+{{
+  "subissue_impacts": [
+    {{
+      "subissue_id": "<the id/name string from the sub-issue block above>",
+      "impact_score": 0-100,
+      "rationale": "1-2 sentences citing specific article content",
+      "confidence": 0-100
+    }}
+  ],
+  "overall_faultline_impact_score": 0-100,
+  "overall_rationale": "1-2 sentences",
+  "overall_confidence": 0-100,
+  "loc_risk_flag": true
+}}
+
+Be conservative on confidence. Tangential articles → confidence below 40.
+If article does not support a sub-issue despite pre-screen, set impact_score 0 for it.
+"""
+
 
 async def score_article_faultline_impact(
-    faultline: dict, article: dict, llm_client=None, model: str = None
+    faultline: dict,
+    article: dict,
+    llm_client=None,
+    model: str = None,
+    matched_subissues: list[dict] | None = None,
 ) -> Optional[dict]:
     """
     LLM call: score one article against one faultline.
@@ -181,17 +392,36 @@ async def score_article_faultline_impact(
         if model is None:
             model = DEFAULT_MODEL
 
-    prompt = FAULTLINE_IMPACT_PROMPT.format(
-        fl_name=faultline["name"],
-        fl_state=faultline["state"],
-        fl_description=faultline.get("description", ""),
-        title=(article.get("title") or "")[:200],
-        summary=(article.get("ai_summary") or article.get("raw_content") or "")[:600],
-        source=article.get("source") or "",
-        severity=article.get("severity") or "low",
-        priority=article.get("priority_score") or 0,
-        trajectory=article.get("threat_trajectory") or "INDETERMINATE",
-    )
+    if matched_subissues:
+        # Stage 3: sub-issue-aware prompt
+        prompt = FAULTLINE_IMPACT_PROMPT_V2.format(
+            fl_name=faultline["name"],
+            fl_state=faultline["state"],
+            fl_description=faultline.get("description", ""),
+            subissues_block=_build_subissues_block(matched_subissues),
+            title=(article.get("title") or "")[:200],
+            summary=(article.get("ai_summary") or article.get("raw_content") or "")[:600],
+            severity=article.get("severity") or "low",
+            priority=article.get("priority_score") or 0,
+            trajectory=article.get("threat_trajectory") or "INDETERMINATE",
+            signal_strength=article.get("signal_strength") or 0,
+            india_relevance=article.get("india_relevance_score") or 0,
+        )
+        max_tokens = 600  # more tokens needed for subissue_impacts array
+    else:
+        # Legacy path: original single-faultline prompt
+        prompt = FAULTLINE_IMPACT_PROMPT.format(
+            fl_name=faultline["name"],
+            fl_state=faultline["state"],
+            fl_description=faultline.get("description", ""),
+            title=(article.get("title") or "")[:200],
+            summary=(article.get("ai_summary") or article.get("raw_content") or "")[:600],
+            source=article.get("source") or "",
+            severity=article.get("severity") or "low",
+            priority=article.get("priority_score") or 0,
+            trajectory=article.get("threat_trajectory") or "INDETERMINATE",
+        )
+        max_tokens = 400
 
     raw_text = ""
     try:
@@ -203,7 +433,7 @@ async def score_article_faultline_impact(
             llm_client.chat.completions.create(
                 model=model,
                 messages=[{"role": "user", "content": prompt}],
-                max_tokens=400,
+                max_tokens=max_tokens,
                 temperature=0.3,
                 response_format={"type": "json_object"},
             ),
@@ -257,6 +487,30 @@ async def score_article_faultline_impact(
         # Clamp + sanitize. LLM string fields go through _sanitize_llm_string to
         # strip markup-like characters (prevents prompt-injected payloads from
         # embedding HTML / template tokens into the stored audit trail).
+        if matched_subissues and "overall_faultline_impact_score" in data:
+            # V2 response: subissue_impacts + overall fields
+            raw_si = data.get("subissue_impacts") or []
+            sanitized_si = []
+            for si in raw_si[:10]:
+                if not isinstance(si, dict):
+                    continue
+                sanitized_si.append({
+                    "subissue_id": _sanitize_llm_string(str(si.get("subissue_id", "")), 200),
+                    "impact_score": max(0, min(100, _to_int(si.get("impact_score")))),
+                    "rationale": _sanitize_llm_string(si.get("rationale", ""), 400),
+                    "confidence": max(0, min(100, _to_int(si.get("confidence")))),
+                })
+            return {
+                # Legacy-compatible fields (overall values)
+                "impact_score": max(0, min(100, _to_int(data.get("overall_faultline_impact_score")))),
+                "direction": direction,
+                "confidence": max(0, min(100, _to_int(data.get("overall_confidence")))),
+                "rationale": _sanitize_llm_string(data.get("overall_rationale", ""), 500),
+                "evidence_phrases": [],
+                # V2 extension fields
+                "subissue_impacts": sanitized_si,
+                "loc_risk_flag": bool(data.get("loc_risk_flag", False)),
+            }
         return {
             "impact_score": max(0, min(100, _to_int(data.get("impact_score")))),
             "direction": direction,
@@ -426,6 +680,120 @@ def compute_faultline_score(
     }
 
 
+# ── Sub-issue-aware daily scoring ────────────────────────────────────────────
+def compute_faultline_score_v2(
+    matched_articles: list[dict],
+    subissue_match_docs: list[dict],
+    subissues_by_id: dict[str, dict],
+    target_date: Optional[str] = None,
+) -> dict:
+    """
+    Sub-issue-aware scoring. Same stability backbone as compute_faultline_score.
+
+    Each (article, subissue) combined_impact_score replaces the raw LLM impact.
+    Formula per pair:
+      combined = 0.4*llm_impact + 0.3*structured_score + 0.2*(sev/4*100) + 0.1*priority_norm
+      eff      = combined * subissue.default_weight
+
+    Final: final_raw = 0.5 * raw_score + 0.5 * avg_combined_impact  (same backbone)
+
+    Returns same keys as compute_faultline_score plus:
+      dominant_subissues: top-3 sub-issues by contribution
+      loc_risk: bool — True if any dominant sub-issue has loc_focus
+    """
+    if not matched_articles or not subissue_match_docs:
+        base = compute_faultline_score([], [], target_date=target_date)
+        return {**base, "dominant_subissues": [], "loc_risk": False}
+
+    art_map = {a["id"]: a for a in matched_articles}
+
+    subissue_contrib: dict[str, float] = {}
+    subissue_articles: dict[str, list[str]] = {}
+    cross_border_count = 0
+    combined_impacts: list[float] = []
+    sig_article_ids: set[str] = set()
+
+    for m in subissue_match_docs:
+        if m.get("llm_confidence", 0) < SIG_CONF_MIN:
+            continue
+        if m.get("llm_impact_score", 0) < SIG_IMPACT_MIN:
+            continue
+
+        art = art_map.get(m["article_id"])
+        sev_w = _SEV_WEIGHT.get((art or {}).get("severity", "low"), 1) if art else 1
+        pri = min((art or {}).get("priority_score") or 0, 100) if art else 0
+        si = subissues_by_id.get(str(m.get("subissue_id", "")), {})
+        default_w = si.get("default_weight", 0.5)
+
+        combined = (
+            0.4 * m.get("llm_impact_score", 0)
+            + 0.3 * m.get("structured_score", 0)
+            + 0.2 * (sev_w / 4 * 100)
+            + 0.1 * pri
+        )
+        eff = combined * default_w
+
+        si_id = str(m.get("subissue_id", ""))
+        subissue_contrib[si_id] = subissue_contrib.get(si_id, 0.0) + eff
+        subissue_articles.setdefault(si_id, []).append(m["article_id"])
+        combined_impacts.append(eff)
+
+        if si.get("cross_border_relevance") or (art or {}).get("is_cross_border"):
+            cross_border_count += 1
+        if art:
+            sig_article_ids.add(art["id"])
+
+    if not combined_impacts:
+        base = compute_faultline_score([], [], target_date=target_date)
+        return {**base, "dominant_subissues": [], "loc_risk": False}
+
+    sig_articles = [art_map[aid] for aid in sig_article_ids if aid in art_map]
+
+    # Re-use existing backbone for severity_load, velocity, actor_spread
+    # Build fake mappings list (combined_impact as impact_score, 70 confidence)
+    fake_mappings = [
+        {"impact_score": min(100, v), "confidence": 70}
+        for v in combined_impacts
+    ]
+    base = compute_faultline_score(sig_articles, fake_mappings, target_date=target_date)
+
+    # Override cross_border with sub-issue-aware value
+    cb = (cross_border_count / len(combined_impacts)) * 100 if combined_impacts else 0.0
+    raw_score = (
+        base["severity_load"] * W_SEVERITY_LOAD
+        + base["velocity"] * W_VELOCITY
+        + base["actor_spread"] * W_ACTOR_SPREAD
+        + cb * W_CROSS_BORDER
+    )
+    avg_combined = sum(combined_impacts) / len(combined_impacts)
+    final_raw = round(0.5 * raw_score + 0.5 * avg_combined, 2)
+
+    # Top-3 dominant sub-issues
+    top3 = sorted(subissue_contrib.items(), key=lambda x: x[1], reverse=True)[:3]
+    dominant = []
+    for sid, contrib in top3:
+        si = subissues_by_id.get(sid, {})
+        dominant.append({
+            "subissue_id": sid,
+            "name": si.get("name", sid),
+            "loc_focus": si.get("loc_focus", []),
+            "contribution": round(contrib, 2),
+            "sample_article_ids": subissue_articles.get(sid, [])[:3],
+        })
+
+    loc_risk = any(bool(d.get("loc_focus")) for d in dominant)
+
+    return {
+        **base,
+        "raw_score": final_raw,
+        "cross_border": round(cb, 2),
+        "n_significant": len(sig_article_ids),
+        "avg_impact": round(avg_combined, 2),
+        "dominant_subissues": dominant,
+        "loc_risk": loc_risk,
+    }
+
+
 # ── Cross-faultline propagation ───────────────────────────────────────────────
 def apply_propagation(
     raw_scores: dict[str, float],
@@ -512,6 +880,18 @@ async def evaluate_alerts(
     if existing:
         return None
 
+    dominant = today_breakdown.get("dominant_subissues", [])
+    loc_risk = today_breakdown.get("loc_risk", False)
+    loc_segment = ", ".join(
+        loc for d in dominant for loc in (d.get("loc_focus") or [])
+    )[:200]
+
+    if dominant:
+        sub_names = ", ".join(d["name"] for d in dominant[:2])
+        reason = f"{reason}. Leading sub-issues: {sub_names}."
+        if loc_risk and loc_segment:
+            reason = f"{reason} LOC at risk: {loc_segment}."
+
     alert = {
         "id": str(uuid.uuid4()),
         "faultline_id": fl_id,
@@ -523,6 +903,9 @@ async def evaluate_alerts(
         "score_breakdown": today_breakdown,
         "reason": reason,
         "trend_direction": "ESCALATING" if today_score >= 55 else "STABLE",
+        "dominant_subissues": dominant,
+        "loc_risk": loc_risk,
+        "loc_segment": loc_segment,
         "created_at": now.isoformat(),
         "expires_at": (now + timedelta(hours=ALERT_EXPIRY_HOURS)).isoformat(),
         "acknowledged": False,
@@ -595,7 +978,7 @@ async def run_daily_faultline_pass(
         logger.warning("No active faultlines configured. Run /api/faultlines/seed first.")
         return {"date": target_date, "faultlines_scored": 0, "alerts_emitted": 0}
 
-    # Load articles in window (project only fields needed for scoring)
+    # Load articles in window (project fields needed for scoring + sub-issue matching)
     articles = await db.intelligence_items.find(
         {
             "published_at": {"$gte": window_start.isoformat(), "$lt": window_end.isoformat()},
@@ -608,6 +991,9 @@ async def run_daily_faultline_pass(
             "published_at": 1, "severity": 1, "priority_score": 1, "tags": 1,
             "signal_bucket": 1, "regions": 1, "state": 1, "actors": 1,
             "entities": 1, "is_cross_border": 1, "threat_trajectory": 1,
+            # Stage 2 sub-issue matching needs these extra fields
+            "why_it_matters": 1, "signal_strength": 1, "india_relevance_score": 1,
+            "district": 1, "locations_mentioned": 1, "threat_category": 1,
         },
     ).to_list(length=5000)
 
@@ -632,11 +1018,6 @@ async def run_daily_faultline_pass(
     llm_attempts = 0
     llm_successes = 0
 
-    async def _score_one(fl_id: str, art: dict, fl: dict) -> tuple[str, dict] | None:
-        async with sem:
-            result = await score_article_faultline_impact(fl, art, llm_client, MODEL)
-            return (art["id"], result) if result else None
-
     for fl in faultlines:
         fl_id = fl["id"]
         candidates = pre_filter_articles(fl, articles)
@@ -647,36 +1028,68 @@ async def run_daily_faultline_pass(
             breakdowns[fl_id] = compute_faultline_score([], [], target_date=target_date)
             continue
 
-        # Score each candidate via LLM (parallel within concurrency limit)
-        mappings: list[dict] = []
-        if llm_client:
-            tasks = [_score_one(fl_id, art, fl) for art in candidates]
-            results = await asyncio.gather(*tasks, return_exceptions=False)
-            llm_attempts += len(candidates)
-            llm_successes += sum(1 for r in results if r is not None)
-        else:
-            results = [None] * len(candidates)
+        # ── Stage 2: sub-issue structured matching ────────────────────────────
+        subissues = await _fetch_subissues(db, fl_id)
+        subissue_mode = bool(subissues)
 
-        # Build mappings + persist
+        # Map each article to its matched sub-issues (or None for legacy path)
+        pairs: list[tuple[dict, list[dict] | None]] = []
+        for art in candidates:
+            if subissue_mode:
+                matched = match_subissues_to_article(fl, art, subissues)
+                if matched:
+                    pairs.append((art, matched))
+                # else: no sub-issue passed threshold — skip LLM for this article
+            else:
+                pairs.append((art, None))  # legacy: no sub-issues defined
+
+        if not pairs:
+            raw_scores[fl_id] = 0.0
+            breakdowns[fl_id] = compute_faultline_score([], [], target_date=target_date)
+            continue
+
+        # ── Stage 3: LLM for articles that passed Stage 2 ────────────────────
+        async def _score_one_v2(
+            art: dict, matched_si: list[dict] | None
+        ) -> tuple[dict, list[dict] | None, dict | None]:
+            async with sem:
+                result = await score_article_faultline_impact(
+                    fl, art, llm_client, MODEL,
+                    matched_subissues=matched_si,
+                )
+                return (art, matched_si, result)
+
+        if llm_client:
+            tasks = [_score_one_v2(art, msi) for art, msi in pairs]
+            scored_triples = await asyncio.gather(*tasks, return_exceptions=False)
+            llm_attempts += len(pairs)
+            llm_successes += sum(1 for _, _, r in scored_triples if r is not None)
+        else:
+            scored_triples = [(art, msi, None) for art, msi in pairs]
+
+        # ── Persist mappings + sub-issue matches ──────────────────────────────
         mapping_docs: list[dict] = []
         kept_articles: list[dict] = []
-        for art, scored in zip(candidates, results):
-            if scored is None:
-                # Fallback: keep article with neutral impact when LLM unavailable
-                mapping = {
-                    "impact_score": 50,
-                    "direction": "STABLE",
-                    "confidence": 30,
+        mappings: list[dict] = []
+        subissue_match_docs: list[dict] = []
+        now_iso = datetime.now(timezone.utc).isoformat()
+
+        for art, matched_si, llm_result in scored_triples:
+            if llm_result is None:
+                if llm_client:
+                    continue  # LLM attempted but failed — don't use neutral fallback
+                # LLM unavailable: fallback for no-LLM mode
+                llm_result = {
+                    "impact_score": 50, "direction": "STABLE", "confidence": 30,
                     "rationale": "Pre-filter match only (LLM unavailable)",
                     "evidence_phrases": [],
                 }
-            else:
-                mapping = scored[1]
 
-            # Drop low-confidence mappings (<25) — keeps noise out
-            if mapping["confidence"] < 25:
+            if llm_result.get("confidence", 0) < 25:
                 continue
 
+            # Legacy faultline_mappings write (backward compat)
+            mapping = llm_result
             mapping_doc = {
                 "id": str(uuid.uuid4()),
                 "faultline_id": fl_id,
@@ -686,43 +1099,62 @@ async def run_daily_faultline_pass(
                 "direction": mapping["direction"],
                 "confidence": mapping["confidence"],
                 "rationale": mapping["rationale"],
-                "evidence_phrases": mapping["evidence_phrases"],
+                "evidence_phrases": mapping.get("evidence_phrases", []),
                 "article_title": art.get("title", ""),
                 "article_published_at": art.get("published_at", ""),
                 "article_severity": art.get("severity", ""),
-                "created_at": datetime.now(timezone.utc).isoformat(),
+                "created_at": now_iso,
             }
             mapping_docs.append(mapping_doc)
             mappings.append(mapping)
             kept_articles.append(art)
 
+            # Sub-issue match docs (V2 path)
+            if matched_si and "subissue_impacts" in llm_result:
+                si_impacts = llm_result["subissue_impacts"] or []
+                for si_impact in si_impacts:
+                    raw_sid = si_impact.get("subissue_id", "")
+                    # Find the sub-issue whose name or _id matches
+                    si_match = next(
+                        (m for m in matched_si
+                         if str(m["subissue"].get("_id", "")) == raw_sid
+                         or m["subissue"].get("name", "") == raw_sid
+                         or str(m["subissue"].get("_id", "")) in raw_sid),
+                        None,
+                    )
+                    if si_match is None:
+                        continue
+                    si_doc = si_match["subissue"]
+                    si_id = str(si_doc.get("_id", si_doc.get("name", "")))
+                    llm_imp = si_impact.get("impact_score", 0)
+                    struct_score = si_match["structured_score"]
+                    combined = round(0.6 * llm_imp + 0.4 * struct_score, 2)
+                    subissue_match_docs.append({
+                        "article_id": art["id"],
+                        "faultline_id": fl_id,
+                        "subissue_id": si_id,
+                        "date": target_date,
+                        "structured_score": struct_score,
+                        "llm_impact_score": llm_imp,
+                        "combined_impact_score": combined,
+                        "llm_confidence": si_impact.get("confidence", 0),
+                        "rationale": _sanitize_llm_string(si_impact.get("rationale", ""), 400),
+                        "matched_features": si_match["matched_features"],
+                        "created_at": now_iso,
+                    })
+
+        # Upsert faultline_mappings (atomic, idempotent)
         if mapping_docs:
-            # Atomic per-mapping upsert keyed on (faultline_id, article_id, date).
-            # Prior approach (delete_many → insert_many) left a half-state window
-            # where prior mappings were gone if the insert failed. This pattern
-            # only removes a mapping AFTER its replacement has been written.
             kept_article_ids: list[str] = []
             for doc in mapping_docs:
-                # Preserve original `id` on update; only set it on insert.
                 set_doc = {k: v for k, v in doc.items() if k != "id"}
                 await db.faultline_mappings.update_one(
-                    {
-                        "faultline_id": fl_id,
-                        "article_id": doc["article_id"],
-                        "date": target_date,
-                    },
-                    {
-                        "$set": set_doc,
-                        "$setOnInsert": {"id": doc["id"]},
-                    },
+                    {"faultline_id": fl_id, "article_id": doc["article_id"], "date": target_date},
+                    {"$set": set_doc, "$setOnInsert": {"id": doc["id"]}},
                     upsert=True,
                 )
                 kept_article_ids.append(doc["article_id"])
 
-            # Cleanup: remove stale mappings for this (faultline, date) that
-            # weren't part of the current run (e.g. articles previously matched
-            # but no longer relevant). Runs AFTER successful upserts, so a
-            # mid-run failure leaves all prior data intact.
             await db.faultline_mappings.delete_many({
                 "faultline_id": fl_id,
                 "date": target_date,
@@ -730,7 +1162,27 @@ async def run_daily_faultline_pass(
             })
             all_mappings_count += len(mapping_docs)
 
-        breakdown = compute_faultline_score(kept_articles, mappings, target_date=target_date)
+        # Upsert sub-issue matches
+        for doc in subissue_match_docs:
+            await db.article_faultline_subissue_matches.update_one(
+                {"article_id": doc["article_id"], "faultline_id": fl_id,
+                 "subissue_id": doc["subissue_id"]},
+                {"$set": doc},
+                upsert=True,
+            )
+
+        # ── Scoring ───────────────────────────────────────────────────────────
+        if subissue_mode and subissue_match_docs:
+            subissues_by_id = {
+                str(si.get("_id", si.get("name", ""))): si for si in subissues
+            }
+            breakdown = compute_faultline_score_v2(
+                kept_articles, subissue_match_docs, subissues_by_id,
+                target_date=target_date,
+            )
+        else:
+            breakdown = compute_faultline_score(kept_articles, mappings, target_date=target_date)
+
         raw_scores[fl_id] = breakdown["raw_score"]
         breakdowns[fl_id] = breakdown
 
@@ -765,7 +1217,9 @@ async def run_daily_faultline_pass(
             "n_articles": breakdown["n_articles"],
             "n_significant": breakdown.get("n_significant", 0),
             "avg_impact": breakdown["avg_impact"],
-            "avg_confidence": breakdown["avg_confidence"],
+            "avg_confidence": breakdown.get("avg_confidence", 0.0),
+            "dominant_subissues": breakdown.get("dominant_subissues", []),
+            "loc_risk": breakdown.get("loc_risk", False),
             "llm_ok": llm_ok,
             "computed_at": datetime.now(timezone.utc).isoformat(),
         }

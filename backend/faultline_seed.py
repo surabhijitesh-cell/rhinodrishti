@@ -28,6 +28,11 @@ STATE_TO_REGIONS = {
     "Tripura": ["Tripura"],
     "North Bengal": ["West Bengal / Siliguri Corridor"],
     "Bangladesh": ["Bangladesh"],
+    # Cross-state faultlines (LOC, NER-wide)
+    "NER": [
+        "Assam", "Manipur", "Meghalaya", "Mizoram", "Nagaland",
+        "Tripura", "West Bengal / Siliguri Corridor", "Arunachal Pradesh",
+    ],
 }
 
 FAULTLINES = [
@@ -44,6 +49,7 @@ FAULTLINES = [
         ],
         "tags": ["Ethnic / Tribal Tension", "Civil Unrest", "Insurgency / Militancy"],
         "signal_buckets": ["conflict_escalation", "insurgency", "political_instability"],
+        "loc_focus": ["NH-37", "NH-2", "Imphal corridor", "Jiribam", "Moreh border"],
         "linked_faultlines": [
             {"id": "man_arms", "weight": 0.5},
             {"id": "man_idp", "weight": 0.6},
@@ -456,6 +462,7 @@ FAULTLINES = [
         ],
         "tags": ["Floods / Climate Impact", "Civil Unrest"],
         "signal_buckets": ["humanitarian_stress", "trade_logistics_disruption"],
+        "loc_focus": ["Brahmaputra", "Barak", "NH-27", "NH-37", "Bogibeel", "Saraighat"],
         "linked_faultlines": [],
         "active": True,
     },
@@ -491,6 +498,7 @@ FAULTLINES = [
         ],
         "tags": ["Ethnic / Tribal Tension", "Civil Unrest", "Political Developments"],
         "signal_buckets": ["conflict_escalation", "political_instability"],
+        "loc_focus": ["NH-8", "Agartala border", "Sonamura", "Sabroom", "Gomati border"],
         "linked_faultlines": [
             {"id": "tri_demographic", "weight": 0.5},
             {"id": "tri_land", "weight": 0.4},
@@ -939,6 +947,10 @@ FAULTLINES = [
         ],
         "tags": ["Border Security", "Foreign Influence (China/Pakistan/USA)", "Military Movement"],
         "signal_buckets": ["border_security", "military_movement", "external_influence"],
+        "loc_focus": [
+            "Siliguri Corridor", "chicken neck", "NH-10", "NH-31",
+            "NJP", "New Jalpaiguri", "Jalpaiguri", "Teesta",
+        ],
         "linked_faultlines": [
             {"id": "nbn_chinese", "weight": 0.6},
             {"id": "nbn_immigration", "weight": 0.3},
@@ -1195,6 +1207,49 @@ FAULTLINES = [
         "linked_faultlines": [
             {"id": "bgd_radicalization", "weight": 0.5},
             {"id": "bgd_military", "weight": 0.4},
+        ],
+        "active": True,
+    },
+
+    # ─── NER LINES OF COMMUNICATION (cross-state) ─────────────────────────────
+    {
+        "id": "ner_loc",
+        "state": "NER",
+        "name": "NER Lines of Communication",
+        "description": (
+            "Threats to national highways, railways, bridges, rivers, and logistics "
+            "routes across Northeast India that affect security force movement and "
+            "rear-area operations. Covers NH network, key rail trunks, "
+            "Brahmaputra/Barak crossings, and the Siliguri Corridor."
+        ),
+        "keywords": [
+            "NH-27", "NH-8", "NH-2", "NH-37", "NH-13", "NH-6", "NH-10", "NH-31",
+            "rail roko NER", "railway disruption northeast", "bridge collapse northeast",
+            "road blockade northeast", "highway blocked northeast",
+            "Brahmaputra ferry", "Barak bridge", "Siliguri corridor LOC",
+            "chicken neck blockade", "flood closed NH", "landslide NH northeast",
+            "sabotage railway NER", "Kaladan corridor", "Imphal corridor",
+            "Jiribam route", "Moreh road", "logistics northeast",
+        ],
+        "tags": [
+            "Infrastructure / Logistics Disruption", "Border Security",
+            "Civil Unrest", "Floods / Climate Impact", "Insurgency / Militancy",
+            "Military Movement",
+        ],
+        "signal_buckets": [
+            "trade_logistics_disruption", "conflict_escalation",
+            "border_security", "humanitarian_stress", "military_movement",
+        ],
+        "loc_focus": [
+            "NH-27", "NH-8", "NH-2", "NH-37", "NH-13", "NH-6", "NH-10", "NH-31",
+            "Brahmaputra", "Barak", "Bogibeel", "Saraighat", "NJP",
+            "Siliguri Corridor", "Jiribam", "Moreh", "Imphal corridor",
+        ],
+        "linked_faultlines": [
+            {"id": "nbn_siliguri", "weight": 0.5},
+            {"id": "asm_economic_environment", "weight": 0.4},
+            {"id": "man_ethnic", "weight": 0.3},
+            {"id": "asm_insurgency", "weight": 0.35},
         ],
         "active": True,
     },

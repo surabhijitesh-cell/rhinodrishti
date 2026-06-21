@@ -833,6 +833,62 @@ async def create_custom_faultline(
     return {"status": "ok", "faultline": doc}
 
 
+# ── Sub-issue seed ────────────────────────────────────────────────────────────
+@router.post("/faultlines/seed-subissues")
+async def seed_subissue_registry(
+    current_user: dict = Depends(get_current_user),
+):
+    """Seed (or refresh) sub-issue registry from subissue_seed.SUBISSUE_SEED. Idempotent."""
+    _require_analyst_or_admin(current_user)
+    from subissue_seed import seed_subissues
+    result = await seed_subissues(db)
+    return {"status": "ok", **result}
+
+
+# ── Faultline detail with sub-issues ─────────────────────────────────────────
+@router.get("/faultlines/{fl_id}/detail")
+async def get_faultline_detail(
+    fl_id: str,
+    date: Optional[str] = Query(None, description="YYYY-MM-DD; defaults to latest"),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Return faultline score snapshot + dominant sub-issues with sample articles.
+    Consumed by paoi_brief.py for narrative brief generation.
+    """
+    fl = await faultlines_col.find_one({"id": fl_id}, {"_id": 0})
+    if not fl:
+        raise HTTPException(status_code=404, detail=f"Faultline '{fl_id}' not found")
+
+    score_query: dict = {"faultline_id": fl_id}
+    if date:
+        score_query["date"] = date
+    score = await scores_col.find_one(score_query, {"_id": 0}, sort=[("date", -1)])
+
+    if not score:
+        return {"faultline": fl, "score": None, "dominant_subissues": [], "loc_risk": False}
+
+    dominant = score.get("dominant_subissues", [])
+    for d in dominant:
+        sample_ids = d.get("sample_article_ids", [])[:3]
+        if sample_ids:
+            arts = await db.intelligence_items.find(
+                {"id": {"$in": sample_ids}},
+                {"id": 1, "title": 1, "published_at": 1, "severity": 1, "source": 1, "_id": 0},
+            ).to_list(length=3)
+            d["sample_articles"] = arts
+
+    return {
+        "faultline": fl,
+        "score": score,
+        "dominant_subissues": dominant,
+        "loc_risk": score.get("loc_risk", False),
+        "loc_segment": ", ".join(
+            loc for d in dominant for loc in (d.get("loc_focus") or [])
+        )[:200],
+    }
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # DYNAMIC-PATH ROUTES (catch-all `/{fl_id}` — must come LAST)
 # ═══════════════════════════════════════════════════════════════════════════════
