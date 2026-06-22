@@ -915,20 +915,90 @@ export default function MonthlyBrief({ api }) {
                   </div>
                 )}
 
-                {syn.period_impact && (
-                  <p className="text-sm leading-relaxed mb-1">{renderLabeledText(syn.period_impact)}</p>
-                )}
-                {syn.forward_concerns && (
-                  <p className="text-xs text-amber-300/90 mb-1">
-                    <span className="uppercase tracking-wider font-mono text-[9px] text-amber-400">Watch next: </span>
-                    {renderLabeledText(syn.forward_concerns)}
-                  </p>
-                )}
-                {syn.manual_review && (
-                  <p className="text-[11px] text-muted-foreground italic pt-1 border-t border-border mt-1">
-                    <span className="uppercase tracking-wider font-mono text-[9px] text-cyan-400">Manual review: </span>
-                    {typeof syn.manual_review === "string" ? syn.manual_review : String(syn.manual_review)}
-                  </p>
+                {syn.situation_overview ? (
+                  <div className="space-y-2 mt-1">
+                    {/* A: Situation Overview */}
+                    <div className="bg-emerald-950/30 border border-emerald-500/20 px-3 py-2">
+                      <p className="text-[9px] font-mono uppercase tracking-wider text-emerald-400 mb-1">A. Situation Overview</p>
+                      <p className="text-sm leading-relaxed">{renderLabeledText(syn.situation_overview)}</p>
+                    </div>
+
+                    {/* B: Key Events */}
+                    {Array.isArray(syn.events) && syn.events.length > 0 && (
+                      <div className="space-y-1.5">
+                        <p className="text-[9px] font-mono uppercase tracking-wider text-blue-400">B. Key Events</p>
+                        {syn.events.map((ev, i) => (
+                          <div key={i} className="border border-border bg-background px-3 py-2">
+                            <div className="flex items-start gap-2 mb-1">
+                              <span className="text-[9px] font-mono text-muted-foreground mt-0.5 shrink-0">{ev.location || ""}</span>
+                              <p className="text-xs font-semibold leading-tight">{ev.heading}</p>
+                            </div>
+                            {ev.what_happened && (
+                              <p className="text-[11px] leading-relaxed mb-0.5">{renderLabeledText(ev.what_happened)}</p>
+                            )}
+                            {ev.why_it_matters && (
+                              <p className="text-[11px] text-amber-300/80 leading-relaxed">
+                                <span className="text-[9px] font-mono text-amber-400 uppercase">Why: </span>
+                                {renderLabeledText(ev.why_it_matters)}
+                              </p>
+                            )}
+                            {ev.linkages && (
+                              <p className="text-[10px] text-cyan-300/70 mt-0.5">
+                                <span className="text-[9px] font-mono text-cyan-400 uppercase">Links: </span>
+                                {ev.linkages}
+                              </p>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* C: Overall Assessment */}
+                    {syn.overall_assessment && (
+                      <div className="bg-amber-950/20 border border-amber-500/20 px-3 py-2">
+                        <p className="text-[9px] font-mono uppercase tracking-wider text-amber-400 mb-1">C. Overall Assessment</p>
+                        <p className="text-sm leading-relaxed">{renderLabeledText(syn.overall_assessment)}</p>
+                        {syn.risk_trajectory && (
+                          <p className="text-[10px] font-mono text-muted-foreground mt-1">
+                            Trajectory: <span className="text-amber-300">{syn.risk_trajectory}</span>
+                          </p>
+                        )}
+                      </div>
+                    )}
+
+                    {/* D: Commander Focus */}
+                    {Array.isArray(syn.commander_focus) && syn.commander_focus.length > 0 && (
+                      <div className="bg-red-950/20 border border-red-500/20 px-3 py-2">
+                        <p className="text-[9px] font-mono uppercase tracking-wider text-red-400 mb-1">D. Commander Focus</p>
+                        <ul className="space-y-0.5">
+                          {syn.commander_focus.map((item, i) => (
+                            <li key={i} className="text-xs flex gap-2">
+                              <span className="text-red-400 shrink-0">▸</span>
+                              <span>{renderLabeledText(item)}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <>
+                    {syn.period_impact && (
+                      <p className="text-sm leading-relaxed mb-1">{renderLabeledText(syn.period_impact)}</p>
+                    )}
+                    {syn.forward_concerns && (
+                      <p className="text-xs text-amber-300/90 mb-1">
+                        <span className="uppercase tracking-wider font-mono text-[9px] text-amber-400">Watch next: </span>
+                        {renderLabeledText(syn.forward_concerns)}
+                      </p>
+                    )}
+                    {syn.manual_review && (
+                      <p className="text-[11px] text-muted-foreground italic pt-1 border-t border-border mt-1">
+                        <span className="uppercase tracking-wider font-mono text-[9px] text-cyan-400">Manual review: </span>
+                        {typeof syn.manual_review === "string" ? syn.manual_review : String(syn.manual_review)}
+                      </p>
+                    )}
+                  </>
                 )}
 
                 {p.keyword_hits?.n_articles > 0 && (
