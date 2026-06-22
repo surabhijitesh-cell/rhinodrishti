@@ -1238,13 +1238,11 @@ FAULTLINES = [
             "economic blockade", "total shutdown", "bandh",
         ],
         "tags": [
-            "Infrastructure / Logistics Disruption", "Border Security",
-            "Civil Unrest", "Floods / Climate Impact", "Insurgency / Militancy",
+            "Infrastructure / Logistics Disruption", "Floods / Climate Impact",
             "Military Movement",
         ],
         "signal_buckets": [
-            "trade_logistics_disruption", "conflict_escalation",
-            "border_security", "humanitarian_stress", "military_movement",
+            "trade_logistics_disruption", "humanitarian_stress", "military_movement",
         ],
         "loc_focus": [
             "NH-27", "NH-8", "NH-2", "NH-37", "NH-13", "NH-6", "NH-10", "NH-31",

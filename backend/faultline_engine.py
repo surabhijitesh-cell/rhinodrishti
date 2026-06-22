@@ -144,15 +144,25 @@ def pre_filter_articles(faultline: dict, articles: list[dict]) -> list[dict]:
 
         # Require state match + at least one of {tag, bucket, keyword, loc_focus}
         if state_match and (tag_match or bucket_match or kw_match or loc_match):
-            candidates.append(art)
+            # Compute a relevance rank so the most signal-rich articles surface first
+            # when the list is capped by max_articles_per_faultline.
+            # Higher = more specific to this faultline.
+            rank = (
+                sum(1 for kw in fl_keywords if kw in haystack) * 3
+                + sum(1 for lk in loc_kw if lk in haystack) * 5
+                + (2 if bucket_match else 0)
+                + (1 if tag_match else 0)
+            )
+            candidates.append((rank, art))
 
-    return candidates
+    candidates.sort(key=lambda x: x[0], reverse=True)
+    return [art for _, art in candidates]
 
 
 # ── Stage 2: sub-issue structured matching ───────────────────────────────────
 # Threshold below which an (article, subissue) pair is dropped before LLM.
 # Set low enough to catch weak-but-real signals; Stage 3 LLM filters further.
-SUBISSUE_STRUCTURED_THRESHOLD = 25
+SUBISSUE_STRUCTURED_THRESHOLD = 10
 
 # Tags → actor_type mapping (extend as new tags are introduced)
 _TAG_TO_ACTOR_TYPE: dict[str, str] = {
