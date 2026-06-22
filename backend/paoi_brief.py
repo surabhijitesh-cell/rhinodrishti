@@ -405,10 +405,15 @@ def narrative_paoi_prompt(pa: dict, events: list[dict], period_label: str) -> st
     event_lines = []
     for i, ev in enumerate(events, 1):
         body = (ev.get("why_it_matters") or ev.get("ai_summary") or "")[:250]
+        # Extract named locations from NER entities for geographic precision
+        ner_locs = (ev.get("entities") or {}).get("locations", [])
+        loc_str = ", ".join(ner_locs[:6]) if ner_locs else ""
+        loc_line = f"  Named locations: {loc_str}\n" if loc_str else ""
         event_lines.append(
             f"EVENT {i}: {ev.get('title','')[:120]}\n"
             f"  Date: {ev.get('published_at','')[:10]}  "
             f"State: {ev.get('state','n/a')}  District: {ev.get('district','n/a')}\n"
+            f"{loc_line}"
             f"  Summary: {body}\n"
             f"  Severity: {ev.get('severity','n/a')}  Trajectory: {ev.get('threat_trajectory','n/a')}"
         )
@@ -426,24 +431,29 @@ Faultline status: {fl_verbal}{subissues_block}
 Most impactful events this period:
 {events_block}
 
-Write a tight narrative. Use: [CONFIRMED] for direct data points, [ASSESSED] for inference, [SPECULATIVE] for forecasts.
-Do NOT include raw faultline scores or numbers.
+Write a tight, actionable narrative. Rules:
+- Use [CONFIRMED] for direct data points, [ASSESSED] for inference, [SPECULATIVE] for forecasts.
+- Do NOT include raw faultline scores or numbers.
+- Every location reference must be as specific as possible: name the village, crossing point, NH number, km marker, bridge, or border post — NOT just the state or district.
+- commander_focus items must name a specific place or route from the events above, then state the required action. Format: "<Location>: <action>". E.g. "Dawki crossing, Meghalaya: Intensify vehicle checks for concealed arms — 3 seizures in 30 days". Generic items like "enhance surveillance" with no location are NOT acceptable.
+- watch_locations must be a flat list of the most surveillance-critical named places extracted from events (villages, NH segments, border haats, crossing points, bridges, specific districts).
 
 Return strict JSON:
 {{
-  "situation_overview": "3-5 sentences: overall situation for this PAOI this period",
+  "situation_overview": "3-5 sentences covering the overall situation, naming the most active specific locations",
   "events": [
     {{
       "heading": "short action-headline (under 10 words)",
-      "location": "State, District or sector",
-      "what_happened": "2-3 sentences",
+      "location": "most specific available: village / NH km / crossing point / bridge — not just state",
+      "what_happened": "2-3 sentences with specific actor names and place names",
       "why_it_matters": "1-2 sentences on operational or strategic significance",
       "linkages": "1 sentence connecting to a faultline, sub-issue, or cross-border dynamic"
     }}
   ],
-  "overall_assessment": "2-3 sentences on trajectory and concern level",
+  "overall_assessment": "2-3 sentences on trajectory, naming the highest-risk specific locations",
   "risk_trajectory": "IMPROVING or STABLE or DETERIORATING",
-  "commander_focus": ["specific watch or action item 1", "item 2", "item 3"]
+  "watch_locations": ["most critical named location 1", "location 2", "location 3", "location 4", "location 5"],
+  "commander_focus": ["<Specific location>: <concrete action>", "<Specific location>: <concrete action>", "<Specific location>: <concrete action>"]
 }}
 
 Generate one events entry for each of the {n_events} EVENT(s) in the input above.
@@ -527,6 +537,7 @@ async def run_paoi_synthesis(
                         "events": res.get("events") or [],
                         "overall_assessment": res.get("overall_assessment", ""),
                         "risk_trajectory": res.get("risk_trajectory", "STABLE"),
+                        "watch_locations": res.get("watch_locations") or [],
                         "commander_focus": res.get("commander_focus") or [],
                     }
                 else:
