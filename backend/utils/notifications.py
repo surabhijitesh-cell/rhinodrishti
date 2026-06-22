@@ -201,7 +201,7 @@ async def resolve_system_notification_recipients(db, notif_type: str, item: dict
             if not matched:
                 continue
 
-        elif notif_type == "REPORT_READY":
+        elif notif_type in ("REPORT_READY", "SYSTEM_ALERT"):
             pass  # broadcast to all enabled users; no additional filtering
 
         recipients.append(uid)

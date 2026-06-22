@@ -343,15 +343,38 @@ async def startup():
                 if limit is None:
                     return  # unlimited plan — no warning needed
                 remaining = round(limit - usage, 4)
-                from llm_client import set_credit_warning
+                from llm_client import set_credit_warning, get_credit_warning
+                prev_level = get_credit_warning()["level"]
                 if remaining <= 0.50:
-                    set_credit_warning("critical", remaining)
-                    logger.warning(f"OpenRouter credits CRITICAL: ${remaining:.4f} remaining")
+                    new_level = "critical"
                 elif remaining <= 2.00:
-                    set_credit_warning("low", remaining)
-                    logger.warning(f"OpenRouter credits LOW: ${remaining:.4f} remaining")
+                    new_level = "low"
                 else:
-                    set_credit_warning("ok", remaining)
+                    new_level = "ok"
+                set_credit_warning(new_level, remaining)
+                if new_level != "ok":
+                    logger.warning(f"OpenRouter credits {new_level.upper()}: ${remaining:.4f} remaining")
+                # Notify users when level worsens (ok→low, ok→critical, low→critical)
+                _severity = {"ok": 0, "low": 1, "critical": 2}
+                if _severity.get(new_level, 0) > _severity.get(prev_level, 0):
+                    try:
+                        from utils.notifications import create_and_dispatch_notification, resolve_system_notification_recipients
+                        recipients = await resolve_system_notification_recipients(db, "SYSTEM_ALERT")
+                        if recipients:
+                            emoji = "🔴" if new_level == "critical" else "🟡"
+                            await create_and_dispatch_notification(
+                                notif_type="SYSTEM_ALERT",
+                                title=f"{emoji} OpenRouter credits {new_level.upper()}: ${remaining:.2f} remaining",
+                                body="LLM synthesis will fail when credits reach $0. Top up at openrouter.ai/credits.",
+                                payload={"level": new_level, "remaining_usd": remaining},
+                                deep_link="/admin",
+                                source_type="system",
+                                source_id="credit_monitor",
+                                created_by=None,
+                                recipient_user_ids=recipients,
+                            )
+                    except Exception as ne:
+                        logger.warning(f"Credit alert notification failed: {ne}")
             except Exception as e:
                 logger.warning(f"Credit monitor check failed: {e}")
 
