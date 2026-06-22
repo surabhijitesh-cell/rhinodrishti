@@ -209,10 +209,10 @@ export default function FortnightlyBrief({ api }) {
           data-testid="generate-fortnightly-btn"
         >
           {generating ? <><RefreshCw size={12} className="mr-1 animate-spin" /> Generating…</> :
-            brief?.status === "ready" ? <><RefreshCw size={12} className="mr-1" /> Regenerate</> :
+            (brief?.status === "ready" || brief?.status === "partial") ? <><RefreshCw size={12} className="mr-1" /> Regenerate</> :
                                           <><FileText  size={12} className="mr-1" /> Generate</>}
         </Button>
-        {brief?.status === "ready" && (
+        {(brief?.status === "ready" || brief?.status === "partial") && (
           <>
             <div className="flex flex-col items-end gap-1">
               <Button
@@ -1004,7 +1004,7 @@ export default function FortnightlyBrief({ api }) {
       )}
 
       {/* Sub-tab header */}
-      {brief?.status === "ready" && (
+      {(brief?.status === "ready" || brief?.status === "partial") && (
         <div className="flex gap-1 border-b border-border" data-testid="fortnightly-subtabs">
           <button
             type="button"
@@ -1019,7 +1019,7 @@ export default function FortnightlyBrief({ api }) {
         </div>
       )}
 
-      {brief?.status === "ready" && activeTab === "brief" && (
+      {(brief?.status === "ready" || brief?.status === "partial") && activeTab === "brief" && (
         <>
           <CommanderDashboard paoiAnalysis={brief?.paoi_analysis} />
           <PaoiDeepDives paoiAnalysis={brief?.paoi_analysis} />
