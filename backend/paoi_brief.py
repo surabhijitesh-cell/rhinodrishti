@@ -520,7 +520,7 @@ async def run_paoi_synthesis(
         # asyncio.gather on 8+ PAOIs causes simultaneous requests that all get throttled.
         for pa in paois:
             try:
-                res = await call_llm_json(_rich_prompt(pa), 900)
+                res = await call_llm_json(_rich_prompt(pa), 1800)
                 if isinstance(res, dict) and res:
                     per_paoi[pa["id"]] = {
                         "situation_overview": res.get("situation_overview", ""),
