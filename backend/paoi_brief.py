@@ -383,7 +383,36 @@ def _paoi_context_block(pa: dict) -> str:
     return "\n".join(lines)
 
 
-def narrative_paoi_prompt(pa: dict, events: list[dict], period_label: str) -> str:
+def _extract_location_hotspots(all_articles: list[dict], top_n: int = 20) -> list[str]:
+    """
+    Rank locations by mention frequency across ALL matched articles (not just top 5).
+    Returns deduplicated list of specific place names, most-mentioned first.
+    Filters out state-level and country-level names that are too broad.
+    """
+    from collections import Counter
+    _BROAD = {
+        "assam", "meghalaya", "tripura", "mizoram", "manipur", "nagaland",
+        "arunachal", "arunachal pradesh", "west bengal", "bangladesh", "india",
+        "ner", "northeast", "north east", "northeast india", "new delhi", "delhi",
+        "north bengal", "siliguri",
+    }
+    counter: Counter = Counter()
+    for art in all_articles:
+        locs = (art.get("entities") or {}).get("locations", [])
+        # Also pull from title — titles often contain the most precise location
+        title = art.get("title", "")
+        district = art.get("district", "")
+        if district and district.lower() not in _BROAD:
+            counter[district] += 2  # district from classifier gets double weight
+        for loc in locs:
+            loc = loc.strip()
+            if loc and loc.lower() not in _BROAD and len(loc) > 3:
+                counter[loc] += 1
+    return [loc for loc, _ in counter.most_common(top_n)]
+
+
+def narrative_paoi_prompt(pa: dict, events: list[dict], period_label: str,
+                          all_articles: list[dict] = None) -> str:
     """One PAOI, narrative synthesis grounded in concrete events."""
     mv = pa["faultline_movement"]
     level = mv.get("level", "MONITOR")
@@ -402,17 +431,27 @@ def narrative_paoi_prompt(pa: dict, events: list[dict], period_label: str) -> st
         )
         subissues_block = f"\nActive sub-issues:\n{si_lines}"
 
+    # Pre-compute hotspot locations from the full article set
+    hotspots = _extract_location_hotspots(all_articles or events)
+    hotspot_block = ""
+    if hotspots:
+        hotspot_block = (
+            "\nSPECIFIC LOCATIONS CONFIRMED IN REPORTING THIS PERIOD "
+            "(use these — do not substitute vague area names):\n"
+            + ", ".join(hotspots)
+        )
+
     event_lines = []
     for i, ev in enumerate(events, 1):
-        body = (ev.get("why_it_matters") or ev.get("ai_summary") or "")[:250]
-        # Extract named locations from NER entities for geographic precision
+        body = (ev.get("why_it_matters") or ev.get("ai_summary") or "")[:300]
         ner_locs = (ev.get("entities") or {}).get("locations", [])
-        loc_str = ", ".join(ner_locs[:6]) if ner_locs else ""
-        loc_line = f"  Named locations: {loc_str}\n" if loc_str else ""
+        loc_str = ", ".join(ner_locs[:10]) if ner_locs else ""
+        loc_line = f"  NER locations: {loc_str}\n" if loc_str else ""
+        district = ev.get("district", "")
         event_lines.append(
-            f"EVENT {i}: {ev.get('title','')[:120]}\n"
+            f"EVENT {i}: {ev.get('title', '')}\n"
             f"  Date: {ev.get('published_at','')[:10]}  "
-            f"State: {ev.get('state','n/a')}  District: {ev.get('district','n/a')}\n"
+            f"State: {ev.get('state','n/a')}  District: {district or 'n/a'}\n"
             f"{loc_line}"
             f"  Summary: {body}\n"
             f"  Severity: {ev.get('severity','n/a')}  Trajectory: {ev.get('threat_trajectory','n/a')}"
@@ -427,36 +466,40 @@ Priority Area: P{pa.get('rank')} {pa['name']}
 Geography: {', '.join(pa.get('geography', []))}
 Actors of interest: {', '.join(pa.get('actors_of_interest', [])[:6])}
 Faultline status: {fl_verbal}{subissues_block}
+{hotspot_block}
 
 Most impactful events this period:
 {events_block}
 
-Write a tight, actionable narrative. Rules:
-- Use [CONFIRMED] for direct data points, [ASSESSED] for inference, [SPECULATIVE] for forecasts.
-- Do NOT include raw faultline scores or numbers.
-- Every location reference must be as specific as possible: name the village, crossing point, NH number, km marker, bridge, or border post — NOT just the state or district.
-- commander_focus items must name a specific place or route from the events above, then state the required action. Format: "<Location>: <action>". E.g. "Dawki crossing, Meghalaya: Intensify vehicle checks for concealed arms — 3 seizures in 30 days". Generic items like "enhance surveillance" with no location are NOT acceptable.
-- watch_locations must be a flat list of the most surveillance-critical named places extracted from events (villages, NH segments, border haats, crossing points, bridges, specific districts).
+STRICT RULES — violation means the output is unusable:
+1. Use [CONFIRMED] for direct data points, [ASSESSED] for inference, [SPECULATIVE] for forecasts.
+2. No raw faultline scores or numbers.
+3. LOCATION SPECIFICITY IS MANDATORY. "Tripura border" = REJECTED. "Assam" alone = REJECTED.
+   You MUST name the exact place from the events: crossing point, ICP, border haat, village, NH number + segment, bridge name, district + sub-division, or town. If the event title says "Agartala-Akhaura ICP" — use "Agartala-Akhaura ICP". If it says "NH-44 near Lumding" — use "NH-44, Lumding". Pull directly from the event titles, NER locations, and district fields above.
+4. commander_focus format is FIXED: "<Exact named place>: <specific action with timeframe or unit>".
+   BAD: "Enhance surveillance along border" — REJECTED (no place, no action detail).
+   GOOD: "Sutarkandi ICP, Assam: Deploy additional Customs and BSF team for 24-hr vehicle scanning — 4 cattle + arms seizures confirmed this period".
+5. watch_locations must be specific named places from the events above — town, ICP, border haat, NH segment, village. NOT state names.
 
 Return strict JSON:
 {{
-  "situation_overview": "3-5 sentences covering the overall situation, naming the most active specific locations",
+  "situation_overview": "3-5 sentences naming the most active specific flashpoints from events",
   "events": [
     {{
-      "heading": "short action-headline (under 10 words)",
-      "location": "most specific available: village / NH km / crossing point / bridge — not just state",
-      "what_happened": "2-3 sentences with specific actor names and place names",
+      "heading": "action-headline under 10 words",
+      "location": "EXACT place from event: town / ICP / border haat / NH segment / village",
+      "what_happened": "2-3 sentences with specific actor names and exact places",
       "why_it_matters": "1-2 sentences on operational or strategic significance",
       "linkages": "1 sentence connecting to a faultline, sub-issue, or cross-border dynamic"
     }}
   ],
-  "overall_assessment": "2-3 sentences on trajectory, naming the highest-risk specific locations",
+  "overall_assessment": "2-3 sentences naming the highest-risk specific flashpoints",
   "risk_trajectory": "IMPROVING or STABLE or DETERIORATING",
-  "watch_locations": ["most critical named location 1", "location 2", "location 3", "location 4", "location 5"],
-  "commander_focus": ["<Specific location>: <concrete action>", "<Specific location>: <concrete action>", "<Specific location>: <concrete action>"]
+  "watch_locations": ["exact place 1", "exact place 2", "exact place 3", "exact place 4", "exact place 5"],
+  "commander_focus": ["<Exact named place>: <specific action + timeframe/unit>", "<place>: <action>", "<place>: <action>"]
 }}
 
-Generate one events entry for each of the {n_events} EVENT(s) in the input above.
+Generate one events entry for each of the {n_events} EVENT(s) above.
 """
 
 
@@ -521,16 +564,15 @@ async def run_paoi_synthesis(
 
     if tier == "rich":
         def _rich_prompt(pa):
-            events = select_top_events_for_paoi(
-                pa["keyword_hits"]["top_articles"], pa, n=5, period_end=period_end
-            )
-            return narrative_paoi_prompt(pa, events, period_label)
+            all_arts = pa["keyword_hits"]["top_articles"]
+            events = select_top_events_for_paoi(all_arts, pa, n=5, period_end=period_end)
+            return narrative_paoi_prompt(pa, events, period_label, all_articles=all_arts)
 
         # Sequential calls with a short pause to avoid bursting OpenRouter rate limits.
         # asyncio.gather on 8+ PAOIs causes simultaneous requests that all get throttled.
         for pa in paois:
             try:
-                res = await call_llm_json(_rich_prompt(pa), 1800)
+                res = await call_llm_json(_rich_prompt(pa), 2000)
                 if isinstance(res, dict) and res:
                     per_paoi[pa["id"]] = {
                         "situation_overview": res.get("situation_overview", ""),
