@@ -48,15 +48,15 @@ router = APIRouter()
 fortnightly_briefs_col = db.fortnightly_briefs
 
 
-async def _build_fortnightly_paoi(year, month, period, start_iso, end_iso, period_label) -> dict:
-    """PAOI analysis for a fortnightly brief. Rich first gen, lean on regen."""
+async def _build_fortnightly_paoi(year, month, period, start_iso, end_iso, period_label, force_rich: bool = False) -> dict:
+    """PAOI analysis for a fortnightly brief. Rich first gen or when force_rich=True, lean on regen."""
     import paoi_brief
     prior = await fortnightly_briefs_col.find_one(
         {"year": year, "month": month, "period": period},
         {"_id": 0, "generation_count": 1},
     )
     prior_count = (prior or {}).get("generation_count", 0)
-    tier = "rich" if prior_count == 0 else "lean"
+    tier = "rich" if (prior_count == 0 or force_rich) else "lean"
     try:
         agg = await paoi_brief.aggregate_paoi_period(db, start_iso, end_iso)
         dashboard = paoi_brief.build_commander_dashboard(agg)
@@ -161,7 +161,7 @@ Return STRICT JSON only:
 
 # ── Generation orchestrator ───────────────────────────────────────────────────
 
-async def _run_fortnightly_generation(year: int, month: int, period: int):
+async def _run_fortnightly_generation(year: int, month: int, period: int, force_rich: bool = False):
     start_iso, end_iso, period_label = _fortnightly_range(year, month, period)
     logger.info(f"Fortnightly brief generation start: {period_label}")
 
@@ -457,7 +457,7 @@ async def _run_fortnightly_generation(year: int, month: int, period: int):
     scenarios = scenarios_payload.get("scenarios", []) if isinstance(scenarios_payload, dict) else []
 
     # PAOI sections — rich on first generation of this period, lean on regen.
-    paoi_analysis = await _build_fortnightly_paoi(year, month, period, start_iso, end_iso, period_label)
+    paoi_analysis = await _build_fortnightly_paoi(year, month, period, start_iso, end_iso, period_label, force_rich=force_rich)
 
     faultline_analysis = await _aggregate_faultline_section(year, month)
 
@@ -502,6 +502,7 @@ async def generate_fortnightly_brief(
     year:   int = Query(...),
     month:  int = Query(..., ge=1, le=12),
     period: int = Query(..., ge=1, le=2),
+    force_rich: bool = Query(False, description="Force rich LLM synthesis even on regen"),
     current_user: dict = Depends(get_current_user),
 ):
     _require_brief_author(current_user)
@@ -524,7 +525,7 @@ async def generate_fortnightly_brief(
 
     async def _bg():
         try:
-            await _run_fortnightly_generation(year, month, period)
+            await _run_fortnightly_generation(year, month, period, force_rich=force_rich)
         except Exception as e:
             logger.exception("fortnightly brief generation crashed")
             await fortnightly_briefs_col.update_one(

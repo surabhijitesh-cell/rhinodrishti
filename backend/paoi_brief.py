@@ -115,6 +115,17 @@ async def aggregate_paoi_period(db, start_iso: str, end_iso: str) -> dict:
             "loc_risk": bool(latest.get("loc_risk")),
         }
 
+    # State priority: commander's focus states first, then others by rank.
+    _STATE_PRIORITY = {
+        "Meghalaya": 0, "Bangladesh": 1, "Assam": 2,
+        "Mizoram": 3, "Tripura": 4,
+    }
+
+    def _paoi_sort_key(p: dict) -> tuple:
+        geo = p.get("geography", []) + p.get("watch_geography", [])
+        prio = min((_STATE_PRIORITY.get(g, 9) for g in geo), default=9)
+        return (prio, p.get("rank", 99))
+
     out_paois = []
     for pa in paois:
         # Faultline movement
@@ -187,6 +198,10 @@ async def aggregate_paoi_period(db, start_iso: str, end_iso: str) -> dict:
             "faultline_movement": movement,
             "keyword_hits": keyword_hits,
         })
+
+    out_paois.sort(key=_paoi_sort_key)
+    for i, p in enumerate(out_paois):
+        p["rank"] = i + 1
 
     return {"paois": out_paois, "as_of": end_date}
 
