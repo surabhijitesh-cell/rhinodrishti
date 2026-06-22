@@ -106,6 +106,12 @@ def pre_filter_articles(faultline: dict, articles: list[dict]) -> list[dict]:
     from faultline_seed import STATE_TO_REGIONS
 
     fl_state_regions = set(STATE_TO_REGIONS.get(faultline["state"], [faultline["state"]]))
+    # Expand cross-state faultlines: if a region is itself a state key (e.g. "NER" →
+    # ["Manipur", "Assam", ...]), also pull in those states' districts so articles
+    # tagged with a district name (e.g. "Kangpokpi") still match.
+    for region in list(fl_state_regions):
+        if region in STATE_TO_REGIONS:
+            fl_state_regions.update(STATE_TO_REGIONS[region])
     fl_keywords = [k.lower() for k in faultline.get("keywords", [])]
     fl_tags = set(faultline.get("tags", []))
     fl_buckets = set(faultline.get("signal_buckets", []))
