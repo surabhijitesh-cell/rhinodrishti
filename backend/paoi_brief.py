@@ -516,21 +516,24 @@ async def run_paoi_synthesis(
             )
             return narrative_paoi_prompt(pa, events, period_label)
 
-        tasks = [call_llm_json(_rich_prompt(pa), 900) for pa in paois]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        for pa, res in zip(paois, results):
-            if isinstance(res, Exception):
-                logger.warning(f"PAOI rich synthesis call failed for {pa['id']}: {res}")
-            elif isinstance(res, dict) and res:
-                per_paoi[pa["id"]] = {
-                    "situation_overview": res.get("situation_overview", ""),
-                    "events": res.get("events") or [],
-                    "overall_assessment": res.get("overall_assessment", ""),
-                    "risk_trajectory": res.get("risk_trajectory", "STABLE"),
-                    "commander_focus": res.get("commander_focus") or [],
-                }
-            else:
-                logger.warning(f"PAOI rich synthesis empty for {pa['id']}")
+        # Sequential calls with a short pause to avoid bursting OpenRouter rate limits.
+        # asyncio.gather on 8+ PAOIs causes simultaneous requests that all get throttled.
+        for pa in paois:
+            try:
+                res = await call_llm_json(_rich_prompt(pa), 900)
+                if isinstance(res, dict) and res:
+                    per_paoi[pa["id"]] = {
+                        "situation_overview": res.get("situation_overview", ""),
+                        "events": res.get("events") or [],
+                        "overall_assessment": res.get("overall_assessment", ""),
+                        "risk_trajectory": res.get("risk_trajectory", "STABLE"),
+                        "commander_focus": res.get("commander_focus") or [],
+                    }
+                else:
+                    logger.warning(f"PAOI rich synthesis empty for {pa['id']}")
+            except Exception as e:
+                logger.warning(f"PAOI rich synthesis call failed for {pa['id']}: {e}")
+            await asyncio.sleep(1.0)
     else:  # lean
         res = await call_llm_json(lean_all_paoi_prompt(paois, period_label), 1600)
         if isinstance(res, dict):
