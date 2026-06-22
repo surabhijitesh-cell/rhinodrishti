@@ -1394,10 +1394,25 @@ def _render_pdf(brief: dict, prev_brief: dict = None, include_faultlines: bool =
                     pdf.set_font("Helvetica", "B", 8)
                     pdf.set_text_color(150, 30, 30)
                     pdf.cell(0, 5, _ascii("  D. COMMANDER FOCUS"), fill=True, **NL)
-                    pdf.set_font("Helvetica", "", 8)
-                    pdf.set_text_color(40, 40, 40)
                     for fi, fitem in enumerate(focus, 1):
-                        pdf.multi_cell(0, 4, _ascii(f"  {fi}. {fitem}"), **NL)
+                        if isinstance(fitem, dict):
+                            loc = fitem.get("location") or ""
+                            action = fitem.get("action") or ""
+                            if loc:
+                                pdf.set_font("Helvetica", "B", 8)
+                                pdf.set_text_color(150, 30, 30)
+                                pdf.multi_cell(0, 4, _ascii(f"  {fi}. [{loc}]"), **NL)
+                                pdf.set_font("Helvetica", "", 8)
+                                pdf.set_text_color(40, 40, 40)
+                                pdf.multi_cell(0, 4, _ascii(f"     {action}"), **NL)
+                            else:
+                                pdf.set_font("Helvetica", "", 8)
+                                pdf.set_text_color(40, 40, 40)
+                                pdf.multi_cell(0, 4, _ascii(f"  {fi}. {action}"), **NL)
+                        else:
+                            pdf.set_font("Helvetica", "", 8)
+                            pdf.set_text_color(40, 40, 40)
+                            pdf.multi_cell(0, 4, _ascii(f"  {fi}. {fitem}"), **NL)
 
             else:
                 # Fallback: lean tier or synthesis unavailable
