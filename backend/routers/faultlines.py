@@ -833,6 +833,131 @@ async def create_custom_faultline(
     return {"status": "ok", "faultline": doc}
 
 
+# ── Debug: pre-filter diagnostic ─────────────────────────────────────────────
+@router.get("/faultlines/{fl_id}/debug-prefilter")
+async def debug_prefilter(
+    fl_id: str,
+    days: int = Query(7, description="Look-back window in days"),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Diagnostic endpoint: run Stage 1 + Stage 2 for a faultline and return counts.
+    Tells you exactly where articles are being dropped.
+    """
+    from datetime import timezone as _tz2, timedelta as _td
+    from faultline_engine import pre_filter_articles, match_subissues_to_article, _fetch_subissues, SUBISSUE_STRUCTURED_THRESHOLD
+    from faultline_seed import STATE_TO_REGIONS
+
+    fl = await faultlines_col.find_one({"id": fl_id}, {"_id": 0})
+    if not fl:
+        raise HTTPException(status_code=404, detail=f"Faultline '{fl_id}' not found")
+
+    now = datetime.now(_tz2.utc)
+    window_end = now + _td(days=1)
+    window_start = now - _td(days=days)
+
+    # Same article query as run_daily_faultline_pass
+    articles = await db.intelligence_items.find(
+        {
+            "published_at": {"$gte": window_start.isoformat(), "$lt": window_end.isoformat()},
+            "processed": True,
+            "is_relevant": {"$ne": False},
+            "is_archived": {"$ne": True},
+        },
+        {
+            "id": 1, "title": 1, "ai_summary": 1, "source": 1,
+            "published_at": 1, "severity": 1, "priority_score": 1, "tags": 1,
+            "signal_bucket": 1, "regions": 1, "state": 1, "actors": 1,
+            "district": 1, "why_it_matters": 1, "signal_strength": 1,
+            "india_relevance_score": 1, "locations_mentioned": 1, "threat_category": 1,
+            "entities": 1, "is_cross_border": 1, "threat_trajectory": 1,
+        },
+    ).to_list(length=5000)
+
+    total_articles = len(articles)
+
+    # Stage 1
+    candidates = pre_filter_articles(fl, articles)
+
+    # Explain why first few non-candidates failed (up to 10 samples)
+    fl_state_regions = set(STATE_TO_REGIONS.get(fl["state"], [fl["state"]]))
+    for region in list(fl_state_regions):
+        if region in STATE_TO_REGIONS:
+            fl_state_regions.update(STATE_TO_REGIONS[region])
+    fl_keywords = [k.lower() for k in fl.get("keywords", [])]
+    fl_tags = set(fl.get("tags", []))
+    fl_buckets = set(fl.get("signal_buckets", []))
+    fl_loc = [l.lower() for l in fl.get("loc_focus", [])]
+
+    rejection_samples = []
+    for art in articles[:200]:
+        if art in candidates:
+            continue
+        if len(rejection_samples) >= 5:
+            break
+        art_regions = set(art.get("regions") or [])
+        if art.get("state"):
+            art_regions.add(art["state"])
+        state_match = bool(art_regions & fl_state_regions)
+        haystack = " ".join([
+            (art.get("title") or "").lower(),
+            (art.get("ai_summary") or "").lower(),
+        ])
+        tag_match = bool(set(art.get("tags") or []) & fl_tags)
+        bucket_match = (art.get("signal_bucket") or "") in fl_buckets
+        kw_match = any(kw in haystack for kw in fl_keywords)
+        loc_match = any(lk in haystack for lk in fl_loc) if fl_loc else False
+        rejection_samples.append({
+            "title": (art.get("title") or "")[:80],
+            "state": art.get("state"),
+            "regions": art.get("regions"),
+            "tags": art.get("tags"),
+            "signal_bucket": art.get("signal_bucket"),
+            "state_match": state_match,
+            "tag_match": tag_match,
+            "bucket_match": bucket_match,
+            "kw_match": kw_match,
+            "loc_match": loc_match,
+            "why_rejected": "state_match=False" if not state_match else "no tag/bucket/kw/loc",
+        })
+
+    # Stage 2
+    subissues = await _fetch_subissues(db, fl_id)
+    stage2_pairs = []
+    stage2_drops = []
+    for art in candidates[:20]:
+        matched = match_subissues_to_article(fl, art, subissues)
+        if matched:
+            stage2_pairs.append({
+                "title": (art.get("title") or "")[:80],
+                "subissues_matched": [m["subissue"]["name"] for m in matched],
+                "scores": [round(m["structured_score"], 1) for m in matched],
+            })
+        else:
+            stage2_drops.append({
+                "title": (art.get("title") or "")[:80],
+                "state": art.get("state"),
+                "tags": art.get("tags"),
+            })
+
+    return {
+        "faultline": fl_id,
+        "window_days": days,
+        "total_articles_in_window": total_articles,
+        "stage1_pass": len(candidates),
+        "stage2_pairs": len(stage2_pairs),
+        "num_subissues": len(subissues),
+        "fl_state_regions": sorted(fl_state_regions),
+        "stage1_sample_candidates": [
+            {"title": (c.get("title") or "")[:80], "state": c.get("state"), "regions": c.get("regions")}
+            for c in candidates[:5]
+        ],
+        "stage1_rejection_samples": rejection_samples,
+        "stage2_pairs_detail": stage2_pairs[:5],
+        "stage2_drops": stage2_drops[:5],
+    }
+
+
 # ── Sub-issue seed ────────────────────────────────────────────────────────────
 @router.post("/faultlines/seed-subissues")
 async def seed_subissue_registry(
