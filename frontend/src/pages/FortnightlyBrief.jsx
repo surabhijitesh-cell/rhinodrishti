@@ -133,7 +133,7 @@ export default function FortnightlyBrief({ api }) {
     setGenerating(true);
     setError(null);
     try {
-      await axios.post(`${api}/brief/fortnightly/generate?year=${year}&month=${month}&period=${period}`);
+      await axios.post(`${api}/brief/fortnightly/generate?year=${year}&month=${month}&period=${period}&force_rich=true`);
       setTimeout(fetchBrief, 4000);
     } catch (e) {
       setError(e?.response?.data?.detail || "Generation request failed");

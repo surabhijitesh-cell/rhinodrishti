@@ -124,7 +124,7 @@ export default function MonthlyBrief({ api }) {
     setGenerating(true);
     setError(null);
     try {
-      await axios.post(`${api}/brief/monthly/generate?year=${year}&month=${month}`);
+      await axios.post(`${api}/brief/monthly/generate?year=${year}&month=${month}&force_rich=true`);
       // Poll for completion
       setTimeout(fetchBrief, 4000);
     } catch (e) {
