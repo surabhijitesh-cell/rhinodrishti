@@ -966,34 +966,23 @@ export default function MonthlyBrief({ api }) {
                       </div>
                     )}
 
-                    {/* Watch Locations */}
-                    {Array.isArray(syn.watch_locations) && syn.watch_locations.length > 0 && (
-                      <div className="bg-orange-950/20 border border-orange-500/20 px-3 py-2">
-                        <p className="text-[9px] font-mono uppercase tracking-wider text-orange-400 mb-1">Watch Locations</p>
-                        <div className="flex flex-wrap gap-1">
-                          {syn.watch_locations.map((loc, i) => (
-                            <span key={i} className="text-[10px] font-mono bg-orange-950/40 border border-orange-500/30 text-orange-300 px-1.5 py-0.5">
-                              📍 {loc}
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
                     {/* D: Commander Focus */}
                     {Array.isArray(syn.commander_focus) && syn.commander_focus.length > 0 && (
                       <div className="bg-red-950/20 border border-red-500/20 px-3 py-2">
                         <p className="text-[9px] font-mono uppercase tracking-wider text-red-400 mb-1">D. Commander Focus</p>
-                        <ul className="space-y-1">
+                        <ul className="space-y-2">
                           {syn.commander_focus.map((item, i) => {
-                            const colonIdx = item.indexOf(':');
-                            const loc = colonIdx > 0 ? item.slice(0, colonIdx).trim() : null;
-                            const action = colonIdx > 0 ? item.slice(colonIdx + 1).trim() : item;
+                            const loc = typeof item === 'object' ? item.location : null;
+                            const action = typeof item === 'object' ? item.action : item;
                             return (
                               <li key={i} className="text-xs flex gap-2">
-                                <span className="text-red-400 shrink-0">▸</span>
+                                <span className="text-red-400 shrink-0 mt-0.5">▸</span>
                                 <span>
-                                  {loc && <span className="font-semibold text-red-300">{loc}: </span>}
+                                  {loc && (
+                                    <span className="inline-flex items-center gap-1 font-semibold text-red-200 bg-red-950/40 border border-red-500/30 px-1.5 py-0.5 text-[10px] font-mono mr-1.5">
+                                      📍 {loc}
+                                    </span>
+                                  )}
                                   {renderLabeledText(action)}
                                 </span>
                               </li>
