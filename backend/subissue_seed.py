@@ -576,6 +576,83 @@ SUBISSUE_SEED = [
         "enabled": True,
     },
 
+    # ═══ MEGHALAYA — Tribal Dynamics sub-issues ══════════════════════════════
+
+    # Sub-issue 1: Dorbar Shnong authority under stress (parent: meg_tribe_conflict)
+    {
+        "faultline_id": "meg_tribe_conflict", "state": "Meghalaya",
+        "name": "Dorbar Shnong & traditional authority under stress",
+        "description": (
+            "Pressure on Meghalaya's traditional governing bodies — Dorbar Shnong "
+            "(Khasi village councils), Nokma headmen (Garo), Dolloi/Lyngdoh (Jaintia) "
+            "— from state encroachment, political party interference, and contested "
+            "succession disputes. Any move by state or courts to override customary "
+            "authority, or intra-community power struggles over Syiemship or Rangbah "
+            "Shnong positions, signals structural fragility in community self-governance."
+        ),
+        "keywords": [
+            "Dorbar Shnong", "Syiem Meghalaya", "Nokma", "Lyngdoh Meghalaya",
+            "Rangbah Shnong", "traditional council Meghalaya", "headman Meghalaya",
+            "village authority Meghalaya", "customary law Meghalaya", "Syiemship",
+            "Dolloi", "Elaka Meghalaya", "clan dispute Meghalaya",
+            "village headman Meghalaya", "tribal council dispute Meghalaya",
+            "customary court Meghalaya",
+        ],
+        "actor_types": ["ethnic_org", "political_party", "state_police"],
+        "event_types": ["protest", "riot", "land_acquisition", "arson"],
+        "narrative_markers": [
+            "Dorbar Shnong order", "headman removed", "Syiem controversy",
+            "village council dissolved", "customary law challenged",
+            "traditional authority violated", "Nokma dispute",
+        ],
+        "loc_focus": [
+            "East Khasi Hills", "West Khasi Hills", "Ri Bhoi",
+            "East Jaintia Hills", "West Garo Hills",
+        ],
+        "default_weight": 0.75,
+        "cross_border_relevance": False,
+        "enabled": True,
+    },
+
+    # Sub-issue 2: ILP agitation & non-tribal settler evictions (parent: meg_indigenous)
+    {
+        "faultline_id": "meg_indigenous", "state": "Meghalaya",
+        "name": "ILP agitation and non-tribal settler evictions",
+        "description": (
+            "Organised agitation by KSU and Confederation of Meghalaya Social "
+            "Organisations (CoMSO) for Inner Line Permit implementation; targeted "
+            "eviction drives against non-tribal (dkhar) settlers in Shillong, Tura, "
+            "and Jowai. Key flashpoints: Republican Colony, Punjabi Lane (Shillong), "
+            "Laitumkhrah market. MRSSA (Meghalaya Residents Safety and Security Act) "
+            "enforcement gaps. Any eviction notice, demolition drive, or KSU-led "
+            "march targeting non-tribal commercial establishments."
+        ),
+        "keywords": [
+            "ILP Meghalaya", "inner line permit Meghalaya", "dkhar",
+            "non-tribal eviction Meghalaya", "KSU agitation", "KSU rally",
+            "Punjabi Lane Shillong", "Republican Colony Shillong",
+            "MRSSA", "CoMSO", "outsider eviction Shillong",
+            "settler eviction Meghalaya", "non-tribal land Meghalaya",
+            "dkhar eviction", "indigenous rights Meghalaya",
+            "Laitumkhrah eviction", "Iewduh market", "Shillong non-tribal",
+            "foreigner Meghalaya eviction",
+        ],
+        "actor_types": ["ethnic_org", "political_party", "state_police"],
+        "event_types": ["protest", "demolition", "riot", "arson", "blockade"],
+        "narrative_markers": [
+            "eviction notice Meghalaya", "demolition drive Shillong",
+            "non-tribal removed", "ILP demand", "dkhar asked to leave",
+            "KSU deadline", "settler shops closed", "outsider targeted",
+        ],
+        "loc_focus": [
+            "Shillong", "Laitumkhrah", "Iewduh", "Punjabi Lane",
+            "Republican Colony", "Tura", "Jowai",
+        ],
+        "default_weight": 0.80,
+        "cross_border_relevance": False,
+        "enabled": True,
+    },
+
     # ═══ MEGHALAYA LOC focus (meg_environment) ═══════════════════════════════
     {
         "faultline_id": "meg_environment", "state": "Meghalaya",
