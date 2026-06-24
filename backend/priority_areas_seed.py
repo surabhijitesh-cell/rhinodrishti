@@ -184,33 +184,55 @@ PRIORITY_AREAS = [
         "color": "red",
     },
 
-    # ─── P5 — Assam Tea Garden Ecology (keyword pull + faultlines) ─────────────
+    # ─── P5 — Tribal Dynamics — Meghalaya ────────────────────────────────────
     {
-        "id": "P5_assam_tea_garden",
+        "id": "P5_meghalaya_tribal_dynamics",
         "rank": 5,
-        "name": "Assam Tea Garden Ecology",
+        "name": "Tribal Dynamics — Meghalaya",
         "description": (
-            "Tea garden ecology across Assam and its vulnerability to external "
-            "influence. Worker or management unrest can impact internal security "
-            "in Assam and, by proximity, Meghalaya. Labour disputes, union activity, "
-            "wage agitation, and external mobilisation of the tea-tribe population."
+            "Intra-tribal and tribal-vs-non-tribal tensions within Meghalaya. "
+            "Three primary axes: (1) Khasi-Garo-Jaintia inter-tribal land and "
+            "administrative boundary disputes; (2) tribal versus non-tribal settler "
+            "conflict — ILP agitation, dkhar evictions, KSU-led actions in Shillong, "
+            "Tura, Jowai; (3) traditional authority structures (Dorbar Shnong, KHADC, "
+            "GHADC, JHADC) under stress from political mobilisation, coal mining "
+            "grievances, and religious identity politics. Secondary: HNLC, GNLA, and "
+            "ANVC armed group activity with tribal community backing."
         ),
-        "geography": ["Assam", "Meghalaya"],
-        "actors_of_interest": [
-            "ACMS", "tea unions", "tea-tribe organisations", "Adivasi groups",
-            "plantation management", "external influencers",
+        "geography": [
+            "East Khasi Hills", "West Khasi Hills", "Ri Bhoi",
+            "South West Khasi Hills", "Eastern West Khasi Hills",
+            "East Jaintia Hills", "West Jaintia Hills",
+            "East Garo Hills", "West Garo Hills", "South Garo Hills",
+            "North Garo Hills", "Shillong",
         ],
-        "linked_faultline_ids": ["asm_economic_environment", "asm_sub_nationalism"],
+        "actors_of_interest": [
+            "KSU", "HNLC", "GNLA", "ANVC", "FKJGP",
+            "KHADC", "GHADC", "JHADC",
+            "Dorbar Shnong", "Nokmas", "non-tribal settler associations",
+        ],
+        "linked_faultline_ids": [
+            "meg_tribe_conflict", "meg_indigenous", "meg_ethnic_dynamics",
+            "meg_religion_politics", "meg_environment", "meg_border",
+        ],
         "keyword_pull": {
             "keywords": [
-                "tea garden", "tea estate", "tea worker", "tea labour", "tea labourer",
-                "ACMS", "tea union", "plantation", "tea tribe", "Adivasi Assam",
-                "tea wage", "tea strike", "tea garden unrest", "tea management",
-                "tea plantation Assam", "garden labour",
+                "Khasi", "Garo", "Jaintia", "Pnar", "KSU", "HNLC", "GNLA", "ANVC",
+                "FKJGP", "KHADC", "GHADC", "JHADC", "autonomous district council Meghalaya",
+                "ILP Meghalaya", "inner line permit Meghalaya", "dkhar",
+                "non-tribal Meghalaya", "tribal land Meghalaya", "Dorbar Shnong",
+                "Syiem", "Nokma", "inter-tribal Meghalaya", "eviction Meghalaya",
+                "settler Meghalaya", "Khasi Students Union", "Garo National Liberation Army",
+                "Seng Khasi", "traditional religion Meghalaya", "Laitsohpliah",
+                "rat-hole mining Jaintia", "coal mining Meghalaya",
+                "tribal council Meghalaya", "Khasi Hills Autonomous",
             ],
-            "regions": ["Assam", "Meghalaya"],
+            "regions": ["Meghalaya"],
         },
-        "watch_geography": [],
+        "watch_geography": [
+            "Ri Bhoi", "Byrnihat", "Balpakram", "Jowai",
+            "Khliehriat", "Phulbari", "Tura",
+        ],
         "color": "red",
     },
 ]
