@@ -9,6 +9,7 @@
 import { useAuth } from "../contexts/AuthContext";
 import { Navigate } from "react-router-dom";
 import { useState, useEffect } from "react";
+import axios from "axios";
 import ApiUsageWidget from "../components/ApiUsageWidget";
 import FilterCascadeWidget from "../components/FilterCascadeWidget";
 import FilterThresholdSimulator from "../components/FilterThresholdSimulator";
@@ -19,7 +20,7 @@ function CreditWarningBanner({ api }) {
 
   useEffect(() => {
     const check = () =>
-      api.get("/admin/openrouter-credit-warning")
+      axios.get(`${api}/admin/openrouter-credit-warning`)
         .then(r => setWarning(r.data))
         .catch(() => {});
     check();
@@ -64,7 +65,7 @@ function StorageCleanupPanel({ api }) {
   const [error, setError] = useState(null);
 
   const refreshStats = () =>
-    api.get("/admin/storage/stats").then(r => setStats(r.data)).catch(() => {});
+    axios.get(`${api}/admin/storage/stats`).then(r => setStats(r.data)).catch(() => {});
 
   useEffect(() => { refreshStats(); }, [api]);
 
@@ -73,7 +74,7 @@ function StorageCleanupPanel({ api }) {
     setResult(null);
     setError(null);
     try {
-      const r = await api.post("/admin/storage/strip-raw-content", { older_than_days: days });
+      const r = await axios.post(`${api}/admin/storage/strip-raw-content`, { older_than_days: days });
       setResult({ type: "strip", ...r.data });
       await refreshStats();
     } catch (e) {
@@ -88,7 +89,7 @@ function StorageCleanupPanel({ api }) {
     setResult(null);
     setError(null);
     try {
-      const r = await api.post("/admin/storage/cleanup-articles", { older_than_days: days });
+      const r = await axios.post(`${api}/admin/storage/cleanup-articles`, { older_than_days: days });
       setResult({ type: "delete", ...r.data });
       await refreshStats();
     } catch (e) {
