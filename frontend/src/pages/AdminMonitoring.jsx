@@ -12,7 +12,49 @@ import { useState, useEffect } from "react";
 import ApiUsageWidget from "../components/ApiUsageWidget";
 import FilterCascadeWidget from "../components/FilterCascadeWidget";
 import FilterThresholdSimulator from "../components/FilterThresholdSimulator";
-import { Shield, Database, Trash2 } from "lucide-react";
+import { Shield, Database, Trash2, AlertTriangle } from "lucide-react";
+
+function CreditWarningBanner({ api }) {
+  const [warning, setWarning] = useState(null);
+
+  useEffect(() => {
+    const check = () =>
+      api.get("/admin/openrouter-credit-warning")
+        .then(r => setWarning(r.data))
+        .catch(() => {});
+    check();
+    const id = setInterval(check, 60_000);
+    return () => clearInterval(id);
+  }, [api]);
+
+  if (!warning || warning.level === "ok") return null;
+
+  const isCritical = warning.level === "critical";
+  const remaining = warning.remaining_usd != null
+    ? `$${warning.remaining_usd.toFixed(2)} remaining`
+    : "credits exhausted";
+
+  return (
+    <div className={`flex items-center gap-2 rounded-lg border px-4 py-2.5 text-sm font-semibold ${
+      isCritical
+        ? "bg-red-950/60 border-red-500/50 text-red-300"
+        : "bg-amber-950/60 border-amber-500/50 text-amber-300"
+    }`}>
+      <AlertTriangle size={14} className="shrink-0" />
+      <span>
+        OpenRouter credits {isCritical ? "critical" : "low"} — {remaining}.{" "}
+        <a
+          href={warning.top_up_url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="underline underline-offset-2 hover:opacity-80"
+        >
+          Top up →
+        </a>
+      </span>
+    </div>
+  );
+}
 
 function StorageCleanupPanel({ api }) {
   const [stats, setStats] = useState(null);
@@ -157,6 +199,9 @@ export default function AdminMonitoring({ api }) {
           </p>
         </div>
       </div>
+
+      {/* ── Credit Warning ── */}
+      <CreditWarningBanner api={api} />
 
       {/* ── Storage Cleanup ── */}
       <StorageCleanupPanel api={api} />

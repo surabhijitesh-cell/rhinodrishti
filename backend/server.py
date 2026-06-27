@@ -340,9 +340,15 @@ async def startup():
                 data = r.json().get("data", {})
                 limit = data.get("limit")
                 usage = data.get("usage", 0)
-                if limit is None:
-                    return  # unlimited plan — no warning needed
-                remaining = round(limit - usage, 4)
+                # limit_remaining is the authoritative remaining balance field.
+                # Fall back to limit-usage when not present; skip only when truly unlimited.
+                limit_remaining = data.get("limit_remaining")
+                if limit_remaining is not None:
+                    remaining = round(limit_remaining, 4)
+                elif limit is not None:
+                    remaining = round(limit - usage, 4)
+                else:
+                    return  # unlimited plan — no cap, no warning needed
                 from llm_client import set_credit_warning, get_credit_warning
                 prev_level = get_credit_warning()["level"]
                 if remaining <= 0.50:
@@ -379,6 +385,8 @@ async def startup():
                 logger.warning(f"Credit monitor check failed: {e}")
 
         scheduler.add_job(_check_openrouter_credits, 'interval', minutes=30, id='credit_monitor')
+        # Run once immediately so the warning level is set before the first 30-min tick.
+        asyncio.create_task(_check_openrouter_credits())
 
         # Firecrawl jobs — DISABLED (insufficient credits; re-enable when plan upgraded)
         # async def _fetch_web_sources():

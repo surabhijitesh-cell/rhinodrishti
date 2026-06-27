@@ -7,9 +7,8 @@ import os
 import re
 import uuid
 import json
-import anthropic
 from shared import db, uploads_col, intelligence_col, patterns_col, logger
-from llm_client import get_anthropic_client, ANTHROPIC_MODEL
+from llm_client import get_client, MODEL as ANALYSIS_MODEL
 
 router = APIRouter()
 
@@ -468,33 +467,18 @@ async def _run_contextual_analysis(doc_id: str):
             user_prompt += f"=== SPECIFIC ANALYSIS REQUEST ===\n{extra_query}\n\n"
         user_prompt += "Provide your COMPREHENSIVE CONTEXTUAL INTELLIGENCE ASSESSMENT as JSON."
 
-        client = get_anthropic_client()
-        # max_tokens raised to 3000 so the full JSON body is never truncated.
-        # timeout=90 gives Render-hosted background tasks a generous window
-        # while still surfacing a clean error if the API is unresponsive.
-        response = await client.messages.create(
-            model=ANTHROPIC_MODEL,
+        client = get_client()
+        response = await client.chat.completions.create(
+            model=ANALYSIS_MODEL,
             max_tokens=3000,
             timeout=90.0,
-            system=[
-                {
-                    "type": "text",
-                    "text": CONTEXTUAL_ANALYSIS_PROMPT,
-                    "cache_control": {"type": "ephemeral"},
-                }
+            messages=[
+                {"role": "system", "content": CONTEXTUAL_ANALYSIS_PROMPT},
+                {"role": "user", "content": user_prompt},
             ],
-            messages=[{"role": "user", "content": user_prompt}],
-            extra_headers={"anthropic-beta": "prompt-caching-2024-07-31"},
         )
 
-        # Track token usage and cost
-        try:
-            from usage_tracker import track_usage
-            await track_usage(response.usage, ANTHROPIC_MODEL)
-        except Exception as e:
-            logger.warning(f"track_usage (documents) failed: {e}")
-
-        response_text = response.content[0].text
+        response_text = response.choices[0].message.content or ""
 
         # Robust JSON extraction — handles markdown fences, trailing commas,
         # and partial responses much better than a plain regex+json.loads.
@@ -511,17 +495,6 @@ async def _run_contextual_analysis(doc_id: str):
         logger.info(
             f"Contextual analysis complete for {doc_id}: "
             f"{analysis.get('threat_classification', {}).get('severity', '?')}"
-        )
-
-    except (anthropic.APITimeoutError, anthropic.APIConnectionError) as e:
-        msg = (
-            "Analysis request timed out. The document may be too large or the AI "
-            "service is temporarily slow. Please try again in a few minutes."
-        )
-        logger.error(f"Analysis timeout/connection error for {doc_id}: {e}")
-        await uploads_col.update_one(
-            {"id": doc_id},
-            {"$set": {"processed": True, "analysis": {"error": msg}}}
         )
 
     except Exception as e:
