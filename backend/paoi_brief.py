@@ -471,15 +471,15 @@ Faultline status: {fl_verbal}{subissues_block}
 Most impactful events this period:
 {events_block}
 
-STRICT RULES — violation means the output is unusable:
-1. Use [CONFIRMED] for direct data points, [ASSESSED] for inference, [SPECULATIVE] for forecasts.
-2. No raw faultline scores or numbers.
-3. LOCATION SPECIFICITY IS MANDATORY. "Tripura border" = REJECTED. "Assam" alone = REJECTED.
-   You MUST name the exact place from the events: crossing point, ICP, border haat, village, NH number + segment, bridge name, district + sub-division, or town. If the event title says "Agartala-Akhaura ICP" — use "Agartala-Akhaura ICP". If it says "NH-44 near Lumding" — use "NH-44, Lumding". Pull directly from the event titles, NER locations, and district fields above.
-4. commander_focus format is FIXED: "<Exact named place>: <specific action with timeframe or unit>".
-   BAD: "Enhance surveillance along border" — REJECTED (no place, no action detail).
-   GOOD: "Sutarkandi ICP, Assam: Deploy additional Customs and BSF team for 24-hr vehicle scanning — 4 cattle + arms seizures confirmed this period".
-5. watch_locations must be specific named places from the events above — town, ICP, border haat, NH segment, village. NOT state names.
+STRICT RULES:
+1. [CONFIRMED] = direct data point from above. [ASSESSED] = inference. [SPECULATIVE] = forecast.
+2. No raw scores or numbers.
+3. EVERY location field must be the MOST SPECIFIC place name in the source event:
+   - Use the ICP name, border haat name, village, NH number + nearest town, bridge name, or sub-division.
+   - Pull directly from the event TITLE and NER locations listed above.
+   - REJECTED examples: "Tripura border", "Assam", "Meghalaya border", "Bangladesh border".
+   - ACCEPTED examples: "Agartala-Akhaura ICP", "Dawki crossing, East Khasi Hills", "NH-44 near Lumding, Assam", "Sutarkandi ICP, Karimganj", "Unakoti district, North Tripura".
+4. commander_focus has TWO separate fields per item: "location" (exact named place) and "action" (specific operation + timeframe + unit if applicable). Keeping them separate prevents vague answers. If multiple events point to the same location, combine into one item. If events point to different locations, create separate items — up to 5.
 
 Return strict JSON:
 {{
@@ -487,19 +487,23 @@ Return strict JSON:
   "events": [
     {{
       "heading": "action-headline under 10 words",
-      "location": "EXACT place from event: town / ICP / border haat / NH segment / village",
+      "location": "EXACT place: ICP / border haat / village / NH segment / bridge — from event title",
       "what_happened": "2-3 sentences with specific actor names and exact places",
-      "why_it_matters": "1-2 sentences on operational or strategic significance",
-      "linkages": "1 sentence connecting to a faultline, sub-issue, or cross-border dynamic"
+      "why_it_matters": "1-2 sentences on operational significance",
+      "linkages": "1 sentence connecting to faultline or cross-border dynamic"
     }}
   ],
   "overall_assessment": "2-3 sentences naming the highest-risk specific flashpoints",
   "risk_trajectory": "IMPROVING or STABLE or DETERIORATING",
-  "watch_locations": ["exact place 1", "exact place 2", "exact place 3", "exact place 4", "exact place 5"],
-  "commander_focus": ["<Exact named place>: <specific action + timeframe/unit>", "<place>: <action>", "<place>: <action>"]
+  "commander_focus": [
+    {{
+      "location": "EXACT named place from events — ICP / village / NH km / border haat / district + sub-division",
+      "action": "Specific operational action with timeframe and responsible unit"
+    }}
+  ]
 }}
 
-Generate one events entry for each of the {n_events} EVENT(s) above.
+Generate one events entry for each of the {n_events} EVENT(s) above. Generate up to 5 commander_focus items.
 """
 
 
@@ -574,12 +578,12 @@ async def run_paoi_synthesis(
             try:
                 res = await call_llm_json(_rich_prompt(pa), 2000)
                 if isinstance(res, dict) and res:
+                    # commander_focus may be list of {location, action} objects or legacy strings
                     per_paoi[pa["id"]] = {
                         "situation_overview": res.get("situation_overview", ""),
                         "events": res.get("events") or [],
                         "overall_assessment": res.get("overall_assessment", ""),
                         "risk_trajectory": res.get("risk_trajectory", "STABLE"),
-                        "watch_locations": res.get("watch_locations") or [],
                         "commander_focus": res.get("commander_focus") or [],
                     }
                 else:
