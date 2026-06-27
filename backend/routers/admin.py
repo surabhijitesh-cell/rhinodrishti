@@ -184,10 +184,14 @@ async def clear_fallback():
 @router.get("/admin/openrouter-credit-warning")
 async def get_credit_warning_status():
     """Current credit warning level — polled by Dashboard banner every 60 s."""
-    from llm_client import get_credit_warning
+    from llm_client import get_credit_warning, is_openrouter_exhausted
     data = get_credit_warning()
+    level = data["level"]
+    # 402 errors during actual LLM calls are a definitive signal that credits are gone.
+    if is_openrouter_exhausted() and level == "ok":
+        level = "critical"
     return {
-        "level": data["level"],           # "ok" | "low" | "critical"
+        "level": level,                   # "ok" | "low" | "critical"
         "remaining_usd": data["remaining_usd"],
         "top_up_url": "https://openrouter.ai/credits",
     }

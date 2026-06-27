@@ -343,12 +343,19 @@ async def startup():
                 # limit_remaining is the authoritative remaining balance field.
                 # Fall back to limit-usage when not present; skip only when truly unlimited.
                 limit_remaining = data.get("limit_remaining")
+                logger.info(f"OpenRouter auth/key → limit={limit} usage={usage} limit_remaining={limit_remaining}")
                 if limit_remaining is not None:
                     remaining = round(limit_remaining, 4)
                 elif limit is not None:
                     remaining = round(limit - usage, 4)
                 else:
-                    return  # unlimited plan — no cap, no warning needed
+                    # Prepaid account with no monthly cap — cannot determine balance from auth/key.
+                    # Fall back to exhaustion flag set by 402 errors during actual LLM calls.
+                    from llm_client import set_credit_warning, get_credit_warning, is_openrouter_exhausted
+                    if is_openrouter_exhausted():
+                        set_credit_warning("critical", None)
+                        logger.warning("OpenRouter credits: exhaustion flag set (402 errors) — marking critical")
+                    return
                 from llm_client import set_credit_warning, get_credit_warning
                 prev_level = get_credit_warning()["level"]
                 if remaining <= 0.50:
