@@ -636,15 +636,19 @@ def _render_pdf(report: dict) -> bytes:
         fl_delta = pr.get("faultline_delta", 0.0)
         rc, gc, bc = traj_badge(traj)
 
-        # PAOI header bar
+        # PAOI header bar — content width 174mm split name | status
         pdf.ln(3)
+        content_w = pdf.w - pdf.l_margin - pdf.r_margin
+        status_w = 74
+        name_w = content_w - status_w
+        status = f"{traj}  |  FL: {fl_level}  ({'+' if fl_delta >= 0 else ''}{fl_delta:.1f})"
         pdf.set_font("Helvetica", "B", 9.5)
         pdf.set_text_color(255, 255, 255)
         pdf.set_fill_color(40, 40, 40)
-        pdf.cell(130, 6, _safe(f"  {name}"), fill=True, ln=False)
+        pdf.cell(name_w, 6.5, _safe(f"  {name}"), fill=True, ln=False)
         pdf.set_fill_color(rc, gc, bc)
-        pdf.set_font("Helvetica", "B", 8.5)
-        pdf.cell(0, 6, _safe(f"  {traj}  |  FL: {fl_level}  ({'+' if fl_delta >= 0 else ''}{fl_delta:.1f})"), fill=True, ln=True)
+        pdf.set_font("Helvetica", "B", 7.5)
+        pdf.cell(status_w, 6.5, _safe(status), fill=True, ln=True, align="C")
         pdf.set_text_color(30, 30, 30)
         pdf.ln(2)
 
