@@ -473,6 +473,57 @@ No headers. No bullets. Prose only. Maximum 350 words."""
     return [{"role": "system", "content": system}, {"role": "user", "content": user_prompt}]
 
 
+def _special_focus_prompt(
+    commander_notes: str,
+    period_label: str,
+    items: list[dict],
+) -> list[dict]:
+    """Synthesize an ad-hoc thematic section from the commander's free-text ask.
+
+    Handles topics outside the fixed PAOI structure (e.g. weather, a named
+    event, a specific actor). Grounded in the corpus, with explicit coverage
+    honesty when the data is thin.
+    """
+    digest = _items_digest(items, max_items=30)
+    system = (
+        "You are a senior NER intelligence analyst. The commander has requested "
+        "specific coverage beyond the standard Priority Areas. Output STRICT JSON only "
+        "— no markdown, no commentary."
+    )
+    user_prompt = f"""COMMANDER'S SPECIAL REQUEST for the {period_label} report:
+\"{commander_notes}\"
+
+INTELLIGENCE CORPUS ({len(items)} items — top {min(30, len(items))} shown):
+{digest}
+
+INSTRUCTIONS:
+- Address ONLY the commander's special request above — not the standard PAOI assessments.
+- Ground EVERY claim in the corpus. DO NOT invent facts.
+- Tag claims: [CONFIRMED] = direct from data | [ASSESSED] = inference | [SPECULATIVE] = forecast.
+- If the corpus contains little or nothing on the requested topic, SAY SO plainly in
+  coverage_note and keep key_points short — do not pad with unrelated PAOI material.
+
+Return STRICT JSON:
+{{
+  "title": "Short section title reflecting the request (max 8 words)",
+  "narrative": "2-3 paragraph narrative directly answering the request, with [LABEL] tags. If evidence is thin, state the limitation up front.",
+  "key_points": [
+    {{
+      "point": "Specific finding tied to the request",
+      "geography": "Exact location — district/sector/state",
+      "claim_label": "CONFIRMED | ASSESSED | SPECULATIVE"
+    }}
+  ],
+  "implications": [
+    "Short implication for security / lines of communication / humanitarian posture"
+  ],
+  "coverage_note": "If reporting on this topic is thin or absent in the period, state it here; otherwise empty string."
+}}
+
+Include 0-6 key_points (only what the corpus supports) and 0-4 implications."""
+    return [{"role": "system", "content": system}, {"role": "user", "content": user_prompt}]
+
+
 # ── PDF rendering ─────────────────────────────────────────────────────────────
 
 def _safe(text: str) -> str:
@@ -524,12 +575,15 @@ def _render_pdf(report: dict) -> bytes:
 
     # ── Helpers ────────────────────────────────────────────────────────────────
 
+    _sec_no = [0]
+
     def section_title(text: str):
+        _sec_no[0] += 1
         pdf.ln(5)
         pdf.set_font("Helvetica", "B", 10)
         pdf.set_text_color(255, 255, 255)
         pdf.set_fill_color(20, 80, 40)
-        pdf.cell(0, 7, _safe(f"  {text.upper()}"), fill=True, ln=True)
+        pdf.cell(0, 7, _safe(f"  {_sec_no[0]}. {text.upper()}"), fill=True, ln=True)
         pdf.ln(2)
 
     def sub_header(text: str):
@@ -674,12 +728,49 @@ def _render_pdf(report: dict) -> bytes:
             pdf.set_y(row_y + row_h)
         pdf.ln(4)
 
-    # ── Section 1: Executive Overview ─────────────────────────────────────────
-    section_title("1. Executive Overview")
+    # ── Executive Overview ────────────────────────────────────────────────────
+    section_title("Executive Overview")
     body(report.get("executive_overview", "See individual PAOI assessments below."))
 
-    # ── Section 2: PAOI Deep Dives ────────────────────────────────────────────
-    section_title("2. Priority Area Deep Dives")
+    # ── Commander's Special Focus (optional) ──────────────────────────────────
+    sf = report.get("special_focus")
+    if sf and (sf.get("narrative") or sf.get("key_points")):
+        section_title("Commander's Special Focus")
+        if sf.get("title"):
+            sub_header(sf["title"])
+        if sf.get("narrative"):
+            body(sf["narrative"])
+        kps = sf.get("key_points") or []
+        if kps:
+            sub_header("KEY POINTS")
+            for kp in kps:
+                pdf.set_x(pdf.l_margin)
+                pdf.set_font("Helvetica", "B", 8)
+                pdf.set_text_color(20, 80, 40)
+                pdf.multi_cell(
+                    0, 4.5,
+                    _safe(f"  > {kp.get('point', '')}  [{kp.get('geography', '')}]  [{kp.get('claim_label', '')}]"),
+                )
+            pdf.ln(1)
+        imps = sf.get("implications") or []
+        if imps:
+            sub_header("IMPLICATIONS")
+            for im in imps:
+                pdf.set_x(pdf.l_margin)
+                pdf.set_font("Helvetica", "B", 8)
+                pdf.set_text_color(20, 80, 40)
+                pdf.cell(4, 4.5, "*", ln=False)
+                pdf.set_font("Helvetica", "", 8.5)
+                pdf.set_text_color(30, 30, 30)
+                pdf.multi_cell(0, 4.5, _safe(str(im)))
+        if sf.get("coverage_note"):
+            pdf.ln(1)
+            pdf.set_font("Helvetica", "I", 8)
+            pdf.set_text_color(110, 110, 110)
+            pdf.multi_cell(0, 4.4, _safe(f"Coverage note: {sf['coverage_note']}"))
+
+    # ── PAOI Deep Dives ───────────────────────────────────────────────────────
+    section_title("Priority Area Deep Dives")
 
     for pr in paoi_reports:
         name = pr.get("paoi_name", "")
@@ -776,6 +867,7 @@ def _render_pdf(report: dict) -> bytes:
         if watches:
             sub_header("NEXT PERIOD WATCH")
             for w in watches:
+                pdf.set_x(pdf.l_margin)
                 pdf.set_font("Helvetica", "B", 8)
                 pdf.set_text_color(20, 80, 40)
                 pdf.multi_cell(0, 4.5, _safe(f"  > {w.get('indicator', '')}  [{w.get('geography', '')}]"))
@@ -786,7 +878,7 @@ def _render_pdf(report: dict) -> bytes:
     # ── Section 3: Next Period Focus ──────────────────────────────────────────
     next_focus = report.get("next_period_focus") or []
     if next_focus:
-        section_title("3. Next Period Focus")
+        section_title("Next Period Focus")
         for item in next_focus:
             pdf.set_font("Helvetica", "B", 8)
             pdf.set_text_color(20, 80, 40)
@@ -880,6 +972,23 @@ async def generate_report(req: GenerateRequest, user: dict = Depends(_require_ad
     exec_messages = _executive_overview_prompt(paoi_reports, period_label, all_items, commander_notes)
     executive_overview = await _llm_text(exec_messages, max_tokens=800)
 
+    # 4b. Commander's special focus — only when the spec carries a free-text ask.
+    # Pull a broad, all-geography corpus so off-PAOI topics (weather, named
+    # events, etc.) are not missed by the PAOI-scoped item set.
+    special_focus = None
+    if commander_notes.strip():
+        broad_items = await _pull_items(start_iso, end_iso, [])
+        sf_messages = _special_focus_prompt(commander_notes, period_label, broad_items)
+        sf = await _llm_json(sf_messages, max_tokens=1800)
+        if sf.get("narrative") or sf.get("key_points"):
+            special_focus = {
+                "title": sf.get("title") or "Commander's Special Focus",
+                "narrative": sf.get("narrative", ""),
+                "key_points": sf.get("key_points") or [],
+                "implications": sf.get("implications") or [],
+                "coverage_note": sf.get("coverage_note", ""),
+            }
+
     # 5. Aggregate next-period focus
     next_focus = []
     for pr in paoi_reports:
@@ -903,6 +1012,7 @@ async def generate_report(req: GenerateRequest, user: dict = Depends(_require_ad
         "period": req.period,
         "commander_notes": commander_notes,
         "executive_overview": executive_overview,
+        "special_focus": special_focus,
         "paoi_reports": paoi_reports,
         "next_period_focus": next_focus,
     }
