@@ -500,8 +500,9 @@ def _render_pdf(report: dict) -> bytes:
         def header(self):
             self.set_font("Helvetica", "B", 7.5)
             self.set_text_color(20, 80, 40)
-            self.cell(0, 5, "RHINO DRISHTI  //  COMMANDER'S INTELLIGENCE REPORT  //  RESTRICTED", align="C")
-            self.ln(2)
+            self.cell(0, 5, "RHINO DRISHTI  //  COMMANDER'S INTELLIGENCE REPORT  //  RESTRICTED",
+                      align="C", ln=1)
+            self.ln(1)
             self.set_draw_color(20, 80, 40)
             self.set_line_width(0.4)
             self.line(self.l_margin, self.get_y(), self.w - self.r_margin, self.get_y())
