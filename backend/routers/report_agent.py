@@ -82,6 +82,67 @@ async def _llm_text(messages: list[dict], max_tokens: int = 700) -> str:
     return (resp.choices[0].message.content or "").strip()
 
 
+def _balance_brackets(s: str) -> str:
+    """Best-effort close of an unterminated JSON fragment (truncated output)."""
+    out: list[str] = []
+    stack: list[str] = []
+    in_str = False
+    esc = False
+    for ch in s:
+        if esc:
+            out.append(ch); esc = False; continue
+        if in_str and ch == "\\":
+            out.append(ch); esc = True; continue
+        if ch == '"':
+            in_str = not in_str; out.append(ch); continue
+        if not in_str:
+            if ch in "{[":
+                stack.append(ch)
+            elif ch in "}]" and stack:
+                stack.pop()
+        out.append(ch)
+    if in_str:
+        out.append('"')
+    res = "".join(out).rstrip()
+    while res and res[-1] in ",:":
+        res = res[:-1].rstrip()
+    for ch in reversed(stack):
+        res += "}" if ch == "{" else "]"
+    return res
+
+
+def _coerce_json(raw: str) -> dict:
+    """Parse model output into a dict, recovering from fences, prose wrappers,
+    and truncated (unterminated) JSON."""
+    if not raw:
+        return {}
+    s = raw.strip()
+    if s.startswith("```"):
+        nl = s.find("\n")
+        s = s[nl + 1:] if nl != -1 else s
+        if s.rstrip().endswith("```"):
+            s = s.rstrip()[:-3]
+        s = s.strip()
+    try:
+        return json.loads(s)
+    except Exception:
+        pass
+    start = s.find("{")
+    if start == -1:
+        return {}
+    end = s.rfind("}")
+    if end > start:
+        try:
+            return json.loads(s[start:end + 1])
+        except Exception:
+            pass
+    # Truncation repair: balance brackets from the first '{'
+    try:
+        return json.loads(_balance_brackets(s[start:]))
+    except Exception:
+        return {}
+
+
 async def _llm_json(messages: list[dict], max_tokens: int = 1500) -> dict:
     client = get_client()
     resp = await client.chat.completions.create(
@@ -89,20 +150,20 @@ async def _llm_json(messages: list[dict], max_tokens: int = 1500) -> dict:
         max_tokens=max_tokens,
         temperature=0.3,
         messages=messages,
-        timeout=60.0,
+        timeout=90.0,
     )
-    raw = (resp.choices[0].message.content or "").strip()
-    # Strip markdown code fences if present
-    if raw.startswith("```"):
-        lines = raw.split("\n")
-        raw = "\n".join(lines[1:])
-        if raw.endswith("```"):
-            raw = raw[:-3].rstrip()
-    try:
-        return json.loads(raw)
-    except Exception:
-        logger.warning("LLM JSON parse failed; raw: %s", raw[:300])
-        return {}
+    choice = resp.choices[0]
+    raw = (choice.message.content or "").strip()
+    finish = getattr(choice, "finish_reason", None)
+    data = _coerce_json(raw)
+    if not data:
+        logger.warning(
+            "LLM JSON parse failed (finish_reason=%s, len=%d); head: %s",
+            finish, len(raw), raw[:200],
+        )
+    elif finish == "length":
+        logger.warning("LLM JSON recovered from truncation (finish_reason=length)")
+    return data
 
 
 # ── System prompts ────────────────────────────────────────────────────────────
@@ -1041,7 +1102,16 @@ async def generate_report(req: GenerateRequest, user: dict = Depends(_require_ad
             granularity=granularity,
             commander_notes=commander_notes,
         )
-        synthesis = await _llm_json(messages, max_tokens=2200)
+        # Larger budget — the synthesis JSON (overview + developments + recs +
+        # watches) overflowed the old 2200-token cap on content-rich PAOIs,
+        # truncating the JSON and yielding an empty deep dive.
+        synthesis = await _llm_json(messages, max_tokens=4000)
+        if not synthesis.get("situation_overview") and not synthesis.get("critical_developments"):
+            logger.warning(
+                "Report Agent: empty synthesis for %s (items=%d) — retrying once",
+                p["id"], len(p_items),
+            )
+            synthesis = await _llm_json(messages, max_tokens=4000)
 
         fl = p.get("faultline_movement") or {}
         paoi_reports.append({
