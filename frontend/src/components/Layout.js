@@ -6,7 +6,7 @@ import {
   Shield, LayoutDashboard, Newspaper, FileText, TrendingUp,
   Globe, Bell, ChevronLeft, ChevronRight, Sun, Moon, Search,
   Activity, Menu, X, Upload, GitBranch, Settings, Network, Key, BookOpen, Brain,
-  LogOut, Users, Megaphone, HelpCircle, RotateCcw, Target
+  LogOut, Users, Megaphone, HelpCircle, RotateCcw, Target, Bot
 } from "lucide-react";
 import { Input } from "../components/ui/input";
 import { Button } from "../components/ui/button";
@@ -75,6 +75,10 @@ const ALL_NAV_ITEMS = [
   {
     path: "/admin", label: "API & Pipeline Monitor", icon: Activity, roles: ["admin"],
     tooltip: "Admin only — live API spend (Anthropic + Gemini + OpenAI) and filter cascade funnel stats.",
+  },
+  {
+    path: "/report-agent", label: "Report Agent", icon: Bot, roles: ["admin"],
+    tooltip: "Admin only — chat-driven configurable intelligence report generation (monthly & fortnightly).",
   },
   {
     path: "/settings", label: "Settings", icon: Settings, roles: ["admin"],

@@ -24,6 +24,7 @@ import UserManagement from "./pages/UserManagement";
 import UpdatesPage from "./pages/UpdatesPage";
 import ReportsPage from "./pages/ReportsPage";
 import AdminMonitoring from "./pages/AdminMonitoring";
+import ReportAgent from "./pages/ReportAgent";
 import FaultlineIntelligence from "./pages/FaultlineIntelligence";
 import FaultlineDetail from "./pages/FaultlineDetail";
 import { Toaster } from "./components/ui/sonner";
@@ -114,6 +115,7 @@ function AppRoutes() {
                 <Route path="/updates" element={<UpdatesPage api={API} />} />
                 <Route path="/reports" element={<ReportsPage api={API} />} />
                 <Route path="/admin" element={<AdminMonitoring api={API} />} />
+                <Route path="/report-agent" element={<ReportAgent api={API} />} />
                 <Route path="/faultlines" element={<FaultlineIntelligence api={API} />} />
                 <Route path="/faultlines/:id" element={<FaultlineDetail api={API} />} />
               </Routes>

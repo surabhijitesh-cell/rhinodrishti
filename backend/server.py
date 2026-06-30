@@ -43,6 +43,7 @@ from routers.faultlines import router as faultlines_router
 from routers.watchlist import router as watchlist_router
 from routers.notifications import router as notifications_router
 from routers.flags import router as flags_router
+from routers.report_agent import router as report_agent_router
 
 # Import scheduler functions
 from routers.pipeline import (
@@ -92,6 +93,7 @@ app.include_router(faultlines_router, prefix="/api")
 app.include_router(watchlist_router, prefix="/api")
 app.include_router(notifications_router, prefix="/api")
 app.include_router(flags_router, prefix="/api")
+app.include_router(report_agent_router, prefix="/api")
 
 
 # ============================================================
