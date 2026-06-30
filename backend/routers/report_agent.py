@@ -345,9 +345,11 @@ async def _extract_focus_keywords(commander_notes: str) -> list[str]:
 async def _pull_topic_items(
     start_iso: str, end_iso: str, keywords: list[str], limit: int = 50,
 ) -> list[dict]:
-    """Pull items matching the topic keywords across ALL severities (except
-    filtered_out). The standard severity gate (critical/high/medium) drops
-    routine news like weather; topical pulls must not.
+    """Pull medium+ severity items matching the topic keywords.
+
+    Broad topical search (regex across multiple fields) but still gated to
+    critical/high/medium severity so the section is not cluttered with routine
+    low-severity noise.
     """
     safe_kw = [re.escape(k) for k in keywords if len(k) >= 3]
     if not safe_kw:
@@ -356,7 +358,7 @@ async def _pull_topic_items(
     query = {
         "published_at": {"$gte": start_iso, "$lt": end_iso},
         "processed": True,
-        "severity": {"$ne": "filtered_out"},
+        "severity": {"$in": ["critical", "high", "medium"]},
         "$or": [
             {"title": rx}, {"ai_summary": rx}, {"why_it_matters": rx},
             {"potential_impact": rx}, {"tags": rx},
@@ -555,7 +557,7 @@ def _special_focus_prompt(
 \"{commander_notes}\"
 {kw_line}
 
-INTELLIGENCE CORPUS ({len(items)} items — top {min(30, len(items))} shown, retrieved by topic across all severity levels):
+INTELLIGENCE CORPUS ({len(items)} items — top {min(30, len(items))} shown, retrieved by topic, medium severity and above):
 {digest}
 
 INSTRUCTIONS:
@@ -1039,7 +1041,7 @@ async def generate_report(req: GenerateRequest, user: dict = Depends(_require_ad
     # events, etc.) are not missed by the PAOI-scoped item set.
     special_focus = None
     if commander_notes.strip():
-        # Topical retrieval across ALL severities (weather etc. is usually 'low')
+        # Broad topical retrieval, still gated to medium+ severity
         kws = await _extract_focus_keywords(commander_notes)
         topic_items = await _pull_topic_items(start_iso, end_iso, kws)
         broad_items = await _pull_items(start_iso, end_iso, [])
