@@ -533,13 +533,18 @@ def _render_pdf(report: dict) -> bytes:
         pdf.ln(2)
 
     def sub_header(text: str):
-        pdf.set_font("Helvetica", "BI", 8.5)
+        y = pdf.get_y()
+        # small green marker square
+        pdf.set_fill_color(20, 80, 40)
+        pdf.rect(pdf.l_margin, y + 0.6, 1.6, 3.2, "F")
+        pdf.set_xy(pdf.l_margin + 3.5, y)
+        pdf.set_font("Helvetica", "B", 8.5)
         pdf.set_text_color(20, 80, 40)
-        pdf.cell(0, 5, _safe(text), ln=True)
-        pdf.set_draw_color(20, 80, 40)
+        pdf.cell(0, 5, _safe(text.upper()), ln=True)
+        pdf.set_draw_color(200, 215, 205)
         pdf.set_line_width(0.2)
-        pdf.line(pdf.l_margin, pdf.get_y(), pdf.l_margin + 60, pdf.get_y())
-        pdf.ln(1.5)
+        pdf.line(pdf.l_margin, pdf.get_y(), pdf.w - pdf.r_margin, pdf.get_y())
+        pdf.ln(1.8)
 
     def body(text: str, indent: float = 0):
         pdf.set_font("Helvetica", "", 8.5)
@@ -577,25 +582,60 @@ def _render_pdf(report: dict) -> bytes:
             "IMPROVING": (20, 130, 20),
         }.get(traj, (100, 100, 100))
 
+    def fl_badge(level: str) -> tuple[int, int, int]:
+        return {
+            "CRITICAL": (170, 30, 30),
+            "ELEVATED": (200, 120, 20),
+            "MONITOR": (50, 100, 180),
+            "STABLE": (90, 90, 90),
+        }.get((level or "").upper(), (110, 110, 110))
+
+    def pill(text: str, rgb: tuple[int, int, int], x: float, h: float = 4.8):
+        """Draw a small filled rounded-ish badge at x on the current line; returns new x."""
+        pdf.set_font("Helvetica", "B", 7)
+        w = pdf.get_string_width(text) + 5
+        pdf.set_fill_color(*rgb)
+        pdf.set_text_color(255, 255, 255)
+        pdf.set_xy(x, pdf.get_y())
+        pdf.cell(w, h, _safe(text), fill=True, align="C")
+        return x + w + 2
+
+    content_w = pdf.w - pdf.l_margin - pdf.r_margin
+
     # ── Cover page ─────────────────────────────────────────────────────────────
     pdf.add_page()
-    pdf.ln(10)
-    pdf.set_font("Helvetica", "B", 20)
-    pdf.set_text_color(20, 80, 40)
-    pdf.cell(0, 12, "COMMANDER'S INTELLIGENCE REPORT", align="C", ln=True)
-    pdf.set_font("Helvetica", "B", 14)
-    pdf.set_text_color(40, 40, 40)
-    pdf.cell(0, 8, _safe(period_label), align="C", ln=True)
-    pdf.set_font("Helvetica", "", 9)
-    pdf.set_text_color(120, 120, 120)
-    pdf.cell(0, 5, f"{report_type}  |  Generated: {generated_at}", align="C", ln=True)
-    pdf.ln(4)
+    pdf.ln(6)
 
-    # Divider
-    pdf.set_draw_color(20, 80, 40)
-    pdf.set_line_width(1.0)
-    pdf.line(pdf.l_margin + 20, pdf.get_y(), pdf.w - pdf.r_margin - 20, pdf.get_y())
-    pdf.ln(5)
+    # Hero band — dark green block with reversed title
+    hero_y = pdf.get_y()
+    hero_h = 30
+    pdf.set_fill_color(18, 70, 38)
+    pdf.rect(pdf.l_margin, hero_y, content_w, hero_h, "F")
+    # thin gold underline accent at base of band
+    pdf.set_fill_color(198, 156, 60)
+    pdf.rect(pdf.l_margin, hero_y + hero_h, content_w, 1.1, "F")
+
+    pdf.set_xy(pdf.l_margin, hero_y + 6.5)
+    pdf.set_font("Helvetica", "B", 19)
+    pdf.set_text_color(255, 255, 255)
+    pdf.cell(content_w, 10, "COMMANDER'S INTELLIGENCE REPORT", align="C", ln=True)
+    pdf.set_x(pdf.l_margin)
+    pdf.set_font("Helvetica", "B", 12)
+    pdf.set_text_color(220, 230, 220)
+    pdf.cell(content_w, 7, _safe(period_label.upper()), align="C", ln=True)
+    pdf.set_y(hero_y + hero_h + 4)
+
+    # Meta row: report-type chip (left) + RESTRICTED chip (right) + generated date (center)
+    meta_y = pdf.get_y() + 1
+    pill(report_type, (60, 90, 60), pdf.l_margin, h=5.2)
+    pdf.set_y(meta_y)
+    restricted_w = pdf.get_string_width("RESTRICTED") + 5
+    pill("RESTRICTED", (150, 30, 30), pdf.w - pdf.r_margin - restricted_w, h=5.2)
+    pdf.set_xy(pdf.l_margin, meta_y)
+    pdf.set_font("Helvetica", "", 8.5)
+    pdf.set_text_color(120, 120, 120)
+    pdf.cell(content_w, 5.2, f"Generated: {generated_at}", align="C", ln=True)
+    pdf.ln(6)
 
     # Commander notes on cover
     if report.get("commander_notes"):
@@ -604,23 +644,35 @@ def _render_pdf(report: dict) -> bytes:
         pdf.multi_cell(0, 5, _safe(f"Commander's focus for this report: {report['commander_notes']}"), align="C")
         pdf.ln(3)
 
-    # PAOI trajectory summary on cover
+    # PAOI trajectory summary on cover — panel with pill badges
     paoi_reports = report.get("paoi_reports", [])
     if paoi_reports:
-        pdf.set_font("Helvetica", "B", 8)
-        pdf.set_text_color(60, 60, 60)
-        pdf.cell(0, 5, "PRIORITY AREAS STATUS SUMMARY", align="C", ln=True)
-        pdf.ln(1)
-        for pr in paoi_reports:
+        pdf.set_font("Helvetica", "B", 8.5)
+        pdf.set_text_color(255, 255, 255)
+        pdf.set_fill_color(40, 40, 40)
+        pdf.cell(content_w, 6, "  PRIORITY AREAS STATUS SUMMARY", fill=True, ln=True)
+        row_h = 6.6
+        for idx, pr in enumerate(paoi_reports):
             traj = pr.get("risk_trajectory", "STABLE")
-            rc, gc, bc = traj_badge(traj)
             fl_level = pr.get("faultline_level", "STABLE")
+            row_y = pdf.get_y()
+            if idx % 2 == 0:
+                pdf.set_fill_color(244, 246, 244)
+                pdf.rect(pdf.l_margin, row_y, content_w, row_h, "F")
+            pdf.set_xy(pdf.l_margin, row_y)
             pdf.set_font("Helvetica", "B", 8.5)
-            pdf.set_text_color(30, 30, 30)
-            pdf.cell(95, 5.5, _safe(f"  {pr.get('paoi_name', '')}"), ln=False)
-            pdf.set_text_color(rc, gc, bc)
-            pdf.cell(0, 5.5, _safe(f"[{traj}]  [{fl_level}]"), ln=True)
-        pdf.ln(3)
+            pdf.set_text_color(35, 35, 35)
+            pdf.cell(content_w * 0.6, row_h, _safe(f"  {pr.get('paoi_name', '')}"), ln=False)
+            # right-aligned pills: FL then trajectory
+            fl_txt, tr_txt = fl_level.upper(), traj
+            tr_w = pdf.get_string_width(tr_txt) + 5
+            fl_w = pdf.get_string_width(fl_txt) + 5
+            pdf.set_y(row_y + (row_h - 4.8) / 2)
+            x = pdf.w - pdf.r_margin - tr_w - fl_w - 2
+            x = pill(fl_txt, fl_badge(fl_level), x)
+            pill(tr_txt, traj_badge(traj), x)
+            pdf.set_y(row_y + row_h)
+        pdf.ln(4)
 
     # ── Section 1: Executive Overview ─────────────────────────────────────────
     section_title("1. Executive Overview")
@@ -636,9 +688,8 @@ def _render_pdf(report: dict) -> bytes:
         fl_delta = pr.get("faultline_delta", 0.0)
         rc, gc, bc = traj_badge(traj)
 
-        # PAOI header bar — content width 174mm split name | status
+        # PAOI header bar — content width split name | status
         pdf.ln(3)
-        content_w = pdf.w - pdf.l_margin - pdf.r_margin
         status_w = 74
         name_w = content_w - status_w
         status = f"{traj}  |  FL: {fl_level}  ({'+' if fl_delta >= 0 else ''}{fl_delta:.1f})"
@@ -687,29 +738,38 @@ def _render_pdf(report: dict) -> bytes:
         if recs:
             sub_header("ACTIONABLE RECOMMENDATIONS")
             for k, rec in enumerate(recs, 1):
-                # Amber header strip
                 pdf.ln(1)
-                pdf.set_fill_color(247, 207, 110)
+                # Keep a card reasonably intact: break early if little room left
+                if pdf.get_y() > pdf.h - pdf.b_margin - 34:
+                    pdf.add_page()
+
+                card_top = pdf.get_y()
+                card_page = pdf.page_no()
+
+                # Amber header strip
+                pdf.set_fill_color(244, 196, 92)
                 pdf.set_font("Helvetica", "B", 8)
-                pdf.set_text_color(90, 55, 0)
-                pdf.cell(0, 5.5, _safe(f"  RECOMMENDATION {k}"), fill=True, ln=True)
+                pdf.set_text_color(85, 52, 0)
+                pdf.cell(content_w, 5.8, _safe(f"  RECOMMENDATION {k}"), fill=True, ln=True)
+                pdf.ln(0.6)
 
-                # Body of the box — record bounds for the accent bar
-                box_start_y = pdf.get_y()
-                box_start_page = pdf.page_no()
-
-                field("Threat / Issue", rec.get("threat_or_issue", ""), indent=4)
-                field("Geography", rec.get("geography", ""), indent=4)
-                field("Why It Matters", rec.get("why_it_matters_to_paoi", ""), indent=4)
+                field("Threat / Issue", rec.get("threat_or_issue", ""), indent=5)
+                field("Geography", rec.get("geography", ""), indent=5)
+                field("Why It Matters", rec.get("why_it_matters_to_paoi", ""), indent=5)
                 field("Recommended Action", rec.get("recommended_action", ""),
-                      indent=4, color=(150, 30, 30))
-                field("Preventive Effect", rec.get("intended_preventive_effect", ""), indent=4)
+                      indent=5, color=(150, 30, 30))
+                field("Preventive Effect", rec.get("intended_preventive_effect", ""), indent=5)
+                pdf.ln(0.4)
 
-                # Left accent bar (only when the box did not break across pages)
-                if pdf.page_no() == box_start_page:
-                    pdf.set_fill_color(210, 150, 40)
-                    pdf.rect(pdf.l_margin, box_start_y, 1.3, pdf.get_y() - box_start_y, "F")
-                pdf.ln(2.5)
+                # Card outline + left accent (only when not split across pages)
+                if pdf.page_no() == card_page:
+                    h = pdf.get_y() - card_top
+                    pdf.set_draw_color(214, 168, 80)
+                    pdf.set_line_width(0.3)
+                    pdf.rect(pdf.l_margin, card_top, content_w, h)
+                    pdf.set_fill_color(206, 150, 50)
+                    pdf.rect(pdf.l_margin, card_top, 1.6, h, "F")
+                pdf.ln(3)
 
         # Next Period Watch
         watches = pr.get("next_period_watch") or []
