@@ -344,12 +344,14 @@ async def _extract_focus_keywords(commander_notes: str) -> list[str]:
 
 async def _pull_topic_items(
     start_iso: str, end_iso: str, keywords: list[str], limit: int = 50,
+    sort_field: str = "priority_score",
 ) -> list[dict]:
     """Pull medium+ severity items matching the topic keywords.
 
     Broad topical search (regex across multiple fields) but still gated to
     critical/high/medium severity so the section is not cluttered with routine
-    low-severity noise.
+    low-severity noise. ``sort_field`` selects ordering — "priority_score" for
+    relevance, "published_at" for recency (e.g. live weather events).
     """
     safe_kw = [re.escape(k) for k in keywords if len(k) >= 3]
     if not safe_kw:
@@ -365,7 +367,7 @@ async def _pull_topic_items(
         ],
     }
     cursor = intelligence_col.find(query, _ITEM_PROJECTION).sort(
-        "priority_score", -1
+        sort_field, -1
     ).limit(limit)
     return await cursor.to_list(length=limit)
 
@@ -994,25 +996,48 @@ async def generate_report(req: GenerateRequest, user: dict = Depends(_require_ad
 
     all_items = await _pull_items(start_iso, end_iso, all_geo)
 
+    # Weather is a first-class disruptor of NER Lines of Communication (P3):
+    # floods, landslides, washed-out roads, damaged bridges. Pull these (medium+)
+    # once so the P3 deep dive treats the weather situation as a LOC factor.
+    LOC_WEATHER_KEYWORDS = [
+        "flood", "landslide", "cloudburst", "monsoon", "rainfall", "inundation",
+        "washed away", "erosion", "submerged", "mudslide", "waterlogging",
+        "torrential", "deluge", "swollen river",
+    ]
+    P3_ID = "P3_ner_lines_of_communication"
+    loc_weather_items = await _pull_topic_items(
+        start_iso, end_iso, LOC_WEATHER_KEYWORDS, limit=20, sort_field="published_at",
+    )
+
     # 3. Per-PAOI synthesis (sequential — avoids rate-limit pile-up)
     paoi_reports = []
     for p in target_paois:
-        p_geo = set((p.get("geography") or []) + (p.get("watch_geography") or []))
-        geo_items = [it for it in all_items if it.get("state") in p_geo]
+        # Use the PAOI's OWN curated, relevance-ranked articles (keyword_hits).
+        # This decouples each PAOI from the shared top-N pool, which is otherwise
+        # dominated by whichever theatre is hottest (e.g. Manipur) and starves
+        # geographically narrow PAOIs (Meghalaya) of any items.
+        p_items = list((p.get("keyword_hits") or {}).get("top_articles") or [])
+        focus_note = custom_focus.get(p["id"], "")
 
-        # Also include items matched via keyword pull
-        kw_ids = {
-            a["id"]
-            for a in ((p.get("keyword_hits") or {}).get("top_articles") or [])
-        }
-        kw_items = [it for it in all_items if it.get("id") in kw_ids and it not in geo_items]
-        p_items = sorted(geo_items + kw_items, key=lambda x: -(x.get("priority_score") or 0))
+        # P3 (NER LOC): fold in weather-driven LOC disruption as an explicit factor
+        if p["id"] == P3_ID and loc_weather_items:
+            existing = {it.get("id") for it in p_items}
+            p_items += [it for it in loc_weather_items if it.get("id") not in existing]
+            weather_focus = (
+                "Treat the current weather situation (floods, landslides, washed-out "
+                "roads, damaged bridges, blocked highways) as a FIRST-CLASS factor "
+                "disrupting NER Lines of Communication. Identify which routes/corridors "
+                "are affected and the operational impact on mobility and resupply."
+            )
+            focus_note = f"{focus_note} {weather_focus}".strip()
+
+        p_items = sorted(p_items, key=lambda x: -(x.get("priority_score") or 0))
 
         messages = _paoi_synthesis_prompt(
             paoi=p,
             items=p_items,
             period_label=period_label,
-            custom_focus=custom_focus.get(p["id"], ""),
+            custom_focus=focus_note,
             granularity=granularity,
             commander_notes=commander_notes,
         )
