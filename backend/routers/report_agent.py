@@ -19,6 +19,7 @@ Endpoints:
 import io
 import json
 import logging
+import re
 import uuid
 from calendar import monthrange
 from datetime import datetime, timezone
@@ -309,6 +310,64 @@ async def _pull_items(start_iso: str, end_iso: str, geography: list[str]) -> lis
     return await cursor.to_list(length=100)
 
 
+_ITEM_PROJECTION = {
+    "_id": 0, "id": 1, "title": 1, "ai_summary": 1, "why_it_matters": 1,
+    "potential_impact": 1, "state": 1, "threat_category": 1,
+    "severity": 1, "published_at": 1, "actors": 1, "priority_score": 1,
+    "tags": 1,
+}
+
+
+async def _extract_focus_keywords(commander_notes: str) -> list[str]:
+    """Ask the LLM for concrete topical keywords identifying the request subject."""
+    msgs = [
+        {"role": "system",
+         "content": "Extract concrete search keywords identifying the SUBJECT of an "
+                    "intelligence-report request. Output STRICT JSON only."},
+        {"role": "user",
+         "content": (
+             f"Request:\n\"{commander_notes}\"\n\n"
+             "Return JSON: {\"keywords\": [\"...\"]} — 4 to 12 concrete topical search "
+             "terms (phenomena, named entities, event types) that DISTINGUISH the subject. "
+             "Include obvious synonyms (e.g. for weather: rain, rainfall, flood, landslide, "
+             "monsoon, cyclone, storm, waterlogging, inundation). "
+             "EXCLUDE generic filler (impact, security, update, report, concern, issue, "
+             "situation, monitor, area, region) AND broad place names that over-match "
+             "unrelated news (Assam, Meghalaya, Manipur, Mizoram, Nagaland, Tripura, "
+             "Arunachal Pradesh, Northeast, NER, India) — geography is filtered separately."
+         )},
+    ]
+    data = await _llm_json(msgs, max_tokens=200)
+    kws = data.get("keywords") or []
+    return [k.strip() for k in kws if isinstance(k, str) and len(k.strip()) >= 3]
+
+
+async def _pull_topic_items(
+    start_iso: str, end_iso: str, keywords: list[str], limit: int = 50,
+) -> list[dict]:
+    """Pull items matching the topic keywords across ALL severities (except
+    filtered_out). The standard severity gate (critical/high/medium) drops
+    routine news like weather; topical pulls must not.
+    """
+    safe_kw = [re.escape(k) for k in keywords if len(k) >= 3]
+    if not safe_kw:
+        return []
+    rx = {"$regex": "|".join(safe_kw), "$options": "i"}
+    query = {
+        "published_at": {"$gte": start_iso, "$lt": end_iso},
+        "processed": True,
+        "severity": {"$ne": "filtered_out"},
+        "$or": [
+            {"title": rx}, {"ai_summary": rx}, {"why_it_matters": rx},
+            {"potential_impact": rx}, {"tags": rx},
+        ],
+    }
+    cursor = intelligence_col.find(query, _ITEM_PROJECTION).sort(
+        "priority_score", -1
+    ).limit(limit)
+    return await cursor.to_list(length=limit)
+
+
 def _items_digest(items: list[dict], max_items: int = 25) -> str:
     """Format items as an LLM-readable digest."""
     lines = []
@@ -477,6 +536,7 @@ def _special_focus_prompt(
     commander_notes: str,
     period_label: str,
     items: list[dict],
+    keywords: list[str] | None = None,
 ) -> list[dict]:
     """Synthesize an ad-hoc thematic section from the commander's free-text ask.
 
@@ -485,6 +545,7 @@ def _special_focus_prompt(
     honesty when the data is thin.
     """
     digest = _items_digest(items, max_items=30)
+    kw_line = f"\nTOPIC KEYWORDS USED TO RETRIEVE THIS CORPUS: {', '.join(keywords)}" if keywords else ""
     system = (
         "You are a senior NER intelligence analyst. The commander has requested "
         "specific coverage beyond the standard Priority Areas. Output STRICT JSON only "
@@ -492,8 +553,9 @@ def _special_focus_prompt(
     )
     user_prompt = f"""COMMANDER'S SPECIAL REQUEST for the {period_label} report:
 \"{commander_notes}\"
+{kw_line}
 
-INTELLIGENCE CORPUS ({len(items)} items — top {min(30, len(items))} shown):
+INTELLIGENCE CORPUS ({len(items)} items — top {min(30, len(items))} shown, retrieved by topic across all severity levels):
 {digest}
 
 INSTRUCTIONS:
@@ -977,8 +1039,23 @@ async def generate_report(req: GenerateRequest, user: dict = Depends(_require_ad
     # events, etc.) are not missed by the PAOI-scoped item set.
     special_focus = None
     if commander_notes.strip():
+        # Topical retrieval across ALL severities (weather etc. is usually 'low')
+        kws = await _extract_focus_keywords(commander_notes)
+        topic_items = await _pull_topic_items(start_iso, end_iso, kws)
         broad_items = await _pull_items(start_iso, end_iso, [])
-        sf_messages = _special_focus_prompt(commander_notes, period_label, broad_items)
+        seen: set[str] = set()
+        merged: list[dict] = []
+        for it in topic_items + broad_items:  # topic items first
+            iid = it.get("id")
+            if iid in seen:
+                continue
+            seen.add(iid)
+            merged.append(it)
+        logger.info(
+            "Report Agent: special focus — %d topic items (kw=%s), %d merged",
+            len(topic_items), kws, len(merged),
+        )
+        sf_messages = _special_focus_prompt(commander_notes, period_label, merged, kws)
         sf = await _llm_json(sf_messages, max_tokens=1800)
         if sf.get("narrative") or sf.get("key_points"):
             special_focus = {
