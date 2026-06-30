@@ -129,10 +129,10 @@ Output ONLY valid JSON. No markdown fences, no commentary.
 
 Available PAOI ids (use exact strings):
   P1_india_bangladesh_border
-  P2_jem_radicalisation
-  P3_ner_loc
-  P4_meghalaya_internal
-  P5_tribal_meg
+  P2_jamaat_radicalisation
+  P3_ner_lines_of_communication
+  P4_meghalaya_internal_security
+  P5_meghalaya_tribal_dynamics
 
 Schema:
 {
@@ -260,6 +260,31 @@ def _period_range(year: int, month: int, period: Optional[int]) -> tuple[str, st
         )
         label = f"16-{last_day} {start.strftime('%B %Y')}"
     return start.isoformat(), end.isoformat(), label
+
+
+# ── Focus resolution ──────────────────────────────────────────────────────────
+
+def _resolve_focus(focus_ids: list[str], all_paois: list[dict]) -> list[dict]:
+    """Match spec focus ids to actual PAOI ids.
+
+    Robust to LLM emitting slightly-off slugs (e.g. 'P2_jem_radicalisation'
+    vs actual 'P2_jamaat_radicalisation') by falling back to the P-number
+    prefix. Empty focus_ids => all PAOIs.
+    """
+    if not focus_ids:
+        return all_paois
+    valid = {p["id"] for p in all_paois}
+    chosen: set[str] = set()
+    for fid in focus_ids:
+        if fid in valid:
+            chosen.add(fid)
+            continue
+        prefix = fid.split("_", 1)[0].upper()  # 'P2'
+        for p in all_paois:
+            if p["id"].split("_", 1)[0].upper() == prefix:
+                chosen.add(p["id"])
+    matched = [p for p in all_paois if p["id"] in chosen]
+    return matched or all_paois
 
 
 # ── Data helpers ──────────────────────────────────────────────────────────────
@@ -525,16 +550,24 @@ def _render_pdf(report: dict) -> bytes:
             pdf.multi_cell(0, 4.5, _safe(text))
         pdf.ln(0.5)
 
-    def label_val(label: str, value: str, indent: float = 0):
-        if indent:
-            pdf.set_x(pdf.l_margin + indent)
-        pdf.set_font("Helvetica", "B", 8)
-        pdf.set_text_color(80, 80, 80)
-        pdf.cell(38, 4.5, _safe(label + ":"), ln=False)
+    def field(label: str, value: str, indent: float = 3,
+              color: tuple[int, int, int] = (30, 30, 30)):
+        """One flowing row: bold inline label + value, indented as a block.
+
+        Uses a single multi_cell (markdown bold label) so auto page-breaks
+        are handled natively — no manual y juggling that can orphan pages.
+        """
+        if not value:
+            return
+        saved_margin = pdf.l_margin
+        pdf.set_left_margin(saved_margin + indent)
+        pdf.set_x(saved_margin + indent)
         pdf.set_font("Helvetica", "", 8)
-        pdf.set_text_color(30, 30, 30)
-        remaining = pdf.w - pdf.get_x() - pdf.r_margin
-        pdf.multi_cell(remaining, 4.5, _safe(str(value)))
+        pdf.set_text_color(*color)
+        pdf.multi_cell(0, 4.6, _safe(f"**{label}:**  {value}"), markdown=True)
+        pdf.set_left_margin(saved_margin)
+        pdf.set_x(saved_margin)
+        pdf.ln(0.8)
 
     def traj_badge(traj: str) -> tuple[int, int, int]:
         return {
@@ -635,10 +668,10 @@ def _render_pdf(report: dict) -> bytes:
 
                 body(dev.get("what_happened", ""), indent=5)
                 if dev.get("why_it_matters_to_paoi"):
-                    label_val("  Impact on PAI", dev["why_it_matters_to_paoi"], indent=5)
+                    field("Impact on PAI", dev["why_it_matters_to_paoi"], indent=5)
                 if actors:
-                    label_val("  Actors", actors, indent=5)
-                pdf.ln(1)
+                    field("Actors", actors, indent=5)
+                pdf.ln(1.5)
 
         # Overall Assessment
         sub_header("OVERALL ASSESSMENT")
@@ -649,26 +682,29 @@ def _render_pdf(report: dict) -> bytes:
         if recs:
             sub_header("ACTIONABLE RECOMMENDATIONS")
             for k, rec in enumerate(recs, 1):
-                # Amber recommendation box
-                pdf.set_fill_color(255, 248, 225)
-                pdf.set_draw_color(180, 130, 40)
-                pdf.set_line_width(0.3)
+                # Amber header strip
+                pdf.ln(1)
+                pdf.set_fill_color(247, 207, 110)
                 pdf.set_font("Helvetica", "B", 8)
-                pdf.set_text_color(120, 70, 0)
-                pdf.cell(0, 5.5, _safe(f"  RECOMMENDATION {k}"), fill=True, border=1, ln=True)
-                pdf.set_text_color(30, 30, 30)
-                label_val("  Threat / Issue", rec.get("threat_or_issue", ""), indent=3)
-                label_val("  Geography", rec.get("geography", ""), indent=3)
-                label_val("  Why It Matters", rec.get("why_it_matters_to_paoi", ""), indent=3)
-                pdf.set_font("Helvetica", "B", 8)
-                pdf.set_text_color(140, 30, 30)
-                pdf.set_x(pdf.l_margin + 3)
-                pdf.cell(38, 4.5, "  Recommended Action:", ln=False)
-                pdf.set_font("Helvetica", "", 8)
-                pdf.set_text_color(30, 30, 30)
-                pdf.multi_cell(pdf.w - pdf.get_x() - pdf.r_margin, 4.5, _safe(rec.get("recommended_action", "")))
-                label_val("  Preventive Effect", rec.get("intended_preventive_effect", ""), indent=3)
-                pdf.ln(2)
+                pdf.set_text_color(90, 55, 0)
+                pdf.cell(0, 5.5, _safe(f"  RECOMMENDATION {k}"), fill=True, ln=True)
+
+                # Body of the box — record bounds for the accent bar
+                box_start_y = pdf.get_y()
+                box_start_page = pdf.page_no()
+
+                field("Threat / Issue", rec.get("threat_or_issue", ""), indent=4)
+                field("Geography", rec.get("geography", ""), indent=4)
+                field("Why It Matters", rec.get("why_it_matters_to_paoi", ""), indent=4)
+                field("Recommended Action", rec.get("recommended_action", ""),
+                      indent=4, color=(150, 30, 30))
+                field("Preventive Effect", rec.get("intended_preventive_effect", ""), indent=4)
+
+                # Left accent bar (only when the box did not break across pages)
+                if pdf.page_no() == box_start_page:
+                    pdf.set_fill_color(210, 150, 40)
+                    pdf.rect(pdf.l_margin, box_start_y, 1.3, pdf.get_y() - box_start_y, "F")
+                pdf.ln(2.5)
 
         # Next Period Watch
         watches = pr.get("next_period_watch") or []
@@ -727,11 +763,7 @@ async def generate_report(req: GenerateRequest, user: dict = Depends(_require_ad
     agg = await paoi_brief.aggregate_paoi_period(db, start_iso, end_iso)
     all_paois = agg.get("paois") or []
 
-    target_paois = (
-        [p for p in all_paois if p["id"] in focus_paoi_ids]
-        if focus_paoi_ids
-        else all_paois
-    )
+    target_paois = _resolve_focus(focus_paoi_ids, all_paois)
 
     # 2. Pull intelligence items for all relevant geography
     all_geo: list[str] = []
