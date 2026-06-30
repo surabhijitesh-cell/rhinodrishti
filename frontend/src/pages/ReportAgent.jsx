@@ -1,9 +1,9 @@
 /**
- * ReportAgent — /report-agent route, admin-only.
+ * Custom Brief Generator — /report-agent route, admin-only.
  *
- * Chat-driven configurable intelligence report generation.
- * Left panel: conversation with the report configuration assistant.
- * Right panel: current spec preview + generate controls + past reports.
+ * Chat-driven, configurable intelligence brief generation.
+ * Left panel: conversation with the brief configuration assistant.
+ * Right panel: current spec preview + generate controls + past briefs (with delete).
  */
 
 import { useState, useEffect, useRef, useCallback } from "react";
@@ -15,13 +15,18 @@ import {
   Trash2, RefreshCw, ChevronDown, ChevronUp, Bot,
 } from "lucide-react";
 
-// ── PAOI label map ────────────────────────────────────────────────────────────
+// ── PAOI label map (keys match backend priority_areas ids; older slugs kept as fallback) ──
 const PAOI_LABELS = {
-  P1_india_bangladesh_border: "P1 · India-Bangladesh Border",
-  P2_jem_radicalisation:      "P2 · JeI Spread & Radicalisation",
-  P3_ner_loc:                 "P3 · NER Lines of Communication",
-  P4_meghalaya_internal:      "P4 · Meghalaya Internal Security",
-  P5_tribal_meg:              "P5 · Tribal Dynamics — Meghalaya",
+  P1_india_bangladesh_border:    "P1 · India-Bangladesh Border",
+  P2_jamaat_radicalisation:      "P2 · Jamaat-e-Islami Spread & Radicalisation",
+  P3_ner_lines_of_communication: "P3 · NER Lines of Communication",
+  P4_meghalaya_internal_security:"P4 · Meghalaya Internal Security",
+  P5_meghalaya_tribal_dynamics:  "P5 · Tribal Dynamics — Meghalaya",
+  // legacy slugs (pre-correction specs)
+  P2_jem_radicalisation:         "P2 · Jamaat-e-Islami Spread & Radicalisation",
+  P3_ner_loc:                    "P3 · NER Lines of Communication",
+  P4_meghalaya_internal:         "P4 · Meghalaya Internal Security",
+  P5_tribal_meg:                 "P5 · Tribal Dynamics — Meghalaya",
 };
 
 const ALL_PAOI_IDS = Object.keys(PAOI_LABELS);
@@ -132,8 +137,9 @@ function PeriodSelector({ reportType, value, onChange }) {
 }
 
 // ── ReportRow ─────────────────────────────────────────────────────────────────
-function ReportRow({ report, api }) {
+function ReportRow({ report, api, onDeleted }) {
   const [downloading, setDownloading] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   async function download() {
     setDownloading(true);
@@ -154,23 +160,45 @@ function ReportRow({ report, api }) {
     }
   }
 
+  async function remove() {
+    if (!window.confirm(`Delete the "${report.period_label}" brief? This cannot be undone.`)) return;
+    setDeleting(true);
+    try {
+      await axios.delete(`${api}/report-agent/reports/${report.id}`);
+      onDeleted?.(report.id);
+    } catch {
+      alert("Could not delete the brief. Please try again.");
+      setDeleting(false);
+    }
+  }
+
   const rt = report.report_type === "monthly" ? "MONTHLY" : "FORTNIGHTLY";
   const dt = (report.generated_at || "")?.slice(0, 10);
 
   return (
     <div className="flex items-center justify-between py-1.5 border-b border-border/40 last:border-0">
-      <div>
-        <div className="text-xs font-semibold">{report.period_label}</div>
+      <div className="min-w-0">
+        <div className="text-xs font-semibold truncate">{report.period_label}</div>
         <div className="text-[10px] font-mono text-muted-foreground">{rt} · {dt}</div>
       </div>
-      <button
-        onClick={download}
-        disabled={downloading}
-        className="flex items-center gap-1.5 text-[10px] px-2 py-1 rounded bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50 text-white font-semibold transition-colors"
-      >
-        {downloading ? <RefreshCw size={10} className="animate-spin" /> : <Download size={10} />}
-        PDF
-      </button>
+      <div className="flex items-center gap-1.5 shrink-0">
+        <button
+          onClick={download}
+          disabled={downloading || deleting}
+          className="flex items-center gap-1.5 text-[10px] px-2 py-1 rounded bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50 text-white font-semibold transition-colors"
+        >
+          {downloading ? <RefreshCw size={10} className="animate-spin" /> : <Download size={10} />}
+          PDF
+        </button>
+        <button
+          onClick={remove}
+          disabled={deleting || downloading}
+          title="Delete this brief"
+          className="flex items-center justify-center p-1 rounded border border-border text-muted-foreground hover:text-red-400 hover:border-red-400/50 disabled:opacity-50 transition-colors"
+        >
+          {deleting ? <RefreshCw size={10} className="animate-spin" /> : <Trash2 size={10} />}
+        </button>
+      </div>
     </div>
   );
 }
@@ -315,26 +343,33 @@ export default function ReportAgent({ api }) {
     await loadSavedSpecs();
   }
 
+  function handleReportDeleted(id) {
+    setPastReports(rs => rs.filter(r => r.id !== id));
+    setGeneratedReport(g => (g && g.id === id ? null : g));
+  }
+
   return (
     <div className="p-4 md:p-6 max-w-7xl mx-auto space-y-4">
 
       {/* ── Header ── */}
       <div className="flex items-center gap-3 border-b border-border pb-4">
-        <Bot size={18} className="text-emerald-400" />
+        <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-emerald-700/15 border border-emerald-700/30">
+          <Bot size={20} className="text-emerald-400" />
+        </div>
         <div>
-          <h1 className="text-base font-semibold uppercase tracking-widest font-['Barlow_Condensed']">
-            Report Generation Agent
+          <h1 className="text-lg font-bold uppercase tracking-widest font-['Barlow_Condensed'] leading-tight">
+            Custom Brief Generator
           </h1>
           <p className="text-[10px] font-mono text-muted-foreground">
-            Chat to configure · generate customized intelligence reports · admin only
+            Chat to configure · generate tailored intelligence briefs grounded in PAOIs &amp; the live corpus · admin only
           </p>
         </div>
         <button
           onClick={resetChat}
           title="Start a new session"
-          className="ml-auto text-muted-foreground/50 hover:text-muted-foreground"
+          className="ml-auto flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider px-2.5 py-1.5 rounded border border-border text-muted-foreground hover:text-foreground hover:border-foreground/30 transition-colors"
         >
-          <RefreshCw size={13} />
+          <RefreshCw size={12} /> New Session
         </button>
       </div>
 
@@ -351,10 +386,10 @@ export default function ReportAgent({ api }) {
                 <div className="flex flex-col items-center justify-center h-40 text-center">
                   <MessageSquare size={28} className="text-muted-foreground/30 mb-2" />
                   <p className="text-xs text-muted-foreground">
-                    Tell me what you want in your next intelligence report.
+                    Tell me what you want in your next intelligence brief.
                   </p>
                   <p className="text-[10px] text-muted-foreground/60 mt-1">
-                    Example: "I want a fortnightly report focused on Bangladesh border infiltration, with very specific unit-level recommendations."
+                    Example: "I want a fortnightly brief focused on Bangladesh border infiltration, with very specific unit-level recommendations."
                   </p>
                 </div>
               )}
@@ -479,7 +514,7 @@ export default function ReportAgent({ api }) {
           {spec && (
             <div className="rounded border border-border bg-card p-3 space-y-3">
               <div className="text-[10px] uppercase tracking-widest font-semibold font-['Barlow_Condensed'] text-muted-foreground">
-                Generate Report
+                Generate Brief
               </div>
 
               <div>
@@ -508,7 +543,7 @@ export default function ReportAgent({ api }) {
                 {generating ? (
                   <><RefreshCw size={12} className="animate-spin" /> Generating…</>
                 ) : (
-                  <><FileText size={12} /> Generate Report</>
+                  <><FileText size={12} /> Generate Brief</>
                 )}
               </button>
 
@@ -525,7 +560,7 @@ export default function ReportAgent({ api }) {
             <div className="rounded border border-emerald-700/40 bg-emerald-950/30 p-3 space-y-2">
               <div className="flex items-center gap-2 text-emerald-400 text-xs font-semibold">
                 <FileText size={12} />
-                Report Ready
+                Brief Ready
               </div>
               <div className="text-[10px] font-mono text-muted-foreground">
                 {generatedReport.period_label} · {(generatedReport.generated_at || "")?.slice(0, 10)}
@@ -542,20 +577,20 @@ export default function ReportAgent({ api }) {
             </div>
           )}
 
-          {/* Past reports */}
+          {/* Past briefs */}
           {pastReports.length > 0 && (
             <div className="rounded border border-border bg-card p-3 space-y-2">
               <button
                 onClick={() => setShowPast(v => !v)}
                 className="w-full flex items-center justify-between text-[10px] uppercase tracking-widest font-semibold font-['Barlow_Condensed'] text-muted-foreground hover:text-foreground"
               >
-                Past Reports ({pastReports.length})
+                Past Briefs ({pastReports.length})
                 {showPast ? <ChevronUp size={10} /> : <ChevronDown size={10} />}
               </button>
               {showPast && (
                 <div>
-                  {pastReports.slice(0, 10).map(r => (
-                    <ReportRow key={r.id} report={r} api={api} />
+                  {pastReports.slice(0, 20).map(r => (
+                    <ReportRow key={r.id} report={r} api={api} onDeleted={handleReportDeleted} />
                   ))}
                 </div>
               )}

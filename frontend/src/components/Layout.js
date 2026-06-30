@@ -29,8 +29,12 @@ const ALL_NAV_ITEMS = [
     tooltip: "Bangladesh & Myanmar intelligence grouped by Diplomatic, Defence, Internal Politics and Economics.",
   },
   {
-    path: "/daily-brief", label: "Generate Briefs", icon: FileText, roles: ["admin", "analyst", "viewer"],
+    path: "/daily-brief", label: "Periodic Briefs", icon: FileText, roles: ["admin", "analyst", "viewer"],
     tooltip: "AI-generated daily, fortnightly and monthly intelligence briefs. Exportable as PDF.",
+  },
+  {
+    path: "/report-agent", label: "Custom Brief Generator", icon: Bot, roles: ["admin"],
+    tooltip: "Admin only — chat-driven, configurable intelligence brief generation (monthly & fortnightly) grounded in PAOIs, faultlines and the live corpus.",
   },
   {
     path: "/trends", label: "Trends", icon: TrendingUp, roles: ["admin", "analyst", "viewer"],
@@ -75,10 +79,6 @@ const ALL_NAV_ITEMS = [
   {
     path: "/admin", label: "API & Pipeline Monitor", icon: Activity, roles: ["admin"],
     tooltip: "Admin only — live API spend (Anthropic + Gemini + OpenAI) and filter cascade funnel stats.",
-  },
-  {
-    path: "/report-agent", label: "Report Agent", icon: Bot, roles: ["admin"],
-    tooltip: "Admin only — chat-driven configurable intelligence report generation (monthly & fortnightly).",
   },
   {
     path: "/settings", label: "Settings", icon: Settings, roles: ["admin"],

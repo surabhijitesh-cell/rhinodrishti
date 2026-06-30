@@ -1136,6 +1136,16 @@ async def list_reports(user: dict = Depends(_require_admin)):
     return reports
 
 
+@router.delete("/report-agent/reports/{report_id}")
+async def delete_report(report_id: str, user: dict = Depends(_require_admin)):
+    res = await agent_reports_col.delete_one(
+        {"id": report_id, "created_by": user["username"]}
+    )
+    if res.deleted_count == 0:
+        raise HTTPException(404, "Report not found")
+    return {"ok": True}
+
+
 @router.get("/report-agent/reports/{report_id}/pdf")
 async def download_pdf(report_id: str, user: dict = Depends(_require_admin)):
     report = await agent_reports_col.find_one({"id": report_id}, {"_id": 0})
