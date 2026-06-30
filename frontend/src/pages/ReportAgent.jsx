@@ -178,20 +178,20 @@ function ReportRow({ report, api }) {
 // ── Main page ─────────────────────────────────────────────────────────────────
 export default function ReportAgent({ api }) {
   const { user } = useAuth();
-  if (user?.role !== "admin") return <Navigate to="/" replace />;
 
-  const [messages, setMessages]         = useState([]);
-  const [input, setInput]               = useState("");
-  const [thinking, setThinking]         = useState(false);
-  const [spec, setSpec]                 = useState(null);
-  const [specId, setSpecId]             = useState(null);
-  const [period, setPeriod]             = useState({ ...currentYearMonth(), period: 1 });
-  const [generating, setGenerating]     = useState(false);
+  // All hooks must be called before any conditional return
+  const [messages, setMessages]               = useState([]);
+  const [input, setInput]                     = useState("");
+  const [thinking, setThinking]               = useState(false);
+  const [spec, setSpec]                       = useState(null);
+  const [specId, setSpecId]                   = useState(null);
+  const [period, setPeriod]                   = useState({ ...currentYearMonth(), period: 1 });
+  const [generating, setGenerating]           = useState(false);
   const [generatedReport, setGeneratedReport] = useState(null);
-  const [pastReports, setPastReports]   = useState([]);
-  const [showPast, setShowPast]         = useState(false);
-  const [savedSpecs, setSavedSpecs]     = useState([]);
-  const [showSpecs, setShowSpecs]       = useState(false);
+  const [pastReports, setPastReports]         = useState([]);
+  const [showPast, setShowPast]               = useState(false);
+  const [savedSpecs, setSavedSpecs]           = useState([]);
+  const [showSpecs, setShowSpecs]             = useState(false);
   const chatEndRef = useRef(null);
 
   const reportType = spec?.report_type || "fortnightly";
@@ -219,6 +219,8 @@ export default function ReportAgent({ api }) {
     loadPastReports();
     loadSavedSpecs();
   }, [loadPastReports, loadSavedSpecs]);
+
+  if (user?.role !== "admin") return <Navigate to="/" replace />;
 
   async function sendMessage() {
     const text = input.trim();
