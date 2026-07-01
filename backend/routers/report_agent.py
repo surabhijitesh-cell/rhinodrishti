@@ -859,43 +859,6 @@ def _render_pdf(report: dict) -> bytes:
     section_title("Executive Overview")
     body(report.get("executive_overview", "See individual PAOI assessments below."))
 
-    # ── Commander's Special Focus (optional) ──────────────────────────────────
-    sf = report.get("special_focus")
-    if sf and (sf.get("narrative") or sf.get("key_points")):
-        section_title("Commander's Special Focus")
-        if sf.get("title"):
-            sub_header(sf["title"])
-        if sf.get("narrative"):
-            body(sf["narrative"])
-        kps = sf.get("key_points") or []
-        if kps:
-            sub_header("KEY POINTS")
-            for kp in kps:
-                pdf.set_x(pdf.l_margin)
-                pdf.set_font("Helvetica", "B", 8)
-                pdf.set_text_color(20, 80, 40)
-                pdf.multi_cell(
-                    0, 4.5,
-                    _safe(f"  > {kp.get('point', '')}  [{kp.get('geography', '')}]  [{kp.get('claim_label', '')}]"),
-                )
-            pdf.ln(1)
-        imps = sf.get("implications") or []
-        if imps:
-            sub_header("IMPLICATIONS")
-            for im in imps:
-                pdf.set_x(pdf.l_margin)
-                pdf.set_font("Helvetica", "B", 8)
-                pdf.set_text_color(20, 80, 40)
-                pdf.cell(4, 4.5, "*", ln=False)
-                pdf.set_font("Helvetica", "", 8.5)
-                pdf.set_text_color(30, 30, 30)
-                pdf.multi_cell(0, 4.5, _safe(str(im)))
-        if sf.get("coverage_note"):
-            pdf.ln(1)
-            pdf.set_font("Helvetica", "I", 8)
-            pdf.set_text_color(110, 110, 110)
-            pdf.multi_cell(0, 4.4, _safe(f"Coverage note: {sf['coverage_note']}"))
-
     # ── PAOI Deep Dives ───────────────────────────────────────────────────────
     section_title("Priority Area Deep Dives")
 
@@ -1002,7 +965,44 @@ def _render_pdf(report: dict) -> bytes:
 
         pdf.ln(5)
 
-    # ── Section 3: Next Period Focus ──────────────────────────────────────────
+    # ── Commander's Special Focus (optional) — after the PAOI deep dives ───────
+    sf = report.get("special_focus")
+    if sf and (sf.get("narrative") or sf.get("key_points")):
+        section_title("Commander's Special Focus")
+        if sf.get("title"):
+            sub_header(sf["title"])
+        if sf.get("narrative"):
+            body(sf["narrative"])
+        kps = sf.get("key_points") or []
+        if kps:
+            sub_header("KEY POINTS")
+            for kp in kps:
+                pdf.set_x(pdf.l_margin)
+                pdf.set_font("Helvetica", "B", 8)
+                pdf.set_text_color(20, 80, 40)
+                pdf.multi_cell(
+                    0, 4.5,
+                    _safe(f"  > {kp.get('point', '')}  [{kp.get('geography', '')}]  [{kp.get('claim_label', '')}]"),
+                )
+            pdf.ln(1)
+        imps = sf.get("implications") or []
+        if imps:
+            sub_header("IMPLICATIONS")
+            for im in imps:
+                pdf.set_x(pdf.l_margin)
+                pdf.set_font("Helvetica", "B", 8)
+                pdf.set_text_color(20, 80, 40)
+                pdf.cell(4, 4.5, "*", ln=False)
+                pdf.set_font("Helvetica", "", 8.5)
+                pdf.set_text_color(30, 30, 30)
+                pdf.multi_cell(0, 4.5, _safe(str(im)))
+        if sf.get("coverage_note"):
+            pdf.ln(1)
+            pdf.set_font("Helvetica", "I", 8)
+            pdf.set_text_color(110, 110, 110)
+            pdf.multi_cell(0, 4.4, _safe(f"Coverage note: {sf['coverage_note']}"))
+
+    # ── Next Period Focus ─────────────────────────────────────────────────────
     next_focus = report.get("next_period_focus") or []
     if next_focus:
         section_title("Next Period Focus")
