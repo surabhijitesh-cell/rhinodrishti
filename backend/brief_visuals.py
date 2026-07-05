@@ -1,23 +1,33 @@
 """
-brief_visuals.py — district-level map and trendline rendering for the
-periodic (monthly + fortnightly) strategic brief PDFs.
+brief_visuals.py — map and trendline rendering for the periodic
+(monthly + fortnightly) strategic brief PDFs.
 
 The dashboard map (frontend NERMap.js) is a Leaflet React component and
-cannot render server-side. The situation map here is a real geographic
-render instead: actual district polygons for the NER states, North Bengal,
-and Bangladesh (assets/ner_districts.geojson — geoBoundaries ADM2, ODbL /
-CC-BY, see assets/DISTRICT_DATA_LICENSE.txt) rasterized with Pillow, plus
-the LOCATION_COORDS gazetteer (ported from NERMap.js) for plotting items.
-Pillow was chosen over matplotlib after matplotlib's compiled font extension
-failed to load in this environment; Pillow needs no font file (Pillow's
-scalable `ImageFont.load_default(size=...)`) and is already a proven,
-widely-deployed dependency.
+cannot render server-side. The situation map here mirrors its visual style
+instead: bold state/border-country outlines (assets/ner-states.geojson,
+assets/border-countries.geojson — copied from frontend/public), colour-coded
+by the worst severity reported in that region, plus clustered severity
+markers (LOCATION_COORDS gazetteer, ported from NERMap.js) sized by how many
+reports share a location — rather than one tiny dot per article, which
+became unreadable once several items landed at the same place. District-
+level polygons were tried first (assets/ner_districts.geojson, geoBoundaries
+ADM2 — still bundled, see assets/DISTRICT_DATA_LICENSE.txt) but made the
+print map busy without adding legibility at this scale; dropped per
+commander feedback in favour of the clearer state-outline style.
+
+Rendering is a Pillow raster (3x supersampled, Lanczos-downsampled for
+anti-aliasing) embedded into the PDF as a PNG. Pillow was chosen over
+matplotlib after matplotlib's compiled font extension failed to load in
+this environment; Pillow needs no bundled font file (uses its scalable
+`ImageFont.load_default(size=...)`) and is a proven, already-working
+dependency.
 
 Provides:
   geocode_place(name)          — gazetteer lookup with state-centroid fallback
   geocode_points(items)        — geocode a list of intel items → map points
-  draw_paoi_map(pdf, ...)      — per-PAOI map: real district outlines +
-                                 severity dots, green ring = current period,
+  draw_paoi_map(pdf, ...)      — per-PAOI map: state/border outlines coloured
+                                 by worst severity, clustered severity
+                                 markers — green ring = current period,
                                  brown ring = previous period
   draw_paoi_trendline(pdf, ..) — faultline-score line chart across 3+ periods
 """
@@ -124,13 +134,15 @@ STATE_CENTERS = {
 
 _LOCATION_COORDS_LOWER = {k.lower(): v for k, v in LOCATION_COORDS.items()}
 
-# Severity fill colours — matches the SEV_COLORS palette in brief_monthly PDF
+# Severity colours — matches the dashboard NERMap.js SEV palette exactly.
 SEV_FILL = {
-    "critical": (200, 50, 50),
-    "high": (200, 100, 30),
-    "medium": (200, 170, 30),
+    "critical": (239, 68, 68),
+    "high": (245, 158, 11),
+    "medium": (6, 182, 212),
     "low": (100, 160, 60),
 }
+_SEV_RANK = {"critical": 3, "high": 2, "medium": 1, "low": 0}
+_NO_SEV_BORDER = (190, 196, 186)   # neutral state border when no items present
 RING_CURRENT = (30, 150, 60)    # green — current period
 RING_PREVIOUS = (139, 90, 43)   # brown — previous period
 
@@ -172,7 +184,7 @@ def geocode_points(items: list[dict]) -> tuple[list[dict], list[str]]:
     """
     Geocode a list of intel items into map points.
     Returns (points, unresolved_titles) where each point is
-    {lat, lon, label, severity, title}.
+    {lat, lon, label, severity, title, state}.
     """
     points, unresolved = [], []
     for it in items:
@@ -183,63 +195,84 @@ def geocode_points(items: list[dict]) -> tuple[list[dict], list[str]]:
                 "lat": lat, "lon": lon, "label": label,
                 "severity": (it.get("severity") or "medium").lower(),
                 "title": (it.get("title") or "")[:120],
+                "state": it.get("state") or "",
             })
         else:
             unresolved.append((it.get("title") or "")[:80])
     return points, unresolved
 
 
-# ── GeoJSON district outlines (geoBoundaries ADM2, NER + North Bengal + BGD) ──
+def _cluster_points(points: list[dict]) -> list[dict]:
+    """Merge points sharing a label into one marker: {lat, lon, label, state,
+    severity (worst present), count, titles}. Order preserved by first sighting."""
+    order: list[str] = []
+    groups: dict[str, dict] = {}
+    for p in points:
+        key = p["label"]
+        if key not in groups:
+            order.append(key)
+            groups[key] = {
+                "lat": p["lat"], "lon": p["lon"], "label": p["label"],
+                "state": p.get("state", ""), "severity": p["severity"],
+                "count": 0, "titles": [],
+            }
+        g = groups[key]
+        g["count"] += 1
+        g["titles"].append(p["title"])
+        if _SEV_RANK.get(p["severity"], 0) > _SEV_RANK.get(g["severity"], 0):
+            g["severity"] = p["severity"]
+    return [groups[k] for k in order]
+
+
+# ── GeoJSON state / country outlines (dashboard-style, no district clutter) ───
+# District-level polygons (assets/ner_districts.geojson, geoBoundaries ADM2)
+# are still bundled for possible future use but are no longer drawn here per
+# commander feedback: state-level outlines read more clearly at print size.
 
 _geo_cache: dict = {}
 
 
-def _load_districts() -> list[dict]:
-    """Load district features once: [{name, country, polygons: [[(lon,lat),...]]}]."""
-    if "districts" in _geo_cache:
-        return _geo_cache["districts"]
+def _load_regions() -> list[dict]:
+    """Load state + border-country outlines once:
+    [{name, polygons: [[(lon,lat),...]]}]."""
+    if "regions" in _geo_cache:
+        return _geo_cache["regions"]
     out: list[dict] = []
-    path = _ASSETS / "ner_districts.geojson"
-    try:
-        gj = json.loads(path.read_text(encoding="utf-8"))
-        for feat in gj.get("features", []):
-            geom = feat.get("geometry") or {}
-            props = feat.get("properties") or {}
-            polys = []
-            if geom.get("type") == "Polygon":
-                polys = [geom.get("coordinates", [])]
-            elif geom.get("type") == "MultiPolygon":
-                polys = geom.get("coordinates", [])
-            rings = []
-            for poly in polys:
-                if not poly:
-                    continue
-                outer = poly[0]  # outer ring only — holes are visual noise at print size
-                if len(outer) < 4:
-                    continue
-                rings.append([(pt[0], pt[1]) for pt in outer])  # (lon, lat)
-            if rings:
-                out.append({
-                    "name": props.get("name", ""),
-                    "country": props.get("country", "IND"),
-                    "polygons": rings,
-                })
-    except Exception:
-        out = []
-    _geo_cache["districts"] = out
+    for path, name_key in [
+        (_ASSETS / "ner-states.geojson", "ST_NM"),
+        (_ASSETS / "border-countries.geojson", "name"),
+    ]:
+        try:
+            gj = json.loads(path.read_text(encoding="utf-8"))
+            for feat in gj.get("features", []):
+                geom = feat.get("geometry") or {}
+                props = feat.get("properties") or {}
+                polys = []
+                if geom.get("type") == "Polygon":
+                    polys = [geom.get("coordinates", [])]
+                elif geom.get("type") == "MultiPolygon":
+                    polys = geom.get("coordinates", [])
+                rings = []
+                for poly in polys:
+                    if not poly:
+                        continue
+                    outer = poly[0]
+                    if len(outer) < 4:
+                        continue
+                    rings.append([(pt[0], pt[1]) for pt in outer])  # (lon, lat)
+                if rings:
+                    out.append({"name": props.get(name_key, ""), "polygons": rings})
+        except Exception:
+            continue
+    _geo_cache["regions"] = out
     return out
 
 
-# ── Map drawing (Pillow raster, real district polygons) ───────────────────────
+# ── Map drawing (Pillow raster, dashboard-style state outlines) ───────────────
 
 # Fixed NER theatre bounds (lon 88–97.5, lat 21.5–29.5) so every PAOI map has
 # the same frame regardless of which points it contains.
 _MAP_BOUNDS = {"lon_min": 88.0, "lon_max": 97.5, "lat_min": 21.5, "lat_max": 29.5}
-
-_COUNTRY_STYLE = {
-    "IND": {"fill": (223, 236, 214), "outline": (140, 158, 128)},
-    "BGD": {"fill": (213, 228, 240), "outline": (120, 145, 168)},
-}
 
 _MM_TO_PX = 300 / 25.4   # render at 300 dpi print resolution
 _SUPERSAMPLE = 3         # render 3x then downsample for anti-aliasing
@@ -260,51 +293,76 @@ def _project_px(lat: float, lon: float, pw: int, ph: int) -> tuple:
 
 def _render_map_image(current_points: list[dict], previous_points: list[dict],
                       w_mm: float, h_mm: float) -> Image.Image:
-    """Rasterize the district map + markers at print resolution with 3x
-    supersampling for anti-aliased polygon edges and circles."""
+    """Rasterize the situation map at print resolution with 3x supersampling
+    for anti-aliased polygon edges and circles. Style mirrors the live
+    dashboard map: bold state/country outlines colour-coded by the worst
+    severity reported there, clustered markers sized by item count."""
     base_pw, base_ph = round(w_mm * _MM_TO_PX), round(h_mm * _MM_TO_PX)
     pw, ph = base_pw * _SUPERSAMPLE, base_ph * _SUPERSAMPLE
 
-    img = Image.new("RGB", (pw, ph), (247, 250, 245))
+    img = Image.new("RGB", (pw, ph), (30, 35, 30))
     draw = ImageDraw.Draw(img)
 
-    for dist in _load_districts():
-        style = _COUNTRY_STYLE.get(dist["country"], _COUNTRY_STYLE["IND"])
-        for ring in dist["polygons"]:
-            pts = [_project_px(lat, lon, pw, ph) for lon, lat in ring
-                   if _in_bounds(lat, lon)]
-            if len(pts) >= 3:
-                draw.polygon(pts, fill=style["fill"], outline=style["outline"], width=1 * _SUPERSAMPLE)
+    all_points = (current_points or []) + (previous_points or [])
+    region_severity: dict[str, str] = {}
+    for p in all_points:
+        st = p.get("state") or ""
+        if not st:
+            continue
+        if _SEV_RANK.get(p["severity"], 0) >= _SEV_RANK.get(region_severity.get(st, "low"), -1):
+            region_severity[st] = p["severity"]
 
-    def _plot(points: list[dict], ring_rgb: tuple, font):
-        seen: dict[tuple, int] = {}
-        labelled: set = set()
-        for p in points:
-            if not _in_bounds(p["lat"], p["lon"]):
+    # Project every ring vertex unconditionally (not just in-bounds ones) so
+    # Pillow clips each polygon cleanly at the canvas edge — pre-filtering
+    # vertices here would drop points and let draw.polygon chord straight
+    # across the gap, producing stray diagonal lines through the shape.
+    #
+    # The fill is drawn as one draw.polygon call (a cosmetic sliver from a
+    # degenerate ring is invisible against the near-black background). The
+    # outline is drawn as separate segments so an anomalously long edge —
+    # ner-states.geojson's Arunachal Pradesh ring has one real topology
+    # defect that otherwise draws a bold diagonal chord across the shape —
+    # gets skipped instead of rendered.
+    for region in _load_regions():
+        border = SEV_FILL.get(region_severity.get(region["name"], ""), _NO_SEV_BORDER)
+        for ring in region["polygons"]:
+            pts = [_project_px(lat, lon, pw, ph) for lon, lat in ring]
+            if len(pts) < 3:
                 continue
-            px, py = _project_px(p["lat"], p["lon"], pw, ph)
-            key = (round(px / _SUPERSAMPLE, 0), round(py / _SUPERSAMPLE, 0))
-            n = seen.get(key, 0)
-            seen[key] = n + 1
-            if n:
-                ang = n * 2.4  # golden-angle spiral to de-clutter stacked markers
-                px += 7 * _SUPERSAMPLE * math.cos(ang) * (1 + n * 0.15)
-                py += 7 * _SUPERSAMPLE * math.sin(ang) * (1 + n * 0.15)
-            ring_r = 6.5 * _SUPERSAMPLE
-            draw.ellipse([px - ring_r, py - ring_r, px + ring_r, py + ring_r],
-                        outline=ring_rgb, width=2 * _SUPERSAMPLE)
-            dot_r = 3.6 * _SUPERSAMPLE
-            fill = SEV_FILL.get(p["severity"], (110, 110, 110))
-            draw.ellipse([px - dot_r, py - dot_r, px + dot_r, py + dot_r],
-                        fill=fill, outline=(255, 255, 255), width=1 * _SUPERSAMPLE)
-            if p["label"] not in labelled and len(labelled) < 10:
-                labelled.add(p["label"])
-                draw.text((px + ring_r + 3 * _SUPERSAMPLE, py - 8 * _SUPERSAMPLE),
-                          p["label"][:20], fill=(60, 65, 55), font=font)
+            draw.polygon(pts, fill=(42, 48, 40))
+            max_edge = 0.2 * max(pw, ph)
+            for i in range(len(pts)):
+                x1, y1 = pts[i]
+                x2, y2 = pts[(i + 1) % len(pts)]
+                if math.hypot(x2 - x1, y2 - y1) < max_edge:
+                    draw.line([x1, y1, x2, y2], fill=border, width=3 * _SUPERSAMPLE)
+    # No separate state-name label — it collided with marker labels whenever
+    # a point resolved to a state centroid (the common case for keyword-level
+    # fallback geocoding). The marker's own label already names the place.
 
-    label_font = ImageFont.load_default(size=15 * _SUPERSAMPLE)
-    _plot(previous_points or [], RING_PREVIOUS, label_font)   # previous under current
-    _plot(current_points or [], RING_CURRENT, label_font)
+    def _plot(points: list[dict], ring_rgb: tuple):
+        for g in _cluster_points(points):
+            if not _in_bounds(g["lat"], g["lon"]):
+                continue
+            px, py = _project_px(g["lat"], g["lon"], pw, ph)
+            # Marker grows modestly with cluster size, capped so it never
+            # swamps neighbouring markers.
+            scale = 1.0 + min(g["count"] - 1, 6) * 0.12
+            ring_r = 11 * _SUPERSAMPLE * scale
+            draw.ellipse([px - ring_r, py - ring_r, px + ring_r, py + ring_r],
+                        outline=ring_rgb, width=3 * _SUPERSAMPLE)
+            dot_r = 6 * _SUPERSAMPLE * scale
+            fill = SEV_FILL.get(g["severity"], (110, 110, 110))
+            draw.ellipse([px - dot_r, py - dot_r, px + dot_r, py + dot_r],
+                        fill=fill, outline=(255, 255, 255), width=int(1.5 * _SUPERSAMPLE))
+            label = g["label"][:22] if g["count"] == 1 else f"{g['label'][:18]} ({g['count']})"
+            tx, ty = px + ring_r + 4 * _SUPERSAMPLE, py
+            draw.text((tx, ty), label, fill=(255, 255, 255),
+                      font=ImageFont.load_default(size=13 * _SUPERSAMPLE), anchor="lm",
+                      stroke_width=int(2 * _SUPERSAMPLE), stroke_fill=(20, 24, 18))
+
+    _plot(previous_points or [], RING_PREVIOUS)   # previous under current
+    _plot(current_points or [], RING_CURRENT)
 
     draw.rectangle([0, 0, pw - 1, ph - 1], outline=(150, 160, 145), width=2 * _SUPERSAMPLE)
 
@@ -315,9 +373,10 @@ def draw_paoi_map(pdf, current_points: list[dict], previous_points: list[dict],
                   x: float, y: float, w: float = 120, h: float = 82,
                   unresolved: list[str] | None = None) -> float:
     """
-    Draw a PAOI situation map at (x, y): real district polygons (NER states,
-    North Bengal, Bangladesh) with severity-coloured dots — green ring =
-    current period, brown ring = previous period. Returns the y coordinate
+    Draw a PAOI situation map at (x, y): bold state/border-country outlines
+    coloured by the worst severity reported there, plus clustered severity
+    markers — green ring = current period, brown ring = previous period.
+    Returns the y coordinate
     below the map + legend.
     """
     img = _render_map_image(current_points or [], previous_points or [], w, h)
@@ -364,7 +423,8 @@ def draw_paoi_map(pdf, current_points: list[dict], previous_points: list[dict],
     pdf.set_font("Helvetica", "I", 5)
     pdf.set_text_color(150, 150, 150)
     pdf.set_xy(x, ly)
-    pdf.cell(0, 3, "District boundaries: geoBoundaries.org (ODbL / CC-BY)")
+    pdf.cell(0, 3, "State/border outlines coloured by worst severity reported there. "
+                   "Clustered markers show (item count) when 2+ reports share a location.")
     ly += 3.2
 
     pdf.set_line_width(0.2)  # restore default-ish
