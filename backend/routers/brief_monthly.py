@@ -855,6 +855,174 @@ async def _build_paoi_analysis(year: int, month: int, month_name: str, force_ric
         }
 
 
+# ── Per-PAOI map layers + Commander's Attention Required ─────────────────────
+
+async def _paoi_window_map_points(keyword_pull: dict, start_iso: str, end_iso: str) -> tuple[list, list]:
+    """Geocoded critical items (topped up with high when critical < 3) matching
+    a PAOI keyword pull in [start, end) — one period's map layer."""
+    import paoi_brief
+    import brief_visuals
+
+    keywords = [k.lower() for k in (keyword_pull or {}).get("keywords", [])]
+    excludes = [k.lower() for k in (keyword_pull or {}).get("exclude_keywords", [])]
+    if not keywords:
+        return [], []
+    q: dict = {
+        "published_at": {"$gte": start_iso[:10], "$lt": end_iso[:10]},
+        "processed": True,
+        "severity": {"$in": ["critical", "high"]},
+    }
+    regions = (keyword_pull or {}).get("regions", [])
+    if regions:
+        q["$or"] = [{"regions": {"$in": regions}}, {"state": {"$in": regions}}]
+    cursor = intelligence_col.find(q, {
+        "_id": 0, "title": 1, "ai_summary": 1, "entities": 1,
+        "state": 1, "district": 1, "severity": 1, "priority_score": 1,
+    }).sort("priority_score", -1).limit(300)
+    matched = []
+    async for art in cursor:
+        if paoi_brief.article_matches_pull(art, keywords, excludes):
+            matched.append(art)
+        if len(matched) >= 30:
+            break
+    crit = [a for a in matched if a.get("severity") == "critical"]
+    high = [a for a in matched if a.get("severity") == "high"]
+    chosen = crit[:10]
+    if len(chosen) < 3:
+        chosen = chosen + high[:3 - len(chosen)]
+    return brief_visuals.geocode_points(chosen)
+
+
+async def _build_paoi_map_points(paoi_ids: list, start_iso: str, end_iso: str,
+                                 prev_start_iso: str, prev_end_iso: str) -> dict:
+    """Per-PAOI map layers for current + previous period. Reads keyword_pull
+    from the priority_areas registry directly so the shared aggregation output
+    shape (also consumed by the report agent) stays untouched."""
+    out = {}
+    for pid in paoi_ids:
+        pa = await db.priority_areas.find_one({"id": pid}, {"_id": 0, "keyword_pull": 1})
+        kp = (pa or {}).get("keyword_pull") or {}
+        cur_pts, cur_unres = await _paoi_window_map_points(kp, start_iso, end_iso)
+        prev_pts, _ = await _paoi_window_map_points(kp, prev_start_iso, prev_end_iso)
+        if cur_pts or prev_pts:
+            out[pid] = {
+                "current": cur_pts,
+                "previous": prev_pts,
+                "unresolved_current": cur_unres,
+            }
+    return out
+
+
+def _category_covered_by_paoi(category: str) -> bool:
+    """True when a threat category shares a substantive word with a PAOI name
+    (approximation of 'already the lead topic of an existing PAOI')."""
+    import re
+    from priority_areas_seed import PRIORITY_AREAS
+    cat_words = {w for w in re.split(r"[^a-z]+", category.lower()) if len(w) > 3}
+    for pa in PRIORITY_AREAS:
+        pa_words = {w for w in re.split(r"[^a-z]+", pa["name"].lower()) if len(w) > 3}
+        if cat_words & pa_words:
+            return True
+    return False
+
+
+def _detect_attention_items(stats: dict, prev_stats: Optional[dict],
+                            category_baselines: list, other_movements: dict) -> list:
+    """Pure outlier scan for Commander's Attention Required. Deterministic —
+    every number in the output comes straight from the inputs, no LLM."""
+    from periodic_report_config import ATTENTION_CONFIG as CFG
+
+    candidates = []
+
+    # 1. Sharp movement on faultlines NOT covered by any PAOI
+    for fl in (other_movements.get("rising", []) + other_movements.get("declining", [])):
+        delta = fl.get("delta") or 0
+        if abs(delta) >= CFG["faultline_delta_threshold"]:
+            direction = "rose" if delta > 0 else "fell"
+            state_tag = f" ({fl['state']})" if fl.get("state") else ""
+            candidates.append({
+                "type": "faultline_shift",
+                "magnitude": abs(delta) / CFG["faultline_delta_threshold"],
+                "headline": f"Non-PAOI faultline moved sharply: {fl.get('name', '')}{state_tag}",
+                "significance": (
+                    f"Concern score {direction} {abs(delta):.0f} points this period "
+                    "on a faultline not tracked by any priority area."
+                ),
+                "numbers": f"now {fl.get('last', 0):.0f}/100 ({fl.get('level', '')}), delta {delta:+.0f} pts",
+            })
+
+    # 2. State Stability Index swings vs previous period
+    if prev_stats:
+        prev_map = {s["state"]: s for s in prev_stats.get("stability", [])}
+        for s in stats.get("stability", []):
+            p = prev_map.get(s["state"])
+            if not p:
+                continue
+            d = (s.get("score") or 0) - (p.get("score") or 0)
+            if abs(d) >= CFG["stability_delta_threshold"]:
+                direction = "improved" if d > 0 else "deteriorated"
+                candidates.append({
+                    "type": "stability_shift",
+                    "magnitude": abs(d) / CFG["stability_delta_threshold"],
+                    "headline": f"{s['state']} Stability Index {direction} sharply",
+                    "significance": (
+                        f"Period-over-period swing of {abs(d)} points crosses the "
+                        f"{CFG['stability_delta_threshold']}-point alert threshold."
+                    ),
+                    "numbers": (
+                        f"{p.get('score')}/100 ({p.get('level')}) -> "
+                        f"{s.get('score')}/100 ({s.get('level')}), delta {d:+d}"
+                    ),
+                })
+
+    # 3. Threat-category volume spikes vs trailing baseline
+    if category_baselines:
+        base_counts: dict = {}
+        for cats in category_baselines:
+            for entry in cats or []:
+                name, cnt = entry[0], entry[1]
+                base_counts.setdefault(name, []).append(cnt)
+        for entry in stats.get("top_categories", []):
+            name, cnt = entry[0], entry[1]
+            base = base_counts.get(name)
+            if not base:
+                continue
+            mean = sum(base) / len(base)
+            if mean <= 0:
+                continue
+            ratio = cnt / mean
+            if (cnt >= CFG["category_spike_min_count"]
+                    and ratio >= CFG["category_spike_ratio"]
+                    and not _category_covered_by_paoi(name)):
+                candidates.append({
+                    "type": "category_spike",
+                    "magnitude": ratio / CFG["category_spike_ratio"],
+                    "headline": f"'{name}' report volume spiked",
+                    "significance": (
+                        f"{ratio:.1f}x the trailing {len(base)}-period average and "
+                        "not the lead topic of any priority area."
+                    ),
+                    "numbers": f"{cnt} items this period vs {mean:.0f} avg over prior {len(base)} period(s)",
+                })
+
+    candidates.sort(key=lambda c: -c["magnitude"])
+    return [{k: v for k, v in c.items() if k != "magnitude"}
+            for c in candidates[:CFG["max_items"]]]
+
+
+async def _build_attention_required(stats: dict, prev_stats: Optional[dict],
+                                    category_baselines: list,
+                                    start_iso: str, end_iso: str) -> list:
+    """Assemble Commander's Attention Required items for the period."""
+    import paoi_brief
+    try:
+        other = await paoi_brief.other_faultline_movements(db, start_iso, end_iso, limit=20)
+    except Exception:
+        logger.exception("other_faultline_movements failed for attention scan")
+        other = {"rising": [], "declining": []}
+    return _detect_attention_items(stats, prev_stats, category_baselines, other)
+
+
 async def _run_generation(year: int, month: int, force_rich: bool = False) -> dict:
     """The actual heavy generator — called via background task or directly."""
     logger.info(f"Monthly brief generation start: {year}-{month:02d}")
@@ -937,6 +1105,38 @@ async def _run_generation(year: int, month: int, force_rich: bool = False) -> di
     #     Rich synthesis on first generation of this period, lean on regen.
     paoi_analysis = await _build_paoi_analysis(year, month, month_name, force_rich=force_rich)
 
+    # 2h. Per-PAOI map layers — current vs previous month critical items
+    start_iso, end_iso = _month_range(year, month)
+    prev_y, prev_m = (year, month - 1) if month > 1 else (year - 1, 12)
+    prev_start_iso, prev_end_iso = _month_range(prev_y, prev_m)
+    try:
+        paoi_analysis["map_points"] = await _build_paoi_map_points(
+            [p["id"] for p in paoi_analysis.get("paois", [])],
+            start_iso, end_iso, prev_start_iso, prev_end_iso,
+        )
+    except Exception:
+        logger.exception("PAOI map point build failed")
+        paoi_analysis["map_points"] = {}
+
+    # 2i. Commander's Attention Required — deterministic outlier scan
+    prev_doc = await monthly_briefs_col.find_one(
+        {"year": prev_y, "month": prev_m, "status": {"$in": ["ready", "partial"]}},
+        {"_id": 0, "stats.stability": 1},
+    )
+    from periodic_report_config import ATTENTION_CONFIG
+    baseline_cursor = monthly_briefs_col.find(
+        {"status": {"$in": ["ready", "partial"]},
+         "$nor": [{"year": year, "month": month}]},
+        {"_id": 0, "stats.top_categories": 1},
+    ).sort([("year", -1), ("month", -1)]).limit(ATTENTION_CONFIG["category_baseline_periods"])
+    category_baselines = [
+        (b.get("stats") or {}).get("top_categories", [])
+        async for b in baseline_cursor
+    ]
+    attention_required = await _build_attention_required(
+        stats, (prev_doc or {}).get("stats"), category_baselines, start_iso, end_iso,
+    )
+
     # 3. Assemble brief
     # Detect partial failure — LLM calls silently returned empty
     llm_ok = bool(exec_summary and state_sections)
@@ -958,6 +1158,7 @@ async def _run_generation(year: int, month: int, force_rich: bool = False) -> di
         "cross_border_analysis": cross_border_analysis,
         "faultline_analysis": faultline_section,
         "paoi_analysis": paoi_analysis,
+        "attention_required": attention_required,
         # pop (not get) so the internal key doesn't persist in the stored doc
         "generation_count": paoi_analysis.pop("_next_generation_count", 1),
     }
@@ -1089,11 +1290,28 @@ async def get_monthly_brief_pdf(
     # Fetch previous month for comparison snapshot
     prev_year, prev_month = (year, month - 1) if month > 1 else (year - 1, 12)
     prev_brief = await monthly_briefs_col.find_one(
-        {"year": prev_year, "month": prev_month, "status": "ready"}, {"_id": 0}
+        {"year": prev_year, "month": prev_month, "status": {"$in": ["ready", "partial"]}}, {"_id": 0}
     )
 
+    # Per-PAOI score history across all stored briefs (for trendline at 3+ periods)
+    paoi_history = defaultdict(list)
+    hist_cursor = monthly_briefs_col.find(
+        {"status": {"$in": ["ready", "partial"]}},
+        {"_id": 0, "year": 1, "month": 1, "paoi_analysis.commander_dashboard": 1},
+    ).sort([("year", 1), ("month", 1)])
+    async for b in hist_cursor:
+        if (b["year"], b["month"]) > (year, month):
+            continue  # future periods don't belong on this brief's trendline
+        label = datetime(b["year"], b["month"], 1).strftime("%b %y")
+        for row in (b.get("paoi_analysis") or {}).get("commander_dashboard", []):
+            if row.get("score") is not None:
+                paoi_history[row["id"]].append({
+                    "label": label, "score": row["score"], "level": row.get("level", ""),
+                })
+
     try:
-        pdf_bytes = _render_pdf(brief, prev_brief=prev_brief, include_faultlines=include_faultlines)
+        pdf_bytes = _render_pdf(brief, prev_brief=prev_brief, include_faultlines=include_faultlines,
+                                paoi_history=dict(paoi_history))
     except Exception as e:
         import traceback
         logger.error(f"PDF render failed: {traceback.format_exc()}")
@@ -1126,7 +1344,10 @@ def _ascii(s) -> str:
     return s.encode("latin-1", errors="replace").decode("latin-1")
 
 
-def _render_pdf(brief: dict, prev_brief: dict = None, include_faultlines: bool = True) -> bytes:
+def _render_pdf(brief: dict, prev_brief: dict = None, include_faultlines: bool = True,
+                paoi_history: dict = None) -> bytes:
+    """paoi_history: {paoi_id: [{label, score, level}, ...]} oldest→newest,
+    supplied by the PDF routes for the per-PAOI trendline (drawn at 3+ periods)."""
     from fpdf import FPDF
     from fpdf.enums import XPos, YPos
 
@@ -1315,23 +1536,90 @@ def _render_pdf(brief: dict, prev_brief: dict = None, include_faultlines: bool =
             pdf.set_font("Helvetica", "B", 11)
             pdf.cell(0, 7, _ascii("  PRIORITY AREA DEEP DIVES"), fill=True, **NL)
             pdf.ln(2)
+
+        # Previous-period PAOI dashboard rows, for the period comparison block
+        prev_dash_map = {}
+        if prev_brief:
+            for r in (prev_brief.get("paoi_analysis") or {}).get("commander_dashboard", []):
+                prev_dash_map[r.get("id")] = r
+        paoi_history = paoi_history or {}
+        map_points_all = paoi.get("map_points") or {}
+
+        def _trend_word(delta_val, risk_trajectory=""):
+            rt = (risk_trajectory or "").upper()
+            if rt in ("IMPROVING", "DETERIORATING"):
+                return rt
+            if rt == "STABLE":
+                return "STEADY"
+            # Concern scale: rising score = deteriorating situation
+            if delta_val >= 5:
+                return "DETERIORATING"
+            if delta_val <= -5:
+                return "IMPROVING"
+            return "STEADY"
+
+        last_group = None
         for p in paoi.get("paois", []):
             if pdf.get_y() > 230:
                 pdf.add_page()
             mv = p.get("faultline_movement", {})
             syn = per.get(p["id"], {})
             level = mv.get("level", "STABLE")
-            risk_traj = syn.get("risk_trajectory", "")
+            delta = mv.get("delta", 0) or 0
+            trend = _trend_word(delta, syn.get("risk_trajectory", ""))
 
-            # PAOI header band
+            # Group banner when a parent grouping (e.g. RAS) starts
+            group = p.get("parent_group") or ""
+            if group and group != last_group:
+                pdf.set_fill_color(60, 40, 20)
+                pdf.set_text_color(240, 220, 170)
+                pdf.set_font("Helvetica", "B", 10)
+                pdf.cell(0, 7, _ascii(f"  {group.upper()}"), fill=True, **NL)
+                pdf.ln(1)
+            last_group = group
+
+            # PAOI header band: name + STATUS | TREND | FL: LEVEL (delta)
             pdf.set_fill_color(30, 60, 40)
             pdf.set_text_color(200, 230, 80)
             pdf.set_font("Helvetica", "B", 10)
-            hdr = _ascii(f"  P{p.get('rank')} {p.get('name', '')}")
-            level_tag = _ascii(f"  [{level}{('  ' + risk_traj) if risk_traj else ''}]")
-            pdf.cell(155, 7, hdr, fill=True)
-            pdf.set_font("Helvetica", "B", 9)
-            pdf.cell(0, 7, level_tag, fill=True, align="R", **NL)
+            sub_tag = "  >" if group else ""
+            hdr = _ascii(f" {sub_tag} P{p.get('rank')} {p.get('name', '')}"[:52])
+            status_tag = _ascii(f"{level} | {trend} | FL: {level} ({delta:+.1f})  ")
+            pdf.cell(102, 7, hdr, fill=True)
+            pdf.set_font("Helvetica", "B", 7.5)
+            pdf.cell(0, 7, status_tag, fill=True, align="R", **NL)
+
+            # Period comparison: prev status -> current, FL delta, trendline (3+)
+            prev_row = prev_dash_map.get(p["id"])
+            hist = paoi_history.get(p["id"]) or []
+            if prev_row or len(hist) >= 3:
+                pdf.set_fill_color(238, 242, 246)
+                pdf.set_font("Helvetica", "B", 8)
+                pdf.set_text_color(40, 60, 90)
+                pdf.cell(0, 5, _ascii("  PERIOD COMPARISON"), fill=True, **NL)
+                if prev_row:
+                    p_sc = prev_row.get("score")
+                    c_sc = mv.get("last")
+                    fl_d = (c_sc - p_sc) if (c_sc is not None and p_sc is not None) else None
+                    line = (
+                        f"  Previous: {prev_row.get('level', '?')}"
+                        + (f" ({p_sc:.0f})" if p_sc is not None else "")
+                        + f"  ->  Current: {level}"
+                        + (f" ({c_sc:.0f})" if c_sc is not None else "")
+                        + (f"   |   FL delta {fl_d:+.1f} pts" if fl_d is not None else "")
+                    )
+                    pdf.set_font("Helvetica", "", 8)
+                    pdf.set_text_color(40, 40, 40)
+                    pdf.cell(0, 5, _ascii(line), **NL)
+                if len(hist) >= 3:
+                    import brief_visuals
+                    if pdf.get_y() > 240:
+                        pdf.add_page()
+                    y_after = brief_visuals.draw_paoi_trendline(
+                        pdf, hist[-12:], pdf.l_margin, pdf.get_y() + 1, w=120, h=28
+                    )
+                    pdf.set_y(y_after)
+                pdf.ln(1)
 
             if syn.get("situation_overview"):
                 # A: Situation Overview
@@ -1344,40 +1632,104 @@ def _render_pdf(brief: dict, prev_brief: dict = None, include_faultlines: bool =
                 pdf.multi_cell(0, 5, _ascii(str(syn["situation_overview"])), **NL)
                 pdf.ln(1)
 
-                # B: Events
-                events = syn.get("events") or []
-                if events:
+                # B: Critical Developments (new schema; falls back to legacy events)
+                devs = syn.get("critical_developments") or []
+                legacy_events = syn.get("events") or []
+                if devs:
                     pdf.set_fill_color(235, 235, 245)
                     pdf.set_font("Helvetica", "B", 8)
                     pdf.set_text_color(30, 30, 80)
-                    pdf.cell(0, 5, _ascii(f"  B. MOST IMPACTFUL EVENTS ({len(events)})"), fill=True, **NL)
-                    for ei, ev in enumerate(events, 1):
-                        if pdf.get_y() > 258:
+                    pdf.cell(0, 5, _ascii(f"  B. CRITICAL DEVELOPMENTS ({len(devs)})"), fill=True, **NL)
+                    for di, dv in enumerate(devs, 1):
+                        if pdf.get_y() > 252:
                             pdf.add_page()
                         pdf.set_fill_color(210, 215, 228)
                         pdf.set_font("Helvetica", "B", 8)
                         pdf.set_text_color(20, 20, 60)
-                        pdf.cell(0, 5, _ascii(f"  EVENT {ei} — {(ev.get('heading') or '')[:78]}"), fill=True, **NL)
+                        conf = (dv.get("confidence") or "").upper()
+                        conf_tag = f"  [{conf}]" if conf else ""
+                        pdf.cell(0, 5, _ascii(f"  {di}. {(dv.get('heading') or '')[:66]}{conf_tag}"), fill=True, **NL)
+                        if dv.get("location"):
+                            pdf.set_font("Helvetica", "I", 7)
+                            pdf.set_text_color(80, 80, 100)
+                            pdf.set_x(pdf.l_margin)
+                            pdf.cell(0, 4, _ascii(f"  Location: {dv['location'][:85]}"), **NL)
+                        if dv.get("description"):
+                            pdf.set_font("Helvetica", "", 8)
+                            pdf.set_text_color(40, 40, 40)
+                            pdf.set_x(pdf.l_margin)
+                            pdf.multi_cell(0, 4, _ascii(f"  {dv['description']}"), **NL)
+                        if dv.get("impact_on_pai"):
+                            pdf.set_font("Helvetica", "B", 8)
+                            pdf.set_text_color(120, 60, 20)
+                            pdf.set_x(pdf.l_margin)
+                            pdf.multi_cell(0, 4, _ascii(f"  Impact on PAI: {dv['impact_on_pai']}"), **NL)
+                        actors = dv.get("actors") or []
+                        if actors:
+                            if isinstance(actors, list):
+                                actors = ", ".join(str(a) for a in actors)
+                            pdf.set_font("Helvetica", "I", 7)
+                            pdf.set_text_color(60, 100, 80)
+                            pdf.set_x(pdf.l_margin)
+                            pdf.multi_cell(0, 4, _ascii(f"  Actors: {actors}"), **NL)
+                        pdf.ln(1)
+                elif legacy_events:
+                    pdf.set_fill_color(235, 235, 245)
+                    pdf.set_font("Helvetica", "B", 8)
+                    pdf.set_text_color(30, 30, 80)
+                    pdf.cell(0, 5, _ascii(f"  B. CRITICAL DEVELOPMENTS ({len(legacy_events)})"), fill=True, **NL)
+                    for ei, ev in enumerate(legacy_events, 1):
+                        if pdf.get_y() > 252:
+                            pdf.add_page()
+                        pdf.set_fill_color(210, 215, 228)
+                        pdf.set_font("Helvetica", "B", 8)
+                        pdf.set_text_color(20, 20, 60)
+                        pdf.cell(0, 5, _ascii(f"  {ei}. {(ev.get('heading') or '')[:78]}"), fill=True, **NL)
                         if ev.get("location"):
                             pdf.set_font("Helvetica", "I", 7)
                             pdf.set_text_color(80, 80, 100)
+                            pdf.set_x(pdf.l_margin)
                             pdf.cell(0, 4, _ascii(f"  Location: {ev['location'][:80]}"), **NL)
                         if ev.get("what_happened"):
                             pdf.set_font("Helvetica", "", 8)
                             pdf.set_text_color(40, 40, 40)
+                            pdf.set_x(pdf.l_margin)
                             pdf.multi_cell(0, 4, _ascii(f"  What happened: {ev['what_happened']}"), **NL)
                         if ev.get("why_it_matters"):
                             pdf.set_font("Helvetica", "B", 8)
                             pdf.set_text_color(120, 60, 20)
-                            pdf.multi_cell(0, 4, _ascii(f"  Why it matters: {ev['why_it_matters']}"), **NL)
+                            pdf.set_x(pdf.l_margin)
+                            pdf.multi_cell(0, 4, _ascii(f"  Impact on PAI: {ev['why_it_matters']}"), **NL)
                         if ev.get("linkages"):
                             pdf.set_font("Helvetica", "I", 7)
                             pdf.set_text_color(60, 100, 80)
+                            pdf.set_x(pdf.l_margin)
                             pdf.multi_cell(0, 4, _ascii(f"  Linkages: {ev['linkages']}"), **NL)
                         pdf.ln(1)
 
+                # Map view: current (green ring) vs previous (brown ring) items
+                mp = map_points_all.get(p["id"]) or {}
+                if mp.get("current") or mp.get("previous"):
+                    import brief_visuals
+                    map_h = 82
+                    if pdf.get_y() + map_h + 14 > 275:
+                        pdf.add_page()
+                    pdf.set_fill_color(230, 240, 220)
+                    pdf.set_font("Helvetica", "B", 8)
+                    pdf.set_text_color(50, 70, 40)
+                    pdf.cell(0, 5, _ascii("  SITUATION MAP - CRITICAL ITEM LOCATIONS"), fill=True, **NL)
+                    y_after = brief_visuals.draw_paoi_map(
+                        pdf, mp.get("current") or [], mp.get("previous") or [],
+                        pdf.l_margin, pdf.get_y() + 1, w=130, h=map_h,
+                        unresolved=mp.get("unresolved_current") or [],
+                    )
+                    pdf.set_y(y_after)
+                    pdf.ln(1)
+
                 # C: Overall Assessment
                 if syn.get("overall_assessment"):
+                    if pdf.get_y() > 255:
+                        pdf.add_page()
                     pdf.set_fill_color(255, 243, 200)
                     pdf.set_font("Helvetica", "B", 8)
                     pdf.set_text_color(120, 80, 0)
@@ -1387,13 +1739,44 @@ def _render_pdf(brief: dict, prev_brief: dict = None, include_faultlines: bool =
                     pdf.multi_cell(0, 5, _ascii(str(syn["overall_assessment"])), **NL)
                     pdf.ln(1)
 
-                # D: Commander Focus
+                # D: Actionable Recommendations (falls back to legacy commander_focus)
+                recs = syn.get("actionable_recommendations") or []
                 focus = syn.get("commander_focus") or []
-                if focus:
+                if recs:
                     pdf.set_fill_color(250, 230, 230)
                     pdf.set_font("Helvetica", "B", 8)
                     pdf.set_text_color(150, 30, 30)
-                    pdf.cell(0, 5, _ascii("  D. COMMANDER FOCUS"), fill=True, **NL)
+                    pdf.cell(0, 5, _ascii(f"  D. ACTIONABLE RECOMMENDATIONS ({len(recs)})"), fill=True, **NL)
+                    for ri, rec in enumerate(recs, 1):
+                        if pdf.get_y() > 250:
+                            pdf.add_page()
+                        pdf.set_fill_color(252, 240, 240)
+                        pdf.set_font("Helvetica", "B", 8)
+                        pdf.set_text_color(150, 30, 30)
+                        pdf.set_x(pdf.l_margin)
+                        pdf.multi_cell(0, 5, _ascii(f"  {ri}. {rec.get('threat_issue', '')}"), fill=True, **NL)
+                        for fkey, flabel in [
+                            ("geography", "Geography"),
+                            ("why_it_matters", "Why It Matters"),
+                            ("recommended_action", "Recommended Action"),
+                            ("preventive_effect", "Preventive Effect"),
+                        ]:
+                            v = rec.get(fkey)
+                            if not v:
+                                continue
+                            pdf.set_font("Helvetica", "B", 7)
+                            pdf.set_text_color(90, 40, 40)
+                            pdf.set_x(pdf.l_margin)
+                            pdf.cell(32, 4, _ascii(f"     {flabel}:"))
+                            pdf.set_font("Helvetica", "", 7.5)
+                            pdf.set_text_color(40, 40, 40)
+                            pdf.multi_cell(0, 4, _ascii(str(v)), **NL)
+                        pdf.ln(1)
+                elif focus:
+                    pdf.set_fill_color(250, 230, 230)
+                    pdf.set_font("Helvetica", "B", 8)
+                    pdf.set_text_color(150, 30, 30)
+                    pdf.cell(0, 5, _ascii("  D. ACTIONABLE RECOMMENDATIONS"), fill=True, **NL)
                     for fi, fitem in enumerate(focus, 1):
                         if isinstance(fitem, dict):
                             loc = fitem.get("location") or ""
@@ -1401,18 +1784,43 @@ def _render_pdf(brief: dict, prev_brief: dict = None, include_faultlines: bool =
                             if loc:
                                 pdf.set_font("Helvetica", "B", 8)
                                 pdf.set_text_color(150, 30, 30)
+                                pdf.set_x(pdf.l_margin)
                                 pdf.multi_cell(0, 4, _ascii(f"  {fi}. [{loc}]"), **NL)
                                 pdf.set_font("Helvetica", "", 8)
                                 pdf.set_text_color(40, 40, 40)
+                                pdf.set_x(pdf.l_margin)
                                 pdf.multi_cell(0, 4, _ascii(f"     {action}"), **NL)
                             else:
                                 pdf.set_font("Helvetica", "", 8)
                                 pdf.set_text_color(40, 40, 40)
+                                pdf.set_x(pdf.l_margin)
                                 pdf.multi_cell(0, 4, _ascii(f"  {fi}. {action}"), **NL)
                         else:
                             pdf.set_font("Helvetica", "", 8)
                             pdf.set_text_color(40, 40, 40)
+                            pdf.set_x(pdf.l_margin)
                             pdf.multi_cell(0, 4, _ascii(f"  {fi}. {fitem}"), **NL)
+
+                # E: Next Period Watch
+                watch = syn.get("next_period_watch") or []
+                if watch:
+                    if pdf.get_y() > 255:
+                        pdf.add_page()
+                    pdf.set_fill_color(235, 242, 235)
+                    pdf.set_font("Helvetica", "B", 8)
+                    pdf.set_text_color(40, 90, 50)
+                    pdf.cell(0, 5, _ascii("  E. NEXT PERIOD WATCH"), fill=True, **NL)
+                    for wi in watch:
+                        if isinstance(wi, dict):
+                            geo = wi.get("geography") or ""
+                            item_txt = wi.get("item") or ""
+                            line = f"  - [{geo}] {item_txt}" if geo else f"  - {item_txt}"
+                        else:
+                            line = f"  - {wi}"
+                        pdf.set_font("Helvetica", "", 8)
+                        pdf.set_text_color(40, 40, 40)
+                        pdf.set_x(pdf.l_margin)
+                        pdf.multi_cell(0, 4, _ascii(line), **NL)
 
             else:
                 # Fallback: lean tier or synthesis unavailable
@@ -1436,7 +1844,42 @@ def _render_pdf(brief: dict, prev_brief: dict = None, include_faultlines: bool =
             pdf.ln(3)
 
     # ══════════════════════════════════════════════════════════════════════════
-    # 2. FAULTLINE ANALYSIS
+    # 2. COMMANDER'S ATTENTION REQUIRED — auto-detected outliers
+    #    (positioned after the PAOI deep dives per commander direction)
+    # ══════════════════════════════════════════════════════════════════════════
+    attention = brief.get("attention_required") or []
+    if attention:
+        if pdf.page == 0 or pdf.get_y() > 215:
+            pdf.add_page()
+        else:
+            pdf.ln(2)
+        pdf.set_fill_color(120, 60, 10)
+        pdf.set_text_color(255, 240, 210)
+        pdf.set_font("Helvetica", "B", 12)
+        pdf.cell(0, 8, _ascii("  COMMANDER'S ATTENTION REQUIRED"), fill=True, **NL)
+        pdf.set_font("Helvetica", "I", 7)
+        pdf.set_text_color(120, 100, 70)
+        pdf.cell(0, 4, _ascii("  Auto-detected statistical outliers outside standing priority-area coverage"), **NL)
+        pdf.ln(1)
+        for ai, item in enumerate(attention, 1):
+            if pdf.get_y() > 255:
+                pdf.add_page()
+            pdf.set_font("Helvetica", "B", 9)
+            pdf.set_text_color(120, 60, 10)
+            pdf.set_x(pdf.l_margin)
+            pdf.multi_cell(0, 5, _ascii(f"  {ai}. {item.get('headline', '')}"), **NL)
+            pdf.set_font("Helvetica", "", 8)
+            pdf.set_text_color(40, 40, 40)
+            pdf.set_x(pdf.l_margin)
+            pdf.multi_cell(0, 4, _ascii(f"     {item.get('significance', '')}"), **NL)
+            pdf.set_font("Helvetica", "I", 7.5)
+            pdf.set_text_color(100, 100, 100)
+            pdf.set_x(pdf.l_margin)
+            pdf.multi_cell(0, 4, _ascii(f"     Data: {item.get('numbers', '')}"), **NL)
+            pdf.ln(1)
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # 3. FAULTLINE ANALYSIS
     # ══════════════════════════════════════════════════════════════════════════
     fl_section = brief.get("faultline_analysis") or {}
     if include_faultlines and fl_section.get("available"):

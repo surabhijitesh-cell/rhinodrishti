@@ -40,6 +40,8 @@ from routers.brief_monthly import (
     _build_notebooklm_script,
     _render_pdf,
     _aggregate_faultline_section,
+    _build_paoi_map_points,
+    _build_attention_required,
     NER_STATES_FULL,
     BORDER_COUNTRIES,
 )
@@ -459,6 +461,48 @@ async def _run_fortnightly_generation(year: int, month: int, period: int, force_
     # PAOI sections — rich on first generation of this period, lean on regen.
     paoi_analysis = await _build_fortnightly_paoi(year, month, period, start_iso, end_iso, period_label, force_rich=force_rich)
 
+    # Previous fortnight window: P2 -> P1 same month; P1 -> P2 of previous month
+    if period == 2:
+        prev_key = {"year": year, "month": month, "period": 1}
+    else:
+        prev_y = year if month > 1 else year - 1
+        prev_m = month - 1 if month > 1 else 12
+        prev_key = {"year": prev_y, "month": prev_m, "period": 2}
+    prev_start_iso, prev_end_iso, _prev_label = _fortnightly_range(
+        prev_key["year"], prev_key["month"], prev_key["period"]
+    )
+
+    # Per-PAOI map layers — current vs previous fortnight critical items
+    try:
+        paoi_analysis["map_points"] = await _build_paoi_map_points(
+            [p["id"] for p in paoi_analysis.get("paois", [])],
+            start_iso, end_iso, prev_start_iso, prev_end_iso,
+        )
+    except Exception:
+        logger.exception("Fortnightly PAOI map point build failed")
+        paoi_analysis["map_points"] = {}
+
+    # Commander's Attention Required — deterministic outlier scan
+    prev_doc = await fortnightly_briefs_col.find_one(
+        {**prev_key, "status": {"$in": ["ready", "partial"]}},
+        {"_id": 0, "stats.stability": 1},
+    )
+    from periodic_report_config import ATTENTION_CONFIG
+    baseline_cursor = fortnightly_briefs_col.find(
+        {"status": {"$in": ["ready", "partial"]},
+         "$nor": [{"year": year, "month": month, "period": period}]},
+        {"_id": 0, "stats.top_categories": 1},
+    ).sort([("year", -1), ("month", -1), ("period", -1)]).limit(
+        ATTENTION_CONFIG["category_baseline_periods"]
+    )
+    category_baselines = [
+        (b.get("stats") or {}).get("top_categories", [])
+        async for b in baseline_cursor
+    ]
+    attention_required = await _build_attention_required(
+        stats, (prev_doc or {}).get("stats"), category_baselines, start_iso, end_iso,
+    )
+
     faultline_analysis = await _aggregate_faultline_section(year, month)
 
     llm_ok = bool(exec_summary and state_sections)
@@ -481,6 +525,7 @@ async def _run_fortnightly_generation(year: int, month: int, period: int, force_
         "cross_border_analysis": cross_border_analysis,
         "paoi_analysis": paoi_analysis,
         "faultline_analysis": faultline_analysis,
+        "attention_required": attention_required,
         "generation_count": paoi_analysis.pop("_next_generation_count", 1),
     }
     if not llm_ok:
@@ -609,18 +654,36 @@ async def get_fortnightly_pdf(year: int, month: int, period: int):
     if period == 2:
         # P2 → recap P1 of same month
         prev_brief = await fortnightly_briefs_col.find_one(
-            {"year": year, "month": month, "period": 1, "status": "ready"}, {"_id": 0}
+            {"year": year, "month": month, "period": 1, "status": {"$in": ["ready", "partial"]}}, {"_id": 0}
         )
     else:
         # P1 → recap P2 of previous month
         prev_year  = year if month > 1 else year - 1
         prev_month = month - 1 if month > 1 else 12
         prev_brief = await fortnightly_briefs_col.find_one(
-            {"year": prev_year, "month": prev_month, "period": 2, "status": "ready"}, {"_id": 0}
+            {"year": prev_year, "month": prev_month, "period": 2, "status": {"$in": ["ready", "partial"]}}, {"_id": 0}
         )
 
+    # Per-PAOI score history across stored fortnightly briefs (trendline at 3+)
+    from collections import defaultdict
+    paoi_history = defaultdict(list)
+    hist_cursor = fortnightly_briefs_col.find(
+        {"status": {"$in": ["ready", "partial"]}},
+        {"_id": 0, "year": 1, "month": 1, "period": 1,
+         "paoi_analysis.commander_dashboard": 1},
+    ).sort([("year", 1), ("month", 1), ("period", 1)])
+    async for b in hist_cursor:
+        if (b["year"], b["month"], b["period"]) > (year, month, period):
+            continue  # future periods don't belong on this brief's trendline
+        label = f"{datetime(b['year'], b['month'], 1).strftime('%b')} P{b['period']}"
+        for row in (b.get("paoi_analysis") or {}).get("commander_dashboard", []):
+            if row.get("score") is not None:
+                paoi_history[row["id"]].append({
+                    "label": label, "score": row["score"], "level": row.get("level", ""),
+                })
+
     try:
-        pdf_bytes = _render_pdf(brief, prev_brief=prev_brief)
+        pdf_bytes = _render_pdf(brief, prev_brief=prev_brief, paoi_history=dict(paoi_history))
     except Exception as e:
         import traceback
         logger.error(f"Fortnightly PDF render failed: {traceback.format_exc()}")

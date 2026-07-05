@@ -195,6 +195,8 @@ async def aggregate_paoi_period(db, start_iso: str, end_iso: str) -> dict:
             "geography": pa.get("geography", []),
             "watch_geography": pa.get("watch_geography", []),
             "intel_notes": pa.get("intel_notes", ""),
+            "parent_group": pa.get("parent_group", ""),
+            "priority_keywords": pa.get("priority_keywords", []),
             "faultline_movement": movement,
             "keyword_hits": keyword_hits,
         })
@@ -206,9 +208,24 @@ async def aggregate_paoi_period(db, start_iso: str, end_iso: str) -> dict:
     return {"paois": out_paois, "as_of": end_date}
 
 
+def article_matches_pull(art: dict, keywords: list[str], exclude_keywords: list[str]) -> bool:
+    """Pure keyword match for a PAOI pull: any include kw AND no exclude kw
+    in the title+summary haystack. Keywords must be pre-lowercased."""
+    hay = " ".join([
+        (art.get("title") or "").lower(),
+        (art.get("ai_summary") or "").lower(),
+    ])
+    if not any(kw in hay for kw in keywords):
+        return False
+    if exclude_keywords and any(kw in hay for kw in exclude_keywords):
+        return False
+    return True
+
+
 async def _keyword_article_pull(db, keyword_pull: dict, start_iso: str, end_iso: str) -> dict:
     """Count + sample articles matching a PAOI's keyword pull in the window."""
     keywords = [k.lower() for k in keyword_pull.get("keywords", [])]
+    exclude_keywords = [k.lower() for k in keyword_pull.get("exclude_keywords", [])]
     regions = keyword_pull.get("regions", [])
     if not keywords:
         return {"n_articles": 0, "top_articles": []}
@@ -237,11 +254,7 @@ async def _keyword_article_pull(db, keyword_pull: dict, start_iso: str, end_iso:
 
     matched = []
     async for art in cursor:
-        hay = " ".join([
-            (art.get("title") or "").lower(),
-            (art.get("ai_summary") or "").lower(),
-        ])
-        if any(kw in hay for kw in keywords):
+        if article_matches_pull(art, keywords, exclude_keywords):
             matched.append(art)
         if len(matched) >= 40:
             break
@@ -275,6 +288,9 @@ def select_top_events_for_paoi(
     geo_lower = set(
         g.lower() for g in pa.get("geography", []) + pa.get("watch_geography", [])
     )
+    # Commander-designated priority terms (e.g. P3 highways/rail, RAS stations):
+    # matching articles get a flat boost so they surface even at low volume.
+    priority_kws = [k.lower() for k in pa.get("priority_keywords", [])]
 
     def _score(a: dict) -> float:
         ps = min(float(a.get("priority_score") or 0), 100) / 100
@@ -292,7 +308,15 @@ def select_top_events_for_paoi(
                     rec = max(0.0, 1.0 - days_gap / 30)
             except Exception:
                 pass
-        return 0.4 * ps + 0.3 * sv + 0.2 * paoi_rel + 0.1 * rec
+        base = 0.4 * ps + 0.3 * sv + 0.2 * paoi_rel + 0.1 * rec
+        if priority_kws:
+            hay = " ".join([
+                (a.get("title") or "").lower(),
+                (a.get("ai_summary") or "").lower(),
+            ])
+            if any(kw in hay for kw in priority_kws):
+                base += 0.5
+        return base
 
     scored = sorted(articles, key=_score, reverse=True)
 
@@ -473,37 +497,50 @@ Most impactful events this period:
 
 STRICT RULES:
 1. [CONFIRMED] = direct data point from above. [ASSESSED] = inference. [SPECULATIVE] = forecast.
+   Tag EVERY substantive claim inline with one of these labels.
 2. No raw scores or numbers.
 3. EVERY location field must be the MOST SPECIFIC place name in the source event:
    - Use the ICP name, border haat name, village, NH number + nearest town, bridge name, or sub-division.
    - Pull directly from the event TITLE and NER locations listed above.
    - REJECTED examples: "Tripura border", "Assam", "Meghalaya border", "Bangladesh border".
    - ACCEPTED examples: "Agartala-Akhaura ICP", "Dawki crossing, East Khasi Hills", "NH-44 near Lumding, Assam", "Sutarkandi ICP, Karimganj", "Unakoti district, North Tripura".
-4. commander_focus has TWO separate fields per item: "location" (exact named place) and "action" (specific operation + timeframe + unit if applicable). Keeping them separate prevents vague answers. If multiple events point to the same location, combine into one item. If events point to different locations, create separate items — up to 5.
+4. impact_on_pai = how the development affects THIS priority area of interest specifically.
+5. actionable_recommendations must be concrete and executable, not vague ("improve coordination" is rejected).
 
 Return strict JSON:
 {{
-  "situation_overview": "3-5 sentences naming the most active specific flashpoints from events",
-  "events": [
+  "situation_overview": "3-5 sentences naming the most active specific flashpoints from events, with inline [LABEL] tags",
+  "critical_developments": [
     {{
       "heading": "action-headline under 10 words",
       "location": "EXACT place: ICP / border haat / village / NH segment / bridge — from event title",
-      "what_happened": "2-3 sentences with specific actor names and exact places",
-      "why_it_matters": "1-2 sentences on operational significance",
-      "linkages": "1 sentence connecting to faultline or cross-border dynamic"
+      "confidence": "CONFIRMED or ASSESSED or SPECULATIVE",
+      "description": "2-3 sentences with specific actor names and exact places, inline [LABEL] tags",
+      "impact_on_pai": "1-2 sentences on what this means for this priority area",
+      "actors": ["named actor or group 1", "actor 2"]
     }}
   ],
-  "overall_assessment": "2-3 sentences naming the highest-risk specific flashpoints",
+  "overall_assessment": "2-3 sentences: the commander's bottom line for this PAOI, naming the highest-risk specific flashpoints",
   "risk_trajectory": "IMPROVING or STABLE or DETERIORATING",
-  "commander_focus": [
+  "actionable_recommendations": [
     {{
-      "location": "EXACT named place from events — ICP / village / NH km / border haat / district + sub-division",
-      "action": "Specific operational action with timeframe and responsible unit"
+      "threat_issue": "the specific threat or issue being addressed",
+      "geography": "EXACT named place(s) this applies to",
+      "why_it_matters": "1 sentence on operational significance",
+      "recommended_action": "specific operational action with timeframe and responsible unit",
+      "preventive_effect": "1 sentence on what this prevents or mitigates"
+    }}
+  ],
+  "next_period_watch": [
+    {{
+      "geography": "named place or corridor to watch",
+      "item": "1 sentence: the specific development or indicator to watch for"
     }}
   ]
 }}
 
-Generate one events entry for each of the {n_events} EVENT(s) above. Generate up to 5 commander_focus items.
+Generate one critical_developments entry for each of the {n_events} EVENT(s) above.
+Generate up to 4 actionable_recommendations and up to 5 next_period_watch items.
 """
 
 
@@ -576,14 +613,19 @@ async def run_paoi_synthesis(
         # asyncio.gather on 8+ PAOIs causes simultaneous requests that all get throttled.
         for pa in paois:
             try:
-                res = await call_llm_json(_rich_prompt(pa), 2000)
+                res = await call_llm_json(_rich_prompt(pa), 3000)
                 if isinstance(res, dict) and res:
-                    # commander_focus may be list of {location, action} objects or legacy strings
+                    # New schema (critical_developments et al.); legacy keys
+                    # (events / commander_focus) kept so previously stored
+                    # briefs still render from their stored synthesis.
                     per_paoi[pa["id"]] = {
                         "situation_overview": res.get("situation_overview", ""),
+                        "critical_developments": res.get("critical_developments") or [],
                         "events": res.get("events") or [],
                         "overall_assessment": res.get("overall_assessment", ""),
                         "risk_trajectory": res.get("risk_trajectory", "STABLE"),
+                        "actionable_recommendations": res.get("actionable_recommendations") or [],
+                        "next_period_watch": res.get("next_period_watch") or [],
                         "commander_focus": res.get("commander_focus") or [],
                     }
                 else:

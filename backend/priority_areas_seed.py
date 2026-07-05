@@ -5,20 +5,28 @@ A curated overlay on top of the 66 faultlines. Each PAOI is a high-level
 commander concern that aggregates one or more faultlines (and/or keyword pulls)
 and gets RED treatment in briefs + daily-brief news tags.
 
-5 PAOIs (commander-defined):
+PAOIs (commander-defined):
   P1 India-Bangladesh Border
   P2 Jamaat-e-Islami spread + radicalisation
-  P3 NER Lines of Communication        (keyword pull — no faultline backing)
-  P4 Meghalaya Internal Security        (commander's location)
-  P5 Assam Tea Garden ecology           (keyword pull + 2 faultlines)
+  P3 NER Lines of Communication        (keyword pull — no faultline backing;
+                                        NH-27/15/17/2/6 + NFR rail priority)
+  Rear Area Internal Security Scan (RAS) — parent grouping of two sub-PAOIs:
+    P4 Meghalaya Internal Security      (commander's location)
+    P5 RAS Locations                    (Narangi, Jorhat, Misamari, Likabali,
+                                         Panitola, Masimpur, Shillong)
+  P6 Tribal Dynamics — Meghalaya
 
 Each PAOI:
   id, rank, name, description
   geography           — regions/districts in scope
   actors_of_interest  — named actors to watch
   linked_faultline_ids— existing faultlines that feed this PAOI
-  keyword_pull        — optional {keywords[], regions[]} for faultline-less topics
-                        (P3 LOC, P5 tea gardens) — matches articles directly
+  keyword_pull        — optional {keywords[], regions[], exclude_keywords[]}
+                        for faultline-less topics (P3 LOC, RAS locations) —
+                        matches articles directly
+  priority_keywords   — optional commander-designated terms that boost an
+                        article into Critical Developments even at low volume
+  parent_group        — optional display grouping (RAS sub-PAOIs share one)
   watch_geography     — secondary watch areas (monitored, not primary)
   color               — "red" (all PAOIs render red by default)
 
@@ -26,6 +34,10 @@ Seeding also tags faultlines.priority_area_ids[] so any faultline in a PAOI
 can be RED-flagged everywhere (daily brief chips, faultline cards, alerts).
 """
 from datetime import datetime, timezone
+
+from periodic_report_config import LOC_PRIORITY_KEYWORDS, RAS_LOCATIONS
+
+RAS_PARENT_GROUP = "Rear Area Internal Security Scan"
 
 
 PRIORITY_AREAS = [
@@ -125,7 +137,10 @@ PRIORITY_AREAS = [
             "Status of major lines of communication across the entire NER — "
             "national highways, state roads, railway lines, and the Siliguri "
             "Corridor. Any disruption from civil unrest, blockade, bandh, natural "
-            "calamity, or insurgency is of concern, anywhere in NER."
+            "calamity, or insurgency is of concern, anywhere in NER. "
+            "Commander-designated priority infrastructure: NH-27, NH-15, NH-17, "
+            "NH-2, NH-6 and all major Northeast Frontier Railway lines including "
+            "branch lines."
         ),
         "geography": [
             "Assam", "Meghalaya", "Mizoram", "Manipur", "Nagaland",
@@ -147,11 +162,12 @@ PRIORITY_AREAS = [
                 "Tripura", "Arunachal Pradesh", "North Bengal",
             ],
         },
+        "priority_keywords": LOC_PRIORITY_KEYWORDS,
         "watch_geography": [],
         "color": "red",
     },
 
-    # ─── P4 — Meghalaya Internal Security ─────────────────────────────────────
+    # ─── P4 — Meghalaya Internal Security (RAS sub-PAOI) ──────────────────────
     {
         "id": "P4_meghalaya_internal_security",
         "rank": 4,
@@ -180,14 +196,53 @@ PRIORITY_AREAS = [
             ],
             "regions": ["Meghalaya"],
         },
+        "parent_group": RAS_PARENT_GROUP,
         "watch_geography": [],
         "color": "red",
     },
 
-    # ─── P5 — Tribal Dynamics — Meghalaya ────────────────────────────────────
+    # ─── P5 — RAS Locations (RAS sub-PAOI, location-based only) ───────────────
+    {
+        "id": "P5_ras_locations",
+        "rank": 5,
+        "name": "RAS Locations",
+        "description": (
+            "Location-based security status of commander-designated rear-area "
+            "stations: Narangi, Jorhat, Misamari, Likabali, Panitola, Masimpur, "
+            "and Shillong. Tracks any intelligence tagged to these locations "
+            "regardless of threat category, even at low volume. Highway and "
+            "railway disruption is excluded — that remains with NER Lines of "
+            "Communication (P3)."
+        ),
+        "geography": [
+            "Narangi", "Jorhat", "Misamari", "Likabali",
+            "Panitola", "Masimpur", "Shillong",
+            "Assam", "Arunachal Pradesh", "Meghalaya",
+        ],
+        "actors_of_interest": [
+            "insurgent groups", "radical networks", "criminal syndicates",
+            "agitating CSOs",
+        ],
+        "linked_faultline_ids": [],  # location keyword-driven, no faultline backing
+        "keyword_pull": {
+            "keywords": RAS_LOCATIONS,
+            "regions": ["Assam", "Arunachal Pradesh", "Meghalaya"],
+            # LoC coverage stays with P3 — keep highway/rail stories out of RAS
+            "exclude_keywords": [
+                "highway", "national highway", "NH-", "railway", "rail line",
+                "road block", "roadblock", "blockade",
+            ],
+        },
+        "priority_keywords": RAS_LOCATIONS,
+        "parent_group": RAS_PARENT_GROUP,
+        "watch_geography": [],
+        "color": "red",
+    },
+
+    # ─── P6 — Tribal Dynamics — Meghalaya ────────────────────────────────────
     {
         "id": "P5_meghalaya_tribal_dynamics",
-        "rank": 5,
+        "rank": 6,
         "name": "Tribal Dynamics — Meghalaya",
         "description": (
             "Intra-tribal and tribal-vs-non-tribal tensions within Meghalaya. "
