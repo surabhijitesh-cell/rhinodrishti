@@ -437,7 +437,14 @@ def _extract_location_hotspots(all_articles: list[dict], top_n: int = 20) -> lis
 
 def narrative_paoi_prompt(pa: dict, events: list[dict], period_label: str,
                           all_articles: list[dict] = None) -> str:
-    """One PAOI, narrative synthesis grounded in concrete events."""
+    """One PAOI, narrative synthesis grounded in a pool of candidate items.
+
+    `events` is a ranked candidate pool (NOT a 1:1 mapping to output
+    critical_developments) — the LLM decides how many distinct developments
+    exist and groups near-duplicate/related items (e.g. several BSF-BGB
+    clashes across different sectors) under one heading, the same way the
+    Custom Brief Generator's PAOI synthesis does.
+    """
     mv = pa["faultline_movement"]
     level = mv.get("level", "MONITOR")
     trend = _trend_arrow(mv.get("delta", 0))
@@ -473,16 +480,15 @@ def narrative_paoi_prompt(pa: dict, events: list[dict], period_label: str,
         loc_line = f"  NER locations: {loc_str}\n" if loc_str else ""
         district = ev.get("district", "")
         event_lines.append(
-            f"EVENT {i}: {ev.get('title', '')}\n"
+            f"[{i}] {ev.get('title', '')}\n"
             f"  Date: {ev.get('published_at','')[:10]}  "
             f"State: {ev.get('state','n/a')}  District: {district or 'n/a'}\n"
             f"{loc_line}"
             f"  Summary: {body}\n"
             f"  Severity: {ev.get('severity','n/a')}  Trajectory: {ev.get('threat_trajectory','n/a')}"
         )
-    events_block = "\n\n".join(event_lines) if event_lines else "No specific events retrieved."
+    events_block = "\n\n".join(event_lines) if event_lines else "No candidate items retrieved."
 
-    n_events = len(events)
     return f"""You are writing the PAOI narrative section for a commander intelligence brief.
 
 Period: {period_label}
@@ -492,20 +498,33 @@ Actors of interest: {', '.join(pa.get('actors_of_interest', [])[:6])}
 Faultline status: {fl_verbal}{subissues_block}
 {hotspot_block}
 
-Most impactful events this period:
+CANDIDATE INTELLIGENCE ITEMS this period ({len(events)} shown, ranked by relevance —
+NOT a list of developments to transcribe one-for-one):
 {events_block}
 
 STRICT RULES:
 1. [CONFIRMED] = direct data point from above. [ASSESSED] = inference. [SPECULATIVE] = forecast.
    Tag EVERY substantive claim inline with one of these labels.
 2. No raw scores or numbers.
-3. EVERY location field must be the MOST SPECIFIC place name in the source event:
+3. EVERY location field must be the MOST SPECIFIC place name(s) in the source item(s):
    - Use the ICP name, border haat name, village, NH number + nearest town, bridge name, or sub-division.
-   - Pull directly from the event TITLE and NER locations listed above.
+   - Pull directly from the item TITLE and NER locations listed above.
    - REJECTED examples: "Tripura border", "Assam", "Meghalaya border", "Bangladesh border".
    - ACCEPTED examples: "Agartala-Akhaura ICP", "Dawki crossing, East Khasi Hills", "NH-44 near Lumding, Assam", "Sutarkandi ICP, Karimganj", "Unakoti district, North Tripura".
 4. impact_on_pai = how the development affects THIS priority area of interest specifically.
 5. actionable_recommendations must be concrete and executable, not vague ("improve coordination" is rejected).
+6. ANALYZE — DO NOT TRANSCRIBE. Decide how many distinct critical_developments actually
+   exist (2-5, ranked by significance) rather than producing one entry per candidate item
+   above. GROUP multiple items that describe the SAME underlying pattern under ONE heading:
+   - Example: if items [2], [5], and [7] are all BSF-BGB confrontation incidents (even at
+     different sectors or on different dates), merge them into a single development like
+     "Escalating BSF-BGB Confrontations" whose location field lists every distinct place
+     involved (e.g. "Tripura (Unakoti), Assam (Mankachar, Sribhumi)") and whose description
+     synthesizes the pattern across all of them — do not list each incident as its own entry.
+   - Keep items separate only when they describe genuinely distinct issues (e.g. a
+     smuggling bust is a different development from an infiltration-refusal incident, even
+     if both involve BSF/BGB).
+   - A grouped development's actors list is the union of actors across the merged items.
 
 Return strict JSON:
 {{
@@ -539,8 +558,8 @@ Return strict JSON:
   ]
 }}
 
-Generate one critical_developments entry for each of the {n_events} EVENT(s) above.
-Generate up to 4 actionable_recommendations and up to 5 next_period_watch items.
+Generate 2-5 critical_developments total (grouped per rule 6 above — NOT one per candidate
+item). Generate up to 4 actionable_recommendations and up to 5 next_period_watch items.
 """
 
 
@@ -606,8 +625,13 @@ async def run_paoi_synthesis(
     if tier == "rich":
         def _rich_prompt(pa):
             all_arts = pa["keyword_hits"]["top_articles"]
-            events = select_top_events_for_paoi(all_arts, pa, n=5, period_end=period_end)
-            return narrative_paoi_prompt(pa, events, period_label, all_articles=all_arts)
+            # Wide ranked candidate pool (not a 1:1 output mapping) — mirrors the
+            # Custom Brief Generator's ~22-item digest so the LLM has enough
+            # material to recognize and group repeated patterns (e.g. multiple
+            # BSF-BGB clashes) into one development instead of listing each
+            # near-duplicate item separately.
+            candidates = select_top_events_for_paoi(all_arts, pa, n=18, period_end=period_end)
+            return narrative_paoi_prompt(pa, candidates, period_label, all_articles=all_arts)
 
         # Sequential calls with a short pause to avoid bursting OpenRouter rate limits.
         # asyncio.gather on 8+ PAOIs causes simultaneous requests that all get throttled.
