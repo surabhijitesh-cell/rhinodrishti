@@ -1,22 +1,32 @@
 """
-brief_visuals.py — fpdf2-native map and trendline drawing for the periodic
-(monthly + fortnightly) strategic brief PDFs.
+brief_visuals.py — district-level map and trendline rendering for the
+periodic (monthly + fortnightly) strategic brief PDFs.
 
-The dashboard map (frontend NERMap.js) is a Leaflet React component and cannot
-render server-side; this module re-renders the same DATA — the NER state
-polygons (assets/ner-states.geojson, copied from frontend/public) and the
-LOCATION_COORDS gazetteer (ported from NERMap.js) — using fpdf2 primitives.
+The dashboard map (frontend NERMap.js) is a Leaflet React component and
+cannot render server-side. The situation map here is a real geographic
+render instead: actual district polygons for the NER states, North Bengal,
+and Bangladesh (assets/ner_districts.geojson — geoBoundaries ADM2, ODbL /
+CC-BY, see assets/DISTRICT_DATA_LICENSE.txt) rasterized with Pillow, plus
+the LOCATION_COORDS gazetteer (ported from NERMap.js) for plotting items.
+Pillow was chosen over matplotlib after matplotlib's compiled font extension
+failed to load in this environment; Pillow needs no font file (Pillow's
+scalable `ImageFont.load_default(size=...)`) and is already a proven,
+widely-deployed dependency.
 
 Provides:
   geocode_place(name)          — gazetteer lookup with state-centroid fallback
   geocode_points(items)        — geocode a list of intel items → map points
-  draw_paoi_map(pdf, ...)      — per-PAOI map: state outlines + severity dots,
-                                 green ring = current period, brown = previous
+  draw_paoi_map(pdf, ...)      — per-PAOI map: real district outlines +
+                                 severity dots, green ring = current period,
+                                 brown ring = previous period
   draw_paoi_trendline(pdf, ..) — faultline-score line chart across 3+ periods
 """
+import io
 import json
 import math
 from pathlib import Path
+
+from PIL import Image, ImageDraw, ImageFont
 
 _ASSETS = Path(__file__).parent / "assets"
 
@@ -179,54 +189,60 @@ def geocode_points(items: list[dict]) -> tuple[list[dict], list[str]]:
     return points, unresolved
 
 
-# ── GeoJSON state outlines ────────────────────────────────────────────────────
+# ── GeoJSON district outlines (geoBoundaries ADM2, NER + North Bengal + BGD) ──
 
 _geo_cache: dict = {}
 
 
-def _load_state_rings(max_ring_points: int = 120) -> list[list[tuple]]:
-    """Load + downsample NER state polygon rings as [(lat, lon), ...] lists."""
-    if "rings" in _geo_cache:
-        return _geo_cache["rings"]
-    rings: list[list[tuple]] = []
-    path = _ASSETS / "ner-states.geojson"
+def _load_districts() -> list[dict]:
+    """Load district features once: [{name, country, polygons: [[(lon,lat),...]]}]."""
+    if "districts" in _geo_cache:
+        return _geo_cache["districts"]
+    out: list[dict] = []
+    path = _ASSETS / "ner_districts.geojson"
     try:
         gj = json.loads(path.read_text(encoding="utf-8"))
         for feat in gj.get("features", []):
             geom = feat.get("geometry") or {}
+            props = feat.get("properties") or {}
             polys = []
             if geom.get("type") == "Polygon":
                 polys = [geom.get("coordinates", [])]
             elif geom.get("type") == "MultiPolygon":
                 polys = geom.get("coordinates", [])
+            rings = []
             for poly in polys:
                 if not poly:
                     continue
-                outer = poly[0]  # outer ring only — holes are visual noise here
-                if len(outer) < 12:
-                    continue     # skip tiny islands
-                step = max(1, len(outer) // max_ring_points)
-                ring = [(pt[1], pt[0]) for pt in outer[::step]]  # (lat, lon)
-                rings.append(ring)
+                outer = poly[0]  # outer ring only — holes are visual noise at print size
+                if len(outer) < 4:
+                    continue
+                rings.append([(pt[0], pt[1]) for pt in outer])  # (lon, lat)
+            if rings:
+                out.append({
+                    "name": props.get("name", ""),
+                    "country": props.get("country", "IND"),
+                    "polygons": rings,
+                })
     except Exception:
-        rings = []
-    _geo_cache["rings"] = rings
-    return rings
+        out = []
+    _geo_cache["districts"] = out
+    return out
 
 
-# ── Map drawing ───────────────────────────────────────────────────────────────
+# ── Map drawing (Pillow raster, real district polygons) ───────────────────────
 
 # Fixed NER theatre bounds (lon 88–97.5, lat 21.5–29.5) so every PAOI map has
 # the same frame regardless of which points it contains.
 _MAP_BOUNDS = {"lon_min": 88.0, "lon_max": 97.5, "lat_min": 21.5, "lat_max": 29.5}
 
+_COUNTRY_STYLE = {
+    "IND": {"fill": (223, 236, 214), "outline": (140, 158, 128)},
+    "BGD": {"fill": (213, 228, 240), "outline": (120, 145, 168)},
+}
 
-def _project(lat: float, lon: float, x: float, y: float, w: float, h: float) -> tuple:
-    """Equirectangular projection of lat/lon into the (x, y, w, h) mm box."""
-    b = _MAP_BOUNDS
-    px = x + (lon - b["lon_min"]) / (b["lon_max"] - b["lon_min"]) * w
-    py = y + (b["lat_max"] - lat) / (b["lat_max"] - b["lat_min"]) * h
-    return px, py
+_MM_TO_PX = 300 / 25.4   # render at 300 dpi print resolution
+_SUPERSAMPLE = 3         # render 3x then downsample for anti-aliasing
 
 
 def _in_bounds(lat: float, lon: float) -> bool:
@@ -234,69 +250,83 @@ def _in_bounds(lat: float, lon: float) -> bool:
     return b["lat_min"] <= lat <= b["lat_max"] and b["lon_min"] <= lon <= b["lon_max"]
 
 
-def draw_paoi_map(pdf, current_points: list[dict], previous_points: list[dict],
-                  x: float, y: float, w: float = 120, h: float = 82,
-                  unresolved: list[str] | None = None) -> float:
-    """
-    Draw a PAOI situation map at (x, y): NER state outlines with severity-
-    coloured dots — green ring = current period, brown ring = previous period.
-    Returns the y coordinate below the map + legend.
-    """
-    # Frame + background
-    pdf.set_fill_color(247, 250, 245)
-    pdf.set_draw_color(150, 160, 145)
-    pdf.set_line_width(0.3)
-    pdf.rect(x, y, w, h, "DF")
+def _project_px(lat: float, lon: float, pw: int, ph: int) -> tuple:
+    """Equirectangular projection of lat/lon into a pw x ph pixel canvas."""
+    b = _MAP_BOUNDS
+    px = (lon - b["lon_min"]) / (b["lon_max"] - b["lon_min"]) * pw
+    py = (b["lat_max"] - lat) / (b["lat_max"] - b["lat_min"]) * ph
+    return px, py
 
-    # State outlines
-    pdf.set_draw_color(165, 175, 160)
-    pdf.set_line_width(0.2)
-    for ring in _load_state_rings():
-        pts = [_project(lat, lon, x, y, w, h) for lat, lon in ring
-               if _in_bounds(lat, lon)]
-        for i in range(1, len(pts)):
-            (x1, y1), (x2, y2) = pts[i - 1], pts[i]
-            # Skip long jump segments created by bounds clipping
-            if abs(x2 - x1) < w * 0.15 and abs(y2 - y1) < h * 0.15:
-                pdf.line(x1, y1, x2, y2)
 
-    def _plot(points: list[dict], ring_rgb: tuple):
+def _render_map_image(current_points: list[dict], previous_points: list[dict],
+                      w_mm: float, h_mm: float) -> Image.Image:
+    """Rasterize the district map + markers at print resolution with 3x
+    supersampling for anti-aliased polygon edges and circles."""
+    base_pw, base_ph = round(w_mm * _MM_TO_PX), round(h_mm * _MM_TO_PX)
+    pw, ph = base_pw * _SUPERSAMPLE, base_ph * _SUPERSAMPLE
+
+    img = Image.new("RGB", (pw, ph), (247, 250, 245))
+    draw = ImageDraw.Draw(img)
+
+    for dist in _load_districts():
+        style = _COUNTRY_STYLE.get(dist["country"], _COUNTRY_STYLE["IND"])
+        for ring in dist["polygons"]:
+            pts = [_project_px(lat, lon, pw, ph) for lon, lat in ring
+                   if _in_bounds(lat, lon)]
+            if len(pts) >= 3:
+                draw.polygon(pts, fill=style["fill"], outline=style["outline"], width=1 * _SUPERSAMPLE)
+
+    def _plot(points: list[dict], ring_rgb: tuple, font):
         seen: dict[tuple, int] = {}
         labelled: set = set()
         for p in points:
             if not _in_bounds(p["lat"], p["lon"]):
                 continue
-            px, py = _project(p["lat"], p["lon"], x, y, w, h)
-            # Deterministic jitter for stacked markers at one location
-            key = (round(px, 1), round(py, 1))
+            px, py = _project_px(p["lat"], p["lon"], pw, ph)
+            key = (round(px / _SUPERSAMPLE, 0), round(py / _SUPERSAMPLE, 0))
             n = seen.get(key, 0)
             seen[key] = n + 1
             if n:
-                ang = n * 2.4  # golden-angle spiral
-                px += 2.2 * math.cos(ang) * (1 + n * 0.15)
-                py += 2.2 * math.sin(ang) * (1 + n * 0.15)
-            # Ring (period indicator)
-            pdf.set_draw_color(*ring_rgb)
-            pdf.set_line_width(0.55)
-            pdf.circle(px, py, 2.1, "D")
-            # Severity dot
+                ang = n * 2.4  # golden-angle spiral to de-clutter stacked markers
+                px += 7 * _SUPERSAMPLE * math.cos(ang) * (1 + n * 0.15)
+                py += 7 * _SUPERSAMPLE * math.sin(ang) * (1 + n * 0.15)
+            ring_r = 6.5 * _SUPERSAMPLE
+            draw.ellipse([px - ring_r, py - ring_r, px + ring_r, py + ring_r],
+                        outline=ring_rgb, width=2 * _SUPERSAMPLE)
+            dot_r = 3.6 * _SUPERSAMPLE
             fill = SEV_FILL.get(p["severity"], (110, 110, 110))
-            pdf.set_fill_color(*fill)
-            pdf.set_draw_color(255, 255, 255)
-            pdf.set_line_width(0.2)
-            pdf.circle(px, py, 1.25, "DF")
-            # Label each distinct place once
+            draw.ellipse([px - dot_r, py - dot_r, px + dot_r, py + dot_r],
+                        fill=fill, outline=(255, 255, 255), width=1 * _SUPERSAMPLE)
             if p["label"] not in labelled and len(labelled) < 10:
                 labelled.add(p["label"])
-                pdf.set_font("Helvetica", "", 5.5)
-                pdf.set_text_color(70, 75, 65)
-                pdf.set_xy(px + 2.6, py - 1.2)
-                pdf.cell(24, 2.4, p["label"][:20])
+                draw.text((px + ring_r + 3 * _SUPERSAMPLE, py - 8 * _SUPERSAMPLE),
+                          p["label"][:20], fill=(60, 65, 55), font=font)
 
-    _plot(previous_points or [], RING_PREVIOUS)   # previous under current
-    _plot(current_points or [], RING_CURRENT)
+    label_font = ImageFont.load_default(size=15 * _SUPERSAMPLE)
+    _plot(previous_points or [], RING_PREVIOUS, label_font)   # previous under current
+    _plot(current_points or [], RING_CURRENT, label_font)
 
-    # Legend
+    draw.rectangle([0, 0, pw - 1, ph - 1], outline=(150, 160, 145), width=2 * _SUPERSAMPLE)
+
+    return img.resize((base_pw, base_ph), Image.LANCZOS)
+
+
+def draw_paoi_map(pdf, current_points: list[dict], previous_points: list[dict],
+                  x: float, y: float, w: float = 120, h: float = 82,
+                  unresolved: list[str] | None = None) -> float:
+    """
+    Draw a PAOI situation map at (x, y): real district polygons (NER states,
+    North Bengal, Bangladesh) with severity-coloured dots — green ring =
+    current period, brown ring = previous period. Returns the y coordinate
+    below the map + legend.
+    """
+    img = _render_map_image(current_points or [], previous_points or [], w, h)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    buf.seek(0)
+    pdf.image(buf, x=x, y=y, w=w, h=h)
+
+    # Legend (vector text below the raster map — keeps file size down)
     ly = y + h + 2.5
     pdf.set_line_width(0.55)
     pdf.set_draw_color(*RING_CURRENT)
@@ -330,6 +360,12 @@ def draw_paoi_map(pdf, current_points: list[dict], previous_points: list[dict],
         pdf.set_xy(x, ly)
         pdf.cell(0, 3, f"Not plotted (no location resolved): {len(unresolved)} item(s)")
         ly += 3.5
+
+    pdf.set_font("Helvetica", "I", 5)
+    pdf.set_text_color(150, 150, 150)
+    pdf.set_xy(x, ly)
+    pdf.cell(0, 3, "District boundaries: geoBoundaries.org (ODbL / CC-BY)")
+    ly += 3.2
 
     pdf.set_line_width(0.2)  # restore default-ish
     return ly + 1

@@ -24,6 +24,7 @@ sgmllib3k==1.0.0
 
 # PDF Generation
 fpdf2==2.8.7
+Pillow==12.2.0   # district-map rasterization in brief_visuals.py
 
 # Document Processing
 PyPDF2==3.0.1

@@ -1,0 +1,21 @@
+ner_districts.geojson — district (ADM2) boundaries for the NER states,
+North Bengal, and Bangladesh, used to render real district polygons in the
+periodic strategic brief PDFs (backend/brief_visuals.py).
+
+Source: geoBoundaries (https://www.geoboundaries.org), build 9469f09.
+  - India ADM2:      geoBoundaries-IND-ADM2_simplified.geojson
+                     License: Open Data Commons Open Database License 1.0 (ODbL)
+  - Bangladesh ADM2: geoBoundaries-BGD-ADM2_simplified.geojson
+                     License: Creative Commons Attribution 3.0 IGO (CC BY 3.0 IGO)
+
+Both licenses require attribution, which is rendered as a footnote under
+every generated map ("District boundaries: geoBoundaries.org (ODbL / CC-BY)").
+
+Runcorn, R., et al. geoBoundaries: A global database of political
+administrative boundaries. PLoS ONE 15(4): e0231866, 2020.
+
+Features were filtered from the full country files to a bounding box
+covering the NER theatre (lon 87.0–97.8, lat 20.3–29.8) and re-saved with
+normalized properties {name, country}. Only the outer ring of each polygon
+is kept (interior holes dropped) — acceptable at the print scale these maps
+render at, not intended for survey-grade use.
