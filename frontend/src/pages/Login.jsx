@@ -9,6 +9,16 @@ export default function Login() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [showPass, setShowPass] = useState(false);
+  // Shown once when the user was bounced here by an expired session (set by
+  // the axios 401 interceptor in AuthContext). Read-and-clear so it doesn't
+  // linger after a fresh visit.
+  const [notice] = useState(() => {
+    if (sessionStorage.getItem("rd_session_expired")) {
+      sessionStorage.removeItem("rd_session_expired");
+      return "Your session expired. Please sign in again.";
+    }
+    return "";
+  });
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -53,6 +63,13 @@ export default function Login() {
             Classification: Restricted
           </p>
         </div>
+
+        {notice && (
+          <div className="flex items-center gap-2 text-amber-300 text-xs bg-amber-500/10 border border-amber-500/25 px-3 py-2" data-testid="login-notice">
+            <AlertTriangle size={14} />
+            <span>{notice}</span>
+          </div>
+        )}
 
         {/* Login Form */}
         <form onSubmit={handleSubmit} className="space-y-4">

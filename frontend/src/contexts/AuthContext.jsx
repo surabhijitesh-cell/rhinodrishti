@@ -21,6 +21,12 @@ export function AuthProvider({ children, api }) {
       (response) => response,
       (error) => {
         if (error.response?.status === 401) {
+          // Only surface the "session expired" notice if the user WAS logged
+          // in — a 401 on the login request itself is a wrong-password error,
+          // not an expiry.
+          if (localStorage.getItem("rd_token")) {
+            sessionStorage.setItem("rd_session_expired", "1");
+          }
           localStorage.removeItem("rd_token");
           localStorage.removeItem("rd_user");
           setUser(null);

@@ -82,7 +82,7 @@ function FaultlineCard({ fl, sparkData, delta7d, onClick, watchlistRank, onToggl
               fill={watchlistRank != null ? "currentColor" : "none"}
             />
           </button>
-          <Badge className={`rounded-none text-[10px] px-1.5 py-0 ${style.text} border ${style.border}`}>
+          <Badge className={`rounded-none text-[10px] px-1.5 py-0 ${style.bg} ${style.text} border ${style.border}`}>
             {level}
           </Badge>
         </div>

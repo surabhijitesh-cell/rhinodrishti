@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import "@/App.css";
-import { BrowserRouter, Routes, Route, useNavigate } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate, useNavigate } from "react-router-dom";
 import axios from "axios";
 import { ThemeProvider } from "./components/ThemeProvider";
 import { AuthProvider, useAuth } from "./contexts/AuthContext";
@@ -118,6 +118,8 @@ function AppRoutes() {
                 <Route path="/report-agent" element={<ReportAgent api={API} />} />
                 <Route path="/faultlines" element={<FaultlineIntelligence api={API} />} />
                 <Route path="/faultlines/:id" element={<FaultlineDetail api={API} />} />
+                {/* Unknown URL (stale bookmark / mistype) → dashboard, not a blank page */}
+                <Route path="*" element={<Navigate to="/" replace />} />
               </Routes>
             </Layout>
           </ProtectedRoute>

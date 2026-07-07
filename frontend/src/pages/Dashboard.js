@@ -110,19 +110,19 @@ function MapClickWrapper({ children }) {
 function StatBox({ label, value, icon: Icon, color, sub, testId, onClick }) {
   return (
     <div
-      className={`stat-card flex items-center gap-4 ${onClick ? "cursor-pointer hover:border-primary/50 hover:bg-primary/5 transition-all duration-200" : ""}`}
+      className={`stat-card flex items-center gap-3 md:gap-4 ${onClick ? "cursor-pointer hover:border-primary/50 hover:bg-primary/5 transition-all duration-200" : ""}`}
       data-testid={testId}
       onClick={onClick}
       role={onClick ? "button" : undefined}
       tabIndex={onClick ? 0 : undefined}
     >
-      <div className={`p-2.5 ${color}`}>
+      <div className={`p-2.5 shrink-0 ${color}`}>
         <Icon size={20} />
       </div>
-      <div>
+      <div className="min-w-0 flex-1">
         <p className="text-2xl font-bold font-['Barlow_Condensed'] tracking-tight">{value}</p>
         <p className="text-[10px] uppercase tracking-[0.15em] text-muted-foreground font-mono">{label}</p>
-        {sub && <p className="text-xs text-muted-foreground mt-0.5">{sub}</p>}
+        {sub && <p className="text-xs text-muted-foreground mt-0.5 leading-snug">{sub}</p>}
       </div>
       {onClick && <ChevronRight size={14} className="ml-auto text-muted-foreground" />}
     </div>
