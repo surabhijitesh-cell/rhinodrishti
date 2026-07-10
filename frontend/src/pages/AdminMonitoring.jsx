@@ -225,12 +225,15 @@ function SocialFetchPanel({ api }) {
       <div className="flex items-center gap-2">
         <Radio size={14} className="text-violet-400" />
         <h2 className="text-sm font-semibold uppercase tracking-widest font-['Barlow_Condensed']">
-          Social Media Scraping (Instagram / Facebook / Twitter)
+          Social Media Scraping (Instagram / Facebook)
         </h2>
         {status && !status.configured && (
           <span className="text-[10px] font-mono text-amber-400 ml-auto">APIFY_TOKEN not set</span>
         )}
       </div>
+      <p className="text-[10px] text-muted-foreground -mt-2">
+        Twitter/X paused — the scraping actor blocks free-plan API access. Revisit if a paid plan is worth it later.
+      </p>
 
       {status?.total_counts && (
         <div className="grid grid-cols-3 gap-2">

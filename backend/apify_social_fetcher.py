@@ -234,6 +234,11 @@ async def _ingest(db, items: list[dict], platform: str) -> int:
     return saved
 
 
+# DISABLED — apidojo/tweet-scraper refuses API calls on Apify's free plan
+# ("The developer of this actor doesn't allow the use of API in the Free
+# Plan"), confirmed live via Render logs 2026-07-10. Not called by
+# run_social_fetch. Re-enable by adding it back to the platform loop below
+# if a paid Apify plan or a different free-API-compatible actor is chosen.
 async def fetch_twitter_posts(db, max_items: int) -> int:
     raw = await _run_actor(ACTOR_TWITTER, {
         "searchTerms": SEARCH_QUERIES,
@@ -302,9 +307,8 @@ async def run_social_fetch(db, force: bool = False) -> dict:
         return {"status": "skipped", "mode": mode, "message": "Not due yet per current interval"}
 
     max_items = FETCH_CONFIG[mode]["max_items_per_platform"]
-    counts = {}
+    counts = {"twitter": "disabled"}
     for platform, fn in [
-        ("twitter", fetch_twitter_posts),
         ("instagram", fetch_instagram_posts),
         ("facebook", fetch_facebook_posts),
     ]:
