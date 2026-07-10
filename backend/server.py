@@ -54,9 +54,9 @@ from routers.pipeline import (
 from routers.briefs import generate_scheduled_daily_brief
 from fusion_engine import run_batch_fusion
 from firecrawl_fetcher import fetch_web_sources, run_keyword_searches, seed_firecrawl_defaults
-from twitter_fetcher import fetch_twitter_accounts, fetch_twitter_searches, seed_twitter_defaults
 from youtube_fetcher import fetch_youtube_channels, fetch_youtube_searches, seed_youtube_defaults
 from telegram_fetcher import fetch_telegram_channels, seed_telegram_defaults
+from apify_social_fetcher import run_social_fetch as run_apify_social_fetch
 from fading_engine import run_fading_pass, delete_expired_low_severity
 from faultline_engine import run_daily_faultline_pass, run_incremental_faultline_pass
 
@@ -163,7 +163,6 @@ async def _deferred_init(item_count: int):
     # Source seeding (upserts — safe to run repeatedly)
     try:
         await seed_firecrawl_defaults(db)
-        await seed_twitter_defaults(db)
         await seed_youtube_defaults(db)
         await seed_telegram_defaults(db)
     except Exception as e:
@@ -417,15 +416,6 @@ async def startup():
         logger.info("Firecrawl scheduled jobs disabled — re-enable in server.py when credits restored")
 
         # Social media jobs
-        # Twitter — DISABLED (API costs; re-enable when needed)
-        # async def _fetch_twitter():
-        #     try:
-        #         a = await fetch_twitter_accounts(db)
-        #         s = await fetch_twitter_searches(db)
-        #         logger.info(f"Twitter: {a} account tweets, {s} search tweets")
-        #     except Exception as e:
-        #         logger.warning(f"Twitter job failed: {e}")
-
         async def _fetch_youtube():
             try:
                 c = await fetch_youtube_channels(db)
@@ -441,9 +431,20 @@ async def startup():
             except Exception as e:
                 logger.warning(f"Telegram job failed: {e}")
 
-        # scheduler.add_job(_fetch_twitter,  'interval', hours=2,  id='twitter_fetch')  # DISABLED
-        scheduler.add_job(_fetch_youtube,  'interval', hours=4,  id='youtube_fetch')
-        scheduler.add_job(_fetch_telegram, 'interval', hours=1,  id='telegram_fetch')
+        # Apify social (Instagram/Facebook/Twitter) — checks the stored volume
+        # mode (throttled default / firehose, toggled from API & Pipeline
+        # Monitor) every tick and only actually fetches when that mode's
+        # interval has elapsed. No-ops silently if APIFY_TOKEN isn't set.
+        async def _fetch_apify_social():
+            try:
+                result = await run_apify_social_fetch(db)
+                logger.info(f"Apify social: {result}")
+            except Exception as e:
+                logger.warning(f"Apify social job failed: {e}")
+
+        scheduler.add_job(_fetch_youtube,      'interval', hours=4,  id='youtube_fetch')
+        scheduler.add_job(_fetch_telegram,     'interval', hours=1,  id='telegram_fetch')
+        scheduler.add_job(_fetch_apify_social, 'interval', hours=6,  id='apify_social_fetch')
 
         # Fading engine — recomputes visibility_score every hour
         async def _run_fading_pass():

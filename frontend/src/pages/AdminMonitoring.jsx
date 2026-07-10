@@ -13,7 +13,7 @@ import axios from "axios";
 import ApiUsageWidget from "../components/ApiUsageWidget";
 import FilterCascadeWidget from "../components/FilterCascadeWidget";
 import FilterThresholdSimulator from "../components/FilterThresholdSimulator";
-import { Shield, Database, Trash2, AlertTriangle } from "lucide-react";
+import { Shield, Database, Trash2, AlertTriangle, Radio, Zap } from "lucide-react";
 
 function CreditWarningBanner({ api }) {
   const [warning, setWarning] = useState(null);
@@ -178,6 +178,128 @@ function StorageCleanupPanel({ api }) {
   );
 }
 
+function SocialFetchPanel({ api }) {
+  const [status, setStatus] = useState(null);
+  const [switching, setSwitching] = useState(false);
+  const [fetching, setFetching] = useState(false);
+  const [message, setMessage] = useState(null);
+
+  const refresh = () =>
+    axios.get(`${api}/social/apify/status`).then(r => setStatus(r.data)).catch(() => {});
+
+  useEffect(() => { refresh(); }, [api]);
+
+  async function setMode(mode) {
+    if (!status || mode === status.mode) return;
+    setSwitching(true);
+    setMessage(null);
+    try {
+      await axios.put(`${api}/social/apify/mode`, { mode });
+      await refresh();
+      setMessage({ type: "ok", text: `Switched to ${mode === "firehose" ? "Firehose" : "Throttled"} mode.` });
+    } catch (e) {
+      setMessage({ type: "error", text: e?.response?.data?.detail || e.message || "Failed to switch mode" });
+    } finally {
+      setSwitching(false);
+    }
+  }
+
+  async function fetchNow() {
+    setFetching(true);
+    setMessage(null);
+    try {
+      const r = await axios.post(`${api}/social/apify/fetch-now`);
+      setMessage({ type: "ok", text: r.data.message });
+      setTimeout(refresh, 4000);
+    } catch (e) {
+      setMessage({ type: "error", text: e?.response?.data?.detail || e.message || "Fetch failed to start" });
+    } finally {
+      setFetching(false);
+    }
+  }
+
+  const isFirehose = status?.mode === "firehose";
+
+  return (
+    <div className="rounded-lg border border-border bg-card p-4 space-y-4">
+      <div className="flex items-center gap-2">
+        <Radio size={14} className="text-violet-400" />
+        <h2 className="text-sm font-semibold uppercase tracking-widest font-['Barlow_Condensed']">
+          Social Media Scraping (Instagram / Facebook / Twitter)
+        </h2>
+        {status && !status.configured && (
+          <span className="text-[10px] font-mono text-amber-400 ml-auto">APIFY_TOKEN not set</span>
+        )}
+      </div>
+
+      {status?.total_counts && (
+        <div className="grid grid-cols-3 gap-2">
+          {Object.entries(status.total_counts).map(([platform, count]) => (
+            <div key={platform} className="bg-background rounded p-2 text-center">
+              <div className="text-xs font-mono text-muted-foreground capitalize">{platform}</div>
+              <div className="text-sm font-semibold font-mono mt-0.5">{count.toLocaleString()}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Throttled / Firehose toggle */}
+      <div className="flex items-center gap-3 flex-wrap">
+        <label className="text-xs text-muted-foreground">Volume mode</label>
+        <div className="inline-flex rounded border border-border overflow-hidden">
+          <button
+            onClick={() => setMode("throttled")}
+            disabled={switching || !status}
+            className={`text-xs px-3 py-1.5 font-semibold transition-colors ${
+              !isFirehose ? "bg-violet-600 text-white" : "bg-background text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            Throttled
+          </button>
+          <button
+            onClick={() => setMode("firehose")}
+            disabled={switching || !status}
+            className={`text-xs px-3 py-1.5 font-semibold transition-colors ${
+              isFirehose ? "bg-red-600 text-white" : "bg-background text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            Firehose
+          </button>
+        </div>
+
+        <button
+          onClick={fetchNow}
+          disabled={fetching || !status?.configured}
+          title={!status?.configured ? "Set APIFY_TOKEN first" : "Fetch immediately, bypassing the schedule"}
+          className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded bg-violet-600 hover:bg-violet-500 disabled:opacity-50 text-white font-semibold transition-colors ml-auto"
+        >
+          <Zap size={12} />
+          {fetching ? "Starting…" : "Fetch Now"}
+        </button>
+      </div>
+
+      <p className="text-[10px] font-mono text-muted-foreground">
+        Throttled — ~50 posts/platform, every ~3.5 days (fits Apify's $5 free monthly credit, ~$0 cost).{" "}
+        Firehose — ~100 posts/platform daily (~$11/month). Last run:{" "}
+        {status?.last_run ? new Date(status.last_run).toLocaleString("en-IN") : "never"}
+        {status?.last_run_counts && (
+          <> · {Object.entries(status.last_run_counts).map(([p, c]) => `${p}: ${c}`).join(", ")}</>
+        )}
+      </p>
+
+      {message && (
+        <div className={`text-xs font-mono rounded p-2 ${
+          message.type === "ok"
+            ? "bg-green-950/40 border border-green-800/40 text-green-300"
+            : "bg-red-950/40 border border-red-800/40 text-red-300"
+        }`}>
+          {message.type === "ok" ? "✓" : "✗"} {message.text}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function AdminMonitoring({ api }) {
   const { user } = useAuth();
 
@@ -206,6 +328,9 @@ export default function AdminMonitoring({ api }) {
 
       {/* ── Storage Cleanup ── */}
       <StorageCleanupPanel api={api} />
+
+      {/* ── Social Media Scraping (Instagram / Facebook / Twitter) ── */}
+      <SocialFetchPanel api={api} />
 
       {/* ── Two-column panels ── */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">

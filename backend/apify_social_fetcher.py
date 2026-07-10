@@ -1,0 +1,287 @@
+"""
+Apify-based social media fetcher — Instagram, Facebook, Twitter/X.
+
+Replaces the old twitter_fetcher.py / facebook_fetcher.py (official-API
+based, both failed completely — cost/access issues, never produced usable
+data). This module uses managed Apify actors instead: no logins, no proxy
+management, no account-ban risk — the actor maintainer absorbs the anti-bot
+arms race, not us.
+
+Actors used (chosen for cost + reliability, see memory/plans research):
+  Twitter:   apidojo/tweet-scraper       — $0.0004/tweet
+  Instagram: breathtaking_anthem/instagram-hashtag-posts-scraper — $0.0014/post
+  Facebook:  scraper_one/facebook-posts-search — $0.002/post
+
+Volume mode (throttled default / firehose) is stored in Mongo
+(db.app_settings, doc id "social_fetch") so the admin toggle in API &
+Pipeline Monitor takes effect immediately without a redeploy or restart.
+
+Same pattern as every other fetcher: pull items → dedup on source_url →
+classify_and_analyze_article → db.intelligence_items. No pipeline changes.
+
+NOTE ON FIELD MAPPING: Apify does not publish a fixed output schema for
+these actors (community-maintained, not versioned APIs) — the ai_pipeline_
+Author/ mapping below reads several candidate key names defensively and
+skips a post rather than crashing if none match. Verify against a real run
+once APIFY_TOKEN is available; this is a documented gap until then.
+"""
+import logging
+import os
+from datetime import datetime, timezone, timedelta
+from typing import Optional
+
+logger = logging.getLogger(__name__)
+
+# ── Actor IDs ──────────────────────────────────────────────────────────────
+ACTOR_TWITTER = "apidojo/tweet-scraper"
+ACTOR_INSTAGRAM = "breathtaking_anthem/instagram-hashtag-posts-scraper"
+ACTOR_FACEBOOK = "scraper_one/facebook-posts-search"
+
+# ── Region seeds — reuse the app's existing NER state list, don't invent one ─
+from shared import NER_STATES  # ["Assam", "Meghalaya", "Mizoram", "Manipur", "Arunachal Pradesh", "Tripura"]
+
+INSTAGRAM_HASHTAGS = [s.replace(" ", "") for s in NER_STATES] + ["Northeast India", "NER"]
+SEARCH_QUERIES = [f"{state} India" for state in NER_STATES] + ["Northeast India security"]
+
+# ── Volume modes ─────────────────────────────────────────────────────────────
+FETCH_CONFIG = {
+    "throttled": {"max_items_per_platform": 50, "hours_between_runs": 84},   # ~2x/week
+    "firehose":  {"max_items_per_platform": 100, "hours_between_runs": 24},  # daily
+}
+DEFAULT_MODE = "throttled"
+
+
+# ── Mode persistence (Mongo — takes effect without redeploy) ─────────────────
+
+async def get_fetch_mode(db) -> str:
+    doc = await db.app_settings.find_one({"id": "social_fetch"})
+    mode = (doc or {}).get("mode", DEFAULT_MODE)
+    return mode if mode in FETCH_CONFIG else DEFAULT_MODE
+
+
+async def set_fetch_mode(db, mode: str) -> dict:
+    if mode not in FETCH_CONFIG:
+        raise ValueError(f"mode must be one of {list(FETCH_CONFIG)}")
+    await db.app_settings.update_one(
+        {"id": "social_fetch"},
+        {"$set": {"mode": mode, "updated_at": datetime.now(timezone.utc).isoformat()}},
+        upsert=True,
+    )
+    return {"mode": mode}
+
+
+async def _should_run_now(db, mode: str) -> bool:
+    """Gate on last_run so a single always-on scheduler job can serve both
+    modes just by checking a different interval — no APScheduler reschedule
+    needed when the admin flips the toggle."""
+    doc = await db.app_settings.find_one({"id": "social_fetch"})
+    last_run = (doc or {}).get("last_run")
+    if not last_run:
+        return True
+    hours_since = (datetime.now(timezone.utc) - datetime.fromisoformat(last_run)).total_seconds() / 3600
+    return hours_since >= FETCH_CONFIG[mode]["hours_between_runs"]
+
+
+async def _mark_run(db, counts: dict) -> None:
+    await db.app_settings.update_one(
+        {"id": "social_fetch"},
+        {"$set": {
+            "last_run": datetime.now(timezone.utc).isoformat(),
+            "last_run_counts": counts,
+        }},
+        upsert=True,
+    )
+
+
+# ── Apify client ──────────────────────────────────────────────────────────────
+
+def _get_client():
+    token = os.environ.get("APIFY_TOKEN", "").strip()
+    if not token:
+        raise RuntimeError("APIFY_TOKEN not set — add it to backend/.env and Render env vars")
+    from apify_client import ApifyClient
+    return ApifyClient(token)
+
+
+def is_configured() -> bool:
+    return bool(os.environ.get("APIFY_TOKEN", "").strip())
+
+
+async def _run_actor(actor_id: str, run_input: dict) -> list[dict]:
+    """Run an Apify actor to completion and return its dataset items.
+    Synchronous apify-client call — run in an executor so it doesn't block
+    the event loop (same pattern as every other fetcher's requests calls)."""
+    import asyncio
+    client = _get_client()
+    loop = asyncio.get_running_loop()
+
+    def _sync_run():
+        run = client.actor(actor_id).call(run_input=run_input)
+        dataset_id = run["defaultDatasetId"]
+        return list(client.dataset(dataset_id).iterate_items())
+
+    return await loop.run_in_executor(None, _sync_run)
+
+
+# ── Field mapping (defensive — see module docstring) ─────────────────────────
+
+def _first(item: dict, *keys, default=""):
+    for k in keys:
+        v = item.get(k)
+        if v:
+            return v
+    return default
+
+
+def _twitter_to_intel_item(tweet: dict) -> Optional[dict]:
+    text = _first(tweet, "text", "fullText")
+    if not text:
+        return None
+    url = _first(tweet, "url", "twitterUrl")
+    author = tweet.get("author") or {}
+    handle = author.get("userName") or author.get("username") or "unknown"
+    created = _first(tweet, "createdAt", "created_at")
+    return {
+        "title": f"Tweet by @{handle}: {text[:80]}",
+        "source": f"X/Twitter - @{handle}",
+        "source_url": url or f"https://x.com/{handle}",
+        "published_at": _parse_date(created),
+        "raw_content": text,
+        "source_type": "twitter_apify",
+    }
+
+
+def _instagram_to_intel_item(post: dict) -> Optional[dict]:
+    caption = _first(post, "caption", "text", "description")
+    if not caption:
+        return None
+    url = _first(post, "url", "postUrl", "permalink")
+    owner = _first(post, "ownerUsername", "username", "author", default="unknown")
+    created = _first(post, "timestamp", "takenAt", "createdAt")
+    return {
+        "title": f"Instagram post by @{owner}: {caption[:80]}",
+        "source": f"Instagram - @{owner}",
+        "source_url": url or f"https://instagram.com/{owner}",
+        "published_at": _parse_date(created),
+        "raw_content": caption,
+        "source_type": "instagram_apify",
+    }
+
+
+def _facebook_to_intel_item(post: dict) -> Optional[dict]:
+    text = _first(post, "text", "message", "content")
+    if not text:
+        return None
+    url = _first(post, "url", "postUrl", "link")
+    author = _first(post, "author", "pageName", "authorName", default="unknown")
+    created = _first(post, "time", "timestamp", "date")
+    return {
+        "title": f"Facebook post by {author}: {text[:80]}",
+        "source": f"Facebook - {author}",
+        "source_url": url,
+        "published_at": _parse_date(created),
+        "raw_content": text,
+        "source_type": "facebook_apify",
+    }
+
+
+def _parse_date(value) -> str:
+    if not value:
+        return datetime.now(timezone.utc).isoformat()
+    if isinstance(value, (int, float)):
+        try:
+            return datetime.fromtimestamp(value, tz=timezone.utc).isoformat()
+        except (ValueError, OSError):
+            return datetime.now(timezone.utc).isoformat()
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00")).isoformat()
+    except ValueError:
+        return datetime.now(timezone.utc).isoformat()
+
+
+# ── Per-platform fetchers ─────────────────────────────────────────────────────
+
+async def _ingest(db, items: list[dict], platform: str) -> int:
+    from ai_pipeline import classify_and_analyze_article
+    saved = 0
+    for item in items:
+        if not item.get("source_url") or not item.get("raw_content"):
+            continue
+        if await db.intelligence_items.find_one({"source_url": item["source_url"]}):
+            continue
+        await db.social_posts.insert_one({**item, "platform": platform, "fetched_at": datetime.now(timezone.utc).isoformat()})
+        try:
+            analysis = await classify_and_analyze_article(item["raw_content"][:4000], item["title"])
+            item.update(analysis)
+        except Exception as e:
+            logger.warning(f"{platform} classify failed, queued unprocessed: {e}")
+            item["processed"] = False
+        await db.intelligence_items.insert_one(item)
+        saved += 1
+    return saved
+
+
+async def fetch_twitter_posts(db, max_items: int) -> int:
+    raw = await _run_actor(ACTOR_TWITTER, {
+        "searchTerms": SEARCH_QUERIES,
+        "maxItems": max_items,
+        "sort": "Latest",
+        "tweetLanguage": "en",
+    })
+    items = [it for it in (_twitter_to_intel_item(t) for t in raw) if it]
+    return await _ingest(db, items, "twitter")
+
+
+async def fetch_instagram_posts(db, max_items: int) -> int:
+    per_hashtag = max(1, max_items // len(INSTAGRAM_HASHTAGS))
+    total_items: list[dict] = []
+    for hashtag in INSTAGRAM_HASHTAGS:
+        raw = await _run_actor(ACTOR_INSTAGRAM, {
+            "hashtag": hashtag,
+            "scrape_type": "recent",
+            "max_items": per_hashtag,
+        })
+        total_items.extend(it for it in (_instagram_to_intel_item(p) for p in raw) if it)
+    return await _ingest(db, total_items, "instagram")
+
+
+async def fetch_facebook_posts(db, max_items: int) -> int:
+    per_query = max(1, max_items // len(SEARCH_QUERIES))
+    total_items: list[dict] = []
+    for query in SEARCH_QUERIES:
+        raw = await _run_actor(ACTOR_FACEBOOK, {
+            "query": query,
+            "resultsCount": per_query,
+            "searchType": "latest",
+        })
+        total_items.extend(it for it in (_facebook_to_intel_item(p) for p in raw) if it)
+    return await _ingest(db, total_items, "facebook")
+
+
+# ── Orchestrator ──────────────────────────────────────────────────────────────
+
+async def run_social_fetch(db, force: bool = False) -> dict:
+    """Fetch all three platforms at the current volume mode.
+    force=True skips the interval gate (used by the manual 'Fetch Now' button)."""
+    if not is_configured():
+        return {"status": "not_configured", "message": "APIFY_TOKEN not set"}
+
+    mode = await get_fetch_mode(db)
+    if not force and not await _should_run_now(db, mode):
+        return {"status": "skipped", "mode": mode, "message": "Not due yet per current interval"}
+
+    max_items = FETCH_CONFIG[mode]["max_items_per_platform"]
+    counts = {}
+    for platform, fn in [
+        ("twitter", fetch_twitter_posts),
+        ("instagram", fetch_instagram_posts),
+        ("facebook", fetch_facebook_posts),
+    ]:
+        try:
+            counts[platform] = await fn(db, max_items)
+        except Exception as e:
+            logger.error(f"Apify {platform} fetch failed: {e}")
+            counts[platform] = 0
+
+    await _mark_run(db, counts)
+    return {"status": "ok", "mode": mode, "max_items_per_platform": max_items, "counts": counts}

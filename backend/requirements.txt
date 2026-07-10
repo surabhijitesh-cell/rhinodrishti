@@ -53,3 +53,4 @@ websockets==16.0
 ntscraper==0.4.0
 tweepy>=4.14.0
 telethon>=1.36.0
+apify-client>=1.7.0  # Instagram/Facebook/Twitter scraping, see apify_social_fetcher.py

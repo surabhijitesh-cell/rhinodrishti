@@ -1,8 +1,8 @@
 """
 Unified Social Media management router.
 
-Covers: X (Twitter), YouTube, Facebook, Telegram
-Each platform has:
+Covers: YouTube, Telegram (working), Apify-based Instagram/Facebook/Twitter
+(see apify_social_fetcher.py). Each platform has:
   GET    /api/social/{platform}           — list sources
   POST   /api/social/{platform}           — add source
   PATCH  /api/social/{platform}/{id}      — update / toggle active
@@ -11,15 +11,22 @@ Each platform has:
 
 GET /api/social/status   — configured status of all platforms
 POST /api/social/fetch-all — trigger all platforms now (admin use)
+
+NOTE: the official-API Twitter and Facebook fetchers (twitter_fetcher.py,
+facebook_fetcher.py) were removed — both failed completely on cost/access
+grounds and never produced usable data. Instagram/Facebook/Twitter are now
+served by apify_social_fetcher.py — see /social/apify/* below.
 """
 
 import uuid
 import asyncio
 from datetime import datetime, timezone, timedelta
 from typing import Optional
-from fastapi import APIRouter, BackgroundTasks, HTTPException
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Depends
 from pydantic import BaseModel
 from shared import db, logger
+from utils.auth import require_admin_role
+import apify_social_fetcher
 
 router = APIRouter()
 
@@ -27,23 +34,6 @@ router = APIRouter()
 # ─────────────────────────────────────────────────────────────────────────────
 # Schemas
 # ─────────────────────────────────────────────────────────────────────────────
-
-class TwitterAccountBody(BaseModel):
-    handle: str          # without @
-    name: str
-    category: str = "general"
-    active: bool = True
-
-class TwitterSearchBody(BaseModel):
-    query: str
-    num_results: int = 10
-    active: bool = True
-
-class TwitterListBody(BaseModel):
-    list_id: str          # numeric id from x.com URL, e.g. /i/lists/1234567890
-    name: str             # human-readable name
-    max_results: int = 50
-    active: bool = True
 
 class YouTubeChannelBody(BaseModel):
     name: str
@@ -54,12 +44,6 @@ class YouTubeChannelBody(BaseModel):
 class YouTubeSearchBody(BaseModel):
     query: str
     max_results: int = 5
-    active: bool = True
-
-class FacebookPageBody(BaseModel):
-    name: str
-    page_id: str
-    category: str = "media"
     active: bool = True
 
 class TelegramChannelBody(BaseModel):
@@ -73,6 +57,9 @@ class PatchBody(BaseModel):
     name: Optional[str] = None
     category: Optional[str] = None
 
+class SocialFetchModeBody(BaseModel):
+    mode: str  # "throttled" | "firehose"
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Status endpoint
@@ -83,10 +70,7 @@ async def social_status():
     import os
     from telegram_fetcher import _is_configured as tg_ok
 
-    twitter_configured  = bool(os.environ.get("TWITTER_BEARER_TOKEN", "").strip())
     youtube_configured  = bool(os.environ.get("YOUTUBE_API_KEY", "").strip())
-    facebook_configured = bool(os.environ.get("FACEBOOK_APP_ID", "").strip() and
-                               os.environ.get("FACEBOOK_APP_SECRET", "").strip())
     firecrawl_configured = bool(os.environ.get("FIRECRAWL_API_KEY", "").strip())
 
     # Fetch item counts per source from DB
@@ -99,30 +83,17 @@ async def social_status():
             "published_at": {"$gte": cutoff},
         })
 
-    twitter_count   = await db.twitter_feeds.count_documents({})
     youtube_count   = await _count("youtube")
-    facebook_count  = await _count("facebook")
     telegram_count  = await _count("telegram")
     firecrawl_count = await _count("firecrawl")
-    intel_twitter_count = await _count("twitter")
 
     return {
         "twitter": {
-            "configured": twitter_configured,
-            "available":  twitter_configured,
-            "item_count": twitter_count,
-            "intel_count": intel_twitter_count,
-            "free_tier": twitter_configured and twitter_count == 0,
-            "note": (
-                "⚠ TWITTER_BEARER_TOKEN not set. Add it to Render environment variables."
-            ) if not twitter_configured else (
-                "⚠ Free API tier — your Bearer Token is set but no tweets have been collected. "
-                "X/Twitter API v2 requires the Basic plan ($100/month) to read public tweets. "
-                "Free tier tokens can only post, not read. "
-                "Upgrade at developer.x.com/en/portal/dashboard to enable data collection."
-            ) if twitter_count == 0 else (
-                f"✓ X API active — {twitter_count} raw tweets cached, {intel_twitter_count} in intel feed (30d)."
-            ),
+            "configured": False,
+            "available": False,
+            "item_count": 0,
+            "note": "Removed — official X API fetcher failed completely (cost/access). "
+                    "Replaced by Apify-based scraping, see /social/apify/status.",
         },
         "youtube": {
             "configured": youtube_configured,
@@ -132,19 +103,11 @@ async def social_status():
             if not youtube_configured else f"YouTube Data API v3 active. {youtube_count} items (30d).",
         },
         "facebook": {
-            "configured": facebook_configured,
-            "available":  facebook_configured,
-            "item_count": facebook_count,
-            "note": (
-                "⚠ Facebook Graph API client-credentials access token NO LONGER "
-                "allows reading page posts as of 2018 API changes. Each page must "
-                "grant your app a Page Access Token via Meta Business Suite. "
-                "Set FACEBOOK_PAGE_TOKEN_<PAGE_ID> per page, or use the Firecrawl "
-                "source instead to scrape public FB pages."
-            ) if not facebook_configured else (
-                f"Graph API credentials set. {facebook_count} items saved (30d). "
-                "⚠ If count is 0, pages likely need per-page access tokens — see FACEBOOK_PAGE_TOKEN_<PAGE_ID>."
-            ),
+            "configured": False,
+            "available": False,
+            "item_count": 0,
+            "note": "Removed — official Graph API fetcher failed completely (page-token access "
+                    "restrictions). Replaced by Apify-based scraping, see /social/apify/status.",
         },
         "telegram": {
             "configured": tg_ok(),
@@ -176,41 +139,13 @@ async def test_social_connections():
 
     results = {}
 
-    # ── Twitter ──────────────────────────────────────────────────────────────
-    token = os.environ.get("TWITTER_BEARER_TOKEN", "").strip()
-    if not token:
-        results["twitter"] = {"status": "not_configured", "message": "TWITTER_BEARER_TOKEN not set"}
-    else:
-        try:
-            import tweepy
-            loop = asyncio.get_running_loop()
-            def _test_twitter():
-                c = tweepy.Client(bearer_token=token, wait_on_rate_limit=False)
-                # search_recent_tweets with a simple query — fails on Free tier
-                resp = c.search_recent_tweets(
-                    query="india",
-                    max_results=10,
-                    tweet_fields=["created_at"],
-                )
-                return resp
-            resp = await loop.run_in_executor(None, _test_twitter)
-            count = len(resp.data or [])
-            results["twitter"] = {"status": "ok", "message": f"Connected — returned {count} tweets"}
-        except Exception as e:
-            err = str(e)
-            if "403" in err or "Read" in err or "Forbidden" in err or "unauthorized" in err.lower():
-                results["twitter"] = {
-                    "status": "auth_error",
-                    "message": (
-                        "401/403 from X API — your Bearer Token is likely a FREE tier key. "
-                        "Free tier only allows posting (no tweet reads). "
-                        "Upgrade to X API Basic ($100/mo) to fetch tweets."
-                    )
-                }
-            elif "429" in err or "rate" in err.lower():
-                results["twitter"] = {"status": "rate_limited", "message": f"Rate limited: {err}"}
-            else:
-                results["twitter"] = {"status": "error", "message": err[:200]}
+    # ── Twitter ────────────────────────────────────────────────────────────
+    # Official X API fetcher removed (failed completely). Twitter is now
+    # served via Apify — see /social/apify/status for its connection test.
+    results["twitter"] = {
+        "status": "removed",
+        "message": "Official API fetcher removed. See /social/apify/status for the Apify-based source.",
+    }
 
     # ── YouTube ──────────────────────────────────────────────────────────────
     yt_key = os.environ.get("YOUTUBE_API_KEY", "").strip()
@@ -234,54 +169,12 @@ async def test_social_connections():
             results["youtube"] = {"status": "error", "message": str(e)[:200]}
 
     # ── Facebook ─────────────────────────────────────────────────────────────
-    fb_id     = os.environ.get("FACEBOOK_APP_ID", "").strip()
-    fb_secret = os.environ.get("FACEBOOK_APP_SECRET", "").strip()
-    if not fb_id or not fb_secret:
-        results["facebook"] = {"status": "not_configured", "message": "FACEBOOK_APP_ID or FACEBOOK_APP_SECRET not set"}
-    else:
-        try:
-            import httpx
-            async with httpx.AsyncClient(timeout=8) as hc:
-                r = await hc.get(
-                    "https://graph.facebook.com/v19.0/oauth/access_token",
-                    params={"client_id": fb_id, "client_secret": fb_secret, "grant_type": "client_credentials"},
-                )
-            data = r.json()
-            if "access_token" in data:
-                # Try reading a known public page to test if posts are accessible
-                token_val = data["access_token"]
-                async with httpx.AsyncClient(timeout=8) as hc:
-                    r2 = await hc.get(
-                        "https://graph.facebook.com/v19.0/IndianArmy.adgpi/posts",
-                        params={"fields": "id,message", "limit": 1, "access_token": token_val},
-                    )
-                d2 = r2.json()
-                if r2.status_code == 200 and "data" in d2:
-                    count = len(d2.get("data", []))
-                    if count > 0:
-                        results["facebook"] = {"status": "ok", "message": f"Connected — app token works, got {count} posts from test page"}
-                    else:
-                        results["facebook"] = {
-                            "status": "warning",
-                            "message": (
-                                "App token obtained but test page returned 0 posts. "
-                                "Meta now requires Page Access Tokens (not app tokens) to read posts. "
-                                "Set FACEBOOK_PAGE_TOKEN_<PAGE_ID> per page in your environment."
-                            )
-                        }
-                else:
-                    err_msg = d2.get("error", {}).get("message", r2.text[:200])
-                    results["facebook"] = {
-                        "status": "warning",
-                        "message": (
-                            f"App token OK but page read failed: {err_msg}. "
-                            "Meta restricts post access — set FACEBOOK_PAGE_TOKEN_<PAGE_ID> per page."
-                        )
-                    }
-            else:
-                results["facebook"] = {"status": "auth_error", "message": f"Token exchange failed: {data.get('error', {}).get('message', str(data)[:200])}"}
-        except Exception as e:
-            results["facebook"] = {"status": "error", "message": str(e)[:200]}
+    # Official Graph API fetcher removed (failed completely). Facebook is now
+    # served via Apify — see /social/apify/status for its connection test.
+    results["facebook"] = {
+        "status": "removed",
+        "message": "Official API fetcher removed. See /social/apify/status for the Apify-based source.",
+    }
 
     # ── Firecrawl ────────────────────────────────────────────────────────────
     fc_key = os.environ.get("FIRECRAWL_API_KEY", "").strip()
@@ -316,196 +209,6 @@ async def test_social_connections():
 
     return {"results": results}
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Twitter — accounts
-# ─────────────────────────────────────────────────────────────────────────────
-
-@router.get("/social/twitter/accounts")
-async def list_twitter_accounts():
-    items = await db.twitter_accounts.find({}, {"_id": 0}).sort("name", 1).to_list(500)
-    return {"accounts": items, "count": len(items)}
-
-
-@router.post("/social/twitter/accounts", status_code=201)
-async def add_twitter_account(body: TwitterAccountBody):
-    handle = body.handle.lstrip("@")
-    if await db.twitter_accounts.find_one({"handle": handle}):
-        raise HTTPException(409, "Account already tracked")
-    doc = {"id": str(uuid.uuid4()), "handle": handle, "name": body.name,
-           "category": body.category, "active": body.active,
-           "created_at": datetime.now(timezone.utc)}
-    await db.twitter_accounts.insert_one(doc)
-    doc.pop("_id", None)
-    return {"account": doc}
-
-
-@router.patch("/social/twitter/accounts/{item_id}")
-async def update_twitter_account(item_id: str, body: PatchBody):
-    upd = {k: v for k, v in body.model_dump().items() if v is not None}
-    if not upd:
-        raise HTTPException(400, "Nothing to update")
-    r = await db.twitter_accounts.update_one({"id": item_id}, {"$set": upd})
-    if r.matched_count == 0:
-        raise HTTPException(404, "Not found")
-    return {"updated": True}
-
-
-@router.delete("/social/twitter/accounts/{item_id}")
-async def delete_twitter_account(item_id: str):
-    r = await db.twitter_accounts.delete_one({"id": item_id})
-    if r.deleted_count == 0:
-        raise HTTPException(404, "Not found")
-    return {"deleted": True}
-
-
-@router.post("/social/twitter/accounts/{item_id}/fetch")
-async def fetch_twitter_account_now(item_id: str):
-    acc = await db.twitter_accounts.find_one({"id": item_id})
-    if not acc:
-        raise HTTPException(404, "Not found")
-    from twitter_fetcher import fetch_user_tweets, _tweet_to_intel_item
-    from ai_pipeline import classify_and_analyze_article
-    handle = acc["handle"].lstrip("@")
-    loop = asyncio.get_running_loop()
-    tweets = await loop.run_in_executor(
-        None, lambda: fetch_user_tweets(handle, acc["name"], acc.get("category", "general"), 10)
-    )
-    saved = 0
-    for tw in tweets:
-        if await db.twitter_feeds.find_one({"tweet_url": tw["tweet_url"]}):
-            continue
-        await db.twitter_feeds.insert_one(tw)
-        if len(tw.get("tweet_text", "")) > 50:
-            item = _tweet_to_intel_item(tw)
-            try:
-                analysis = await classify_and_analyze_article(tw["tweet_text"], f"Tweet: {acc['name']}")
-                item.update(analysis)
-            except Exception:
-                item["processed"] = False
-            await db.intelligence_items.insert_one(item)
-        saved += 1
-    return {"saved": saved, "handle": handle}
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Twitter — searches
-# ─────────────────────────────────────────────────────────────────────────────
-
-@router.get("/social/twitter/searches")
-async def list_twitter_searches():
-    items = await db.twitter_searches.find({}, {"_id": 0}).to_list(200)
-    return {"searches": items, "count": len(items)}
-
-
-@router.post("/social/twitter/searches", status_code=201)
-async def add_twitter_search(body: TwitterSearchBody):
-    if await db.twitter_searches.find_one({"query": body.query}):
-        raise HTTPException(409, "Query already exists")
-    doc = {"id": str(uuid.uuid4()), "query": body.query, "num_results": body.num_results,
-           "active": body.active, "last_run": None, "created_at": datetime.now(timezone.utc)}
-    await db.twitter_searches.insert_one(doc)
-    doc.pop("_id", None)
-    return {"search": doc}
-
-
-@router.delete("/social/twitter/searches/{item_id}")
-async def delete_twitter_search(item_id: str):
-    r = await db.twitter_searches.delete_one({"id": item_id})
-    if r.deleted_count == 0:
-        raise HTTPException(404, "Not found")
-    return {"deleted": True}
-
-
-@router.post("/social/twitter/searches/{item_id}/fetch")
-async def run_twitter_search_now(item_id: str):
-    s = await db.twitter_searches.find_one({"id": item_id})
-    if not s:
-        raise HTTPException(404, "Not found")
-    from twitter_fetcher import search_tweets_official, _tweet_to_intel_item
-    from ai_pipeline import classify_and_analyze_article
-    loop = asyncio.get_running_loop()
-    tweets = await loop.run_in_executor(
-        None, lambda: search_tweets_official(s["query"], s.get("num_results", 10))
-    )
-    saved = 0
-    for tw in tweets:
-        if await db.twitter_feeds.find_one({"tweet_url": tw["tweet_url"]}):
-            continue
-        await db.twitter_feeds.insert_one(tw)
-        if len(tw.get("tweet_text", "")) > 50:
-            item = _tweet_to_intel_item(tw)
-            try:
-                analysis = await classify_and_analyze_article(tw["tweet_text"], f"X search")
-                item.update(analysis)
-            except Exception:
-                item["processed"] = False
-            await db.intelligence_items.insert_one(item)
-        saved += 1
-    await db.twitter_searches.update_one({"id": item_id}, {"$set": {"last_run": datetime.now(timezone.utc)}})
-    return {"saved": saved, "query": s["query"]}
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Twitter — lists (free-tier friendly: 1 call → many accounts)
-# ─────────────────────────────────────────────────────────────────────────────
-
-@router.get("/social/twitter/lists")
-async def list_twitter_lists():
-    items = await db.twitter_lists.find({}, {"_id": 0}).sort("name", 1).to_list(100)
-    return {"lists": items, "count": len(items)}
-
-
-@router.post("/social/twitter/lists", status_code=201)
-async def add_twitter_list(body: TwitterListBody):
-    if await db.twitter_lists.find_one({"list_id": body.list_id}):
-        raise HTTPException(409, "List already tracked")
-    doc = {"id": str(uuid.uuid4()), "list_id": body.list_id, "name": body.name,
-           "max_results": body.max_results, "active": body.active,
-           "last_fetched": None, "created_at": datetime.now(timezone.utc)}
-    await db.twitter_lists.insert_one(doc)
-    doc.pop("_id", None)
-    return {"list": doc}
-
-
-@router.delete("/social/twitter/lists/{item_id}")
-async def delete_twitter_list(item_id: str):
-    r = await db.twitter_lists.delete_one({"id": item_id})
-    if r.deleted_count == 0:
-        raise HTTPException(404, "Not found")
-    return {"deleted": True}
-
-
-@router.post("/social/twitter/lists/{item_id}/fetch")
-async def fetch_twitter_list_now(item_id: str):
-    lst = await db.twitter_lists.find_one({"id": item_id})
-    if not lst:
-        raise HTTPException(404, "Not found")
-    from twitter_fetcher import fetch_list_tweets_official, _tweet_to_intel_item
-    from ai_pipeline import classify_and_analyze_article
-
-    list_id   = lst["list_id"]
-    list_name = lst["name"]
-    loop = asyncio.get_running_loop()
-    tweets = await loop.run_in_executor(
-        None, lambda: fetch_list_tweets_official(list_id, list_name, lst.get("max_results", 50))
-    )
-    saved = 0
-    for tw in tweets:
-        if await db.twitter_feeds.find_one({"tweet_url": tw["tweet_url"]}):
-            continue
-        await db.twitter_feeds.insert_one(tw)
-        if len(tw.get("tweet_text", "")) > 50:
-            item = _tweet_to_intel_item(tw)
-            try:
-                analysis = await classify_and_analyze_article(tw["tweet_text"], f"X List: {list_name}")
-                item.update(analysis)
-            except Exception:
-                item["processed"] = False
-            await db.intelligence_items.insert_one(item)
-        saved += 1
-    await db.twitter_lists.update_one({"id": item_id}, {"$set": {"last_fetched": datetime.now(timezone.utc)}})
-    return {"saved": saved, "list": list_name}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -601,74 +304,6 @@ async def delete_youtube_search(item_id: str):
     if r.deleted_count == 0:
         raise HTTPException(404, "Not found")
     return {"deleted": True}
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Facebook — pages
-# ─────────────────────────────────────────────────────────────────────────────
-
-@router.get("/social/facebook/pages")
-async def list_facebook_pages():
-    items = await db.facebook_pages.find({}, {"_id": 0}).sort("name", 1).to_list(200)
-    return {"pages": items, "count": len(items)}
-
-
-@router.post("/social/facebook/pages", status_code=201)
-async def add_facebook_page(body: FacebookPageBody):
-    if await db.facebook_pages.find_one({"page_id": body.page_id}):
-        raise HTTPException(409, "Page already tracked")
-    doc = {"id": str(uuid.uuid4()), "name": body.name, "page_id": body.page_id,
-           "category": body.category, "active": body.active, "last_fetched": None,
-           "created_at": datetime.now(timezone.utc)}
-    await db.facebook_pages.insert_one(doc)
-    doc.pop("_id", None)
-    return {"page": doc}
-
-
-@router.patch("/social/facebook/pages/{item_id}")
-async def update_facebook_page(item_id: str, body: PatchBody):
-    upd = {k: v for k, v in body.model_dump().items() if v is not None}
-    if not upd:
-        raise HTTPException(400, "Nothing to update")
-    r = await db.facebook_pages.update_one({"id": item_id}, {"$set": upd})
-    if r.matched_count == 0:
-        raise HTTPException(404, "Not found")
-    return {"updated": True}
-
-
-@router.delete("/social/facebook/pages/{item_id}")
-async def delete_facebook_page(item_id: str):
-    r = await db.facebook_pages.delete_one({"id": item_id})
-    if r.deleted_count == 0:
-        raise HTTPException(404, "Not found")
-    return {"deleted": True}
-
-
-@router.post("/social/facebook/pages/{item_id}/fetch")
-async def fetch_facebook_page_now(item_id: str):
-    page = await db.facebook_pages.find_one({"id": item_id})
-    if not page:
-        raise HTTPException(404, "Not found")
-    from facebook_fetcher import fetch_page_posts_sync, _post_to_intel_item
-    from ai_pipeline import classify_and_analyze_article
-    loop = asyncio.get_running_loop()
-    posts = await loop.run_in_executor(
-        None, lambda: fetch_page_posts_sync(page["page_id"], page["name"], 10)
-    )
-    saved = 0
-    for post in posts:
-        if await db.intelligence_items.find_one({"source_url": post["url"]}):
-            continue
-        item = _post_to_intel_item(post)
-        try:
-            analysis = await classify_and_analyze_article(item["raw_content"][:4000], item["title"])
-            item.update(analysis)
-        except Exception:
-            item["processed"] = False
-        await db.intelligence_items.insert_one(item)
-        saved += 1
-    await db.facebook_pages.update_one({"id": item_id}, {"$set": {"last_fetched": datetime.now(timezone.utc)}})
-    return {"saved": saved, "page": page["name"]}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -779,15 +414,12 @@ async def fetch_all_social_now(background_tasks: BackgroundTasks):
     try:
         results = await asyncio.gather(
             db.youtube_channels.update_many({"active": {"$ne": False}}, {"$set": {"last_fetched": now}}),
-            db.facebook_pages.update_many({"active": {"$ne": False}},   {"$set": {"last_fetched": now}}),
             db.telegram_channels.update_many({"active": {"$ne": False}}, {"$set": {"last_fetched": now}}),
-            db.twitter_searches.update_many({"active": {"$ne": False}},  {"$set": {"last_run": now}}),
-            db.twitter_lists.update_many({"active": {"$ne": False}},     {"$set": {"last_fetched": now}}),
             db.web_sources.update_many({"active": {"$ne": False}},       {"$set": {"last_fetched": now}}),
             db.firecrawl_searches.update_many({"active": {"$ne": False}}, {"$set": {"last_run": now}}),
         )
         counts = [r.modified_count for r in results]
-        labels = ["yt_ch", "fb_pg", "tg_ch", "tw_srch", "tw_lists", "web_src", "fc_srch"]
+        labels = ["yt_ch", "tg_ch", "web_src", "fc_srch"]
         logger.info(f"fetch-all: timestamps written — {dict(zip(labels, counts))}")
     except Exception as e:
         logger.error(f"fetch-all: instant timestamp update failed: {e}")
@@ -795,28 +427,23 @@ async def fetch_all_social_now(background_tasks: BackgroundTasks):
     # ── 2. Background network fetches ─────────────────────────────────────────
     async def _run_all():
         try:
-            from twitter_fetcher   import fetch_twitter_accounts, fetch_twitter_searches, fetch_twitter_lists
             from youtube_fetcher   import fetch_youtube_channels, fetch_youtube_searches
-            from facebook_fetcher  import fetch_facebook_pages
             from telegram_fetcher  import fetch_telegram_channels
             from firecrawl_fetcher import fetch_web_sources, run_keyword_searches
 
             coros  = [
-                fetch_twitter_accounts(db),
-                fetch_twitter_searches(db),
-                fetch_twitter_lists(db),
                 fetch_youtube_channels(db),
                 fetch_youtube_searches(db),
-                fetch_facebook_pages(db),
                 fetch_telegram_channels(db),
                 fetch_web_sources(db),
                 run_keyword_searches(db),
+                apify_social_fetcher.run_social_fetch(db),
             ]
             labels = [
-                "twitter_accounts", "twitter_searches", "twitter_lists",
                 "youtube_channels", "youtube_searches",
-                "facebook_pages",   "telegram_channels",
+                "telegram_channels",
                 "firecrawl_sites",  "firecrawl_searches",
+                "apify_social",
             ]
 
             results = await asyncio.gather(*coros, return_exceptions=True)
@@ -831,3 +458,60 @@ async def fetch_all_social_now(background_tasks: BackgroundTasks):
 
     background_tasks.add_task(_run_all)
     return {"status": "fetch started", "message": "Timestamps updated; content fetching in background"}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Apify — Instagram / Facebook / Twitter (replaces the removed official-API
+# fetchers). Volume mode (throttled default / firehose) is admin-toggled from
+# API & Pipeline Monitor and takes effect on the next scheduler tick — no
+# redeploy needed.
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.get("/social/apify/status")
+async def apify_social_status():
+    configured = apify_social_fetcher.is_configured()
+    mode = await apify_social_fetcher.get_fetch_mode(db)
+    doc = await db.app_settings.find_one({"id": "social_fetch"}, {"_id": 0})
+    counts = {
+        "instagram": await db.social_posts.count_documents({"platform": "instagram"}),
+        "facebook":  await db.social_posts.count_documents({"platform": "facebook"}),
+        "twitter":   await db.social_posts.count_documents({"platform": "twitter"}),
+    }
+    return {
+        "configured": configured,
+        "mode": mode,
+        "last_run": (doc or {}).get("last_run"),
+        "last_run_counts": (doc or {}).get("last_run_counts"),
+        "total_counts": counts,
+        "note": "APIFY_TOKEN not set — add it to Render environment variables."
+        if not configured else f"Apify configured. Mode: {mode}.",
+    }
+
+
+@router.get("/social/apify/mode")
+async def get_apify_fetch_mode():
+    return {"mode": await apify_social_fetcher.get_fetch_mode(db)}
+
+
+@router.put("/social/apify/mode")
+async def set_apify_fetch_mode(body: SocialFetchModeBody, admin: dict = Depends(require_admin_role)):
+    if body.mode not in apify_social_fetcher.FETCH_CONFIG:
+        raise HTTPException(400, f"mode must be one of {list(apify_social_fetcher.FETCH_CONFIG)}")
+    result = await apify_social_fetcher.set_fetch_mode(db, body.mode)
+    logger.info(f"Social fetch mode set to {body.mode} by {admin.get('username')}")
+    return result
+
+
+@router.post("/social/apify/fetch-now")
+async def apify_fetch_now(background_tasks: BackgroundTasks, admin: dict = Depends(require_admin_role)):
+    """Manual trigger — bypasses the interval gate (force=True) so an admin
+    can test immediately after setting APIFY_TOKEN, regardless of mode."""
+    if not apify_social_fetcher.is_configured():
+        raise HTTPException(400, "APIFY_TOKEN not set — add it to Render environment variables first")
+
+    async def _run():
+        result = await apify_social_fetcher.run_social_fetch(db, force=True)
+        logger.info(f"Apify manual fetch: {result}")
+
+    background_tasks.add_task(_run)
+    return {"status": "fetch started", "message": "Running in background — check /social/apify/status shortly"}
