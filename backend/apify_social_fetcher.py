@@ -248,39 +248,45 @@ async def fetch_twitter_posts(db, max_items: int) -> int:
 INSTAGRAM_MIN_ITEMS = 24  # actor-enforced floor — validation fails below this
 
 
-async def fetch_instagram_posts(db, max_items: int) -> int:
-    # The actor rejects max_items < 24, so we can't spread the budget thin
-    # across all hashtags in one run. Instead query as many hashtags as the
-    # budget allows at the actor's minimum each, rotating the starting point
-    # by day-of-year so every hashtag gets covered across repeated runs
-    # rather than always querying the same first few.
-    n_hashtags = max(1, max_items // INSTAGRAM_MIN_ITEMS)
-    offset = datetime.now(timezone.utc).timetuple().tm_yday % len(INSTAGRAM_HASHTAGS)
-    rotated = INSTAGRAM_HASHTAGS[offset:] + INSTAGRAM_HASHTAGS[:offset]
-    hashtags_to_query = rotated[:n_hashtags]
+def _rotated(items: list, n: int) -> list:
+    """Pick n items starting from a day-of-year-based offset, so repeated
+    runs cycle through the full list over time instead of always hitting
+    the same first few entries."""
+    if not items:
+        return []
+    offset = datetime.now(timezone.utc).timetuple().tm_yday % len(items)
+    rotated = items[offset:] + items[:offset]
+    return rotated[:n]
 
-    total_items: list[dict] = []
-    for hashtag in hashtags_to_query:
-        raw = await _run_actor(ACTOR_INSTAGRAM, {
-            "hashtag": hashtag,
-            "scrape_type": "recent",
-            "max_items": INSTAGRAM_MIN_ITEMS,
-        })
-        total_items.extend(it for it in (_instagram_to_intel_item(p) for p in raw) if it)
-    return await _ingest(db, total_items, "instagram")
+
+async def fetch_instagram_posts(db, max_items: int) -> int:
+    # This specific free-tier actor allows exactly ONE run per day per
+    # account (confirmed live: "Access denied! Free User allowed to run
+    # once daily" on the second call within a single fetch). One hashtag,
+    # one call, per fetch — rotate which hashtag across runs for coverage.
+    hashtag = _rotated(INSTAGRAM_HASHTAGS, 1)[0]
+    raw = await _run_actor(ACTOR_INSTAGRAM, {
+        "hashtag": hashtag,
+        "scrape_type": "recent",
+        "max_items": max(max_items, INSTAGRAM_MIN_ITEMS),  # 24 is a floor, not a cap
+    })
+    items = [it for it in (_instagram_to_intel_item(p) for p in raw) if it]
+    return await _ingest(db, items, "instagram")
 
 
 async def fetch_facebook_posts(db, max_items: int) -> int:
-    per_query = max(1, max_items // len(SEARCH_QUERIES))
-    total_items: list[dict] = []
-    for query in SEARCH_QUERIES:
-        raw = await _run_actor(ACTOR_FACEBOOK, {
-            "query": query,
-            "resultsCount": per_query,
-            "searchType": "latest",
-        })
-        total_items.extend(it for it in (_facebook_to_intel_item(p) for p in raw) if it)
-    return await _ingest(db, total_items, "facebook")
+    # This free-tier actor rate-limits hard within a single run (confirmed
+    # live: every call after the first returned "Rate limit reached" when
+    # looped across all 8 NER queries). One query, one call, per fetch —
+    # rotate which query across runs for coverage.
+    query = _rotated(SEARCH_QUERIES, 1)[0]
+    raw = await _run_actor(ACTOR_FACEBOOK, {
+        "query": query,
+        "resultsCount": max_items,
+        "searchType": "latest",
+    })
+    items = [it for it in (_facebook_to_intel_item(p) for p in raw) if it]
+    return await _ingest(db, items, "facebook")
 
 
 # ── Orchestrator ──────────────────────────────────────────────────────────────
