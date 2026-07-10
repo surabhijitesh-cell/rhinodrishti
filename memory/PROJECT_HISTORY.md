@@ -34,3 +34,13 @@ clustered severity markers), new RAS parent grouping (Meghalaya IS + RAS
 Locations sub-PAOI), NH/rail priority weighting in P3, auto "Commander's
 Attention Required" section (after deep dives). 26 tests in
 tests/test_periodic_report_v36.py.
+
+## 2026-07-10 — fix/qa-findings-jul07 + feature/apify-social-scraping
+Full-app QA pass on the live deployment: fixed faultline severity badges
+(all showed the same lime-green background), a blank dead-page for unknown
+routes, silent session-expiry with no message, and mobile stat-card
+cramming. Separately: replaced the dead twitter_fetcher.py/facebook_fetcher.py
+(both failed completely on official-API cost/access) with Apify-based
+Instagram/Facebook/Twitter scraping — Throttled (~$0, fits the $5 free
+credit) vs Firehose (~$11/mo) toggle in API & Pipeline Monitor. Needs
+APIFY_TOKEN added before it can run.
