@@ -156,8 +156,9 @@ def _instagram_to_intel_item(post: dict) -> Optional[dict]:
     if not caption:
         return None
     url = _first(post, "url", "postUrl", "permalink")
-    owner = _first(post, "ownerUsername", "username", "author", default="unknown")
-    created = _first(post, "timestamp", "takenAt", "createdAt")
+    author = post.get("author") or {}
+    owner = _first(post, "ownerUsername", "username", default="") or author.get("username", "unknown")
+    created = _first(post, "taken_at", "taken_at_timestamp", "timestamp", "takenAt", "createdAt")
     return {
         "title": f"Instagram post by @{owner}: {caption[:80]}",
         "source": f"Instagram - @{owner}",
@@ -169,12 +170,14 @@ def _instagram_to_intel_item(post: dict) -> Optional[dict]:
 
 
 def _facebook_to_intel_item(post: dict) -> Optional[dict]:
-    text = _first(post, "text", "message", "content")
+    text = _first(post, "postText", "text", "message", "content")
     if not text:
         return None
     url = _first(post, "url", "postUrl", "link")
-    author = _first(post, "author", "pageName", "authorName", default="unknown")
-    created = _first(post, "time", "timestamp", "date")
+    author_obj = post.get("author") or {}
+    author = author_obj.get("name") if isinstance(author_obj, dict) else None
+    author = author or _first(post, "pageName", "authorName", default="unknown")
+    created = _first(post, "timestamp", "time", "date")
     return {
         "title": f"Facebook post by {author}: {text[:80]}",
         "source": f"Facebook - {author}",
@@ -189,6 +192,11 @@ def _parse_date(value) -> str:
     if not value:
         return datetime.now(timezone.utc).isoformat()
     if isinstance(value, (int, float)):
+        # Epoch millis (13 digits, e.g. Facebook's `timestamp`) vs epoch
+        # seconds (10 digits, e.g. Instagram's `taken_at_timestamp`) —
+        # anything past year ~2286 in seconds is unambiguously millis.
+        if value > 1e11:
+            value = value / 1000
         try:
             return datetime.fromtimestamp(value, tz=timezone.utc).isoformat()
         except (ValueError, OSError):
@@ -232,14 +240,26 @@ async def fetch_twitter_posts(db, max_items: int) -> int:
     return await _ingest(db, items, "twitter")
 
 
+INSTAGRAM_MIN_ITEMS = 24  # actor-enforced floor — validation fails below this
+
+
 async def fetch_instagram_posts(db, max_items: int) -> int:
-    per_hashtag = max(1, max_items // len(INSTAGRAM_HASHTAGS))
+    # The actor rejects max_items < 24, so we can't spread the budget thin
+    # across all hashtags in one run. Instead query as many hashtags as the
+    # budget allows at the actor's minimum each, rotating the starting point
+    # by day-of-year so every hashtag gets covered across repeated runs
+    # rather than always querying the same first few.
+    n_hashtags = max(1, max_items // INSTAGRAM_MIN_ITEMS)
+    offset = datetime.now(timezone.utc).timetuple().tm_yday % len(INSTAGRAM_HASHTAGS)
+    rotated = INSTAGRAM_HASHTAGS[offset:] + INSTAGRAM_HASHTAGS[:offset]
+    hashtags_to_query = rotated[:n_hashtags]
+
     total_items: list[dict] = []
-    for hashtag in INSTAGRAM_HASHTAGS:
+    for hashtag in hashtags_to_query:
         raw = await _run_actor(ACTOR_INSTAGRAM, {
             "hashtag": hashtag,
             "scrape_type": "recent",
-            "max_items": per_hashtag,
+            "max_items": INSTAGRAM_MIN_ITEMS,
         })
         total_items.extend(it for it in (_instagram_to_intel_item(p) for p in raw) if it)
     return await _ingest(db, total_items, "instagram")
