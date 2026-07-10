@@ -116,8 +116,13 @@ async def _run_actor(actor_id: str, run_input: dict) -> list[dict]:
     loop = asyncio.get_running_loop()
 
     def _sync_run():
+        # apify-client 3.x: .call() returns a pydantic Run model, not a dict —
+        # confirmed by inspecting apify_client._models.Run locally (the field
+        # is default_dataset_id, snake_case attribute access).
         run = client.actor(actor_id).call(run_input=run_input)
-        dataset_id = run["defaultDatasetId"]
+        if run is None:
+            return []
+        dataset_id = run.default_dataset_id
         return list(client.dataset(dataset_id).iterate_items())
 
     return await loop.run_in_executor(None, _sync_run)
