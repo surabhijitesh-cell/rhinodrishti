@@ -27,6 +27,7 @@ once APIFY_TOKEN is available; this is a documented gap until then.
 """
 import logging
 import os
+import uuid
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
@@ -222,6 +223,7 @@ async def _ingest(db, items: list[dict], platform: str) -> int:
             continue
         if await db.intelligence_items.find_one({"source_url": item["source_url"]}):
             continue
+        item.setdefault("id", str(uuid.uuid4()))
         await db.social_posts.insert_one({**item, "platform": platform, "fetched_at": datetime.now(timezone.utc).isoformat()})
         try:
             analysis = await classify_and_analyze_article(item["raw_content"][:4000], item["title"])
