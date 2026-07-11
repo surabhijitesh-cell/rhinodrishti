@@ -381,6 +381,8 @@ async def classify_and_analyze_article(article, source_hint: str = "") -> dict:
             analysis = json.loads(json_str)
         else:
             raise ValueError("No JSON found in response")
+        if not isinstance(analysis, dict):
+            raise ValueError(f"Parsed JSON not object, got {type(analysis).__name__}")
 
         # Extract data from new enhanced format
         display_title = analysis.get("title_english", title) or title
