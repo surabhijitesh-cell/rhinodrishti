@@ -7,7 +7,7 @@ import {
   Rss, Eye, EyeOff, Clock, CheckCircle2, Loader2,
   Filter, Languages, BellRing, GitBranch, Check, Wifi, WifiOff,
   ArrowUpDown, Youtube, Send, ChevronDown, ChevronUp,
-  Play, Zap, Radio, Maximize2, Minimize2,
+  Play, Zap, Radio, Maximize2, Minimize2, Facebook,
 } from "lucide-react";
 import Tip from "../components/Tip";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
@@ -271,6 +271,7 @@ function SourceScanners({ api, socialTrigger }) {
   const [rss, setRss]                 = useState(null);
   const [rssSources, setRssSources]   = useState([]);
   const [socialStatus, setSocialStatus] = useState(null);
+  const [apifyStatus, setApifyStatus] = useState(null);
   const [ytData, setYtData]           = useState({ channels: [], searches: [] });
   const [tgData, setTgData]           = useState({ channels: [] });
   const [triggering, setTriggering]   = useState({});
@@ -303,12 +304,14 @@ function SourceScanners({ api, socialTrigger }) {
         axios.get(`${api}/social/youtube/searches`),
         axios.get(`${api}/social/telegram/channels`),
         axios.get(`${api}/sources`),
+        axios.get(`${api}/social/apify/status`),
       ]);
-      const [status, yt, ytS, tg, rssS] = results;
+      const [status, yt, ytS, tg, rssS, apify] = results;
       if (status.status === "fulfilled") setSocialStatus(status.value.data);
       setYtData({ channels: yt.value?.data?.channels || [], searches: ytS.value?.data?.searches || [] });
       setTgData({ channels: tg.value?.data?.channels || [] });
       setRssSources(rssS.value?.data?.sources || []);
+      if (apify.status === "fulfilled") setApifyStatus(apify.value.data);
     } catch {}
   }, [api]);
 
@@ -369,6 +372,8 @@ function SourceScanners({ api, socialTrigger }) {
   const lastResult   = rss?.last_scan_result;
   const ytActive     = !!socialStatus?.youtube?.configured;
   const tgActive     = !!socialStatus?.telegram?.configured;
+  const fbActive     = !!apifyStatus?.configured;
+  const fbPostCount  = apifyStatus?.total_counts?.facebook || 0;
 
   const latest = (arr, key) => arr.reduce((best, item) => {
     if (!item[key]) return best;
@@ -382,6 +387,7 @@ function SourceScanners({ api, socialTrigger }) {
     { key: "rss", ok: true,     active: rssScanning },
     { key: "yt",  ok: ytActive, active: triggering["youtube"] },
     { key: "tg",  ok: tgActive, active: triggering["telegram"] },
+    { key: "fb",  ok: fbActive, active: triggering["facebook"] },
   ];
   const configuredCount = platforms.filter(p => p.ok).length;
   const anyActive = platforms.some(p => p.active);
@@ -428,7 +434,7 @@ function SourceScanners({ api, socialTrigger }) {
             }`} />
           ))}
         </div>
-        <span className="text-[10px] font-mono text-muted-foreground ml-1 hidden sm:block">{configuredCount}/3 configured</span>
+        <span className="text-[10px] font-mono text-muted-foreground ml-1 hidden sm:block">{configuredCount}/{platforms.length} configured</span>
         <div className="ml-auto flex items-center gap-2">
           <Button
             variant="ghost" size="sm"
@@ -449,7 +455,7 @@ function SourceScanners({ api, socialTrigger }) {
         <>
           <div className="border-t border-border p-3">
             <p className="text-[9px] font-mono text-muted-foreground/50 mb-2 uppercase tracking-wider">Click a card to view its sources · Click header to collapse panel</p>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
 
               <ScannerCard
                 label="RSS Feeds" icon={Rss}
@@ -503,6 +509,23 @@ function SourceScanners({ api, socialTrigger }) {
                 tooltip={`Telegram — ${tgChannels.length} monitored channels via Telethon client. Session ID required (run telegram_setup.py). High-value for militant and political org communications.`}
               />
 
+              <ScannerCard
+                label="Facebook" icon={Facebook}
+                accentColor="text-blue-400" bgAccent="bg-blue-500/10"
+                borderAccent="border-blue-500/30" barColor="bg-blue-500"
+                isConfigured={fbActive} isActive={triggering["facebook"] || triggering["all"]} activeLabel="FETCHING"
+                progress={fbActive ? 100 : 0}
+                stat1={fbActive ? `${fbPostCount} posts` : ""}
+                lastFetched={apifyStatus?.last_run}
+                onTrigger={() => trigger("facebook", "/social/apify/fetch-now")}
+                triggering={triggering["facebook"] || triggering["all"]}
+                configNote="Add APIFY_TOKEN"
+                isSelected={selected === "facebook"}
+                onClick={() => handleCardClick("facebook")}
+                testId="scanner-facebook"
+                tooltip={`Facebook — Apify-scraped public posts via APIFY_TOKEN. ${fbPostCount} posts captured so far. Comment sentiment scored per post where comments exist.`}
+              />
+
             </div>
           </div>
 
@@ -510,7 +533,7 @@ function SourceScanners({ api, socialTrigger }) {
           {/* All 5 social platforms now show a live-feed widget with direct
               (raw) and curated (AI-classified) toggle instead of a static
               handle list. The RSS card still shows the old static panel. */}
-          {selected && ["youtube","telegram"].includes(selected) ? (
+          {selected && ["youtube","telegram","facebook"].includes(selected) ? (
             <SocialMediaFeedWidget
               api={api}
               sourceType={selected}

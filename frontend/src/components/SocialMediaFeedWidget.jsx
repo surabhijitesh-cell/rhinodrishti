@@ -16,7 +16,7 @@ import {
   RefreshCw, ExternalLink, Heart, Repeat2, Loader2,
   Filter, AlertTriangle, Pin, PinOff, X as XIcon, Zap, Brain, Eye,
   Youtube, Send, Globe, Twitter, CheckCircle2,
-  XCircle, Clock, PlusCircle, Lock,
+  XCircle, Clock, PlusCircle, Lock, Facebook, ArrowUp, ArrowDown,
 } from "lucide-react";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
@@ -107,6 +107,31 @@ const SOURCE_CFG = {
     emptyHint: [
       "Add YOUTUBE_API_KEY to backend .env",
       "Add channels in Settings → Social Scan → YouTube",
+      "Click Fetch Now below",
+    ],
+  },
+  facebook: {
+    label: "Facebook",
+    Icon: Facebook,
+    color: "text-blue-400",
+    borderColor: "border-blue-500/20",
+    bgColor: "bg-blue-500/5",
+    headerBg: "bg-blue-500/10",
+    rawEndpoint: (api) => `${api}/social-feeds/facebook`,
+    curatedEndpoint: (api) => `${api}/intelligence?source_type=facebook&limit=100&sort_by=published_at`,
+    getTitle: (it) => it.source || "Facebook",
+    getSubtitle: (it) => it.source || "",
+    getText: (it) => it.raw_content || it.ai_summary || "",
+    getUrl: (it) => it.source_url || "",
+    getTime: (it) => it.published_at || "",
+    getLikes: () => 0,
+    getShares: () => 0,
+    shareIcon: RefreshCw,
+    shareLabel: "",
+    likeLabel: "",
+    emptyHint: [
+      "Add APIFY_TOKEN to backend .env",
+      "Runs automatically via the scheduler (throttled/firehose toggle above)",
       "Click Fetch Now below",
     ],
   },
@@ -487,6 +512,19 @@ export default function SocialMediaFeedWidget({
     return { total, processed, accepted, rejected, pending: total - processed };
   }, [items, mode]);
 
+  // Social Pulse — live aggregate of comment_sentiment across currently
+  // loaded Facebook items. Not persisted — recomputed from `items` on every
+  // poll, so it always reflects what's on screen right now.
+  const socialPulse = useMemo(() => {
+    if (sourceType !== "facebook") return null;
+    const scored = items.filter(it => it.comment_sentiment);
+    if (scored.length === 0) return null;
+    const avg = (key) => Math.round(
+      scored.reduce((sum, it) => sum + (it.comment_sentiment[key] || 0), 0) / scored.length
+    );
+    return { positive_pct: avg("positive_pct"), negative_pct: avg("negative_pct"), postCount: scored.length };
+  }, [items, sourceType]);
+
   // ── Role gate — rendered AFTER all hooks (Rules of Hooks) ──────────────────
   if (!isAllowed) {
     return (
@@ -531,6 +569,18 @@ export default function SocialMediaFeedWidget({
                 <Clock size={9} />{pipelineStats.pending}
               </span>
             )}
+          </div>
+        )}
+
+        {/* Social Pulse — Facebook only, live aggregate of comment sentiment */}
+        {socialPulse && (
+          <div className="flex items-center gap-1.5 text-[9px] font-mono" title={`Aggregated from ${socialPulse.postCount} scored posts currently loaded`}>
+            <span className="text-emerald-400 flex items-center gap-0.5">
+              <ArrowUp size={9} />{socialPulse.positive_pct}%
+            </span>
+            <span className="text-red-400 flex items-center gap-0.5">
+              <ArrowDown size={9} />{socialPulse.negative_pct}%
+            </span>
           </div>
         )}
 

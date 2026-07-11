@@ -5,6 +5,7 @@ import {
   Target, MapPin, Users, Package, Shield, AlertTriangle,
   Wifi, Building, Clock, ExternalLink, ChevronDown, ChevronUp,
   Flag, TrendingUp, Radar, Layers, Trash2, RefreshCw, Pencil, X, Check,
+  Rss, Youtube, Send, Facebook, ArrowUp, ArrowDown,
 } from "lucide-react";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
@@ -111,6 +112,21 @@ function FadingBadge({ item }) {
       <span className={`text-[10px] font-mono cursor-default ${colour}`}>{label}</span>
     </Tip>
   );
+}
+
+const SOURCE_TYPE_ICON = [
+  ["rss", Rss, "text-green-400"],
+  ["youtube", Youtube, "text-red-400"],
+  ["telegram", Send, "text-sky-400"],
+  ["facebook", Facebook, "text-blue-400"],
+];
+
+function sourceEmblem(sourceType) {
+  const st = (sourceType || "").toLowerCase();
+  const match = SOURCE_TYPE_ICON.find(([prefix]) => st.startsWith(prefix));
+  if (!match) return null;
+  const [, Icon, color] = match;
+  return <Icon size={11} className={`${color} shrink-0`} />;
 }
 
 export default function IntelligenceCard({ item, compact = false, api, feedbackData, onDelete, onEnhanced }) {
@@ -224,7 +240,20 @@ export default function IntelligenceCard({ item, compact = false, api, feedbackD
               {item.title}
             </h3>
             <div className="flex items-center gap-2 mt-1 text-xs text-muted-foreground font-mono">
+              {sourceEmblem(item.source_type)}
               <span data-testid="card-source">{item.source}</span>
+              {item.comment_sentiment && (
+                <Tip text={`Comment sentiment from ${item.comment_sentiment.sample_size} scraped comments`} side="top">
+                  <span className="inline-flex items-center gap-1.5" data-testid="card-sentiment">
+                    <span className="inline-flex items-center gap-0.5 text-emerald-400">
+                      <ArrowUp size={10} />{item.comment_sentiment.positive_pct}%
+                    </span>
+                    <span className="inline-flex items-center gap-0.5 text-red-400">
+                      <ArrowDown size={10} />{item.comment_sentiment.negative_pct}%
+                    </span>
+                  </span>
+                </Tip>
+              )}
               <span>|</span>
               <Clock size={10} />
               <span>{formatTime(item.published_at)}</span>

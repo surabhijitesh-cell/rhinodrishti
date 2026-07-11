@@ -191,6 +191,7 @@ def _facebook_to_intel_item(post: dict) -> Optional[dict]:
         "published_at": _parse_date(created),
         "raw_content": text,
         "source_type": "facebook_apify",
+        "comments_count": post.get("commentsCount", 0),
     }
 
 
@@ -231,6 +232,13 @@ async def _ingest(db, items: list[dict], platform: str) -> int:
         except Exception as e:
             logger.warning(f"{platform} classify failed, queued unprocessed: {e}")
             item["processed"] = False
+
+        if platform == "facebook" and item.get("comments_count", 0) > 0:
+            from facebook_comment_sentiment import analyze_facebook_comments
+            sentiment = await analyze_facebook_comments(item["source_url"], item["comments_count"])
+            if sentiment:
+                item["comment_sentiment"] = sentiment
+
         await db.intelligence_items.insert_one(item)
         saved += 1
     return saved
