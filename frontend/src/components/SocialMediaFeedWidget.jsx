@@ -541,7 +541,7 @@ export default function SocialMediaFeedWidget({
   // same way). Not persisted — recomputed from `items` on every poll, so it
   // always reflects what's on screen right now.
   const socialPulse = useMemo(() => {
-    if (!["facebook", "instagram", "twitter"].includes(sourceType)) return null;
+    if (!["facebook", "instagram", "twitter", "youtube"].includes(sourceType)) return null;
     const scored = items.filter(it => it.comment_sentiment);
     if (scored.length === 0) return null;
     const avg = (key) => Math.round(
@@ -597,18 +597,6 @@ export default function SocialMediaFeedWidget({
           </div>
         )}
 
-        {/* Social Pulse — Facebook only, live aggregate of comment sentiment */}
-        {socialPulse && (
-          <div className="flex items-center gap-1.5 text-[9px] font-mono" title={`Aggregated from ${socialPulse.postCount} scored posts currently loaded`}>
-            <span className="text-emerald-400 flex items-center gap-0.5">
-              <ArrowUp size={9} />{socialPulse.positive_pct}%
-            </span>
-            <span className="text-red-400 flex items-center gap-0.5">
-              <ArrowDown size={9} />{socialPulse.negative_pct}%
-            </span>
-          </div>
-        )}
-
         {/* Direct / Curated toggle */}
         <div className="ml-auto flex items-center border border-border rounded-none overflow-hidden mr-1">
           <button
@@ -633,12 +621,21 @@ export default function SocialMediaFeedWidget({
 
         {/* Action buttons */}
         <div className="flex items-center gap-1">
+          {socialPulse && (
+            <span className="flex items-center gap-0.5 text-[9px] font-mono text-emerald-400" title={`Social Pulse — ${socialPulse.postCount} scored posts currently loaded`}>
+              <ArrowUp size={9} />{socialPulse.positive_pct}%
+            </span>
+          )}
           <Button variant="ghost" size="sm" onClick={fetchNow} disabled={triggering}
-            className="h-6 px-2 text-[9px] rounded-none font-mono uppercase border border-border hover:text-emerald-400"
+            className="h-6 px-1.5 text-[9px] rounded-none font-mono uppercase border border-border hover:text-emerald-400"
             title="Trigger an immediate fetch on the backend">
-            {triggering ? <Loader2 size={9} className="animate-spin mr-1" /> : <Zap size={9} className="mr-1" />}
-            Fetch
+            {triggering ? <Loader2 size={9} className="animate-spin" /> : <Zap size={9} />}
           </Button>
+          {socialPulse && (
+            <span className="flex items-center gap-0.5 text-[9px] font-mono text-red-400" title={`Social Pulse — ${socialPulse.postCount} scored posts currently loaded`}>
+              <ArrowDown size={9} />{socialPulse.negative_pct}%
+            </span>
+          )}
           <Button variant="ghost" size="sm" onClick={() => load()} disabled={refreshing}
             className="h-6 px-2 text-[9px] rounded-none font-mono uppercase border border-border">
             {refreshing ? <Loader2 size={9} className="animate-spin" /> : <RefreshCw size={9} />}
