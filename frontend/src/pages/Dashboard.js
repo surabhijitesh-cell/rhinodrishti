@@ -459,7 +459,8 @@ function SourceScanners({ api, socialTrigger }) {
         <div className="ml-auto flex items-center gap-2">
           {sentimentPulse.combined && (
             <Tip text={`Combined Social Pulse — ${sentimentPulse.combined.post_count} scored posts across Facebook/Instagram/Twitter/YouTube`} side="top">
-              <span className="flex items-center gap-1 text-[10px] font-mono border border-border px-1.5 py-0.5 cursor-help" onClick={e => e.stopPropagation()}>
+              <span className="flex items-center gap-1.5 text-[10px] font-mono border border-border px-1.5 py-0.5 cursor-help" onClick={e => e.stopPropagation()}>
+                <span className="uppercase tracking-wider text-muted-foreground text-[9px]">Social Media Pulse Indicator</span>
                 <span className="text-emerald-400">▲{sentimentPulse.combined.positive_pct}%</span>
                 <span className="text-red-400">▼{sentimentPulse.combined.negative_pct}%</span>
               </span>
