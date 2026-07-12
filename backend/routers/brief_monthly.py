@@ -1165,6 +1165,10 @@ async def _run_generation(year: int, month: int, force_rich: bool = False) -> di
     if not llm_ok:
         brief["_llm_error"] = "LLM calls returned empty — check OpenRouter API key and rate limits. Re-generate to retry."
 
+    # 4b. Social Media Pulse — sentiment for this period's own window
+    from social_pulse import get_social_pulse_for_period
+    brief["social_pulse"] = await get_social_pulse_for_period(db, start_iso, end_iso)
+
     # 5. NotebookLM markdown
     brief["notebooklm_script"] = _build_notebooklm_script(brief, year, month)
 
@@ -2007,6 +2011,25 @@ def _render_pdf(brief: dict, prev_brief: dict = None, include_faultlines: bool =
         draw_table(["State", "Score/100", "Level", "Intel Items"], [65, 32, 55, 38], stable_rows)
 
     pdf.ln(4)
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # 3b. SOCIAL MEDIA PULSE
+    # ══════════════════════════════════════════════════════════════════════════
+    pulse = brief.get("social_pulse")
+    if pulse and pulse.get("platforms"):
+        if pdf.get_y() > 240:
+            pdf.add_page()
+        pdf.section_title("SOCIAL MEDIA PULSE", display_period)
+        platform_labels = {"facebook": "Facebook", "instagram": "Instagram", "twitter": "Twitter/X", "youtube": "YouTube"}
+        pulse_rows = [
+            [platform_labels.get(p, p.title()), f"{s['positive_pct']}%", f"{s['negative_pct']}%", s["post_count"]]
+            for p, s in pulse["platforms"].items()
+        ]
+        combined = pulse.get("combined")
+        if combined:
+            pulse_rows.append(["Combined", f"{combined['positive_pct']}%", f"{combined['negative_pct']}%", combined["post_count"]])
+        draw_table(["Platform", "Positive", "Negative", "Posts Scored"], [55, 35, 35, 45], pulse_rows)
+        pdf.ln(4)
 
     # ══════════════════════════════════════════════════════════════════════════
     # 4. PREVIOUS PERIOD RECAP (if available)

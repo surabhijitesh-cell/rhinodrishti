@@ -616,6 +616,24 @@ def generate_brief_pdf(brief: dict, date: str, total: int, critical: int, high: 
     pdf.cell(0, 5, 'Covering: Assam, Meghalaya, Mizoram, Manipur, Arunachal Pradesh, Tripura')
     pdf.ln(15)
 
+    # SOCIAL MEDIA PULSE
+    pulse = brief.get('social_pulse')
+    if pulse and pulse.get('platforms'):
+        pdf.section_title('SOCIAL MEDIA PULSE')
+        pdf.set_font('Helvetica', '', 9)
+        pdf.set_text_color(40, 40, 40)
+        platform_labels = {"facebook": "Facebook", "instagram": "Instagram", "twitter": "Twitter/X", "youtube": "YouTube"}
+        for plat, stats in pulse['platforms'].items():
+            label = platform_labels.get(plat, plat.title())
+            pdf.cell(0, 5, f"{label}: {stats['positive_pct']}% positive / {stats['negative_pct']}% negative  ({stats['post_count']} posts scored)",
+                     new_x="LMARGIN", new_y="NEXT")
+        combined = pulse.get('combined')
+        if combined:
+            pdf.set_font('Helvetica', 'B', 9)
+            pdf.cell(0, 5, f"Combined: {combined['positive_pct']}% positive / {combined['negative_pct']}% negative  ({combined['post_count']} posts total)",
+                     new_x="LMARGIN", new_y="NEXT")
+        pdf.ln(3)
+
     # NER REGIONAL SECTION
     pdf.section_title('NORTHEAST REGION - KEY DEVELOPMENTS')
 
@@ -1507,6 +1525,10 @@ async def generate_brief_for_date(date: str):
     await attach_faultline_tags(brief_data.get("international_news", []))
     await attach_faultline_tags(brief_data.get("cross_border_bangladesh", []))
     await attach_faultline_tags(brief_data.get("cross_border_myanmar", []))
+
+    # 12c. SOCIAL MEDIA PULSE — sentiment for this brief's own window, not all-time
+    from social_pulse import get_social_pulse_for_period
+    brief_data["social_pulse"] = await get_social_pulse_for_period(db, cutoff_utc, now_utc.isoformat())
 
     # 13. SAVE AND RETURN
     brief = DailyBrief(**brief_data)

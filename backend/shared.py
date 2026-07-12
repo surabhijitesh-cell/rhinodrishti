@@ -121,6 +121,7 @@ class DailyBrief(BaseModel):
     pattern_insights: List[Dict] = []
     uploaded_insights: List[Dict] = []
     included_item_ids: List[str] = []
+    social_pulse: Optional[Dict] = None
     generated_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 

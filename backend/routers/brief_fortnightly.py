@@ -530,6 +530,10 @@ async def _run_fortnightly_generation(year: int, month: int, period: int, force_
     }
     if not llm_ok:
         brief["_llm_error"] = "LLM calls returned empty — check OpenRouter API key and rate limits. Re-generate to retry."
+
+    from social_pulse import get_social_pulse_for_period
+    brief["social_pulse"] = await get_social_pulse_for_period(db, start_iso, end_iso)
+
     brief["notebooklm_script"] = _build_notebooklm_script(brief, year, month)
 
     await fortnightly_briefs_col.replace_one(
