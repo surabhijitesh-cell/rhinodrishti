@@ -198,16 +198,6 @@ function ScannerCard({
         />
       </div>
 
-      {/* row 2.5: social pulse (own row — keeps row 1 label from truncating) */}
-      {pulse && (
-        <Tip text={`Social Pulse — ${pulse.post_count} scored posts`} side="top">
-          <div className="flex items-center gap-1.5 text-[9px] font-mono -mt-1">
-            <span className="text-emerald-400">▲{pulse.positive_pct}%</span>
-            <span className="text-red-400">▼{pulse.negative_pct}%</span>
-          </div>
-        </Tip>
-      )}
-
       {/* row 3: stats + last fetch */}
       <div className="flex items-center justify-between gap-1 min-w-0">
         <span className="text-[10px] font-mono text-muted-foreground truncate">
@@ -218,20 +208,31 @@ function ScannerCard({
         </span>
       </div>
 
-      {/* row 4: trigger button — stops propagation so card click still works */}
-      <Button
-        variant="ghost" size="sm"
-        className={`h-5 w-full text-[9px] rounded-none font-mono border tracking-wider ${
-          isConfigured
-            ? `${borderAccent} ${accentColor} opacity-60 hover:opacity-100`
-            : "border-border text-muted-foreground opacity-40 cursor-not-allowed"
-        }`}
-        onClick={e => { e.stopPropagation(); onTrigger && onTrigger(); }}
-        disabled={!isConfigured || triggering || !onTrigger}
-      >
-        {triggering ? <Loader2 size={9} className="animate-spin mr-1" /> : <Zap size={9} className="mr-1" />}
-        {triggering ? "FETCHING…" : "FETCH"}
-      </Button>
+      {/* row 4: trigger button, flanked by social pulse (▲ left, ▼ right) when available */}
+      <div className="flex items-center gap-1">
+        {pulse && (
+          <Tip text={`Social Pulse — ${pulse.post_count} scored posts`} side="top">
+            <span className="text-[9px] font-mono text-emerald-400 shrink-0">▲{pulse.positive_pct}%</span>
+          </Tip>
+        )}
+        <Button
+          variant="ghost" size="sm"
+          className={`h-5 flex-1 text-[9px] rounded-none font-mono border tracking-wider ${
+            isConfigured
+              ? `${borderAccent} ${accentColor} opacity-60 hover:opacity-100`
+              : "border-border text-muted-foreground opacity-40 cursor-not-allowed"
+          }`}
+          onClick={e => { e.stopPropagation(); onTrigger && onTrigger(); }}
+          disabled={!isConfigured || triggering || !onTrigger}
+        >
+          {triggering ? <Loader2 size={9} className="animate-spin" /> : <Zap size={9} />}
+        </Button>
+        {pulse && (
+          <Tip text={`Social Pulse — ${pulse.post_count} scored posts`} side="top">
+            <span className="text-[9px] font-mono text-red-400 shrink-0">▼{pulse.negative_pct}%</span>
+          </Tip>
+        )}
+      </div>
 
       {/* selected indicator */}
       {isSelected && (
