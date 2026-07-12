@@ -350,13 +350,30 @@ async def startup():
                 elif limit is not None:
                     remaining = round(limit - usage, 4)
                 else:
-                    # Prepaid account with no monthly cap — cannot determine balance from auth/key.
-                    # Fall back to exhaustion flag set by 402 errors during actual LLM calls.
-                    from llm_client import set_credit_warning, get_credit_warning, is_openrouter_exhausted
-                    if is_openrouter_exhausted():
-                        set_credit_warning("critical", None)
-                        logger.warning("OpenRouter credits: exhaustion flag set (402 errors) — marking critical")
-                    return
+                    # Prepaid/BYOK account with no spending limit — auth/key's limit fields
+                    # are always None here (confirmed live: "limit=None limit_remaining=None"
+                    # every check, meaning the $2/$0.50 thresholds below never ran and the
+                    # only way to notice exhaustion was after a real 402 failure). The
+                    # separate /credits endpoint (data.total_credits, data.total_usage) is
+                    # what actually reports balance for this account type.
+                    async with httpx.AsyncClient(timeout=10) as client2:
+                        cr = await client2.get(
+                            "https://openrouter.ai/api/v1/credits",
+                            headers={"Authorization": f"Bearer {key}"},
+                        )
+                    if cr.status_code != 200:
+                        from llm_client import set_credit_warning, is_openrouter_exhausted
+                        if is_openrouter_exhausted():
+                            set_credit_warning("critical", None)
+                            logger.warning("OpenRouter credits: exhaustion flag set (402 errors) — marking critical")
+                        return
+                    cdata = cr.json().get("data", {})
+                    total_credits = cdata.get("total_credits")
+                    total_usage = cdata.get("total_usage")
+                    if total_credits is None or total_usage is None:
+                        return
+                    remaining = round(total_credits - total_usage, 4)
+                    logger.info(f"OpenRouter /credits → total_credits={total_credits} total_usage={total_usage} remaining={remaining}")
                 from llm_client import set_credit_warning, get_credit_warning
                 prev_level = get_credit_warning()["level"]
                 if remaining <= 0.50:
