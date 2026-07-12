@@ -152,18 +152,21 @@ export default function ApiUsageWidget({ api }) {
   const [editVal, setEditVal]       = useState("");
   const [loading, setLoading]       = useState(true);
   const [showHistory, setShowHistory] = useState(false);
+  const [credit, setCredit]         = useState(null); // live OpenRouter account balance
   const alertFiredRef               = useRef(false);
 
   const load = useCallback(async (silent = false) => {
     try {
-      const [todayRes, histRes] = await Promise.all([
+      const [todayRes, histRes, creditRes] = await Promise.all([
         axios.get(`${api}/admin/api-usage/today`),
         axios.get(`${api}/admin/api-usage?days=7`),
+        axios.get(`${api}/admin/openrouter-credit-warning`).catch(() => null),
       ]);
       const t = todayRes.data;
       setToday(t);
       setDaily(histRes.data.daily || []);
       setThreshold(histRes.data.threshold_usd || 15);
+      if (creditRes) setCredit(creditRes.data);
 
       if (t.alert && !alertFiredRef.current) {
         alertFiredRef.current = true;
@@ -262,6 +265,30 @@ export default function ApiUsageWidget({ api }) {
             <div className="flex justify-between text-[9px] font-mono text-muted-foreground">
               <span>{today.pct_of_limit}% of daily limit</span>
               <span>Limit ₹{today.threshold_inr} (${today.threshold_usd})</span>
+            </div>
+          </div>
+        )}
+
+        {/* ── OpenRouter account balance (live, direct from OpenRouter) ── */}
+        {credit && (
+          <div className={`flex items-center justify-between p-2 border rounded-none ${
+            credit.level === "critical" ? "border-red-500/30 bg-red-500/5"
+              : credit.level === "low" ? "border-amber-500/30 bg-amber-500/5"
+              : "border-border/30"
+          }`}>
+            <span className="text-[10px] font-mono uppercase text-muted-foreground tracking-wider">OpenRouter Balance</span>
+            <div className="flex items-center gap-2">
+              <span className={`text-[11px] font-bold font-mono ${
+                credit.level === "critical" ? "text-red-400" : credit.level === "low" ? "text-amber-400" : "text-emerald-400"
+              }`}>
+                {credit.remaining_usd != null ? `$${credit.remaining_usd.toFixed(2)}` : "—"}
+              </span>
+              {credit.level !== "ok" && (
+                <a href={credit.top_up_url} target="_blank" rel="noopener noreferrer"
+                  className="text-[9px] font-mono underline text-muted-foreground hover:text-foreground">
+                  Top up
+                </a>
+              )}
             </div>
           </div>
         )}
