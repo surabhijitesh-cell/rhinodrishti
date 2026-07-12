@@ -517,18 +517,20 @@ async def apify_fetch_now(background_tasks: BackgroundTasks, admin: dict = Depen
     return {"status": "fetch started", "message": "Running in background — check /social/apify/status shortly"}
 
 
-@router.post("/social/apify/backfill-comments")
-async def apify_backfill_comments(background_tasks: BackgroundTasks, admin: dict = Depends(require_admin_role)):
+@router.post("/social/apify/backfill-comments/{platform}")
+async def apify_backfill_comments(platform: str, background_tasks: BackgroundTasks, admin: dict = Depends(require_admin_role)):
     """One-time (idempotent) sweep: attach comment_sentiment to existing
-    Facebook items that don't have it yet. Safe to re-run — only touches
-    docs missing the field."""
+    items of the given platform (facebook | instagram | twitter) that don't
+    have it yet. Safe to re-run — only touches docs missing the field."""
+    if platform not in ("facebook", "instagram", "twitter"):
+        raise HTTPException(400, "platform must be one of facebook, instagram, twitter")
     if not apify_social_fetcher.is_configured():
         raise HTTPException(400, "APIFY_TOKEN not set — add it to Render environment variables first")
 
     async def _run():
-        from facebook_comment_sentiment import backfill_facebook_comment_sentiment
-        result = await backfill_facebook_comment_sentiment(db)
-        logger.info(f"Facebook comment sentiment backfill: {result}")
+        from social_comment_sentiment import backfill_comment_sentiment
+        result = await backfill_comment_sentiment(db, platform)
+        logger.info(f"{platform} comment sentiment backfill: {result}")
 
     background_tasks.add_task(_run)
-    return {"status": "backfill started", "message": "Running in background"}
+    return {"status": "backfill started", "platform": platform, "message": "Running in background"}

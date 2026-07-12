@@ -16,7 +16,7 @@ import {
   RefreshCw, ExternalLink, Heart, Repeat2, Loader2,
   Filter, AlertTriangle, Pin, PinOff, X as XIcon, Zap, Brain, Eye,
   Youtube, Send, Globe, Twitter, CheckCircle2,
-  XCircle, Clock, PlusCircle, Lock, Facebook, ArrowUp, ArrowDown,
+  XCircle, Clock, PlusCircle, Lock, Facebook, Instagram, ArrowUp, ArrowDown,
 } from "lucide-react";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
@@ -54,10 +54,34 @@ const SOURCE_CFG = {
     shareLabel: "RT",
     likeLabel: "Likes",
     emptyHint: [
-      "Set TWITTER_BEARER_TOKEN in the backend .env",
-      "Add a List in Settings → Social Scan → X/Twitter",
+      "Add APIFY_TOKEN to backend .env",
+      "Runs automatically via the scheduler (throttled/firehose toggle above)",
       "Click Fetch Now below",
-      "Wait 10–60s for tweets to appear",
+    ],
+  },
+  instagram: {
+    label: "Instagram",
+    Icon: Instagram,
+    color: "text-pink-400",
+    borderColor: "border-pink-500/20",
+    bgColor: "bg-pink-500/5",
+    headerBg: "bg-pink-500/10",
+    rawEndpoint: (api) => `${api}/social-feeds/instagram`,
+    curatedEndpoint: (api) => `${api}/intelligence?source_type=instagram&limit=100&sort_by=published_at`,
+    getTitle: (it) => it.source || "Instagram",
+    getSubtitle: (it) => it.source || "",
+    getText: (it) => it.raw_content || it.ai_summary || "",
+    getUrl: (it) => it.source_url || "",
+    getTime: (it) => it.published_at || "",
+    getLikes: () => 0,
+    getShares: () => 0,
+    shareIcon: RefreshCw,
+    shareLabel: "",
+    likeLabel: "",
+    emptyHint: [
+      "Add APIFY_TOKEN to backend .env",
+      "Runs automatically via the scheduler (throttled/firehose toggle above)",
+      "Click Fetch Now below",
     ],
   },
   telegram: {
@@ -513,10 +537,11 @@ export default function SocialMediaFeedWidget({
   }, [items, mode]);
 
   // Social Pulse — live aggregate of comment_sentiment across currently
-  // loaded Facebook items. Not persisted — recomputed from `items` on every
-  // poll, so it always reflects what's on screen right now.
+  // loaded items (Facebook/Instagram/Twitter — all three score comments the
+  // same way). Not persisted — recomputed from `items` on every poll, so it
+  // always reflects what's on screen right now.
   const socialPulse = useMemo(() => {
-    if (sourceType !== "facebook") return null;
+    if (!["facebook", "instagram", "twitter"].includes(sourceType)) return null;
     const scored = items.filter(it => it.comment_sentiment);
     if (scored.length === 0) return null;
     const avg = (key) => Math.round(

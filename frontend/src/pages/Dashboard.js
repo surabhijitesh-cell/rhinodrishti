@@ -7,7 +7,7 @@ import {
   Rss, Eye, EyeOff, Clock, CheckCircle2, Loader2,
   Filter, Languages, BellRing, GitBranch, Check, Wifi, WifiOff,
   ArrowUpDown, Youtube, Send, ChevronDown, ChevronUp,
-  Play, Zap, Radio, Maximize2, Minimize2, Facebook,
+  Play, Zap, Radio, Maximize2, Minimize2, Facebook, Instagram, Twitter,
 } from "lucide-react";
 import Tip from "../components/Tip";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
@@ -374,6 +374,10 @@ function SourceScanners({ api, socialTrigger }) {
   const tgActive     = !!socialStatus?.telegram?.configured;
   const fbActive     = !!apifyStatus?.configured;
   const fbPostCount  = apifyStatus?.total_counts?.facebook || 0;
+  const igActive     = !!apifyStatus?.configured;
+  const igPostCount  = apifyStatus?.total_counts?.instagram || 0;
+  const twActive     = !!apifyStatus?.configured;
+  const twPostCount  = apifyStatus?.total_counts?.twitter || 0;
 
   const latest = (arr, key) => arr.reduce((best, item) => {
     if (!item[key]) return best;
@@ -388,6 +392,8 @@ function SourceScanners({ api, socialTrigger }) {
     { key: "yt",  ok: ytActive, active: triggering["youtube"] },
     { key: "tg",  ok: tgActive, active: triggering["telegram"] },
     { key: "fb",  ok: fbActive, active: triggering["facebook"] },
+    { key: "ig",  ok: igActive, active: triggering["instagram"] },
+    { key: "tw",  ok: twActive, active: triggering["twitter"] },
   ];
   const configuredCount = platforms.filter(p => p.ok).length;
   const anyActive = platforms.some(p => p.active);
@@ -455,7 +461,7 @@ function SourceScanners({ api, socialTrigger }) {
         <>
           <div className="border-t border-border p-3">
             <p className="text-[9px] font-mono text-muted-foreground/50 mb-2 uppercase tracking-wider">Click a card to view its sources · Click header to collapse panel</p>
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
 
               <ScannerCard
                 label="RSS Feeds" icon={Rss}
@@ -526,14 +532,48 @@ function SourceScanners({ api, socialTrigger }) {
                 tooltip={`Facebook — Apify-scraped public posts via APIFY_TOKEN. ${fbPostCount} posts captured so far. Comment sentiment scored per post where comments exist.`}
               />
 
+              <ScannerCard
+                label="Instagram" icon={Instagram}
+                accentColor="text-pink-400" bgAccent="bg-pink-500/10"
+                borderAccent="border-pink-500/30" barColor="bg-pink-500"
+                isConfigured={igActive} isActive={triggering["instagram"] || triggering["all"]} activeLabel="FETCHING"
+                progress={igActive ? 100 : 0}
+                stat1={igActive ? `${igPostCount} posts` : ""}
+                lastFetched={apifyStatus?.last_run}
+                onTrigger={() => trigger("instagram", "/social/apify/fetch-now")}
+                triggering={triggering["instagram"] || triggering["all"]}
+                configNote="Add APIFY_TOKEN"
+                isSelected={selected === "instagram"}
+                onClick={() => handleCardClick("instagram")}
+                testId="scanner-instagram"
+                tooltip={`Instagram — Apify-scraped public posts via APIFY_TOKEN. ${igPostCount} posts captured so far. Comment sentiment scored per post where comments exist.`}
+              />
+
+              <ScannerCard
+                label="Twitter/X" icon={Twitter}
+                accentColor="text-slate-300" bgAccent="bg-slate-500/10"
+                borderAccent="border-slate-500/30" barColor="bg-slate-400"
+                isConfigured={twActive} isActive={triggering["twitter"] || triggering["all"]} activeLabel="FETCHING"
+                progress={twActive ? 100 : 0}
+                stat1={twActive ? `${twPostCount} tweets` : ""}
+                lastFetched={apifyStatus?.last_run}
+                onTrigger={() => trigger("twitter", "/social/apify/fetch-now")}
+                triggering={triggering["twitter"] || triggering["all"]}
+                configNote="Add APIFY_TOKEN"
+                isSelected={selected === "twitter"}
+                onClick={() => handleCardClick("twitter")}
+                testId="scanner-twitter"
+                tooltip={`Twitter/X — Apify-scraped tweets via APIFY_TOKEN. ${twPostCount} tweets captured so far. Comment sentiment scored per tweet where replies exist.`}
+              />
+
             </div>
           </div>
 
           {/* ── source detail / live-feed panel ── */}
-          {/* All 5 social platforms now show a live-feed widget with direct
+          {/* All social platforms now show a live-feed widget with direct
               (raw) and curated (AI-classified) toggle instead of a static
               handle list. The RSS card still shows the old static panel. */}
-          {selected && ["youtube","telegram","facebook"].includes(selected) ? (
+          {selected && ["youtube","telegram","facebook","instagram","twitter"].includes(selected) ? (
             <SocialMediaFeedWidget
               api={api}
               sourceType={selected}

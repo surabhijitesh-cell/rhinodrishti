@@ -5,7 +5,7 @@ import {
   Target, MapPin, Users, Package, Shield, AlertTriangle,
   Wifi, Building, Clock, ExternalLink, ChevronDown, ChevronUp,
   Flag, TrendingUp, Radar, Layers, Trash2, RefreshCw, Pencil, X, Check,
-  Rss, Youtube, Send, Facebook, ArrowUp, ArrowDown,
+  Rss, Youtube, Send, Facebook, Instagram, Twitter, ArrowUp, ArrowDown,
 } from "lucide-react";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
@@ -119,6 +119,8 @@ const SOURCE_TYPE_ICON = [
   ["youtube", Youtube, "text-red-400"],
   ["telegram", Send, "text-sky-400"],
   ["facebook", Facebook, "text-blue-400"],
+  ["instagram", Instagram, "text-pink-400"],
+  ["twitter", Twitter, "text-slate-300"],
 ];
 
 function sourceEmblem(sourceType) {

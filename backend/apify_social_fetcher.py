@@ -12,6 +12,13 @@ Actors used (chosen for cost + reliability, see memory/plans research):
   Instagram: breathtaking_anthem/instagram-hashtag-posts-scraper — $0.0014/post
   Facebook:  scraper_one/facebook-posts-search — $0.002/post
 
+All three platforms have full feature parity as of 2026-07-12 (Apify Starter
+plan, $29/mo): ingestion, comment/reply sentiment (social_comment_sentiment.py),
+Dashboard widget, source emblem, Social Pulse. Twitter was previously disabled
+— the free-plan API block on apidojo/tweet-scraper is confirmed lifted under
+Starter (live test call, not assumed). Instagram's once-daily cap and
+Facebook's rate limit are also confirmed lifted under Starter.
+
 Volume mode (throttled default / firehose) is stored in Mongo
 (db.app_settings, doc id "social_fetch") so the admin toggle in API &
 Pipeline Monitor takes effect immediately without a redeploy or restart.
@@ -22,8 +29,8 @@ classify_and_analyze_article → db.intelligence_items. No pipeline changes.
 NOTE ON FIELD MAPPING: Apify does not publish a fixed output schema for
 these actors (community-maintained, not versioned APIs) — the ai_pipeline_
 Author/ mapping below reads several candidate key names defensively and
-skips a post rather than crashing if none match. Verify against a real run
-once APIFY_TOKEN is available; this is a documented gap until then.
+skips a post rather than crashing if none match. Verified against real run
+output for all three platforms (see git history for the live test calls).
 """
 import logging
 import os
@@ -154,6 +161,7 @@ def _twitter_to_intel_item(tweet: dict) -> Optional[dict]:
         "published_at": _parse_date(created),
         "raw_content": text,
         "source_type": "twitter_apify",
+        "comments_count": tweet.get("replyCount", 0),
     }
 
 
@@ -172,6 +180,7 @@ def _instagram_to_intel_item(post: dict) -> Optional[dict]:
         "published_at": _parse_date(created),
         "raw_content": caption,
         "source_type": "instagram_apify",
+        "comments_count": post.get("comment_count", 0),
     }
 
 
@@ -233,9 +242,9 @@ async def _ingest(db, items: list[dict], platform: str) -> int:
             logger.warning(f"{platform} classify failed, queued unprocessed: {e}")
             item["processed"] = False
 
-        if platform == "facebook" and item.get("comments_count", 0) > 0:
-            from facebook_comment_sentiment import analyze_facebook_comments
-            sentiment = await analyze_facebook_comments(item["source_url"], item["comments_count"])
+        if item.get("comments_count", 0) > 0:
+            from social_comment_sentiment import analyze_comments
+            sentiment = await analyze_comments(platform, item["source_url"], item["comments_count"])
             if sentiment:
                 item["comment_sentiment"] = sentiment
 
@@ -244,14 +253,15 @@ async def _ingest(db, items: list[dict], platform: str) -> int:
     return saved
 
 
-# DISABLED — apidojo/tweet-scraper refuses API calls on Apify's free plan
-# ("The developer of this actor doesn't allow the use of API in the Free
-# Plan"), confirmed live via Render logs 2026-07-10. Not called by
-# run_social_fetch. Re-enable by adding it back to the platform loop below
-# if a paid Apify plan or a different free-API-compatible actor is chosen.
+# Re-enabled 2026-07-12 — apidojo/tweet-scraper blocked API calls on Apify's
+# free plan ("The developer of this actor doesn't allow the use of API in
+# the Free Plan", confirmed live 2026-07-10). Upgrading to Apify Starter
+# ($29/mo) lifted this — confirmed live with a real test call before
+# re-enabling, not assumed.
 async def fetch_twitter_posts(db, max_items: int) -> int:
+    query = _rotated(SEARCH_QUERIES, 1)[0]
     raw = await _run_actor(ACTOR_TWITTER, {
-        "searchTerms": SEARCH_QUERIES,
+        "searchTerms": [query],
         "maxItems": max_items,
         "sort": "Latest",
         "tweetLanguage": "en",
@@ -275,10 +285,11 @@ def _rotated(items: list, n: int) -> list:
 
 
 async def fetch_instagram_posts(db, max_items: int) -> int:
-    # This specific free-tier actor allows exactly ONE run per day per
-    # account (confirmed live: "Access denied! Free User allowed to run
-    # once daily" on the second call within a single fetch). One hashtag,
-    # one call, per fetch — rotate which hashtag across runs for coverage.
+    # The once-per-day free-tier cap ("Access denied! Free User allowed to
+    # run once daily") is confirmed LIFTED under Apify Starter — tested live
+    # 2026-07-12 with two consecutive calls, both succeeded. Kept the
+    # one-hashtag-per-fetch rotation anyway: it's a sane default footprint,
+    # not a forced workaround anymore — loosen if you want broader coverage.
     hashtag = _rotated(INSTAGRAM_HASHTAGS, 1)[0]
     raw = await _run_actor(ACTOR_INSTAGRAM, {
         "hashtag": hashtag,
@@ -290,10 +301,10 @@ async def fetch_instagram_posts(db, max_items: int) -> int:
 
 
 async def fetch_facebook_posts(db, max_items: int) -> int:
-    # This free-tier actor rate-limits hard within a single run (confirmed
-    # live: every call after the first returned "Rate limit reached" when
-    # looped across all 8 NER queries). One query, one call, per fetch —
-    # rotate which query across runs for coverage.
+    # The free-tier rate limit ("Rate limit reached" on every call after the
+    # first when looped across all 8 NER queries) is confirmed LIFTED under
+    # Apify Starter — tested live 2026-07-12. Kept the one-query-per-fetch
+    # rotation anyway as a sane default footprint, not a forced workaround.
     query = _rotated(SEARCH_QUERIES, 1)[0]
     raw = await _run_actor(ACTOR_FACEBOOK, {
         "query": query,
@@ -317,10 +328,11 @@ async def run_social_fetch(db, force: bool = False) -> dict:
         return {"status": "skipped", "mode": mode, "message": "Not due yet per current interval"}
 
     max_items = FETCH_CONFIG[mode]["max_items_per_platform"]
-    counts = {"twitter": "disabled"}
+    counts = {}
     for platform, fn in [
         ("instagram", fetch_instagram_posts),
         ("facebook", fetch_facebook_posts),
+        ("twitter", fetch_twitter_posts),
     ]:
         try:
             counts[platform] = await fn(db, max_items)
