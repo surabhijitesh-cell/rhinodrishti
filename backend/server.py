@@ -565,7 +565,7 @@ async def startup():
         )
 
         scheduler.start()
-        logger.info("Scheduler: grassroots/60min, standard/30min, established/12hr, retry/15min, brief/0600 IST, embeddings/6hr, fusion/30min, youtube/4hr, telegram/1hr, fading/1hr, relationships/nightly, faultlines/0600+1800 IST + incremental/4hr, credit_monitor/30min, strip_raw/24hr [firecrawl+twitter DISABLED]")
+        logger.info("Scheduler: grassroots/60min, standard/30min, established/12hr, retry/15min, brief/0600 IST, embeddings/6hr, fusion/30min, youtube/4hr, telegram/1hr, apify_social/6hr (insta/fb/twitter), fading/1hr, relationships/nightly, faultlines/0600+1800 IST + incremental/4hr, credit_monitor/30min, strip_raw/24hr [firecrawl DISABLED]")
     except Exception as e:
         logger.warning(f"Scheduler setup failed: {e}")
 
