@@ -44,3 +44,16 @@ cramming. Separately: replaced the dead twitter_fetcher.py/facebook_fetcher.py
 Instagram/Facebook/Twitter scraping — Throttled (~$0, fits the $5 free
 credit) vs Firehose (~$11/mo) toggle in API & Pipeline Monitor. Needs
 APIFY_TOKEN added before it can run.
+
+## 2026-07-11..12 — feature/apify-social-scraping
+Fixed two production bugs found via live debugging: non-dict LLM classify
+results crashed silently, and Apify social items missing an `id` field froze
+the entire 15-min unprocessed-item retry job. Shipped Facebook dashboard
+widget, source emblems (RSS/YouTube/Telegram/Facebook), and real comment
+sentiment (separate Apify comment-scraper actor + batched LLM call, not
+just reaction counts). After Rohit upgraded to Apify Starter ($29/mo),
+confirmed live that it lifted every free-tier block hit earlier (Twitter's
+API block, Instagram's once-daily cap, Facebook's rate limit) — re-enabled
+Twitter, generalized the Facebook-only sentiment module into
+social_comment_sentiment.py, and brought Instagram + Twitter to full
+feature parity with Facebook (widget, emblem, Social Pulse, sentiment).
