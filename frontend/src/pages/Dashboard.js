@@ -187,14 +187,6 @@ function ScannerCard({
             {label}
           </span>
         )}
-        {pulse && (
-          <Tip text={`Social Pulse — ${pulse.post_count} scored posts`} side="top">
-            <span className="flex items-center gap-1 text-[9px] font-mono shrink-0">
-              <span className="text-emerald-400">▲{pulse.positive_pct}%</span>
-              <span className="text-red-400">▼{pulse.negative_pct}%</span>
-            </span>
-          </Tip>
-        )}
         {badge}
       </div>
 
@@ -205,6 +197,16 @@ function ScannerCard({
           style={{ width: `${isConfigured ? Math.max(progress, 8) : 8}%`, opacity: isConfigured ? 1 : 0.3 }}
         />
       </div>
+
+      {/* row 2.5: social pulse (own row — keeps row 1 label from truncating) */}
+      {pulse && (
+        <Tip text={`Social Pulse — ${pulse.post_count} scored posts`} side="top">
+          <div className="flex items-center gap-1.5 text-[9px] font-mono -mt-1">
+            <span className="text-emerald-400">▲{pulse.positive_pct}%</span>
+            <span className="text-red-400">▼{pulse.negative_pct}%</span>
+          </div>
+        </Tip>
+      )}
 
       {/* row 3: stats + last fetch */}
       <div className="flex items-center justify-between gap-1 min-w-0">
