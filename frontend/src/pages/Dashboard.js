@@ -225,7 +225,8 @@ function ScannerCard({
           onClick={e => { e.stopPropagation(); onTrigger && onTrigger(); }}
           disabled={!isConfigured || triggering || !onTrigger}
         >
-          {triggering ? <Loader2 size={9} className="animate-spin" /> : <Zap size={9} />}
+          {triggering ? <Loader2 size={9} className="animate-spin mr-1" /> : <Zap size={9} className="mr-1" />}
+          {triggering ? "FETCHING…" : "FETCH"}
         </Button>
         {pulse && (
           <Tip text={`Social Pulse — ${pulse.post_count} scored posts`} side="top">
