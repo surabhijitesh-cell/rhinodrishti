@@ -120,14 +120,19 @@ def _to_intel_item(video: dict, source_type: str = "youtube",
 # Scheduled jobs
 # ─────────────────────────────────────────────────────────────────────────────
 
+MAX_SENTIMENT_LOOKUPS_PER_CYCLE = 5  # commentThreads is free but still a network call — bound runtime
+
+
 async def fetch_youtube_channels(db) -> int:
     from ai_pipeline import classify_and_analyze_article
+    from social_comment_sentiment import analyze_comments
 
     channels = await db.youtube_channels.find({"active": True}).to_list(100)
     if not channels:
         return 0
 
     saved = 0
+    sentiment_lookups = 0
     for ch in channels:
         channel_id = ch.get("channel_id")
         if not channel_id:
@@ -155,6 +160,12 @@ async def fetch_youtube_channels(db) -> int:
                 logger.error(f"AI analysis failed for YouTube video {v['url']}: {e}")
                 item["processed"] = False
 
+            if item.get("video_id") and sentiment_lookups < MAX_SENTIMENT_LOOKUPS_PER_CYCLE:
+                sentiment_lookups += 1
+                sentiment = await analyze_comments("youtube", item["video_id"])
+                if sentiment:
+                    item["comment_sentiment"] = sentiment
+
             await db.intelligence_items.insert_one(item)
             saved += 1
 
@@ -170,6 +181,7 @@ async def fetch_youtube_channels(db) -> int:
 async def fetch_youtube_searches(db) -> int:
     from ai_pipeline import classify_and_analyze_article
     from keyword_engine import get_top_keywords_for_search
+    from social_comment_sentiment import analyze_comments
 
     # 1. Manually-configured searches (user added via Settings UI)
     manual = await db.youtube_searches.find({"active": True}).to_list(100)
@@ -191,6 +203,7 @@ async def fetch_youtube_searches(db) -> int:
                 f"= {len(queries)} unique queries")
 
     saved = 0
+    sentiment_lookups = 0
     for query, max_results, doc_id, is_bank in queries:
         loop = asyncio.get_event_loop()
         videos = await loop.run_in_executor(
@@ -212,6 +225,12 @@ async def fetch_youtube_searches(db) -> int:
                 item.update(analysis)
             except Exception as e:
                 item["processed"] = False
+
+            if item.get("video_id") and sentiment_lookups < MAX_SENTIMENT_LOOKUPS_PER_CYCLE:
+                sentiment_lookups += 1
+                sentiment = await analyze_comments("youtube", item["video_id"])
+                if sentiment:
+                    item["comment_sentiment"] = sentiment
 
             await db.intelligence_items.insert_one(item)
             saved += 1

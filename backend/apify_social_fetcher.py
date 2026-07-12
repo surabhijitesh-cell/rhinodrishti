@@ -225,9 +225,19 @@ def _parse_date(value) -> str:
 
 # ── Per-platform fetchers ─────────────────────────────────────────────────────
 
+# Comment-sentiment lookups are slow (~15-25s Apify actor call + an LLM call,
+# EACH). Doing this for every item in a firehose-sized batch (up to 100)
+# blew cycle runtime past Render's limits and the process got killed before
+# _mark_run ever ran — last_run looked permanently stuck even though items
+# were still being ingested. Capped per platform per cycle so a fetch always
+# finishes and records itself; uncapped items just don't get a sentiment tag.
+MAX_SENTIMENT_LOOKUPS_PER_CYCLE = 5
+
+
 async def _ingest(db, items: list[dict], platform: str) -> int:
     from ai_pipeline import classify_and_analyze_article
     saved = 0
+    sentiment_lookups = 0
     for item in items:
         if not item.get("source_url") or not item.get("raw_content"):
             continue
@@ -242,7 +252,8 @@ async def _ingest(db, items: list[dict], platform: str) -> int:
             logger.warning(f"{platform} classify failed, queued unprocessed: {e}")
             item["processed"] = False
 
-        if item.get("comments_count", 0) > 0:
+        if item.get("comments_count", 0) > 0 and sentiment_lookups < MAX_SENTIMENT_LOOKUPS_PER_CYCLE:
+            sentiment_lookups += 1
             from social_comment_sentiment import analyze_comments
             sentiment = await analyze_comments(platform, item["source_url"], item["comments_count"])
             if sentiment:

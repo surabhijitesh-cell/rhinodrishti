@@ -522,9 +522,9 @@ async def apify_backfill_comments(platform: str, background_tasks: BackgroundTas
     """One-time (idempotent) sweep: attach comment_sentiment to existing
     items of the given platform (facebook | instagram | twitter) that don't
     have it yet. Safe to re-run — only touches docs missing the field."""
-    if platform not in ("facebook", "instagram", "twitter"):
-        raise HTTPException(400, "platform must be one of facebook, instagram, twitter")
-    if not apify_social_fetcher.is_configured():
+    if platform not in ("facebook", "instagram", "twitter", "youtube"):
+        raise HTTPException(400, "platform must be one of facebook, instagram, twitter, youtube")
+    if platform != "youtube" and not apify_social_fetcher.is_configured():
         raise HTTPException(400, "APIFY_TOKEN not set — add it to Render environment variables first")
 
     async def _run():
@@ -534,3 +534,42 @@ async def apify_backfill_comments(platform: str, background_tasks: BackgroundTas
 
     background_tasks.add_task(_run)
     return {"status": "backfill started", "platform": platform, "message": "Running in background"}
+
+
+@router.get("/social/sentiment-pulse")
+async def social_sentiment_pulse():
+    """Live aggregate of comment_sentiment per platform, plus a combined
+    figure across all of them — backs the Dashboard's per-card pulse badges
+    and the combined Social Pulse indicator. Cheap: averages an existing
+    field, no new scraping."""
+    source_type_by_platform = {
+        "facebook":  "facebook_apify",
+        "instagram": "instagram_apify",
+        "twitter":   "twitter_apify",
+        "youtube":   {"$regex": "^youtube"},
+    }
+    pulse = {}
+    all_scores = []
+    for platform, source_type in source_type_by_platform.items():
+        items = await db.intelligence_items.find(
+            {"source_type": source_type, "comment_sentiment": {"$exists": True}},
+            {"_id": 0, "comment_sentiment": 1},
+        ).to_list(500)
+        if not items:
+            pulse[platform] = None
+            continue
+        pos = round(sum(it["comment_sentiment"].get("positive_pct", 0) for it in items) / len(items))
+        neg = round(sum(it["comment_sentiment"].get("negative_pct", 0) for it in items) / len(items))
+        pulse[platform] = {"positive_pct": pos, "negative_pct": neg, "post_count": len(items)}
+        all_scores.extend(items)
+
+    if all_scores:
+        pulse["combined"] = {
+            "positive_pct": round(sum(it["comment_sentiment"].get("positive_pct", 0) for it in all_scores) / len(all_scores)),
+            "negative_pct": round(sum(it["comment_sentiment"].get("negative_pct", 0) for it in all_scores) / len(all_scores)),
+            "post_count": len(all_scores),
+        }
+    else:
+        pulse["combined"] = None
+
+    return pulse

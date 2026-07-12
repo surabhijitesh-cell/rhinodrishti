@@ -155,7 +155,7 @@ function ScannerCard({
   label, icon: Icon, accentColor, bgAccent, borderAccent, barColor,
   isConfigured, isActive, activeLabel, progress, stat1, stat2,
   lastFetched, onTrigger, triggering, configNote, testId,
-  isSelected, onClick, tooltip,
+  isSelected, onClick, tooltip, pulse,
 }) {
   const badge = isActive
     ? <Badge className={`rounded-none text-[8px] px-1 py-0 border ${bgAccent} ${accentColor} ${borderAccent} animate-pulse leading-3`}>{activeLabel || "ACTIVE"}</Badge>
@@ -186,6 +186,14 @@ function ScannerCard({
           <span className={`text-[10px] uppercase tracking-wider font-['Barlow_Condensed'] font-bold truncate flex-1 ${isConfigured ? "text-foreground" : "text-muted-foreground"}`}>
             {label}
           </span>
+        )}
+        {pulse && (
+          <Tip text={`Social Pulse — ${pulse.post_count} scored posts`} side="top">
+            <span className="flex items-center gap-1 text-[9px] font-mono shrink-0">
+              <span className="text-emerald-400">▲{pulse.positive_pct}%</span>
+              <span className="text-red-400">▼{pulse.negative_pct}%</span>
+            </span>
+          </Tip>
         )}
         {badge}
       </div>
@@ -272,6 +280,7 @@ function SourceScanners({ api, socialTrigger }) {
   const [rssSources, setRssSources]   = useState([]);
   const [socialStatus, setSocialStatus] = useState(null);
   const [apifyStatus, setApifyStatus] = useState(null);
+  const [sentimentPulse, setSentimentPulse] = useState({});
   const [ytData, setYtData]           = useState({ channels: [], searches: [] });
   const [tgData, setTgData]           = useState({ channels: [] });
   const [triggering, setTriggering]   = useState({});
@@ -305,13 +314,15 @@ function SourceScanners({ api, socialTrigger }) {
         axios.get(`${api}/social/telegram/channels`),
         axios.get(`${api}/sources`),
         axios.get(`${api}/social/apify/status`),
+        axios.get(`${api}/social/sentiment-pulse`),
       ]);
-      const [status, yt, ytS, tg, rssS, apify] = results;
+      const [status, yt, ytS, tg, rssS, apify, pulse] = results;
       if (status.status === "fulfilled") setSocialStatus(status.value.data);
       setYtData({ channels: yt.value?.data?.channels || [], searches: ytS.value?.data?.searches || [] });
       setTgData({ channels: tg.value?.data?.channels || [] });
       setRssSources(rssS.value?.data?.sources || []);
       if (apify.status === "fulfilled") setApifyStatus(apify.value.data);
+      if (pulse.status === "fulfilled") setSentimentPulse(pulse.value.data || {});
     } catch {}
   }, [api]);
 
@@ -442,6 +453,14 @@ function SourceScanners({ api, socialTrigger }) {
         </div>
         <span className="text-[10px] font-mono text-muted-foreground ml-1 hidden sm:block">{configuredCount}/{platforms.length} configured</span>
         <div className="ml-auto flex items-center gap-2">
+          {sentimentPulse.combined && (
+            <Tip text={`Combined Social Pulse — ${sentimentPulse.combined.post_count} scored posts across Facebook/Instagram/Twitter/YouTube`} side="top">
+              <span className="flex items-center gap-1 text-[10px] font-mono border border-border px-1.5 py-0.5 cursor-help" onClick={e => e.stopPropagation()}>
+                <span className="text-emerald-400">▲{sentimentPulse.combined.positive_pct}%</span>
+                <span className="text-red-400">▼{sentimentPulse.combined.negative_pct}%</span>
+              </span>
+            </Tip>
+          )}
           <Button
             variant="ghost" size="sm"
             className="h-6 px-2 text-[9px] rounded-none font-mono text-muted-foreground border border-border hover:text-foreground"
@@ -495,6 +514,7 @@ function SourceScanners({ api, socialTrigger }) {
                 onClick={() => handleCardClick("youtube")}
                 testId="scanner-youtube"
                 tooltip={`YouTube — ${ytChannels.length} subscribed channels + ${ytData.searches.filter(s=>s.active).length} keyword searches. Requires YOUTUBE_API_KEY on Render. Fetches video metadata and transcripts.`}
+                pulse={sentimentPulse.youtube}
               />
 
 
@@ -530,6 +550,7 @@ function SourceScanners({ api, socialTrigger }) {
                 onClick={() => handleCardClick("facebook")}
                 testId="scanner-facebook"
                 tooltip={`Facebook — Apify-scraped public posts via APIFY_TOKEN. ${fbPostCount} posts captured so far. Comment sentiment scored per post where comments exist.`}
+                pulse={sentimentPulse.facebook}
               />
 
               <ScannerCard
@@ -547,6 +568,7 @@ function SourceScanners({ api, socialTrigger }) {
                 onClick={() => handleCardClick("instagram")}
                 testId="scanner-instagram"
                 tooltip={`Instagram — Apify-scraped public posts via APIFY_TOKEN. ${igPostCount} posts captured so far. Comment sentiment scored per post where comments exist.`}
+                pulse={sentimentPulse.instagram}
               />
 
               <ScannerCard
@@ -564,6 +586,7 @@ function SourceScanners({ api, socialTrigger }) {
                 onClick={() => handleCardClick("twitter")}
                 testId="scanner-twitter"
                 tooltip={`Twitter/X — Apify-scraped tweets via APIFY_TOKEN. ${twPostCount} tweets captured so far. Comment sentiment scored per tweet where replies exist.`}
+                pulse={sentimentPulse.twitter}
               />
 
             </div>
