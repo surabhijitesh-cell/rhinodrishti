@@ -142,7 +142,7 @@ SEV_FILL = {
     "low": (100, 160, 60),
 }
 _SEV_RANK = {"critical": 3, "high": 2, "medium": 1, "low": 0}
-_NO_SEV_BORDER = (190, 196, 186)   # neutral state border when no items present
+_NO_SEV_BORDER = (140, 140, 125)   # neutral state border when no items present
 RING_CURRENT = (30, 150, 60)    # green — current period
 RING_PREVIOUS = (139, 90, 43)   # brown — previous period
 
@@ -300,7 +300,7 @@ def _render_map_image(current_points: list[dict], previous_points: list[dict],
     base_pw, base_ph = round(w_mm * _MM_TO_PX), round(h_mm * _MM_TO_PX)
     pw, ph = base_pw * _SUPERSAMPLE, base_ph * _SUPERSAMPLE
 
-    img = Image.new("RGB", (pw, ph), (30, 35, 30))
+    img = Image.new("RGB", (pw, ph), (250, 245, 230))  # light cream
     draw = ImageDraw.Draw(img)
 
     all_points = (current_points or []) + (previous_points or [])
@@ -318,7 +318,7 @@ def _render_map_image(current_points: list[dict], previous_points: list[dict],
     # across the gap, producing stray diagonal lines through the shape.
     #
     # The fill is drawn as one draw.polygon call (a cosmetic sliver from a
-    # degenerate ring is invisible against the near-black background). The
+    # degenerate ring blends into the cream background). The
     # outline is drawn as separate segments so an anomalously long edge —
     # ner-states.geojson's Arunachal Pradesh ring has one real topology
     # defect that otherwise draws a bold diagonal chord across the shape —
@@ -329,7 +329,7 @@ def _render_map_image(current_points: list[dict], previous_points: list[dict],
             pts = [_project_px(lat, lon, pw, ph) for lon, lat in ring]
             if len(pts) < 3:
                 continue
-            draw.polygon(pts, fill=(42, 48, 40))
+            draw.polygon(pts, fill=(240, 233, 210))  # slightly darker cream than canvas — keeps borders visible
             max_edge = 0.2 * max(pw, ph)
             for i in range(len(pts)):
                 x1, y1 = pts[i]
@@ -354,12 +354,12 @@ def _render_map_image(current_points: list[dict], previous_points: list[dict],
             dot_r = 6 * _SUPERSAMPLE * scale
             fill = SEV_FILL.get(g["severity"], (110, 110, 110))
             draw.ellipse([px - dot_r, py - dot_r, px + dot_r, py + dot_r],
-                        fill=fill, outline=(255, 255, 255), width=int(1.5 * _SUPERSAMPLE))
+                        fill=fill, outline=(60, 60, 50), width=int(1.5 * _SUPERSAMPLE))
             label = g["label"][:22] if g["count"] == 1 else f"{g['label'][:18]} ({g['count']})"
             tx, ty = px + ring_r + 4 * _SUPERSAMPLE, py
-            draw.text((tx, ty), label, fill=(255, 255, 255),
+            draw.text((tx, ty), label, fill=(40, 40, 30),
                       font=ImageFont.load_default(size=13 * _SUPERSAMPLE), anchor="lm",
-                      stroke_width=int(2 * _SUPERSAMPLE), stroke_fill=(20, 24, 18))
+                      stroke_width=int(2 * _SUPERSAMPLE), stroke_fill=(250, 245, 230))
 
     _plot(previous_points or [], RING_PREVIOUS)   # previous under current
     _plot(current_points or [], RING_CURRENT)
