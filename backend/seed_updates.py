@@ -241,6 +241,41 @@ UPDATES = [
         "created_at": "2026-05-20T06:00:00+00:00",
         "created_by": "system",
     },
+    {
+        "version": "14.0",
+        "priority": "major",
+        "message": "Instagram, Facebook and Twitter/X scraping added via Apify, replacing the official-API fetchers that had failed completely on cost/access. Throttled vs Firehose volume toggle added to API & Pipeline Monitor. Fixed several live QA findings: faultline severity badge colours, a blank page on unknown routes, silent session-expiry, and mobile stat-card layout.",
+        "created_at": "2026-07-10T06:00:00+00:00",
+        "created_by": "system",
+    },
+    {
+        "version": "14.1",
+        "priority": "major",
+        "message": "Facebook live-feed widget restored in the Dashboard's Intelligence Source Monitors. Real comment-sentiment scoring added — a separate Apify actor reads actual comment text (not just reaction counts), scored via one batched AI call per post.",
+        "created_at": "2026-07-11T06:00:00+00:00",
+        "created_by": "system",
+    },
+    {
+        "version": "14.2",
+        "priority": "major",
+        "message": "Instagram, Twitter/X and YouTube brought to full feature parity with Facebook — live-feed widgets, source emblems on every Intelligence Feed card, and comment-sentiment scoring (YouTube via its free comments API, no added cost). Social Pulse sentiment indicators added: a badge on each social platform's scanner card, and a combined indicator in the Intelligence Source Monitors header.",
+        "created_at": "2026-07-12T06:00:00+00:00",
+        "created_by": "system",
+    },
+    {
+        "version": "14.3",
+        "priority": "minor",
+        "message": "Fixed the OpenRouter low-credit warning, which never fired for this account's billing type. The API & Pipeline Monitor's API Spend panel now shows the live OpenRouter account balance directly.",
+        "created_at": "2026-07-12T12:00:00+00:00",
+        "created_by": "system",
+    },
+    {
+        "version": "14.4",
+        "priority": "major",
+        "message": "Daily, Fortnightly and Monthly briefs now include a Social Media Pulse section — positive/negative sentiment per platform for that brief's own period. Situation map background in Fortnightly and Monthly briefs changed to light cream for better readability.",
+        "created_at": "2026-07-12T18:00:00+00:00",
+        "created_by": "system",
+    },
 ]
 
 
