@@ -11,30 +11,33 @@
 3. [Dashboard](#3-dashboard)
 4. [Intelligence Feed](#4-intelligence-feed)
 5. [Cross-Border Intelligence](#5-cross-border-intelligence)
-6. [Daily Brief](#6-daily-brief)
-7. [Weekly Trends](#7-weekly-trends)
-8. [Pattern Detection](#8-pattern-detection)
-9. [Knowledge Graph](#9-knowledge-graph)
-10. [Alerts](#10-alerts)
-11. [Keyword Engine](#11-keyword-engine)
-12. [Training & Feedback](#12-training--feedback)
-13. [Manual Intelligence Uploads](#13-manual-intelligence-uploads)
-14. [Reports & PDF Generation](#14-reports--pdf-generation)
-15. [Platform Updates & Notifications](#15-platform-updates--notifications)
-    - 15.1 [Push Notifications (Mobile & Desktop)](#151-push-notifications-mobile--desktop)
-16. [Faultline Intelligence & PAOI Monitoring](#16-faultline-intelligence--paoi-monitoring)
-    - 16.1 [Priority Areas of Interest (PAOI)](#161-priority-areas-of-interest-paoi)
-    - 16.2 [Faultline Cards & Watchlist](#162-faultline-cards--watchlist)
-    - 16.3 [Faultline Scoring & Time Decay](#163-faultline-scoring--time-decay)
-    - 16.4 [Monthly Faultline Analysis Report](#164-monthly-faultline-analysis-report)
-17. [Flagging Intelligence to Commanders](#17-flagging-intelligence-to-commanders)
-18. [User Management](#18-user-management)
-19. [Settings](#19-settings)
-    - 19.1 [Local Database Storage Card](#191-local-database-storage-card)
-    - 19.2 [Source Effectiveness Card](#192-source-effectiveness-card)
-20. [Local Database Setup Wizard](#20-local-database-setup-wizard)
-21. [How the AI Pipeline Works](#21-how-the-ai-pipeline-works)
-22. [Glossary](#22-glossary)
+6. [Periodic Briefs (Daily / Fortnightly / Monthly)](#6-periodic-briefs-daily--fortnightly--monthly)
+7. [Custom Brief Generator](#7-custom-brief-generator)
+8. [Trends Intelligence Center](#8-trends-intelligence-center)
+9. [Pattern Detection](#9-pattern-detection)
+10. [Knowledge Graph](#10-knowledge-graph)
+11. [Alerts](#11-alerts)
+12. [Keyword Engine](#12-keyword-engine)
+13. [Training & Feedback](#13-training--feedback)
+14. [Manual Intelligence Uploads](#14-manual-intelligence-uploads)
+15. [Intelligence Reports](#15-intelligence-reports)
+16. [Platform Updates & Notifications](#16-platform-updates--notifications)
+    - 16.1 [Push Notifications (Mobile & Desktop)](#161-push-notifications-mobile--desktop)
+17. [Faultline Intelligence & PAOI Monitoring](#17-faultline-intelligence--paoi-monitoring)
+    - 17.1 [Priority Areas of Interest (PAOI)](#171-priority-areas-of-interest-paoi)
+    - 17.2 [Faultline Cards & Watchlist](#172-faultline-cards--watchlist)
+    - 17.3 [Faultline Scoring & Time Decay](#173-faultline-scoring--time-decay)
+    - 17.4 [Monthly Faultline Analysis Report](#174-monthly-faultline-analysis-report)
+18. [Social Media Intelligence & Sentiment Pulse](#18-social-media-intelligence--sentiment-pulse)
+19. [Flagging Intelligence to Commanders](#19-flagging-intelligence-to-commanders)
+20. [User Management](#20-user-management)
+21. [API & Pipeline Monitor](#21-api--pipeline-monitor)
+22. [Settings](#22-settings)
+    - 22.1 [Local Database Storage Card](#221-local-database-storage-card)
+    - 22.2 [Source Effectiveness Card](#222-source-effectiveness-card)
+23. [Local Database Setup Wizard](#23-local-database-setup-wizard)
+24. [How the AI Pipeline Works](#24-how-the-ai-pipeline-works)
+25. [Glossary](#25-glossary)
 
 ---
 
@@ -64,12 +67,14 @@ On first deployment, the system automatically creates an admin account:
 | Upload/Analyze/Add to Feed | Yes | Yes | No |
 | Run Keyword Refresh | Yes | Yes | No |
 | Flag Articles to Commanders | Yes | Yes | No |
+| Custom Brief Generator | Yes | No | No |
+| API & Pipeline Monitor | Yes | No | No |
 | User Management | Yes | No | No |
 | Settings | Yes | No | No |
 
-**Admin** — Full access including user creation, password resets, and system settings.
+**Admin** — Full access including user creation, password resets, system settings, the Custom Brief Generator, and the API & Pipeline Monitor.
 
-**Analyst** — Can access all intelligence features (feeds, briefs, training, uploads, feedback, flagging). Cannot access User Management or Settings.
+**Analyst** — Can access all intelligence features (feeds, briefs, training, uploads, feedback, flagging). Cannot access User Management, Settings, the Custom Brief Generator, or the API & Pipeline Monitor.
 
 **Viewer** — Read-only access. Can view all intelligence data and download PDFs. All action buttons are disabled.
 
@@ -83,24 +88,28 @@ On first deployment, the system automatically creates an admin account:
 ## 2. Getting Started
 
 ### What is Rhino Drishti?
-Rhino Drishti is an AI-powered military intelligence aggregation and analysis platform for monitoring India's North Eastern Region (NER), Bangladesh, and Myanmar. It automatically collects news from 89 RSS sources, runs AI classification using a military intelligence framework with dynamic analyst feedback bias, detects patterns, monitors strategic faultlines within Priority Areas of Interest (PAOI), and generates daily intelligence briefs.
+Rhino Drishti is an AI-powered military intelligence aggregation and analysis platform for monitoring India's North Eastern Region (NER), Bangladesh, and Myanmar. It automatically collects news and social media from RSS feeds, YouTube, Telegram, Facebook, Instagram and Twitter/X, runs AI classification using a military intelligence framework with dynamic analyst feedback bias, detects patterns, monitors strategic faultlines within Priority Areas of Interest (PAOI), tracks social-media sentiment, and generates Daily, Fortnightly and Monthly intelligence briefs.
 
 ### Navigation
 The sidebar contains all pages:
-- **Dashboard** — Overview of intelligence landscape
+- **Dashboard** — Overview of the intelligence landscape
 - **Intelligence Feed** — Full searchable list of classified items
 - **Cross-Border** — Items specifically involving cross-border activity
-- **Daily Brief** — Automated daily intelligence summary
-- **Weekly Trends** — 7-day severity and threat type charts
+- **Periodic Briefs** — Daily, Fortnightly and Monthly automated intelligence briefs
+- **Custom Brief Generator** — Chat-driven, PAOI-focused brief builder (Admin only)
+- **Trends** — Trends Intelligence Center: stability index, severity trends, cross-border correlation
+- **Faultlines** — PAOI-linked faultline monitoring with scoring and monthly reports
 - **Patterns** — Detected threat patterns across regions
 - **Knowledge Graph** — Actor-location relationship mapping
 - **Alerts** — Critical and high-severity items requiring attention
-- **Faultline Intelligence** — PAOI-linked faultline monitoring with scoring and monthly reports
 - **Keyword Engine** — AI-powered keyword management for detection
 - **Training & Feedback** — Rate articles, upload training data, monitor AI learning
 - **Manual Int Uploads** — Analyze articles, upload documents, or add URLs directly to the feed
+- **Reports** — Regional, Cross-Border and Custom filtered PDF reports
 - **User Management** — Create/manage users (Admin only)
+- **API & Pipeline Monitor** — API spend, credit balance, filter health, social scraping controls (Admin only)
 - **Settings** — Configure retention, feedback limits, AI bias (Admin only)
+- **Platform Updates** — Timeline of every version update
 - **User Handbook** — This guide
 
 ---
@@ -113,21 +122,28 @@ The Dashboard is your command center showing the current intelligence landscape 
 - **Total Items / Critical / High / Medium / Low**: Click any stat card to filter the Intelligence Feed by that severity level
 
 ### Intelligence Source Monitor Panel
-The collapsible panel shows real-time status for all **6 intelligence source types**.
+The collapsible panel shows real-time status for **6 intelligence source types**.
 
-**Two fetch buttons:**
-- **FETCH INTEL** — triggers ALL 6 sources simultaneously
-- **SCAN SOCIAL MEDIA** — triggers the 5 non-RSS sources only (YouTube, Facebook, Telegram, X/Twitter, Firecrawl)
+**Two fetch controls:**
+- **FETCH INTEL** — triggers ALL sources simultaneously
+- **SCAN SOCIAL MEDIA** — triggers the social sources only (YouTube, Telegram, Facebook, Instagram, Twitter/X)
 
-**Source types:**
+**Source cards, in order:**
 | Source | What it monitors |
 |--------|-----------------|
-| **RSS Feeds** | 89 curated news feeds (regional NER, national, Bangladesh, Myanmar, government PIBs) |
+| **RSS Feeds** | Curated news feeds (regional NER, national, Bangladesh, Myanmar, government PIBs) |
 | **YouTube** | Subscribed channels and keyword searches — requires `YOUTUBE_API_KEY` |
-| **Facebook** | Configured pages — requires Facebook App credentials |
-| **Telegram** | Monitored channels via Telethon session |
-| **X / Twitter** | Accounts and keyword searches — via official API or Nitter fallback |
-| **Firecrawl** | Deep-crawls websites without RSS, plus keyword web searches — requires `FIRECRAWL_API_KEY` |
+| **Telegram** | Monitored channels via a Telethon session |
+| **Facebook** | Public posts scraped via Apify — requires `APIFY_TOKEN` |
+| **Instagram** | Public posts scraped via Apify — requires `APIFY_TOKEN` |
+| **Twitter/X** | Tweets scraped via Apify — requires `APIFY_TOKEN` |
+
+Facebook, Instagram and Twitter/X each show a small **Social Pulse** badge (▲ positive % / ▼ negative %) next to the Fetch button — see [Section 18](#18-social-media-intelligence--sentiment-pulse). A combined **Social Media Pulse Indicator** sits in the panel header, to the left of the Scan Social Media button, averaging sentiment across all four social platforms.
+
+Click any source card to open a live-feed widget for that source (Raw vs. AI-Curated toggle). The RSS card instead opens a static list of configured feeds.
+
+### Custom Analytics Workspace
+Below the source monitors, admins and analysts can build and save personal chart panels from any combination of intelligence metrics — pick the fields, pick the chart type, save it to your Dashboard for next time.
 
 ### Tooltips & Guided Walkthrough
 Tooltips appear on every UI element (hover to see, auto-dismisses after 3 seconds). Each page has a built-in guided tour — re-trigger via the **?** button in the top-right bar. Admins can reset all tours with the **↺** button.
@@ -137,7 +153,7 @@ Tooltips appear on every UI element (hover to see, auto-dismisses after 3 second
 - **Unacknowledged Critical Alerts** — Sticky panel of CRITICAL/HIGH items pending acknowledgement
 - **Live Feed Panel** — Real-time WebSocket updates of new intelligence items
 - **Pattern Insights** — Summary of the most significant detected threat patterns
-- **Latest Intelligence** — 6 most recent items with Priority Filter and Sort By controls
+- **Latest Intelligence** — Most recent items with Priority Filter and Sort By controls
 
 ---
 
@@ -156,11 +172,13 @@ Severity, State/Region, Threat Category, Date Range
 Each intelligence item shows:
 - **Relevance Rating** (top): 1-6 scale for analyst feedback
 - **Flag Icon** (top-right): Click to flag the article and send to a commander. If already flagged, the icon appears **red and filled**
+- **Source Emblem**: a small platform icon (RSS / YouTube / Telegram / Facebook / Instagram / Twitter) so you can tell at a glance where an item came from
 - **Title** with severity badge (red=Critical, orange=High, yellow=Medium)
 - **Priority Score** (0-100) and **Confidence Score** (0-100)
 - **Threat Trajectory**: ESCALATING / STABLE / DE-ESCALATING / NEW_THREAT
 - **AI Summary**, **Why It Matters**, **Early Warning Signal**
 - **Special Flags**: PLA_PAKISTAN_PRESENCE, COORDINATED_NARRATIVE, etc.
+- **Comment Sentiment Tag** (Facebook/Instagram/Twitter/YouTube items only): ▲ green / ▼ red percentages showing what real commenters on that post feel about the situation — see [Section 18](#18-social-media-intelligence--sentiment-pulse)
 - **Tags**, **Actors**, **Source** with link
 - **Fused Sources Badge**: Shows "X sources" when multiple outlets cover the same story
 
@@ -196,35 +214,91 @@ No LOW severity items. No untranslated content. Processed items only.
 
 ---
 
-## 6. Daily Brief
+## 6. Periodic Briefs (Daily / Fortnightly / Monthly)
 
-Automated daily intelligence summary generated at **0600 IST** each day.
+One page, three tabs — **Daily**, **Fortnightly**, and **Monthly Strategic**. Switch tabs at the top of the page.
 
-### Sections
+### Daily Brief
+
+Automated intelligence summary generated at **0600 IST** each day.
+
+**Sections:**
 - **NER Key Developments**: Top items from Northeast Indian states only
 - **Cross-Border Intelligence**: Categorized Bangladesh and Myanmar news
 - **National News**: National-level developments affecting NER security
 - **International News**: Strategic international items
 - **Pattern Insights**: Detected escalation patterns
 - **Faultline Section**: HIGH/CRITICAL faultlines with PAOI tags
+- **Social Media Pulse**: Sentiment breakdown (positive/negative %) per platform for the last 24 hours
 - **Document Insights**: Analysis from documents uploaded during the current brief period
 
-### Actions
-- **REGENERATE BRIEF**: Force regenerate with latest data
-- **EXPORT PDF**: Download as RESTRICTED-header PDF
+**Actions:** **REGENERATE BRIEF** (force regenerate with latest data), **EXPORT PDF**.
 
-### Cross-Brief Deduplication
-Items included in one day's brief are NOT repeated in subsequent briefs.
+**Cross-Brief Deduplication:** Items included in one day's brief are NOT repeated in subsequent briefs.
+
+### Fortnightly & Monthly Strategic Briefs
+
+AI-generated strategic assessments covering a 15-day or full-month period, built from the entire intelligence corpus for that window — not just headlines.
+
+**Navigating periods:** Use the **< Prev / Next >** controls to move between periods. If a brief hasn't been generated yet for the selected period, click **Generate** (Monthly briefs can take a few minutes — the page polls automatically and updates when ready).
+
+**Sections in every Fortnightly/Monthly brief:**
+- **Commander's Priority Dashboard** — verbal status strip for every PAOI (no raw scores)
+- **PAOI Deep-Dives** — per-priority-area situation overview, most impactful events (with location, what happened, why it matters, linkages), overall assessment, and actionable recommendations, each with its own **Situation Map** (state/border outlines colour-coded by severity, clustered event markers)
+- **Regional/Period Overview** — total items, critical/high counts, cross-border count, severity distribution, State Stability Index table
+- **Social Media Pulse** — positive/negative sentiment per platform for that brief's own period (Facebook, Instagram, Twitter/X, YouTube)
+- **Previous Period Recap** — how key numbers moved since last period
+- **Executive Assessment / State-wise Security Assessment** — sorted most-critical-state-first, each state section expandable with analyst notes attachable inline
+- **Cross-Border Threat Analysis**
+- **Predictive Scenarios**
+- **Commander Action Matrix** (Monthly only)
+- **Mitigation Playbook**
+- **Stability Trend** — historical 2×4 minigraph panel (one chart per NER state) with a Heatmap toggle and a 3/6/12-fortnight or all-time period selector
+
+**Export options:** **Brief PDF**, **Combined PDF** (Monthly only — brief + Faultline Analysis Report in one file), and **NotebookLM** (copies a NotebookLM-formatted text export to your clipboard for use in Google NotebookLM).
+
+**Analyst Enhancement notes** — any note you attach to an intelligence card is automatically pulled into the relevant brief section when it's next generated.
 
 ---
 
-## 7. Weekly Trends
+## 7. Custom Brief Generator
 
-Visual analytics showing intelligence trends over the past 7 days: Severity Distribution, Threat Type Breakdown, Regional Distribution, Cross-Border Activity trend line.
+*Admin only.* Located at **Custom Brief Generator** in the sidebar.
+
+A chat-driven tool for building a one-off, precisely-scoped intelligence brief instead of waiting for the next scheduled Daily/Fortnightly/Monthly cycle.
+
+### How to use it
+1. Type what you want in the chat panel on the left — e.g. *"fortnightly brief focused on Bangladesh border infiltration and the Jamaat-e-Islami faultline"*
+2. The assistant replies and builds a structured **specification** (report type, PAOI focus, granularity, commander emphasis, custom notes), shown in the **Current Specification** card on the right
+3. Refine the spec with further chat messages if it's not quite right
+4. Pick a **period** (year/month, or for fortnightly output, Period 1 "1st–15th" or Period 2 "16th–end")
+5. Click **Generate Brief** — takes roughly 30–90 seconds while PAOI synthesis runs
+6. Download the resulting **PDF**, or find it later under **Past Briefs**
+
+### Other features
+- **Saved Configurations** — reload or delete a specification you built earlier without re-chatting
+- **New Session** — clears the chat and starts a fresh specification
+- **Past Briefs** — every brief you've generated this way, each with its own PDF download and delete button
+
+This tool shares its PAOI-narrative format with the Fortnightly/Monthly briefs — it's the reference format they're built from — but is scoped to exactly what you ask for, on demand.
 
 ---
 
-## 8. Pattern Detection
+## 8. Trends Intelligence Center
+
+Visual analytics for spotting shifts in the threat landscape over time. Range selector at the top: **7 Days / 30 Days / 90 Days / 1 Year**.
+
+- **Strategic Stability Index** — clickable per-state cards, 0–100 score with a concern level (CRITICAL / ELEVATED / MONITOR / STABLE), showing item count, active actors, velocity and cross-border % for that state
+- **State Severity Evolution** — multi-line chart, one line per state, daily incident counts
+- **Severity Trend** — stacked area chart of all items by severity across the selected range
+- **Cross-Border Correlation** — per-border (Bangladesh/Myanmar) chart comparing border-country events against correlated NER activity
+- **Threat Category Analysis** — bar chart of the top categories by volume
+- **Top Actors** — bar chart of the most-mentioned actors/groups
+- **State Drill-Down** — click any state card or state-activity bar to see that state's top locations/districts, active actors, threat categories, and its own daily-severity mini chart
+
+---
+
+## 9. Pattern Detection
 
 The Pattern Detection Engine automatically groups intelligence items to identify recurring threats.
 
@@ -237,7 +311,7 @@ Clusters of 3+ items sharing same region + threat type, same region + actor, or 
 
 ---
 
-## 9. Knowledge Graph
+## 10. Knowledge Graph
 
 Entity relationship mapping that surfaces connections across the entire intelligence corpus.
 
@@ -249,13 +323,13 @@ Click **Rebuild Graph** to regenerate from latest data.
 
 ---
 
-## 10. Alerts
+## 11. Alerts
 
 Filtered view of CRITICAL and HIGH severity items. Each alert has an **ACK** button to mark as reviewed/handled.
 
 ---
 
-## 11. Keyword Engine
+## 12. Keyword Engine
 
 The Dynamic Keyword Engine manages intelligence-relevant keywords that drive RSS detection and filtering.
 
@@ -268,14 +342,14 @@ The Dynamic Keyword Engine manages intelligence-relevant keywords that drive RSS
 - **AI Expanded** (Grey): Synonym expansions
 
 ### AI Refresh
-Click **AI Refresh Keywords** to trigger Claude AI to generate emerging signal keywords and expand top keywords into synonyms.
+Click **AI Refresh Keywords** to trigger AI generation of emerging signal keywords and expansion of top keywords into synonyms.
 
 ### Manual Keyword Addition
 Type a keyword in the search bar. When no results are found, an **"Add it manually?"** prompt appears with Type and Score (90=Critical, 75=High, 60=Medium, 40=Low) selectors.
 
 ---
 
-## 12. Training & Feedback
+## 13. Training & Feedback
 
 The central hub for shaping the AI's intelligence priorities.
 
@@ -293,7 +367,7 @@ The central hub for shaping the AI's intelligence priorities.
 Rating uses device fingerprinting (one rating per device per item). Admin-configurable max ratings per item (default: 20).
 
 ### Train Rhino Drishti
-Click to start the training pipeline: scrape pending URLs, extract text from uploaded documents, run AI analysis (Claude Haiku), extract regions/actors/keywords.
+Click to start the training pipeline: scrape pending URLs, extract text from uploaded documents, run AI analysis, extract regions/actors/keywords.
 
 ### Active Feedback Bias (Live AI Pipeline)
 When status badge reads **ACTIVE**, analyst preferences are injected into every new article classification.
@@ -301,7 +375,7 @@ When status badge reads **ACTIVE**, analyst preferences are injected into every 
 **How it works:**
 1. Analysts rate articles 1-6 on the Intelligence Feed
 2. System aggregates ratings into a bias profile (upweight/downweight patterns)
-3. Bias is appended to the Claude AI classification prompt as "Analyst Feedback Calibration"
+3. Bias is appended to the AI classification prompt as "Analyst Feedback Calibration"
 4. New articles are scored with analyst-driven adjustments (bias recalculates every 5 minutes)
 
 ### Training Effectiveness Score
@@ -315,7 +389,7 @@ training_bias = log(total_ratings + 1) * (avg_rating - 3.5)
 
 ---
 
-## 13. Manual Intelligence Uploads
+## 14. Manual Intelligence Uploads
 
 Three workflows:
 1. **Upload File** — PDF, Word, Excel, or TXT for AI contextual threat analysis
@@ -333,18 +407,18 @@ When you expand an analysis card, Key Entities (actors, locations, events) are s
 
 ---
 
-## 14. Reports & PDF Generation
+## 15. Intelligence Reports
 
-### Report Types
-1. **Regional Threat Summary** — Threat assessment for a specific NER state
-2. **Cross-Border SITREP** — Border situation report for Bangladesh or Myanmar
-3. **Custom Filtered Report** — Any combination of region, threat, severity, source, date, keywords
+Three report types, each on the **Reports** page:
+1. **Regional Threat Summary** — Threat assessment for a specific NER state and date range
+2. **Cross-Border SITREP** — Border situation report for Bangladesh or Myanmar, over a date range
+3. **Custom Filtered Report** — Any combination of title, region, threat category, severity, minimum priority, keyword search, source name, date range, and a cross-border-only filter
 
 All report filenames use **ddmmyyyy** format aligned to **IST**.
 
 ---
 
-## 15. Platform Updates & Notifications
+## 16. Platform Updates & Notifications
 
 ### How Update Notifications Work
 
@@ -360,7 +434,7 @@ Access via **Platform Updates** in the sidebar. Shows a timeline of all updates 
 
 ---
 
-## 15.1 Push Notifications (Mobile & Desktop)
+## 16.1 Push Notifications (Mobile & Desktop)
 
 Rhino Drishti supports **Web Push notifications** that appear on your device even when the browser tab is closed or the screen is locked.
 
@@ -406,7 +480,7 @@ Each device's subscription is managed separately. Enabling push on your phone do
 
 ---
 
-## 16. Faultline Intelligence & PAOI Monitoring
+## 17. Faultline Intelligence & PAOI Monitoring
 
 The **Faultline Intelligence** module continuously monitors defined societal, political, and security fault lines within the Commander's **Priority Areas of Interest (PAOI)** and scores them based on recent intelligence activity.
 
@@ -421,7 +495,7 @@ Unlike individual intelligence items (event-based), faultlines track the **under
 
 ---
 
-## 16.1 Priority Areas of Interest (PAOI)
+## 17.1 Priority Areas of Interest (PAOI)
 
 The Commander defines **Priority Areas of Interest** that group related faultlines for aggregate monitoring.
 
@@ -447,7 +521,7 @@ Rank determines display order (P1 = highest priority, shown first).
 
 ---
 
-## 16.2 Faultline Cards & Watchlist
+## 17.2 Faultline Cards & Watchlist
 
 Each faultline card shows:
 
@@ -479,7 +553,7 @@ Click any faultline card to see: 30-day score history chart, contributing articl
 
 ---
 
-## 16.3 Faultline Scoring & Time Decay
+## 17.3 Faultline Scoring & Time Decay
 
 Scores are calculated by the **Daily Faultline Engine** running twice daily at **06:00 IST** and **18:00 IST**.
 
@@ -509,13 +583,13 @@ faultline_score = SUM(article_weight x e^(-0.35 x age_days))
 
 ---
 
-## 16.4 Monthly Faultline Analysis Report
+## 17.4 Monthly Faultline Analysis Report
 
 The primary instrument for presenting faultline status to the Commander.
 
 **How to generate:**
 1. Navigate to **Faultline Intelligence** in the sidebar
-2. Click **Monthly Report** (or access via the briefs page)
+2. Click **Monthly Report** (or download the **Faultline Report PDF** from the Monthly Strategic Brief's Faultline Analysis section)
 
 **Report structure:**
 1. **Commander's Priority Dashboard** — All PAOI-linked faultlines with scores, month-on-month delta, and severity colour coding
@@ -527,7 +601,25 @@ The primary instrument for presenting faultline status to the Commander.
 
 ---
 
-## 17. Flagging Intelligence to Commanders
+## 18. Social Media Intelligence & Sentiment Pulse
+
+Instagram, Facebook and Twitter/X posts are scraped via Apify (a managed web-scraping service) and processed through the same AI classification pipeline as news articles. YouTube video comments are read via YouTube's own free comments API.
+
+### Comment Sentiment
+For posts that have real comments, a second scrape pulls actual comment text (not just like/reaction counts) and a single AI call estimates what percentage of commenters are positive/supportive versus negative/critical about the situation described. This shows up as a green ▲ / red ▼ percentage tag:
+- On the relevant **Intelligence Feed** card, next to the source name
+- On the **Dashboard** scanner card for that platform, flanking the Fetch button
+- Aggregated across all platforms in the **combined Social Media Pulse Indicator** in the Dashboard's Intelligence Source Monitors header
+- As a **Social Media Pulse** section in every Daily, Fortnightly and Monthly brief, scoped to that brief's own time period
+
+Sentiment is a best-effort enrichment — posts with no comments, or where the scrape/AI call fails, simply show no tag rather than a wrong one.
+
+### Volume Modes
+Admins control how much is scraped per cycle from the **API & Pipeline Monitor** page — see [Section 21](#21-api--pipeline-monitor).
+
+---
+
+## 19. Flagging Intelligence to Commanders
 
 Any intelligence item in the feed can be **flagged** — sent directly to a commander for immediate attention.
 
@@ -552,7 +644,7 @@ Recipients view flagged articles in their **Notification Panel** (bell icon). Ea
 
 ---
 
-## 18. User Management
+## 20. User Management
 
 *Admin only.*
 
@@ -576,11 +668,39 @@ Click the **Key** icon next to any user → enter new password → **Copy** → 
 
 ---
 
-## 19. Settings
+## 21. API & Pipeline Monitor
+
+*Admin only.* Access via **API & Pipeline Monitor** in the sidebar.
+
+### API Spend
+Live multi-provider cost tracker: today's total spend against a daily limit (editable), a per-provider breakdown with its own sub-alert threshold, an hourly stacked spend chart, and 7-day daily cost history. Includes a live **OpenRouter Balance** row showing your actual remaining account credit, colour-coded (green/amber/red) with a top-up link once low.
+
+### Credit Warning Banner
+Appears automatically when OpenRouter credits run low or critical, with a direct top-up link.
+
+### Social Media Scraping
+Shows post counts captured per platform (Instagram, Facebook, Twitter/X). A **Throttled / Firehose** toggle controls scrape volume:
+- **Throttled** (default) — roughly 50 posts/platform every ~3.5 days, near-zero cost
+- **Firehose** — roughly 100 posts/platform/day, higher cost
+
+**Fetch Now** triggers an immediate scrape cycle outside the schedule.
+
+### Filter Cascade
+Visualizes how many items survive each of the 4 pipeline filter stages (from raw ingestion down to what reaches the feed), with pass/reject counts per stage and overall pipeline health.
+
+### Filter Threshold Simulator
+Lets you experiment with different filter thresholds and see the projected effect on rejection rates before changing anything live.
+
+### Storage Cleanup
+Shows database collection counts. **Strip Raw Content** removes the full article body text for items older than a chosen age (keeps the link and AI analysis intact); **Delete Articles** permanently removes items older than a chosen threshold. The pipeline auto-strips article bodies older than 45 days daily regardless.
+
+---
+
+## 22. Settings
 
 *Admin only.*
 
-### 19.1 Local Database Storage Card
+### 22.1 Local Database Storage Card
 
 | Mode | Indicator | Meaning |
 |------|-----------|---------|
@@ -588,7 +708,7 @@ Click the **Key** icon next to any user → enter new password → **Copy** → 
 | **Local — Tailscale** | Shield icon (green) | Data stored on local hard disk via Tailscale VPN |
 | **Local — Direct** | Server icon (amber) | Data stored on local machine on same network |
 
-### 19.2 Source Effectiveness Card
+### 22.2 Source Effectiveness Card
 
 Shows which non-RSS sources are producing actionable intelligence:
 Item count, Severity bar, AI processing rate, Latest catch, High-value score (Critical + High count).
@@ -614,7 +734,7 @@ Full-width analytics table showing exactly how analyst feedback changes article 
 
 ---
 
-## 20. Local Database Setup Wizard
+## 23. Local Database Setup Wizard
 
 Rhino Drishti can store collected intelligence on a **local 1 TB hard disk** at your intelligence collection centre.
 
@@ -639,11 +759,11 @@ After setup, update `MONGO_URL` on Render and redeploy. Settings page switches f
 
 ---
 
-## 21. How the AI Pipeline Works
+## 24. How the AI Pipeline Works
 
 ### Data Flow
 ```
-6 INTELLIGENCE SOURCES (parallel)
+INTELLIGENCE SOURCES (RSS, YouTube, Telegram, Facebook, Instagram, Twitter/X — parallel)
 → Manual Uploads (PDF, DOCX, URL)
 → Deduplication
 → Hard Filter (reject sports/entertainment)
@@ -651,16 +771,17 @@ After setup, update `MONGO_URL` on Render and redeploy. Settings page switches f
 → Language Detection & Translation
   (Bengali, Assamese, Hindi, Burmese, Thai, Chinese, Arabic, Japanese, Korean → English)
 → Level 1 Sifter (border instability pre-filter)
-→ Level 2 Deep Analyst (10-step Claude AI + feedback bias injection)
-→ Vector Embedding (OpenAI text-embedding-3-small)
+→ Level 2 Deep Analyst (multi-step AI classification + feedback bias injection)
+→ Vector Embedding (for semantic search)
 → Adaptive Keyword Feedback (boost/decay keyword scores)
 → Analyst Feedback Integration
+→ Comment Sentiment Scoring (social media items with comments)
 → WebSocket Broadcast + Push Notification Dispatch
 → Pattern Detection (sliding-window cluster analysis)
 → Faultline Scoring (time-decay weighted aggregation)
 ```
 
-### AI Classification (10-Step Military Intelligence Prompt)
+### AI Classification (Military Intelligence Prompt)
 1. Relevance Filter: Strict rejection of sports, entertainment, lifestyle
 2. Priority Scoring (0-100) with boost rules (cross-border +10, China/Pakistan +15)
 3. Multi-label Classification: 19 threat categories
@@ -672,15 +793,15 @@ After setup, update `MONGO_URL` on Render and redeploy. Settings page switches f
 9. Signal Classification: Cross-border signal bucket and strength
 10. Language Rule: All output in English regardless of input language
 
-### RSS Source Breakdown (89 Sources)
-| Category | Count | Examples |
-|----------|-------|---------|
-| Regional (NER) | 12 | NE Now, Assam Tribune, EastMojo |
-| National | 19 | NDTV, Hindu, India Today, HT, The Wire |
-| Bangladesh | 19 | Prothom Alo, Daily Star, Dhaka Tribune |
-| Myanmar | 14 | Myanmar Now, Irrawaddy, Mizzima, DVB |
-| International | 5 | BBC, Al Jazeera, Reuters |
-| Government | 20 | PIB (all 8 NER states + Delhi), MEA, NIA, MHA, DoNER, NDMA |
+### RSS Source Breakdown
+| Category | Examples |
+|----------|---------|
+| Regional (NER) | NE Now, Assam Tribune, EastMojo |
+| National | NDTV, Hindu, India Today, HT, The Wire |
+| Bangladesh | Prothom Alo, Daily Star, Dhaka Tribune |
+| Myanmar | Myanmar Now, Irrawaddy, Mizzima, DVB |
+| International | BBC, Al Jazeera, Reuters |
+| Government | PIB (all NER states + Delhi), MEA, NIA, MHA, DoNER, NDMA |
 
 ### Scheduler (Automated Tasks)
 | Task | Frequency | Purpose |
@@ -692,22 +813,29 @@ After setup, update `MONGO_URL` on Render and redeploy. Settings page switches f
 | Daily Brief | 0600 IST daily | Auto-generate daily brief |
 | Embedding Backfill | Every 6 hours | Vector embeddings for semantic search |
 | Article Fusion | Every 30 min | Detect and cluster duplicate articles |
+| YouTube Fetch | Every 4 hours | Channels + keyword searches, with comment sentiment on new videos |
+| Telegram Fetch | Every hour | Monitored channels |
+| Social Media (Apify) Fetch | Every 6 hours, gated by Throttled/Firehose mode | Instagram, Facebook, Twitter/X posts + comment sentiment |
 | **Faultline Daily Pass** | **06:00 + 18:00 IST** | **Re-score all faultlines with time-decay formula** |
+| Credit Monitor | Every 30 min | Checks OpenRouter account balance, warns when low |
 
 ---
 
-## 22. Glossary
+## 25. Glossary
 
 | Term | Definition |
 |------|-----------|
 | **ACK** | Acknowledge — mark an alert as reviewed |
 | **Activity Log** | Session-level record of training runs and feedback sessions |
+| **Apify** | Managed web-scraping service used to collect Instagram, Facebook and Twitter/X posts without logins or proxy management |
 | **Auto-Translation** | Automatic translation of non-English content to English before display |
 | **Bias Impact Report** | Analytics table showing how analyst feedback changes article priority scores |
+| **Comment Sentiment** | AI-estimated positive/negative percentage from real comments on a social media post, shown as a ▲/▼ tag |
 | **C-Score** | Confidence Score (0-100%) — AI's certainty in its own classification |
 | **Cluster / Fusion** | Group of similar articles from multiple sources merged into one intelligence item |
 | **Cross-border** | Activity involving more than one country |
 | **Cross-Border SITREP** | Situation Report for Bangladesh or Myanmar border intelligence |
+| **Custom Brief Generator** | Admin-only chat tool for building an on-demand, precisely-scoped PAOI brief |
 | **Device Fingerprint** | Unique identifier per browser/device to prevent duplicate ratings |
 | **DIPR** | Department of Information and Public Relations — state government press release office |
 | **Escalation Risk** | Likelihood that a pattern of events will intensify |
@@ -716,6 +844,8 @@ After setup, update `MONGO_URL` on Render and redeploy. Settings page switches f
 | **Faultline Decay** | Exponential decay formula `e^(-0.35 x age_days)` applied to each article's contribution to a faultline score |
 | **Feedback Bias** | Dynamic analyst-driven adjustment injected into the AI classification prompt |
 | **Feedback Session** | Aggregated log entry created after an analyst submits 5+ ratings |
+| **Filter Cascade** | The 4-stage pipeline that filters raw ingested items down to what reaches the feed |
+| **Firehose Mode** | Higher-volume social media scraping setting (~100 posts/platform/day) |
 | **Flag** | Escalation action — sends a specific intelligence article to a commander with priority level and message |
 | **Flag Icon (Red)** | Red, filled flag icon on an item card indicating the article has already been flagged to a commander |
 | **Guided Tour** | Step-by-step page walkthrough. Re-trigger via the ? button; admin can reset all tours |
@@ -727,7 +857,7 @@ After setup, update `MONGO_URL` on Render and redeploy. Settings page switches f
 | **Local Database** | On-premises MongoDB 7.0 installation connected to Render backend via Tailscale VPN |
 | **Monthly Faultline Analysis Report** | Multi-page PDF summarising faultline scores, month-on-month changes, top movers, and AI strategic narrative |
 | **NER** | North Eastern Region of India (Assam, Manipur, Meghalaya, Mizoram, Tripura, Nagaland, Arunachal Pradesh, Sikkim) |
-| **Nitter** | Open-source Twitter/X front-end used as fallback scraper without official API key |
+| **NotebookLM Export** | A NotebookLM-formatted text version of a brief, copied to your clipboard for use in Google NotebookLM |
 | **P-Score** | Priority Score (0-100) — AI-computed urgency combining severity, source credibility and strategic relevance |
 | **PAOI** | Priority Area of Interest — a strategic topic defined by the Commander grouping related faultlines |
 | **PAOI Manager** | Modal interface for creating, editing, and reordering Priority Areas of Interest |
@@ -741,18 +871,22 @@ After setup, update `MONGO_URL` on Render and redeploy. Settings page switches f
 | **Semantic Search** | AI-powered search using vector embeddings that finds related concepts |
 | **Severity** | Classification level: Critical > High > Medium > Low |
 | **Sifter** | Level 1 pre-filter that screens articles for border/militant relevance |
+| **Situation Map** | Per-PAOI map in Fortnightly/Monthly briefs showing state/border outlines colour-coded by severity plus clustered event markers |
+| **Social Media Pulse** | Aggregated positive/negative sentiment indicator for a social platform, shown on Dashboard cards, feed cards, and in briefs |
 | **Source Effectiveness** | Settings card showing intelligence yield per non-RSS source |
 | **Special Flags** | AI-detected indicators: PLA_PAKISTAN_PRESENCE, COORDINATED_NARRATIVE, INFRASTRUCTURE_DUAL_USE |
 | **Tailscale** | WireGuard-based VPN mesh network for secure local database connection |
 | **Telethon** | Python Telegram client library for reading messages from Telegram channels |
 | **Threat Trajectory** | Direction of a threat: ESCALATING, STABLE, DE-ESCALATING, NEW_THREAT |
+| **Throttled Mode** | Lower-volume social media scraping setting (~50 posts/platform every ~3.5 days), near-zero cost |
 | **Toast Notification** | Brief popup message at the top-center of the screen |
 | **Training Pipeline** | Process of scraping, analyzing, and learning from analyst-submitted URLs and documents |
+| **Trends Intelligence Center** | Analytics page for stability index, severity trends, cross-border correlation, and per-state drill-down |
 | **VAPID** | Voluntary Application Server Identification — standard used for secure web push delivery |
 | **Vector Embedding** | Mathematical representation of text meaning, enabling semantic similarity search |
 | **Watchlist** | Commander's personal priority list of up to 10 faultlines, ranked 1-10, pinned to the top of the Faultline Intelligence page |
 
 ---
 
-*Rhino Drishti v12.0 — Elite OSINT Intelligence Platform — Faultline & PAOI Monitoring, Push Notifications, Commander Flagging*
-*Handbook updated: 19 June 2026*
+*Rhino Drishti v14.4 — Elite OSINT Intelligence Platform — Apify Social Scraping, Comment Sentiment, Social Media Pulse, Strategic Briefs Suite, Faultline & PAOI Monitoring*
+*Handbook updated: 13 July 2026*
