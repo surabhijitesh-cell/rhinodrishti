@@ -299,7 +299,14 @@ export default function Layout({ children, alertCount = 0, onSearch, notifUnread
               <div className="flex items-center gap-2 ml-1 pl-2 border-l border-border">
                 <div className="hidden sm:block text-right">
                   <p className="text-xs font-mono leading-tight" data-testid="user-display-name">{user.name || user.username}</p>
-                  <p className="text-[9px] uppercase tracking-widest text-muted-foreground">{user.role}</p>
+                  <p className="text-[9px] uppercase tracking-widest text-muted-foreground">
+                    {user.role}
+                    {user.iod && (
+                      <span className="ml-1.5 text-primary/80" data-testid="user-iod-badge" title="Collection centre">
+                        · {user.iod}
+                      </span>
+                    )}
+                  </p>
                 </div>
                 <Tip text="Log out of Rhino Drishti" side="bottom">
                   <Button

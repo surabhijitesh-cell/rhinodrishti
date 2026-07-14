@@ -12,6 +12,17 @@ const ROLE_BADGES = {
   viewer: "bg-green-500/20 text-green-400 border-green-500/30",
 };
 
+const IOD_BADGES = {
+  "IOD-1": "bg-slate-500/20 text-slate-300 border-slate-500/30",
+  "IOD-4": "bg-violet-500/20 text-violet-400 border-violet-500/30",
+  "IOD-5": "bg-cyan-500/20 text-cyan-400 border-cyan-500/30",
+  "IOD-CIJ": "bg-orange-500/20 text-orange-400 border-orange-500/30",
+};
+
+// Fixed display order — IOD-1 (default/unassigned) first, then the three
+// named centres. Matches backend/iod_registry.py.
+const IOD_ORDER = ["IOD-1", "IOD-4", "IOD-5", "IOD-CIJ"];
+
 function generatePassword() {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789!@#$%";
   let pwd = "";
@@ -26,7 +37,7 @@ export default function UserManagement({ api }) {
   const [resetUserId, setResetUserId] = useState(null);
 
   // Create form state
-  const [form, setForm] = useState({ username: "", email: "", name: "", password: "", role: "analyst" });
+  const [form, setForm] = useState({ username: "", email: "", name: "", password: "", role: "analyst", iod: "IOD-1" });
   const [showFormPass, setShowFormPass] = useState(false);
   const [creating, setCreating] = useState(false);
 
@@ -62,7 +73,7 @@ export default function UserManagement({ api }) {
     try {
       await axios.post(`${api}/users`, form);
       toast.success(`User "${form.username}" created`);
-      setForm({ username: "", email: "", name: "", password: "", role: "analyst" });
+      setForm({ username: "", email: "", name: "", password: "", role: "analyst", iod: "IOD-1" });
       setShowCreate(false);
       fetchUsers();
     } catch (err) {
@@ -96,6 +107,17 @@ export default function UserManagement({ api }) {
     }
   };
 
+  const handleChangeIod = async (user, iod) => {
+    if (iod === (user.iod || "IOD-1")) return;
+    try {
+      await axios.put(`${api}/users/${user.id}`, { iod });
+      toast.success(`${user.username} moved to ${iod}`);
+      fetchUsers();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Failed to reassign IOD");
+    }
+  };
+
   const handleDelete = async (user) => {
     if (!window.confirm(`Delete user "${user.username}"? This cannot be undone.`)) return;
     try {
@@ -113,6 +135,17 @@ export default function UserManagement({ api }) {
     setTimeout(() => setCopied(false), 2000);
     toast.success("Password copied to clipboard");
   };
+
+  // Group users by IOD (collection centre) — IOD-1 covers anyone with no
+  // explicit assignment, so it's the natural default/unassigned bucket.
+  const usersByIod = {};
+  for (const u of users) {
+    const iod = u.iod || "IOD-1";
+    (usersByIod[iod] = usersByIod[iod] || []).push(u);
+  }
+  const iodGroups = IOD_ORDER.filter((iod) => usersByIod[iod]?.length).map((iod) => ({
+    iod, members: usersByIod[iod],
+  }));
 
   return (
     <div className="space-y-6" data-testid="user-management-page">
@@ -179,6 +212,18 @@ export default function UserManagement({ api }) {
                   <option value="admin">Admin</option>
                   <option value="analyst">Analyst</option>
                   <option value="viewer">Viewer</option>
+                </select>
+              </div>
+              <div>
+                <label className="text-[10px] uppercase tracking-widest text-muted-foreground font-mono block mb-1">IOD (Collection Centre)</label>
+                <select
+                  value={form.iod} onChange={(e) => setForm({ ...form, iod: e.target.value })}
+                  className="w-full bg-background border border-border px-3 py-2 text-sm font-mono focus:outline-none focus:border-primary"
+                  data-testid="new-iod"
+                >
+                  {IOD_ORDER.map((iod) => (
+                    <option key={iod} value={iod}>{iod}{iod === "IOD-1" ? " (default)" : ""}</option>
+                  ))}
                 </select>
               </div>
               <div className="md:col-span-2">
@@ -290,50 +335,78 @@ export default function UserManagement({ api }) {
                     <th className="text-left px-4 py-2 text-[10px] uppercase tracking-widest text-muted-foreground font-mono">Username</th>
                     <th className="text-left px-4 py-2 text-[10px] uppercase tracking-widest text-muted-foreground font-mono">Name</th>
                     <th className="text-left px-4 py-2 text-[10px] uppercase tracking-widest text-muted-foreground font-mono">Role</th>
+                    <th className="text-left px-4 py-2 text-[10px] uppercase tracking-widest text-muted-foreground font-mono">IOD</th>
                     <th className="text-left px-4 py-2 text-[10px] uppercase tracking-widest text-muted-foreground font-mono">Status</th>
                     <th className="text-left px-4 py-2 text-[10px] uppercase tracking-widest text-muted-foreground font-mono">Last Login</th>
                     <th className="text-right px-4 py-2 text-[10px] uppercase tracking-widest text-muted-foreground font-mono">Actions</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-border">
-                  {users.map((u) => (
-                    <tr key={u.id} className="hover:bg-muted/10 transition-colors">
-                      <td className="px-4 py-2.5 font-mono text-sm">{u.username}</td>
-                      <td className="px-4 py-2.5 text-muted-foreground">{u.name || "—"}</td>
-                      <td className="px-4 py-2.5">
-                        <Badge className={`rounded-none text-[9px] px-1.5 py-0 border ${ROLE_BADGES[u.role] || ROLE_BADGES.viewer}`}>
-                          {u.role?.toUpperCase()}
-                        </Badge>
-                      </td>
-                      <td className="px-4 py-2.5">
-                        <button onClick={() => handleToggleActive(u)}
-                          className={`text-[10px] uppercase tracking-widest font-mono cursor-pointer ${u.is_active ? "text-green-400" : "text-red-400"}`}
-                          data-testid={`toggle-active-${u.username}`}
-                        >
-                          {u.is_active ? "Active" : "Inactive"}
-                        </button>
-                      </td>
-                      <td className="px-4 py-2.5 text-xs text-muted-foreground font-mono">
-                        {u.last_login ? new Date(u.last_login).toLocaleString("en-IN", { dateStyle: "short", timeStyle: "short" }) : "Never"}
-                      </td>
-                      <td className="px-4 py-2.5 text-right">
-                        <div className="flex items-center justify-end gap-1">
-                          <Button variant="ghost" size="sm" className="h-7 w-7 p-0"
-                            onClick={() => { setResetUserId(u.id); setResetPass(""); setShowResetPass(false); }}
-                            title="Reset password" data-testid={`reset-btn-${u.username}`}
-                          >
-                            <Key size={13} />
-                          </Button>
-                          <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-red-400 hover:text-red-300"
-                            onClick={() => handleDelete(u)} title="Delete user" data-testid={`delete-btn-${u.username}`}
-                          >
-                            <Trash2 size={13} />
-                          </Button>
+                {iodGroups.map(({ iod, members }) => (
+                  <tbody key={iod} className="divide-y divide-border">
+                    <tr className="bg-muted/15">
+                      <td colSpan={7} className="px-4 py-1.5">
+                        <div className="flex items-center gap-2">
+                          <Badge className={`rounded-none text-[9px] px-1.5 py-0 border ${IOD_BADGES[iod] || IOD_BADGES["IOD-1"]}`}>
+                            {iod}
+                          </Badge>
+                          <span className="text-[10px] uppercase tracking-widest text-muted-foreground font-mono">
+                            {members.length} {members.length === 1 ? "user" : "users"}
+                            {iod === "IOD-1" ? " · default collection centre" : ""}
+                          </span>
                         </div>
                       </td>
                     </tr>
-                  ))}
-                </tbody>
+                    {members.map((u) => (
+                      <tr key={u.id} className="hover:bg-muted/10 transition-colors">
+                        <td className="px-4 py-2.5 font-mono text-sm">{u.username}</td>
+                        <td className="px-4 py-2.5 text-muted-foreground">{u.name || "—"}</td>
+                        <td className="px-4 py-2.5">
+                          <Badge className={`rounded-none text-[9px] px-1.5 py-0 border ${ROLE_BADGES[u.role] || ROLE_BADGES.viewer}`}>
+                            {u.role?.toUpperCase()}
+                          </Badge>
+                        </td>
+                        <td className="px-4 py-2.5">
+                          <select
+                            value={u.iod || "IOD-1"}
+                            onChange={(e) => handleChangeIod(u, e.target.value)}
+                            className="bg-background border border-border px-1.5 py-1 text-[10px] font-mono focus:outline-none focus:border-primary"
+                            data-testid={`iod-select-${u.username}`}
+                          >
+                            {IOD_ORDER.map((iod) => (
+                              <option key={iod} value={iod}>{iod}</option>
+                            ))}
+                          </select>
+                        </td>
+                        <td className="px-4 py-2.5">
+                          <button onClick={() => handleToggleActive(u)}
+                            className={`text-[10px] uppercase tracking-widest font-mono cursor-pointer ${u.is_active ? "text-green-400" : "text-red-400"}`}
+                            data-testid={`toggle-active-${u.username}`}
+                          >
+                            {u.is_active ? "Active" : "Inactive"}
+                          </button>
+                        </td>
+                        <td className="px-4 py-2.5 text-xs text-muted-foreground font-mono">
+                          {u.last_login ? new Date(u.last_login).toLocaleString("en-IN", { dateStyle: "short", timeStyle: "short" }) : "Never"}
+                        </td>
+                        <td className="px-4 py-2.5 text-right">
+                          <div className="flex items-center justify-end gap-1">
+                            <Button variant="ghost" size="sm" className="h-7 w-7 p-0"
+                              onClick={() => { setResetUserId(u.id); setResetPass(""); setShowResetPass(false); }}
+                              title="Reset password" data-testid={`reset-btn-${u.username}`}
+                            >
+                              <Key size={13} />
+                            </Button>
+                            <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-red-400 hover:text-red-300"
+                              onClick={() => handleDelete(u)} title="Delete user" data-testid={`delete-btn-${u.username}`}
+                            >
+                              <Trash2 size={13} />
+                            </Button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                ))}
               </table>
             </div>
           )}

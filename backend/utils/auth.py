@@ -54,11 +54,13 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
     if not user.get("is_active", True):
         raise HTTPException(status_code=403, detail="Account deactivated")
 
-    # IOD is resolved from username on every request, not stored on the user
-    # document — no DB write needed, no risk of a stale stamp. See
-    # iod_registry.py / memory/plans/iod-scoping-plan.md.
-    from iod_registry import resolve_user_iod
-    user["iod"] = resolve_user_iod(user["username"])
+    # IOD: the user document's own `iod` field wins when present (admin-set
+    # via User Management). Falls back to the static username->IOD registry
+    # for the small set of users created before this field existed, then to
+    # IOD-1. See iod_registry.py / memory/plans/iod-scoping-plan.md.
+    if not user.get("iod"):
+        from iod_registry import resolve_user_iod
+        user["iod"] = resolve_user_iod(user["username"])
     return user
 
 

@@ -11,6 +11,7 @@ class UserCreate(BaseModel):
     password: str
     name: str = ""
     role: str = "viewer"  # admin, analyst, viewer
+    iod: Optional[str] = None  # IOD-1 | IOD-4 | IOD-5 | IOD-CIJ — defaults to IOD-1 if omitted
 
 
 class UserLogin(BaseModel):
@@ -23,6 +24,7 @@ class UserUpdate(BaseModel):
     email: Optional[str] = None
     role: Optional[str] = None
     is_active: Optional[bool] = None
+    iod: Optional[str] = None
 
 
 class PasswordReset(BaseModel):
@@ -37,6 +39,7 @@ class UserInDB(BaseModel):
     password_hash: str
     name: str = ""
     role: str = "viewer"
+    iod: str = "IOD-1"
     is_active: bool = True
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     last_login: Optional[str] = None
