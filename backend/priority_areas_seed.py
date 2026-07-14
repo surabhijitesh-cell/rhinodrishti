@@ -297,13 +297,21 @@ async def seed_priority_areas(db) -> dict:
     """
     Idempotent seed of PAOIs + tag faultlines with priority_area_ids[].
     Returns {priority_areas_upserted, faultlines_tagged}.
+
+    IOD-scoped (memory/plans/iod-scoping-plan.md, cross-cutting fix #1):
+    these 6 hardcoded PAOIs belong to IOD-1. The faultline tagging pass reads
+    ALL enabled PAOIs from the database — not just this hardcoded list — so
+    PAOIs another IOD creates via the CRUD API keep their tags. This
+    replaces the old "wipe every faultline's tags, then re-apply from the
+    hardcoded list" approach, which would have destroyed other IODs' tags
+    the moment they owned any PAOIs.
     """
     now = datetime.now(timezone.utc).isoformat()
 
-    # 1. Upsert priority areas
+    # 1. Upsert this IOD's priority areas
     pa_upserted = 0
     for pa in PRIORITY_AREAS:
-        doc = {**pa, "enabled": True, "updated_at": now}
+        doc = {**pa, "iod": pa.get("iod", "IOD-1"), "enabled": True, "updated_at": now}
         result = await db.priority_areas.update_one(
             {"id": pa["id"]},
             {"$set": doc, "$setOnInsert": {"created_at": now}},
@@ -312,17 +320,26 @@ async def seed_priority_areas(db) -> dict:
         if result.upserted_id or result.modified_count:
             pa_upserted += 1
 
-    # 2. Tag faultlines with the PAOIs that reference them.
-    #    First clear all tags, then re-apply (idempotent + handles removals).
-    await db.faultlines.update_many({}, {"$set": {"priority_area_ids": []}})
+    # 2. Tag every faultline with the ids of ALL enabled PAOIs (any IOD) that
+    #    reference it. Computed as one authoritative set per faultline rather
+    #    than wipe-then-reapply, so it never touches a faultline that no
+    #    enabled PAOI (from this list or another IOD's) currently links.
+    all_paois = await db.priority_areas.find(
+        {"enabled": True}, {"_id": 0, "id": 1, "linked_faultline_ids": 1}
+    ).to_list(500)
 
     faultline_to_paois: dict[str, list] = {}
-    for pa in PRIORITY_AREAS:
-        for fl_id in pa.get("linked_faultline_ids", []):
+    for pa in all_paois:
+        for fl_id in pa.get("linked_faultline_ids", []) or []:
             faultline_to_paois.setdefault(fl_id, []).append(pa["id"])
 
+    all_faultline_ids = {
+        fl["id"] async for fl in db.faultlines.find({}, {"_id": 0, "id": 1})
+    }
+
     tagged = 0
-    for fl_id, paoi_ids in faultline_to_paois.items():
+    for fl_id in all_faultline_ids:
+        paoi_ids = faultline_to_paois.get(fl_id, [])
         result = await db.faultlines.update_one(
             {"id": fl_id},
             {"$set": {"priority_area_ids": paoi_ids, "updated_at": now}},
