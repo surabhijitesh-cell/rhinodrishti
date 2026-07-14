@@ -39,6 +39,7 @@ async def login(data: UserLogin):
     except Exception:
         pass  # DB quota full — last_login update non-fatal
 
+    from iod_registry import resolve_user_iod
     return {
         "token": token,
         "user": {
@@ -47,6 +48,7 @@ async def login(data: UserLogin):
             "email": user.get("email", ""),
             "name": user.get("name", ""),
             "role": user.get("role", "viewer"),
+            "iod": resolve_user_iod(user["username"]),
         }
     }
 
@@ -72,9 +74,12 @@ async def list_active_users(user: dict = Depends(get_current_user)):
 
 @router.get("/users")
 async def list_users(admin: dict = Depends(require_admin_role)):
+    from iod_registry import resolve_user_iod
     users = await users_col.find(
         {}, {"_id": 0, "password_hash": 0}
     ).sort("created_at", -1).to_list(200)
+    for u in users:
+        u["iod"] = resolve_user_iod(u["username"])
     return {"users": users}
 
 
