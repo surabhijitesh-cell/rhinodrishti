@@ -154,9 +154,13 @@ async def _top_actors(db, year: int, month: int) -> list:
 
 
 async def aggregate_faultline_report(
-    db, year: int, month: int
+    db, year: int, month: int, iod: str = "IOD-1"
 ) -> dict:
-    """Aggregate everything the PDF needs. No LLM here — that's a separate pass."""
+    """Aggregate everything the PDF needs. No LLM here — that's a separate pass.
+
+    iod defaults to IOD-1 (today's only PAOI owner) — memory/plans/
+    iod-scoping-plan.md cross-cutting fix #4: without this, another IOD's
+    first PAOI would leak into this report's red-flagging pass."""
     # Actors of interest (parallel with score load — independent query)
     actors_task = asyncio.ensure_future(_top_actors(db, year, month))
 
@@ -204,7 +208,7 @@ async def aggregate_faultline_report(
     paoi_analysis = brief.get("paoi_analysis") or {}
 
     # PAOI registry — used to order and group
-    paois_cursor = db.priority_areas.find({"enabled": True}, {"_id": 0}).sort("rank", 1)
+    paois_cursor = db.priority_areas.find({"enabled": True, "iod": iod}, {"_id": 0}).sort("rank", 1)
     paois = [p async for p in paois_cursor]
 
     # Attach per-PAOI faultline summaries (using curr scores)
