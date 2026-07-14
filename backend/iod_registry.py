@@ -73,7 +73,7 @@ IOD_FAULTLINE_WATCHLIST: dict[str, list[str]] = {
 USER_IOD_ASSIGNMENTS: dict[str, str] = {
     "iod4_1": IOD_4, "iod4_gs": IOD_4,
     "iod5_1": IOD_5, "iod5_gs": IOD_5,
-    "cij_1": IOD_CIJ, "cij_2": IOD_CIJ, "cij_3": IOD_CIJ,
+    "cij_1": IOD_CIJ, "cij_2": IOD_CIJ, "cij_3": IOD_CIJ, "iodc_1": IOD_CIJ,
 }
 
 
