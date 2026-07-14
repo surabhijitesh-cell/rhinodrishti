@@ -343,19 +343,20 @@ export default function UserManagement({ api }) {
                 </thead>
                 {iodGroups.map(({ iod, members }) => (
                   <tbody key={iod} className="divide-y divide-border">
-                    <tr className="bg-muted/15">
-                      <td colSpan={7} className="px-4 py-1.5">
-                        <div className="flex items-center gap-2">
-                          <Badge className={`rounded-none text-[9px] px-1.5 py-0 border ${IOD_BADGES[iod] || IOD_BADGES["IOD-1"]}`}>
-                            {iod}
-                          </Badge>
-                          <span className="text-[10px] uppercase tracking-widest text-muted-foreground font-mono">
-                            {members.length} {members.length === 1 ? "user" : "users"}
-                            {iod === "IOD-1" ? " · default collection centre" : ""}
-                          </span>
-                        </div>
-                      </td>
-                    </tr>
+                    {iod !== "IOD-1" && (
+                      <tr className="bg-muted/15">
+                        <td colSpan={7} className="px-4 py-1.5">
+                          <div className="flex items-center gap-2">
+                            <Badge className={`rounded-none text-[9px] px-1.5 py-0 border ${IOD_BADGES[iod]}`}>
+                              {iod}
+                            </Badge>
+                            <span className="text-[10px] uppercase tracking-widest text-muted-foreground font-mono">
+                              {members.length} {members.length === 1 ? "user" : "users"}
+                            </span>
+                          </div>
+                        </td>
+                      </tr>
+                    )}
                     {members.map((u) => (
                       <tr key={u.id} className="hover:bg-muted/10 transition-colors">
                         <td className="px-4 py-2.5 font-mono text-sm">{u.username}</td>
