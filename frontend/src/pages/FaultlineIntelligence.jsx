@@ -8,6 +8,8 @@ import {
 import CustomFaultlineModal from "../components/CustomFaultlineModal";
 import PAOIManager from "../components/PAOIManager";
 import axios from "axios";
+import { useAuth } from "../contexts/AuthContext";
+import { useAdminIod } from "../contexts/AdminIodContext";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
@@ -147,6 +149,9 @@ function FaultlineCard({ fl, sparkData, delta7d, onClick, watchlistRank, onToggl
 
 export default function FaultlineIntelligence({ api }) {
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const { viewIod } = useAdminIod();
+  const effectiveIod = user?.role === "admin" && viewIod ? viewIod : null;
   const [faultlines, setFaultlines] = useState([]);
   const [historyByFl, setHistoryByFl] = useState({});
   const [loading, setLoading] = useState(true);
@@ -164,14 +169,15 @@ export default function FaultlineIntelligence({ api }) {
   const fetchFaultlines = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await axios.get(`${api}/faultlines?include_score=true`);
+      const iodParam = effectiveIod ? `&iod=${effectiveIod}` : "";
+      const res = await axios.get(`${api}/faultlines?include_score=true${iodParam}`);
       setFaultlines(res.data.faultlines || []);
     } catch (e) {
       console.error("Failed to load faultlines", e);
       setFaultlines([]);
     }
     setLoading(false);
-  }, [api]);
+  }, [api, effectiveIod]);
 
   useEffect(() => { fetchFaultlines(); }, [fetchFaultlines]);
 
@@ -336,6 +342,11 @@ export default function FaultlineIntelligence({ api }) {
           <h1 className="text-2xl font-bold flex items-center gap-2">
             <Target size={20} className="text-primary" />
             Faultline Intelligence
+            {(effectiveIod || user?.iod) && (
+              <Badge className="text-[9px] font-mono bg-primary/10 text-primary border-primary/30 px-1.5 py-0 align-middle">
+                {effectiveIod || user.iod}
+              </Badge>
+            )}
           </h1>
           <p className="text-xs text-muted-foreground font-mono">
             Continuous stress monitoring across regional fault lines

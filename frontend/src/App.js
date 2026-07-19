@@ -4,6 +4,7 @@ import { BrowserRouter, Routes, Route, useNavigate } from "react-router-dom";
 import axios from "axios";
 import { ThemeProvider } from "./components/ThemeProvider";
 import { AuthProvider, useAuth } from "./contexts/AuthContext";
+import { AdminIodProvider } from "./contexts/AdminIodContext";
 import { UpdateNotificationProvider } from "./contexts/UpdateContext";
 import ProtectedRoute from "./components/ProtectedRoute";
 import Layout from "./components/Layout";
@@ -133,12 +134,14 @@ function App() {
       <TooltipProvider delayDuration={200}>
         <BrowserRouter>
           <AuthProvider api={API}>
-            <UpdateNotificationProvider api={API}>
-              <TourProvider>
-                <AppRoutes />
-                <AppTour />
-              </TourProvider>
-            </UpdateNotificationProvider>
+            <AdminIodProvider>
+              <UpdateNotificationProvider api={API}>
+                <TourProvider>
+                  <AppRoutes />
+                  <AppTour />
+                </TourProvider>
+              </UpdateNotificationProvider>
+            </AdminIodProvider>
           </AuthProvider>
         </BrowserRouter>
         <Toaster position="top-center" />

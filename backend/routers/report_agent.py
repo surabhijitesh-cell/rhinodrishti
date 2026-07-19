@@ -1044,7 +1044,7 @@ async def generate_report(req: GenerateRequest, user: dict = Depends(_require_ad
     )
 
     # 1. PAOI aggregation (reuse existing paoi_brief pipeline)
-    agg = await paoi_brief.aggregate_paoi_period(db, start_iso, end_iso)
+    agg = await paoi_brief.aggregate_paoi_period(db, start_iso, end_iso, iod=user.get("iod", "IOD-1"))
     all_paois = agg.get("paois") or []
 
     target_paois = _resolve_focus(focus_paoi_ids, all_paois)
