@@ -2,7 +2,7 @@
 from fastapi import APIRouter, Query, HTTPException, BackgroundTasks, Depends
 from typing import Optional
 from datetime import datetime, timezone, timedelta
-from utils.auth import get_current_user
+from utils.auth import get_current_user, get_current_user_optional
 from shared import (
     db, intelligence_col, patterns_col, _stats_cache, STATS_CACHE_TTL,
     invalidate_stats_cache, SEVERITY_LEVELS, logger,
@@ -286,7 +286,8 @@ async def get_intelligence(
     sort_order: Optional[str] = Query("desc", description="Sort order: asc or desc"),
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=100),
-    translate: bool = Query(True)
+    translate: bool = Query(True),
+    user: Optional[dict] = Depends(get_current_user_optional),
 ):
     query = {
         "processed": True,
@@ -347,7 +348,40 @@ async def get_intelligence(
 
     skip = (page - 1) * limit
     total = await intelligence_col.count_documents(query)
-    items = await intelligence_col.find(query, {"_id": 0}).sort(sort_field, sort_dir).skip(skip).limit(limit).to_list(limit)
+
+    # IOD ranking boost: items mapped to the user's IOD faultlines float to the
+    # top of the default sort. Free — reuses article↔faultline mappings the
+    # daily scoring pass already writes, no new LLM calls. IOD-1 (or no user)
+    # sees today's order, byte-identical.
+    boost_faultline_ids = None
+    if user and user.get("iod", "IOD-1") != "IOD-1":
+        from iod_registry import get_iod_faultline_ids
+        boost_faultline_ids = get_iod_faultline_ids(user["iod"])
+
+    if boost_faultline_ids:
+        pipeline = [
+            {"$match": query},
+            {"$lookup": {
+                "from": "faultline_mappings",
+                "let": {"aid": "$id"},
+                "pipeline": [
+                    {"$match": {"$expr": {"$and": [
+                        {"$eq": ["$article_id", "$$aid"]},
+                        {"$in": ["$faultline_id", boost_faultline_ids]},
+                    ]}}},
+                    {"$limit": 1},
+                ],
+                "as": "_iod_match",
+            }},
+            {"$addFields": {"_iod_boost": {"$cond": [{"$gt": [{"$size": "$_iod_match"}, 0]}, 1, 0]}}},
+            {"$sort": {"_iod_boost": -1, sort_field: sort_dir}},
+            {"$skip": skip},
+            {"$limit": limit},
+            {"$project": {"_id": 0, "_iod_match": 0, "_iod_boost": 0}},
+        ]
+        items = await intelligence_col.aggregate(pipeline).to_list(limit)
+    else:
+        items = await intelligence_col.find(query, {"_id": 0}).sort(sort_field, sort_dir).skip(skip).limit(limit).to_list(limit)
 
     if translate:
         for item in items:

@@ -68,3 +68,29 @@ async def require_admin_role(user: dict = Depends(get_current_user)):
     if user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Admin access required")
     return user
+
+
+async def get_current_user_optional(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    """Same as get_current_user but never raises — returns None for missing,
+    invalid, or expired tokens. For endpoints that work unauthenticated (e.g.
+    the public intelligence feed) but personalize when a valid session exists
+    (IOD-based ranking boost)."""
+    if not credentials:
+        return None
+    try:
+        payload = verify_token(credentials.credentials)
+    except HTTPException:
+        return None
+    user_id = payload.get("sub")
+    if not user_id:
+        return None
+
+    from shared import db
+    user = await db.users.find_one({"id": user_id}, {"_id": 0, "password_hash": 0})
+    if not user or not user.get("is_active", True):
+        return None
+
+    if not user.get("iod"):
+        from iod_registry import resolve_user_iod
+        user["iod"] = resolve_user_iod(user["username"])
+    return user
