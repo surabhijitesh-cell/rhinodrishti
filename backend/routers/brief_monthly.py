@@ -44,6 +44,24 @@ def _require_brief_author(current_user: dict) -> None:
     if current_user.get("role") not in ("admin", "analyst"):
         raise HTTPException(403, "Only analysts and admins can generate briefs")
 
+
+def _iod_query_filter(iod: str) -> dict:
+    """Match stored briefs for the given IOD. Briefs generated before IOD-scoping
+    have no `iod` field at all — treat those as IOD-1 so existing monthly/
+    fortnightly briefs keep working unchanged."""
+    if iod == "IOD-1":
+        return {"$or": [{"iod": "IOD-1"}, {"iod": {"$exists": False}}]}
+    return {"iod": iod}
+
+
+def _effective_iod(current_user: dict, iod_override: Optional[str]) -> str:
+    """Admins may override via ?iod=; everyone else always gets their own IOD."""
+    if iod_override and current_user.get("role") == "admin":
+        from iod_registry import ALL_IODS
+        if iod_override in ALL_IODS:
+            return iod_override
+    return current_user.get("iod", "IOD-1")
+
 router = APIRouter()
 
 monthly_briefs_col = db.monthly_briefs
@@ -693,7 +711,7 @@ def _build_notebooklm_script(brief: dict, year: int, month: int) -> str:
 
 # ── Faultline section (Phase 5a) ─────────────────────────────────────────────
 
-async def _aggregate_faultline_section(year: int, month: int) -> dict:
+async def _aggregate_faultline_section(year: int, month: int, iod: str = "IOD-1") -> dict:
     """
     Aggregate faultline_scores for the calendar month, grouped by state.
     Returns:
@@ -717,8 +735,15 @@ async def _aggregate_faultline_section(year: int, month: int) -> dict:
     else:
         end = datetime(year, month + 1, 1, tzinfo=timezone.utc).date()
 
+    match: dict = {"date": {"$gte": start.isoformat(), "$lt": end.isoformat()}}
+    if iod != "IOD-1":
+        from iod_registry import get_iod_faultline_ids
+        watchlist = get_iod_faultline_ids(iod)
+        if watchlist:
+            match["faultline_id"] = {"$in": watchlist}
+
     cursor = db.faultline_scores.find(
-        {"date": {"$gte": start.isoformat(), "$lt": end.isoformat()}},
+        match,
         {"_id": 0},
     ).sort([("faultline_id", 1), ("date", 1)])
     all_scores = [s async for s in cursor]
@@ -811,7 +836,7 @@ Return strict JSON:
 """
 
 
-async def _build_paoi_analysis(year: int, month: int, month_name: str, force_rich: bool = False) -> dict:
+async def _build_paoi_analysis(year: int, month: int, month_name: str, force_rich: bool = False, iod: str = "IOD-1") -> dict:
     """
     Build the Priority Area of Interest analysis block:
       commander_dashboard, paois (deep-dives), synthesis (rich/lean),
@@ -823,20 +848,21 @@ async def _build_paoi_analysis(year: int, month: int, month_name: str, force_ric
 
     start_iso, end_iso = _month_range(year, month)
 
-    # Determine synthesis tier from prior generation count
+    # Determine synthesis tier from prior generation count (per-IOD — each IOD
+    # gets its own rich-first-then-lean cadence, since each starts empty).
     prior = await monthly_briefs_col.find_one(
-        {"year": year, "month": month}, {"_id": 0, "generation_count": 1}
+        {"year": year, "month": month, **_iod_query_filter(iod)}, {"_id": 0, "generation_count": 1}
     )
     prior_count = (prior or {}).get("generation_count", 0)
     tier = "rich" if (prior_count == 0 or force_rich) else "lean"
 
     try:
-        agg = await paoi_brief.aggregate_paoi_period(db, start_iso, end_iso)
+        agg = await paoi_brief.aggregate_paoi_period(db, start_iso, end_iso, iod=iod)
         dashboard = paoi_brief.build_commander_dashboard(agg)
         synthesis = await paoi_brief.run_paoi_synthesis(
             db, agg, dashboard, month_name, tier, _call_llm_json
         )
-        other = await paoi_brief.other_faultline_movements(db, start_iso, end_iso)
+        other = await paoi_brief.other_faultline_movements(db, start_iso, end_iso, iod=iod)
         return {
             "available": bool(agg.get("paois")),
             "commander_dashboard": dashboard,
@@ -1012,27 +1038,34 @@ def _detect_attention_items(stats: dict, prev_stats: Optional[dict],
 
 async def _build_attention_required(stats: dict, prev_stats: Optional[dict],
                                     category_baselines: list,
-                                    start_iso: str, end_iso: str) -> list:
+                                    start_iso: str, end_iso: str, iod: str = "IOD-1") -> list:
     """Assemble Commander's Attention Required items for the period."""
     import paoi_brief
     try:
-        other = await paoi_brief.other_faultline_movements(db, start_iso, end_iso, limit=20)
+        other = await paoi_brief.other_faultline_movements(db, start_iso, end_iso, limit=20, iod=iod)
     except Exception:
         logger.exception("other_faultline_movements failed for attention scan")
         other = {"rising": [], "declining": []}
     return _detect_attention_items(stats, prev_stats, category_baselines, other)
 
 
-async def _run_generation(year: int, month: int, force_rich: bool = False) -> dict:
-    """The actual heavy generator — called via background task or directly."""
-    logger.info(f"Monthly brief generation start: {year}-{month:02d}")
+async def _run_generation_core(year: int, month: int, iod: str = "IOD-1", force_rich: bool = False) -> dict:
+    """The actual heavy generator — called via background task or directly.
+
+    Builds the FULL brief for one IOD, including the shared-core sections
+    (stats, executive summary, state sections, mitigation playbook, scenarios,
+    cross-border analysis) that are objective ground truth, not IOD-specific.
+    IOD-1 always runs this in full. For IOD-4/5/CIJ, `_run_generation` below
+    reuses IOD-1's shared-core output instead of calling this again — see
+    that function for the cost-saving path."""
+    logger.info(f"Monthly brief generation start: {year}-{month:02d} ({iod})")
 
     # 1. Aggregate stats
     stats = await _aggregate_month_stats(year, month)
 
     if stats["total"] == 0:
         return {
-            "year": year, "month": month, "status": "empty",
+            "year": year, "month": month, "iod": iod, "status": "empty",
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "error": "No intelligence items found for this month",
         }
@@ -1084,7 +1117,7 @@ async def _run_generation(year: int, month: int, force_rich: bool = False) -> di
     scenarios = scenarios_payload.get("scenarios", []) if isinstance(scenarios_payload, dict) else []
 
     # 2f. Faultline analysis section (Phase 5a)
-    faultline_section = await _aggregate_faultline_section(year, month)
+    faultline_section = await _aggregate_faultline_section(year, month, iod=iod)
     if faultline_section["available"]:
         narrative_tasks = []
         narrative_states = []
@@ -1103,7 +1136,7 @@ async def _run_generation(year: int, month: int, force_rich: bool = False) -> di
 
     # 2g. PAOI sections (Commander Priority Dashboard + deep-dives + inference).
     #     Rich synthesis on first generation of this period, lean on regen.
-    paoi_analysis = await _build_paoi_analysis(year, month, month_name, force_rich=force_rich)
+    paoi_analysis = await _build_paoi_analysis(year, month, month_name, force_rich=force_rich, iod=iod)
 
     # 2h. Per-PAOI map layers — current vs previous month critical items
     start_iso, end_iso = _month_range(year, month)
@@ -1120,12 +1153,12 @@ async def _run_generation(year: int, month: int, force_rich: bool = False) -> di
 
     # 2i. Commander's Attention Required — deterministic outlier scan
     prev_doc = await monthly_briefs_col.find_one(
-        {"year": prev_y, "month": prev_m, "status": {"$in": ["ready", "partial"]}},
+        {"year": prev_y, "month": prev_m, "status": {"$in": ["ready", "partial"]}, **_iod_query_filter(iod)},
         {"_id": 0, "stats.stability": 1},
     )
     from periodic_report_config import ATTENTION_CONFIG
     baseline_cursor = monthly_briefs_col.find(
-        {"status": {"$in": ["ready", "partial"]},
+        {"status": {"$in": ["ready", "partial"]}, **_iod_query_filter(iod),
          "$nor": [{"year": year, "month": month}]},
         {"_id": 0, "stats.top_categories": 1},
     ).sort([("year", -1), ("month", -1)]).limit(ATTENTION_CONFIG["category_baseline_periods"])
@@ -1134,7 +1167,7 @@ async def _run_generation(year: int, month: int, force_rich: bool = False) -> di
         async for b in baseline_cursor
     ]
     attention_required = await _build_attention_required(
-        stats, (prev_doc or {}).get("stats"), category_baselines, start_iso, end_iso,
+        stats, (prev_doc or {}).get("stats"), category_baselines, start_iso, end_iso, iod=iod,
     )
 
     # 3. Assemble brief
@@ -1147,7 +1180,7 @@ async def _run_generation(year: int, month: int, force_rich: bool = False) -> di
         )
 
     brief = {
-        "year": year, "month": month,
+        "year": year, "month": month, "iod": iod,
         "status": "ready" if llm_ok else "partial",
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "stats": stats,
@@ -1165,7 +1198,8 @@ async def _run_generation(year: int, month: int, force_rich: bool = False) -> di
     if not llm_ok:
         brief["_llm_error"] = "LLM calls returned empty — check OpenRouter API key and rate limits. Re-generate to retry."
 
-    # 4b. Social Media Pulse — sentiment for this period's own window
+    # 4b. Social Media Pulse — sentiment for this period's own window (shared
+    # ground truth, same for every IOD — not filtered)
     from social_pulse import get_social_pulse_for_period
     brief["social_pulse"] = await get_social_pulse_for_period(db, start_iso, end_iso)
 
@@ -1174,9 +1208,106 @@ async def _run_generation(year: int, month: int, force_rich: bool = False) -> di
 
     # 6. Persist
     await monthly_briefs_col.replace_one(
-        {"year": year, "month": month}, brief, upsert=True,
+        {"year": year, "month": month, **_iod_query_filter(iod)}, brief, upsert=True,
     )
-    logger.info(f"Monthly brief generation {'complete' if llm_ok else 'partial (LLM empty)'}: {year}-{month:02d}")
+    logger.info(f"Monthly brief generation {'complete' if llm_ok else 'partial (LLM empty)'}: {year}-{month:02d} ({iod})")
+    return brief
+
+
+async def _run_generation(year: int, month: int, iod: str = "IOD-1", force_rich: bool = False) -> dict:
+    """Entry point used by the generate endpoint / background task.
+
+    IOD-1 runs the full generator unchanged (byte-for-byte the same behavior
+    as before IOD-scoping). IOD-4/5/CIJ reuse IOD-1's shared-core sections
+    (stats, executive summary, state sections, mitigation playbook, scenarios,
+    cross-border analysis, social pulse — objective ground truth, identical
+    for every IOD) and only recompute the IOD-specific parts: faultline
+    analysis (filtered to that IOD's watch-list) and PAOI analysis (that IOD's
+    own priority areas). This matches the plan's cost design — no IOD pays for
+    LLM calls that would just reproduce IOD-1's own output."""
+    if iod == "IOD-1":
+        return await _run_generation_core(year, month, iod="IOD-1", force_rich=force_rich)
+
+    core_doc = await monthly_briefs_col.find_one(
+        {"year": year, "month": month, **_iod_query_filter("IOD-1"),
+         "status": {"$in": ["ready", "partial"]}},
+        {"_id": 0},
+    )
+    if not core_doc:
+        core_doc = await _run_generation_core(year, month, iod="IOD-1", force_rich=force_rich)
+    if core_doc.get("status") not in ("ready", "partial"):
+        # No items this month at all — same "empty" outcome applies to every IOD.
+        return {**core_doc, "iod": iod}
+
+    month_name = datetime(year, month, 1).strftime("%B %Y")
+    start_iso, end_iso = _month_range(year, month)
+    prev_y, prev_m = (year, month - 1) if month > 1 else (year - 1, 12)
+    prev_start_iso, prev_end_iso = _month_range(prev_y, prev_m)
+
+    faultline_section = await _aggregate_faultline_section(year, month, iod=iod)
+    if faultline_section["available"]:
+        narrative_tasks = []
+        narrative_states = []
+        for st, fls in faultline_section["by_state"].items():
+            if not fls:
+                continue
+            narrative_states.append(st)
+            narrative_tasks.append(
+                _call_llm_json(_faultline_narrative_prompt(st, fls, month_name), max_tokens=500)
+            )
+        narrative_results = await asyncio.gather(*narrative_tasks)
+        faultline_section["state_narratives"] = {
+            st: res for st, res in zip(narrative_states, narrative_results) if res
+        }
+    else:
+        faultline_section["state_narratives"] = {}
+
+    paoi_analysis = await _build_paoi_analysis(year, month, month_name, force_rich=force_rich, iod=iod)
+    try:
+        paoi_analysis["map_points"] = await _build_paoi_map_points(
+            [p["id"] for p in paoi_analysis.get("paois", [])],
+            start_iso, end_iso, prev_start_iso, prev_end_iso,
+        )
+    except Exception:
+        logger.exception("PAOI map point build failed")
+        paoi_analysis["map_points"] = {}
+
+    prev_doc = await monthly_briefs_col.find_one(
+        {"year": prev_y, "month": prev_m, "status": {"$in": ["ready", "partial"]}, **_iod_query_filter(iod)},
+        {"_id": 0, "stats.stability": 1},
+    )
+    from periodic_report_config import ATTENTION_CONFIG
+    baseline_cursor = monthly_briefs_col.find(
+        {"status": {"$in": ["ready", "partial"]}, **_iod_query_filter(iod),
+         "$nor": [{"year": year, "month": month}]},
+        {"_id": 0, "stats.top_categories": 1},
+    ).sort([("year", -1), ("month", -1)]).limit(ATTENTION_CONFIG["category_baseline_periods"])
+    category_baselines = [
+        (b.get("stats") or {}).get("top_categories", [])
+        async for b in baseline_cursor
+    ]
+    attention_required = await _build_attention_required(
+        core_doc["stats"], (prev_doc or {}).get("stats"), category_baselines, start_iso, end_iso, iod=iod,
+    )
+
+    brief = {
+        **{k: core_doc[k] for k in (
+            "status", "stats", "executive_summary", "state_sections",
+            "mitigation_playbook", "scenarios", "cross_border_analysis", "social_pulse",
+        ) if k in core_doc},
+        "year": year, "month": month, "iod": iod,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "faultline_analysis": faultline_section,
+        "paoi_analysis": paoi_analysis,
+        "attention_required": attention_required,
+        "generation_count": paoi_analysis.pop("_next_generation_count", 1),
+    }
+    brief["notebooklm_script"] = _build_notebooklm_script(brief, year, month)
+
+    await monthly_briefs_col.replace_one(
+        {"year": year, "month": month, "iod": iod}, brief, upsert=True,
+    )
+    logger.info(f"Monthly brief generation complete: {year}-{month:02d} ({iod}, reused IOD-1 shared core)")
     return brief
 
 
@@ -1188,24 +1319,26 @@ async def generate_monthly_brief(
     year:  int = Query(...),
     month: int = Query(..., ge=1, le=12),
     force_rich: bool = Query(False, description="Force rich LLM synthesis even on regen"),
+    iod: Optional[str] = Query(None, description="Admin-only override — generate another IOD's brief"),
     current_user: dict = Depends(get_current_user),
 ):
     """Kick off (re)generation. Marks brief as 'generating' immediately, then
     runs full LLM synthesis in background. Poll /brief/monthly/{y}/{m} for status."""
     _require_brief_author(current_user)
+    effective_iod = _effective_iod(current_user, iod)
 
     # Preserve generation_count across regenerations so the rich/lean tier
     # selection works. The stub below otherwise wipes it (replace_one), forcing
     # every regen back to the expensive rich tier.
     prior = await monthly_briefs_col.find_one(
-        {"year": year, "month": month}, {"_id": 0, "generation_count": 1}
+        {"year": year, "month": month, **_iod_query_filter(effective_iod)}, {"_id": 0, "generation_count": 1}
     )
     prior_count = (prior or {}).get("generation_count", 0)
 
     # Mark as generating
     await monthly_briefs_col.replace_one(
-        {"year": year, "month": month},
-        {"year": year, "month": month, "status": "generating",
+        {"year": year, "month": month, **_iod_query_filter(effective_iod)},
+        {"year": year, "month": month, "iod": effective_iod, "status": "generating",
          "generation_count": prior_count,
          "started_at": datetime.now(timezone.utc).isoformat()},
         upsert=True,
@@ -1213,32 +1346,32 @@ async def generate_monthly_brief(
 
     async def _bg():
         try:
-            await _run_generation(year, month, force_rich=force_rich)
+            await _run_generation(year, month, iod=effective_iod, force_rich=force_rich)
         except Exception as e:
             logger.exception("monthly brief generation crashed")
             await monthly_briefs_col.update_one(
-                {"year": year, "month": month},
+                {"year": year, "month": month, **_iod_query_filter(effective_iod)},
                 {"$set": {"status": "error", "error": str(e)[:300]}},
             )
 
     background_tasks.add_task(_bg)
-    return {"status": "generating", "year": year, "month": month}
+    return {"status": "generating", "year": year, "month": month, "iod": effective_iod}
 
 
 @router.get("/brief/monthly/list")
-async def list_monthly_briefs():
-    """List all available monthly briefs (newest first)."""
+async def list_monthly_briefs(iod: str = Query("IOD-1", description="Which IOD's briefs to list")):
+    """List all available monthly briefs for the given IOD (newest first)."""
     cursor = monthly_briefs_col.find(
-        {}, {"_id": 0, "year": 1, "month": 1, "status": 1, "generated_at": 1}
+        {**_iod_query_filter(iod)}, {"_id": 0, "year": 1, "month": 1, "status": 1, "generated_at": 1}
     ).sort([("year", -1), ("month", -1)]).limit(36)
     return {"briefs": [b async for b in cursor]}
 
 
 @router.get("/brief/monthly/stability-history")
-async def monthly_stability_history():
+async def monthly_stability_history(iod: str = Query("IOD-1")):
     """Return stability scores + sev_counts for all ready monthly briefs (for trend chart)."""
     cursor = monthly_briefs_col.find(
-        {"status": {"$in": ["ready", "partial"]}},
+        {"status": {"$in": ["ready", "partial"]}, **_iod_query_filter(iod)},
         {"_id": 0, "year": 1, "month": 1,
          "stats.stability": 1, "stats.sev_counts": 1, "stats.total": 1},
     ).sort([("year", 1), ("month", 1)])
@@ -1257,18 +1390,20 @@ async def monthly_stability_history():
 
 
 @router.get("/brief/monthly/{year}/{month}")
-async def get_monthly_brief(year: int, month: int):
-    brief = await monthly_briefs_col.find_one({"year": year, "month": month}, {"_id": 0})
+async def get_monthly_brief(year: int, month: int, iod: str = Query("IOD-1")):
+    brief = await monthly_briefs_col.find_one({"year": year, "month": month, **_iod_query_filter(iod)}, {"_id": 0})
     if not brief:
         raise HTTPException(404, "Brief not generated for this month — POST to /brief/monthly/generate first")
     return brief
 
 
 @router.get("/brief/monthly/{year}/{month}/notebooklm", response_class=PlainTextResponse)
-async def get_monthly_brief_notebooklm(year: int, month: int):
+async def get_monthly_brief_notebooklm(year: int, month: int, iod: str = Query("IOD-1")):
     """Returns the markdown script optimized for NotebookLM Video Overview generation.
     Frontend exposes this as a 'Copy for NotebookLM' button."""
-    brief = await monthly_briefs_col.find_one({"year": year, "month": month}, {"notebooklm_script": 1})
+    brief = await monthly_briefs_col.find_one(
+        {"year": year, "month": month, **_iod_query_filter(iod)}, {"notebooklm_script": 1}
+    )
     if not brief or not brief.get("notebooklm_script"):
         raise HTTPException(404, "Brief not generated or markdown not ready")
     return brief["notebooklm_script"]
@@ -1279,13 +1414,14 @@ async def get_monthly_brief_pdf(
     year: int,
     month: int,
     include_faultlines: bool = Query(True, description="Set false to exclude the Faultline Analysis section from the combined PDF."),
+    iod: str = Query("IOD-1"),
 ):
     """PDF export of the monthly brief.
 
     Default behavior includes the Faultline Analysis section (full Monthly
     Strategic Brief). Pass include_faultlines=false to get the Monthly Brief
     portion only (commander option from the UI)."""
-    brief = await monthly_briefs_col.find_one({"year": year, "month": month}, {"_id": 0})
+    brief = await monthly_briefs_col.find_one({"year": year, "month": month, **_iod_query_filter(iod)}, {"_id": 0})
     if not brief:
         raise HTTPException(404, "Brief not generated")
     if brief.get("status") not in ("ready", "partial"):
@@ -1294,13 +1430,14 @@ async def get_monthly_brief_pdf(
     # Fetch previous month for comparison snapshot
     prev_year, prev_month = (year, month - 1) if month > 1 else (year - 1, 12)
     prev_brief = await monthly_briefs_col.find_one(
-        {"year": prev_year, "month": prev_month, "status": {"$in": ["ready", "partial"]}}, {"_id": 0}
+        {"year": prev_year, "month": prev_month, "status": {"$in": ["ready", "partial"]}, **_iod_query_filter(iod)},
+        {"_id": 0},
     )
 
     # Per-PAOI score history across all stored briefs (for trendline at 3+ periods)
     paoi_history = defaultdict(list)
     hist_cursor = monthly_briefs_col.find(
-        {"status": {"$in": ["ready", "partial"]}},
+        {"status": {"$in": ["ready", "partial"]}, **_iod_query_filter(iod)},
         {"_id": 0, "year": 1, "month": 1, "paoi_analysis.commander_dashboard": 1},
     ).sort([("year", 1), ("month", 1)])
     async for b in hist_cursor:

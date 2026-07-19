@@ -10,6 +10,8 @@ import { Button } from "../components/ui/button";
 import Tip from "../components/Tip";
 import { CommanderDashboard, PaoiDeepDives } from "../components/PaoiBriefSections";
 import { downloadPdf } from "../lib/downloadPdf";
+import { useAuth } from "../contexts/AuthContext";
+import { useAdminIod } from "../contexts/AdminIodContext";
 import {
   AreaChart, Area, LineChart, Line, XAxis, YAxis, Tooltip,
   ResponsiveContainer, Legend,
@@ -59,6 +61,9 @@ function periodLabel(year, month, period) {
 }
 
 export default function FortnightlyBrief({ api }) {
+  const { user } = useAuth();
+  const { viewIod } = useAdminIod();
+  const effectiveIod = (user?.role === "admin" && viewIod) ? viewIod : (user?.iod || "IOD-1");
   const init = defaultPeriod();
   const [year,   setYear]   = useState(init.year);
   const [month,  setMonth]  = useState(init.month);
@@ -89,7 +94,7 @@ export default function FortnightlyBrief({ api }) {
     setError(null);
     setLoading(true);
     try {
-      const r = await axios.get(`${api}/brief/fortnightly/${year}/${month}/${period}`);
+      const r = await axios.get(`${api}/brief/fortnightly/${year}/${month}/${period}?iod=${effectiveIod}`);
       setBrief(r.data);
       setGenerating(r.data.status === "generating");
     } catch (e) {
@@ -103,7 +108,7 @@ export default function FortnightlyBrief({ api }) {
     setLoading(false);
     // Fetch previous period brief silently
     try {
-      const pr = await axios.get(`${api}/brief/fortnightly/${prevPeriodYear}/${prevPeriodMonth}/${prevPeriodNum}`);
+      const pr = await axios.get(`${api}/brief/fortnightly/${prevPeriodYear}/${prevPeriodMonth}/${prevPeriodNum}?iod=${effectiveIod}`);
       if (pr.data?.status === "ready" || pr.data?.status === "partial") {
         setPrevBrief(pr.data);
       } else {
@@ -114,12 +119,12 @@ export default function FortnightlyBrief({ api }) {
     }
     // Fetch full stability history
     try {
-      const hr = await axios.get(`${api}/brief/fortnightly/stability-history`);
+      const hr = await axios.get(`${api}/brief/fortnightly/stability-history?iod=${effectiveIod}`);
       setHistory(hr.data?.history || []);
     } catch {
       setHistory([]);
     }
-  }, [api, year, month, period, prevPeriodYear, prevPeriodMonth, prevPeriodNum]);
+  }, [api, year, month, period, prevPeriodYear, prevPeriodMonth, prevPeriodNum, effectiveIod]);
 
   useEffect(() => { fetchBrief(); }, [fetchBrief]);
 
@@ -133,7 +138,7 @@ export default function FortnightlyBrief({ api }) {
     setGenerating(true);
     setError(null);
     try {
-      await axios.post(`${api}/brief/fortnightly/generate?year=${year}&month=${month}&period=${period}&force_rich=true`);
+      await axios.post(`${api}/brief/fortnightly/generate?year=${year}&month=${month}&period=${period}&force_rich=true&iod=${effectiveIod}`);
       setTimeout(fetchBrief, 4000);
     } catch (e) {
       setError(e?.response?.data?.detail || "Generation request failed");
@@ -143,7 +148,7 @@ export default function FortnightlyBrief({ api }) {
 
   const handleCopyNotebookLM = async () => {
     try {
-      const r = await axios.get(`${api}/brief/fortnightly/${year}/${month}/${period}/notebooklm`);
+      const r = await axios.get(`${api}/brief/fortnightly/${year}/${month}/${period}/notebooklm?iod=${effectiveIod}`);
       await navigator.clipboard.writeText(r.data);
       setCopied(true);
       setTimeout(() => setCopied(false), 2500);
@@ -157,7 +162,7 @@ export default function FortnightlyBrief({ api }) {
     setPdfError(null);
     const result = await downloadPdf(
       axios,
-      `${api}/brief/fortnightly/${year}/${month}/${period}/pdf`,
+      `${api}/brief/fortnightly/${year}/${month}/${period}/pdf?iod=${effectiveIod}`,
       `ner_fortnightly_${year}_${month}_p${period}.pdf`,
     );
     setPdfLoading(null);
