@@ -44,6 +44,7 @@ from routers.watchlist import router as watchlist_router
 from routers.notifications import router as notifications_router
 from routers.flags import router as flags_router
 from routers.report_agent import router as report_agent_router
+from routers.user_activity import router as user_activity_router
 
 # Import scheduler functions
 from routers.pipeline import (
@@ -94,6 +95,7 @@ app.include_router(watchlist_router, prefix="/api")
 app.include_router(notifications_router, prefix="/api")
 app.include_router(flags_router, prefix="/api")
 app.include_router(report_agent_router, prefix="/api")
+app.include_router(user_activity_router, prefix="/api")
 
 
 # ============================================================
@@ -412,6 +414,40 @@ async def startup():
         scheduler.add_job(_check_openrouter_credits, 'interval', minutes=30, id='credit_monitor')
         # Run once immediately so the warning level is set before the first 30-min tick.
         asyncio.create_task(_check_openrouter_credits())
+
+        # Weekly user-activity report reminder — Monday 08:00 IST (02:30 UTC).
+        # The report itself is generated on demand (any date range) from the
+        # User Management > Activity tab; this job just pings admins that last
+        # week's data is ready to pull.
+        async def _notify_weekly_activity_report():
+            try:
+                from datetime import datetime, timedelta, timezone as tz
+                from utils.notifications import create_and_dispatch_notification
+                admins = await db.users.find({"role": "admin", "is_active": True}, {"id": 1, "_id": 0}).to_list(None)
+                if not admins:
+                    return
+                today = datetime.now(tz.utc).date()
+                week_end = today - timedelta(days=today.weekday())      # this week's Monday
+                week_start = week_end - timedelta(days=7)                # last Monday
+                await create_and_dispatch_notification(
+                    notif_type="SYSTEM_ALERT",
+                    title="Weekly User Activity Report ready",
+                    body=f"Login sessions and actions for {week_start.isoformat()} to {(week_end - timedelta(days=1)).isoformat()} are ready to view.",
+                    payload={"date_from": week_start.isoformat(), "date_to": (week_end - timedelta(days=1)).isoformat()},
+                    deep_link="/user-management",
+                    source_type="system",
+                    source_id="weekly_activity_report",
+                    created_by=None,
+                    recipient_user_ids=[a["id"] for a in admins],
+                )
+            except Exception as e:
+                logger.warning(f"Weekly activity report notification failed: {e}")
+
+        scheduler.add_job(
+            _notify_weekly_activity_report,
+            CronTrigger(day_of_week='mon', hour=2, minute=30, timezone='UTC'),  # 08:00 IST Monday
+            id='weekly_activity_report',
+        )
 
         # Firecrawl jobs — DISABLED (insufficient credits; re-enable when plan upgraded)
         # async def _fetch_web_sources():

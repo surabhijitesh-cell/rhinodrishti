@@ -1,10 +1,11 @@
 import { useState, useEffect, useCallback } from "react";
-import { Users, Plus, Key, Trash2, Eye, EyeOff, Copy, RefreshCw, Check, Shield } from "lucide-react";
+import { Users, Plus, Key, Trash2, Eye, EyeOff, Copy, RefreshCw, Check, Shield, Activity } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Button } from "../components/ui/button";
 import { Badge } from "../components/ui/badge";
 import { toast } from "sonner";
 import axios from "axios";
+import UserActivityTab from "../components/UserActivityTab";
 
 const ROLE_BADGES = {
   admin: "bg-red-500/20 text-red-400 border-red-500/30",
@@ -31,6 +32,7 @@ function generatePassword() {
 }
 
 export default function UserManagement({ api }) {
+  const [activeTab, setActiveTab] = useState("users");
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
@@ -158,16 +160,44 @@ export default function UserManagement({ api }) {
             {users.length} users registered
           </p>
         </div>
-        <Button
-          onClick={() => setShowCreate(!showCreate)}
-          className="uppercase text-xs font-bold tracking-wider rounded-none"
-          data-testid="create-user-btn"
-        >
-          <Plus size={14} className="mr-2" />
-          {showCreate ? "Cancel" : "Create User"}
-        </Button>
+        {activeTab === "users" && (
+          <Button
+            onClick={() => setShowCreate(!showCreate)}
+            className="uppercase text-xs font-bold tracking-wider rounded-none"
+            data-testid="create-user-btn"
+          >
+            <Plus size={14} className="mr-2" />
+            {showCreate ? "Cancel" : "Create User"}
+          </Button>
+        )}
       </div>
 
+      {/* Tabs */}
+      <div className="flex border-b border-border">
+        <button
+          onClick={() => setActiveTab("users")}
+          className={`px-4 py-2 text-xs uppercase tracking-wider font-mono border-b-2 flex items-center gap-1.5 ${
+            activeTab === "users" ? "border-primary text-foreground" : "border-transparent text-muted-foreground hover:text-foreground"
+          }`}
+          data-testid="tab-users"
+        >
+          <Users size={13} /> Users
+        </button>
+        <button
+          onClick={() => setActiveTab("activity")}
+          className={`px-4 py-2 text-xs uppercase tracking-wider font-mono border-b-2 flex items-center gap-1.5 ${
+            activeTab === "activity" ? "border-primary text-foreground" : "border-transparent text-muted-foreground hover:text-foreground"
+          }`}
+          data-testid="tab-activity"
+        >
+          <Activity size={13} /> Activity
+        </button>
+      </div>
+
+      {activeTab === "activity" && <UserActivityTab api={api} />}
+
+      {activeTab === "users" && (
+      <>
       {/* Create User Form */}
       {showCreate && (
         <Card className="border border-border rounded-none bg-card border-l-4 border-l-primary" data-testid="create-user-form">
@@ -413,6 +443,8 @@ export default function UserManagement({ api }) {
           )}
         </CardContent>
       </Card>
+      </>
+      )}
     </div>
   );
 }

@@ -1,5 +1,5 @@
 """Training pipeline: URL/file upload, AI processing, pattern aggregation."""
-from fastapi import APIRouter, HTTPException, BackgroundTasks, UploadFile, File, Form
+from fastapi import APIRouter, HTTPException, BackgroundTasks, UploadFile, File, Form, Depends
 from typing import Optional
 from datetime import datetime, timezone, timedelta
 import asyncio
@@ -8,6 +8,8 @@ import os
 import io
 from shared import db, training_col, intelligence_col, activity_log_col, feedback_col, logger
 from llm_client import get_anthropic_client, ANTHROPIC_MODEL
+from utils.auth import get_current_user
+from user_activity import log_action
 
 router = APIRouter()
 
@@ -16,7 +18,7 @@ router = APIRouter()
 # Add URL to training queue
 # ============================================================
 @router.post("/training/add-url")
-async def add_training_url(body: dict):
+async def add_training_url(body: dict, current_user: dict = Depends(get_current_user)):
     url = (body.get("url") or "").strip()
     if not url or not url.startswith("http"):
         raise HTTPException(status_code=400, detail="A valid URL is required")
@@ -45,6 +47,7 @@ async def add_training_url(body: dict):
         "relevance": relevance,
     }
     await training_col.insert_one(doc)
+    await log_action(current_user, "training_action", f"add_url: {url}")
 
     return {"message": "URL added to training queue", "id": doc["id"], "source": doc["source"], "relevance": relevance}
 
@@ -53,7 +56,7 @@ async def add_training_url(body: dict):
 # Upload file to training queue
 # ============================================================
 @router.post("/training/upload-file")
-async def upload_training_file(file: UploadFile = File(...)):
+async def upload_training_file(file: UploadFile = File(...), current_user: dict = Depends(get_current_user)):
     allowed = {
         "application/pdf": "pdf",
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
@@ -97,6 +100,7 @@ async def upload_training_file(file: UploadFile = File(...)):
         "ai_analysis": None,
     }
     await training_col.insert_one(doc)
+    await log_action(current_user, "training_action", f"upload_file: {file.filename}")
 
     return {
         "message": "File uploaded to training queue",
@@ -139,11 +143,12 @@ async def delete_training_item(item_id: str):
 # Train — process all pending/ready items
 # ============================================================
 @router.post("/training/run")
-async def run_training(background_tasks: BackgroundTasks):
+async def run_training(background_tasks: BackgroundTasks, current_user: dict = Depends(get_current_user)):
     pending = await training_col.count_documents({"status": {"$in": ["pending", "ready"]}})
     if pending == 0:
         raise HTTPException(status_code=400, detail="No pending items in training queue")
     background_tasks.add_task(_run_training_pipeline)
+    background_tasks.add_task(log_action, current_user, "training_action", f"run: {pending} items")
     return {"message": f"Training started for {pending} items", "pending": pending}
 
 

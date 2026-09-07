@@ -1,12 +1,13 @@
 """Authentication and User Management endpoints."""
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from datetime import datetime, timezone
 from models.user import UserCreate, UserLogin, UserUpdate, PasswordReset, UserInDB, UserResponse
 from utils.auth import (
     hash_password, verify_password, create_access_token,
-    get_current_user, require_admin_role,
+    get_current_user, get_current_session_id, require_admin_role,
 )
 from shared import db
+from user_activity import start_session, end_session
 
 router = APIRouter()
 users_col = db.users
@@ -17,7 +18,7 @@ users_col = db.users
 # ============================================================
 
 @router.post("/auth/login")
-async def login(data: UserLogin):
+async def login(data: UserLogin, request: Request):
     user = await users_col.find_one(
         {"$or": [{"username": data.username}, {"email": data.username}]},
         {"_id": 0}
@@ -29,7 +30,9 @@ async def login(data: UserLogin):
     if not verify_password(data.password, user.get("password_hash", "")):
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
-    token = create_access_token({"sub": user["id"], "role": user.get("role", "viewer")})
+    ip_address = request.client.host if request.client else ""
+    session_id = await start_session(user, ip_address)
+    token = create_access_token({"sub": user["id"], "role": user.get("role", "viewer"), "session_id": session_id})
 
     try:
         await users_col.update_one(
@@ -54,6 +57,17 @@ async def login(data: UserLogin):
             "iod": iod,
         }
     }
+
+
+@router.post("/auth/logout")
+async def logout(session_id: str = Depends(get_current_session_id)):
+    """Marks the login session's precise end time — improves the accuracy of
+    the Currently Online view and session-duration figures over waiting for
+    the away/offline staleness threshold. Best-effort: always returns success
+    even for a missing/expired session, since the client clears its token
+    regardless."""
+    await end_session(session_id)
+    return {"message": "Logged out"}
 
 
 @router.get("/auth/me")

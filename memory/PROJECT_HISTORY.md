@@ -57,3 +57,13 @@ API block, Instagram's once-daily cap, Facebook's rate limit) — re-enabled
 Twitter, generalized the Facebook-only sentiment module into
 social_comment_sentiment.py, and brought Instagram + Twitter to full
 feature parity with Facebook (widget, emblem, Social Pulse, sentiment).
+
+## 2026-09-07 — feature/user-activity-audit
+Added per-user login session tracking and action logging (relevance
+ratings, manual uploads, training actions were previously anonymous —
+device-id only, no user attribution) plus a new Activity tab in User
+Management: live "Currently Online" view and a date-range Activity Report
+(screen + PDF). Weekly Monday 08:00 IST push notification via existing
+notification system; report itself generates on demand, nothing stored
+long-term. Also ran a one-off historical volume report (system-wide only,
+no per-user breakdown possible pre-feature) and handed it to Rohit directly.
