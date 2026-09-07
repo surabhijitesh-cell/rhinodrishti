@@ -71,10 +71,14 @@ export function AuthProvider({ children, api }) {
   }, [api]);
 
   const logout = useCallback(() => {
+    // Best-effort — marks the session's precise end time for the activity
+    // report / Currently Online view. Fire-and-forget: logout must not wait
+    // on the network, and clearing the token below happens regardless.
+    axios.post(`${api}/auth/logout`).catch(() => {});
     localStorage.removeItem("rd_token");
     localStorage.removeItem("rd_user");
     setUser(null);
-  }, []);
+  }, [api]);
 
   return (
     <AuthContext.Provider value={{ user, login, logout, loading, isAuthenticated: !!user }}>

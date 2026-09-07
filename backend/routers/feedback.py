@@ -1,5 +1,5 @@
 """Feedback endpoints: submit/update ratings, aggregation, training profile."""
-from fastapi import APIRouter, HTTPException, Query, Request, BackgroundTasks
+from fastapi import APIRouter, HTTPException, Query, Request, BackgroundTasks, Depends
 from typing import Optional
 from datetime import datetime, timezone, timedelta
 import math
@@ -7,6 +7,8 @@ import uuid
 import os
 from shared import db, feedback_col, intelligence_col, activity_log_col, logger
 from feedback_bias import get_feedback_bias_profile, invalidate_bias_cache
+from utils.auth import get_current_user
+from user_activity import log_action
 
 router = APIRouter()
 
@@ -34,7 +36,10 @@ def _derive_relevance(avg: float) -> str:
 # Submit / Update a Rating
 # ============================================================
 @router.post("/feedback")
-async def submit_feedback(body: dict, request: Request, background_tasks: BackgroundTasks):
+async def submit_feedback(
+    body: dict, request: Request, background_tasks: BackgroundTasks,
+    current_user: dict = Depends(get_current_user),
+):
     intelligence_id = body.get("intelligence_id")
     device_id = body.get("device_id")
     rating = body.get("rating")
@@ -69,6 +74,10 @@ async def submit_feedback(body: dict, request: Request, background_tasks: Backgr
         await _update_aggregation(intelligence_id)
         invalidate_bias_cache()
         background_tasks.add_task(_check_feedback_session, device_id)
+        background_tasks.add_task(
+            log_action, current_user, "relevance_rating",
+            f"rating={rating} on item {intelligence_id} (updated)",
+        )
         return {"message": "Rating updated", "action": "updated", "rating": rating}
 
     # Check cap before inserting new
@@ -103,6 +112,10 @@ async def submit_feedback(body: dict, request: Request, background_tasks: Backgr
 
     # Check if device has enough ratings for a feedback session log
     background_tasks.add_task(_check_feedback_session, device_id)
+    background_tasks.add_task(
+        log_action, current_user, "relevance_rating",
+        f"rating={rating} on item {intelligence_id}",
+    )
 
     return {"message": "Rating submitted", "action": "created", "rating": rating}
 

@@ -2,6 +2,7 @@
 import os
 import jwt
 from datetime import datetime, timezone, timedelta
+from typing import Optional
 from passlib.context import CryptContext
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -53,7 +54,28 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
         raise HTTPException(status_code=401, detail="User not found")
     if not user.get("is_active", True):
         raise HTTPException(status_code=403, detail="Account deactivated")
+
+    # Refresh this login session's "last active" timestamp — backs the
+    # Currently Online view and session-duration figures in the Activity
+    # report. Never blocks/fails the actual request. See user_activity.py.
+    session_id = payload.get("session_id")
+    if session_id:
+        from user_activity import touch_session
+        await touch_session(session_id)
+
     return user
+
+
+async def get_current_session_id(credentials: HTTPAuthorizationCredentials = Depends(security)) -> Optional[str]:
+    """Decode the bearer token and return its session_id, or None. Used only
+    by /auth/logout to mark the session's precise end time."""
+    if not credentials:
+        return None
+    try:
+        payload = verify_token(credentials.credentials)
+    except HTTPException:
+        return None
+    return payload.get("session_id")
 
 
 async def require_admin_role(user: dict = Depends(get_current_user)):

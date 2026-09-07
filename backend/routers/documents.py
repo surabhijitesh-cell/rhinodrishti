@@ -1,5 +1,5 @@
 """Document upload, URL analysis, and contextual intelligence assessment."""
-from fastapi import APIRouter, HTTPException, BackgroundTasks, UploadFile, File
+from fastapi import APIRouter, HTTPException, BackgroundTasks, UploadFile, File, Depends
 from pydantic import BaseModel
 from datetime import datetime, timezone, timedelta
 import io
@@ -9,6 +9,8 @@ import uuid
 import json
 from shared import db, uploads_col, intelligence_col, patterns_col, logger
 from llm_client import get_client, MODEL as ANALYSIS_MODEL
+from utils.auth import get_current_user
+from user_activity import log_action
 
 router = APIRouter()
 
@@ -180,7 +182,10 @@ async def get_uploaded_documents():
 
 
 @router.post("/upload-document")
-async def upload_document(file: UploadFile = File(...), background_tasks: BackgroundTasks = None):
+async def upload_document(
+    file: UploadFile = File(...), background_tasks: BackgroundTasks = None,
+    current_user: dict = Depends(get_current_user),
+):
     allowed_types = {
         "application/pdf": "pdf",
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
@@ -233,12 +238,16 @@ async def upload_document(file: UploadFile = File(...), background_tasks: Backgr
 
     if background_tasks:
         background_tasks.add_task(_run_contextual_analysis, doc_record["id"])
+        background_tasks.add_task(log_action, current_user, "manual_upload", f"file: {file.filename}")
 
     return {"message": "Document uploaded — analysis starting", "document_id": doc_record["id"], "filename": file.filename}
 
 
 @router.post("/analyze-url")
-async def analyze_url(data: URLAnalysisRequest, background_tasks: BackgroundTasks = None):
+async def analyze_url(
+    data: URLAnalysisRequest, background_tasks: BackgroundTasks = None,
+    current_user: dict = Depends(get_current_user),
+):
     """Fetch a URL and run contextual intelligence analysis."""
     url = data.url.strip()
     if not url.startswith("http"):
@@ -275,6 +284,7 @@ async def analyze_url(data: URLAnalysisRequest, background_tasks: BackgroundTask
 
     if background_tasks:
         background_tasks.add_task(_run_contextual_analysis, doc_record["id"])
+        background_tasks.add_task(log_action, current_user, "manual_upload", f"url: {url}")
 
     return {"message": "URL fetched — analysis starting", "document_id": doc_record["id"], "filename": doc_record["filename"]}
 

@@ -34,6 +34,8 @@ feedback_col = db.intelligence_feedback
 training_col = db.training_data
 activity_log_col = db.training_activity_log
 relationships_col = db.item_relationships
+user_sessions_col = db.user_sessions
+user_action_log_col = db.user_action_log
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("server")
