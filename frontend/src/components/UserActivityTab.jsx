@@ -18,6 +18,16 @@ function downloadBlob(data, filename) {
   window.URL.revokeObjectURL(url);
 }
 
+// Format using LOCAL calendar fields, not toISOString() (which converts to
+// UTC first) — in IST that shifts local midnight back a day, breaking every
+// range below by one day.
+const fmtDate = (d) => {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+};
+
 function lastCompletedWeek() {
   const today = new Date();
   const day = today.getDay(); // 0=Sun..6=Sat
@@ -28,8 +38,20 @@ function lastCompletedWeek() {
   lastMonday.setDate(thisMonday.getDate() - 7);
   const lastSunday = new Date(thisMonday);
   lastSunday.setDate(thisMonday.getDate() - 1);
-  const fmt = (d) => d.toISOString().slice(0, 10);
-  return { from: fmt(lastMonday), to: fmt(lastSunday) };
+  return { from: fmtDate(lastMonday), to: fmtDate(lastSunday) };
+}
+
+function lastCompletedMonth() {
+  const today = new Date();
+  // Day 0 of this month = last day of previous month
+  const lastDayPrevMonth = new Date(today.getFullYear(), today.getMonth(), 0);
+  const firstDayPrevMonth = new Date(lastDayPrevMonth.getFullYear(), lastDayPrevMonth.getMonth(), 1);
+  return { from: fmtDate(firstDayPrevMonth), to: fmtDate(lastDayPrevMonth) };
+}
+
+function lastCompletedYear() {
+  const prevYear = new Date().getFullYear() - 1;
+  return { from: `${prevYear}-01-01`, to: `${prevYear}-12-31` };
 }
 
 function OnlineUsers({ api }) {
@@ -99,14 +121,14 @@ function ActivityReport({ api }) {
   const [dateTo, setDateTo] = useState(defaults.to);
   const [report, setReport] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [pdfLoading, setPdfLoading] = useState(false);
+  const [pdfLoading, setPdfLoading] = useState(null); // "summary" | "detail" | null
 
-  const generate = async () => {
-    if (!dateFrom || !dateTo) { toast.error("Pick both dates"); return; }
+  const generate = async (from = dateFrom, to = dateTo) => {
+    if (!from || !to) { toast.error("Pick both dates"); return; }
     setLoading(true);
     try {
       const res = await axios.get(`${api}/admin/user-activity/report`, {
-        params: { date_from: dateFrom, date_to: dateTo },
+        params: { date_from: from, date_to: to },
       });
       setReport(res.data);
     } catch (e) {
@@ -115,18 +137,25 @@ function ActivityReport({ api }) {
     setLoading(false);
   };
 
-  const downloadPdf = async () => {
-    setPdfLoading(true);
+  const selectRange = (range) => {
+    setDateFrom(range.from);
+    setDateTo(range.to);
+    generate(range.from, range.to);
+  };
+
+  const downloadPdf = async (kind) => {
+    setPdfLoading(kind);
     try {
-      const res = await axios.get(`${api}/admin/user-activity/report/pdf`, {
+      const path = kind === "detail" ? "/admin/user-activity/report/pdf/detail" : "/admin/user-activity/report/pdf";
+      const res = await axios.get(`${api}${path}`, {
         params: { date_from: dateFrom, date_to: dateTo },
         responseType: "blob",
       });
-      downloadBlob(res.data, `user_activity_${dateFrom}_to_${dateTo}.pdf`);
+      downloadBlob(res.data, `user_activity_${kind}_${dateFrom}_to_${dateTo}.pdf`);
     } catch {
       toast.error("PDF download failed");
     }
-    setPdfLoading(false);
+    setPdfLoading(null);
   };
 
   return (
@@ -137,6 +166,21 @@ function ActivityReport({ api }) {
         </CardTitle>
       </CardHeader>
       <CardContent className="p-4 space-y-4">
+        <div className="flex flex-wrap items-center gap-2">
+          <Button onClick={() => selectRange(lastCompletedWeek())} variant="outline" size="sm" className="rounded-none text-xs uppercase tracking-wider" data-testid="quick-weekly-btn">
+            Weekly
+          </Button>
+          <Button onClick={() => selectRange(lastCompletedMonth())} variant="outline" size="sm" className="rounded-none text-xs uppercase tracking-wider" data-testid="quick-monthly-btn">
+            Monthly
+          </Button>
+          <Button onClick={() => selectRange(lastCompletedYear())} variant="outline" size="sm" className="rounded-none text-xs uppercase tracking-wider" data-testid="quick-annual-btn">
+            Annual
+          </Button>
+          <span className="text-[10px] text-muted-foreground font-mono">
+            (latest complete week / month / year — or pick a custom range below)
+          </span>
+        </div>
+
         <div className="flex flex-wrap items-end gap-3">
           <div>
             <label className="text-[10px] uppercase tracking-wider text-muted-foreground font-mono block mb-1">From</label>
@@ -154,15 +198,21 @@ function ActivityReport({ api }) {
               data-testid="activity-report-to"
             />
           </div>
-          <Button onClick={generate} disabled={loading} size="sm" className="rounded-none text-xs uppercase tracking-wider" data-testid="generate-activity-report-btn">
+          <Button onClick={() => generate()} disabled={loading} size="sm" className="rounded-none text-xs uppercase tracking-wider" data-testid="generate-activity-report-btn">
             <RefreshCw size={12} className={`mr-1 ${loading ? "animate-spin" : ""}`} />
             Generate
           </Button>
           {report && (
-            <Button onClick={downloadPdf} disabled={pdfLoading} variant="outline" size="sm" className="rounded-none text-xs uppercase tracking-wider" data-testid="download-activity-report-btn">
-              <Download size={12} className="mr-1" />
-              {pdfLoading ? "Preparing…" : "PDF"}
-            </Button>
+            <>
+              <Button onClick={() => downloadPdf("summary")} disabled={!!pdfLoading} variant="outline" size="sm" className="rounded-none text-xs uppercase tracking-wider" data-testid="download-activity-summary-btn">
+                <Download size={12} className="mr-1" />
+                {pdfLoading === "summary" ? "Preparing…" : "Summary PDF"}
+              </Button>
+              <Button onClick={() => downloadPdf("detail")} disabled={!!pdfLoading} variant="outline" size="sm" className="rounded-none text-xs uppercase tracking-wider" data-testid="download-activity-detail-btn">
+                <Download size={12} className="mr-1" />
+                {pdfLoading === "detail" ? "Preparing…" : "Detailed Log PDF"}
+              </Button>
+            </>
           )}
         </div>
 

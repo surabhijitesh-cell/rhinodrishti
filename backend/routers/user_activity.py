@@ -39,23 +39,24 @@ def _ascii(s) -> str:
     return s.encode("latin-1", errors="replace").decode("latin-1")
 
 
-def _render_report_pdf(report: dict) -> bytes:
+# ── Palette — identical to brief_monthly.py ──────────────────────────────────
+C_BG       = (30,  35,  25)
+C_ACCENT   = (180, 220, 80)
+C_SEC_BG   = (230, 240, 220)
+C_SEC_TEXT = (50,  60,  40)
+C_TBL_HDR  = (45,  65,  40)
+C_TBL_ALT  = (245, 248, 242)
+
+
+def _new_pdf(report: dict, subtitle: str):
     """Same visual identity as the Daily/Monthly/Fortnightly briefs (dark
     header/footer bar, lime accent, cream section bands, bordered tables) —
     see brief_monthly.py's _render_pdf for the reference implementation this
-    mirrors."""
+    mirrors. Returns (pdf, NL) ready for a caller to add content to."""
     from fpdf import FPDF
     from fpdf.enums import XPos, YPos
 
     NL = {"new_x": XPos.LMARGIN, "new_y": YPos.NEXT}
-
-    # ── Palette — identical to brief_monthly.py ──────────────────────────────
-    C_BG       = (30,  35,  25)
-    C_ACCENT   = (180, 220, 80)
-    C_SEC_BG   = (230, 240, 220)
-    C_SEC_TEXT = (50,  60,  40)
-    C_TBL_HDR  = (45,  65,  40)
-    C_TBL_ALT  = (245, 248, 242)
 
     date_from, date_to = report["date_from"], report["date_to"]
     period_label = f"{date_from} to {date_to}"
@@ -71,7 +72,7 @@ def _render_report_pdf(report: dict) -> bytes:
             self.cell(0, 8, "RHINO DRISHTI", align="C", new_x="LMARGIN", new_y="NEXT")
             self.set_font("Helvetica", "", 8)
             self.set_text_color(160, 170, 150)
-            self.cell(0, 4, "NER INTELLIGENCE PLATFORM  |  USER ACTIVITY REPORT", align="C", new_x="LMARGIN", new_y="NEXT")
+            self.cell(0, 4, f"NER INTELLIGENCE PLATFORM  |  {subtitle}", align="C", new_x="LMARGIN", new_y="NEXT")
             self.set_font("Helvetica", "", 7)
             self.cell(0, 4, _ascii(f"Classification: RESTRICTED  |  Period: {period_label}  |  Generated: {gen_ts} UTC"), align="C", new_x="LMARGIN", new_y="NEXT")
             self.set_y(32)
@@ -96,63 +97,77 @@ def _render_report_pdf(report: dict) -> bytes:
     pdf.set_margins(10, 10, 10)
     pdf.set_auto_page_break(auto=True, margin=18)
     pdf.add_page()
+    return pdf, NL
 
-    def draw_session_table(sessions):
-        headers = ["Login", "Logout", "Duration (min)", "IP Address"]
-        col_ws = [50, 50, 30, 50]
-        pdf.set_fill_color(*C_TBL_HDR)
-        pdf.set_text_color(255, 255, 255)
-        pdf.set_font("Helvetica", "B", 7)
-        for j, (h, w) in enumerate(zip(headers, col_ws)):
-            kw = NL if j == len(headers) - 1 else {}
-            pdf.cell(w, 6, h, fill=True, border=1, **kw)
-        for i, s in enumerate(sessions):
-            if pdf.get_y() > 265:
-                pdf.add_page()
-            logout_display = s["logout_at"][:19].replace("T", " ") if s["logout_at"] else "still active"
-            row = [
-                (s["login_at"] or "")[:19].replace("T", " "),
-                logout_display,
-                s["duration_minutes"],
-                s["ip_address"],
-            ]
-            pdf.set_fill_color(*C_TBL_ALT if i % 2 == 0 else (255, 255, 255))
-            pdf.set_text_color(40, 40, 40)
-            pdf.set_font("Helvetica", "", 7)
-            for j, (v, w) in enumerate(zip(row, col_ws)):
-                kw = NL if j == len(row) - 1 else {}
-                pdf.cell(w, 5.5, _ascii(str(v)), fill=True, border=1, **kw)
 
+def _draw_summary_table(pdf, NL, users):
+    headers = ["Username", "IOD", "Logins", "Active (min)", "Ratings", "Uploads", "Training"]
+    col_ws = [40, 25, 20, 25, 25, 25, 25]
+    pdf.set_fill_color(*C_TBL_HDR)
+    pdf.set_text_color(255, 255, 255)
+    pdf.set_font("Helvetica", "B", 7)
+    for j, (h, w) in enumerate(zip(headers, col_ws)):
+        kw = NL if j == len(headers) - 1 else {}
+        pdf.cell(w, 6, h, fill=True, border=1, **kw)
+    for i, u in enumerate(users):
+        if pdf.get_y() > 265:
+            pdf.add_page()
+        row = [
+            u["username"], u["iod"], u["login_count"], u["total_active_minutes"],
+            u["relevance_ratings_given"], u["manual_uploads"], u["training_actions"],
+        ]
+        pdf.set_fill_color(*C_TBL_ALT if i % 2 == 0 else (255, 255, 255))
+        pdf.set_text_color(40, 40, 40)
+        pdf.set_font("Helvetica", "", 7)
+        for j, (v, w) in enumerate(zip(row, col_ws)):
+            kw = NL if j == len(row) - 1 else {}
+            pdf.cell(w, 5.5, _ascii(str(v)), fill=True, border=1, **kw)
+
+
+def _draw_session_table(pdf, NL, sessions):
+    headers = ["Login", "Logout", "Duration (min)", "IP Address"]
+    col_ws = [50, 50, 30, 50]
+    pdf.set_fill_color(*C_TBL_HDR)
+    pdf.set_text_color(255, 255, 255)
+    pdf.set_font("Helvetica", "B", 7)
+    for j, (h, w) in enumerate(zip(headers, col_ws)):
+        kw = NL if j == len(headers) - 1 else {}
+        pdf.cell(w, 6, h, fill=True, border=1, **kw)
+    for i, s in enumerate(sessions):
+        if pdf.get_y() > 265:
+            pdf.add_page()
+        logout_display = s["logout_at"][:19].replace("T", " ") if s["logout_at"] else "still active"
+        row = [
+            (s["login_at"] or "")[:19].replace("T", " "),
+            logout_display,
+            s["duration_minutes"],
+            s["ip_address"],
+        ]
+        pdf.set_fill_color(*C_TBL_ALT if i % 2 == 0 else (255, 255, 255))
+        pdf.set_text_color(40, 40, 40)
+        pdf.set_font("Helvetica", "", 7)
+        for j, (v, w) in enumerate(zip(row, col_ws)):
+            kw = NL if j == len(row) - 1 else {}
+            pdf.cell(w, 5.5, _ascii(str(v)), fill=True, border=1, **kw)
+
+
+def _render_summary_pdf(report: dict) -> bytes:
+    """Usage summary only — one row per user. This is the main report PDF."""
+    pdf, NL = _new_pdf(report, "USER ACTIVITY SUMMARY")
     if not report["users"]:
         pdf.section_title("No user activity recorded in this period")
         return bytes(pdf.output())
-
-    def draw_summary_table(users):
-        headers = ["Username", "IOD", "Logins", "Active (min)", "Ratings", "Uploads", "Training"]
-        col_ws = [40, 25, 20, 25, 25, 25, 25]
-        pdf.set_fill_color(*C_TBL_HDR)
-        pdf.set_text_color(255, 255, 255)
-        pdf.set_font("Helvetica", "B", 7)
-        for j, (h, w) in enumerate(zip(headers, col_ws)):
-            kw = NL if j == len(headers) - 1 else {}
-            pdf.cell(w, 6, h, fill=True, border=1, **kw)
-        for i, u in enumerate(users):
-            if pdf.get_y() > 265:
-                pdf.add_page()
-            row = [
-                u["username"], u["iod"], u["login_count"], u["total_active_minutes"],
-                u["relevance_ratings_given"], u["manual_uploads"], u["training_actions"],
-            ]
-            pdf.set_fill_color(*C_TBL_ALT if i % 2 == 0 else (255, 255, 255))
-            pdf.set_text_color(40, 40, 40)
-            pdf.set_font("Helvetica", "", 7)
-            for j, (v, w) in enumerate(zip(row, col_ws)):
-                kw = NL if j == len(row) - 1 else {}
-                pdf.cell(w, 5.5, _ascii(str(v)), fill=True, border=1, **kw)
-
     pdf.section_title(f"USAGE SUMMARY ({len(report['users'])} users)")
-    draw_summary_table(report["users"])
-    pdf.ln(6)
+    _draw_summary_table(pdf, NL, report["users"])
+    return bytes(pdf.output())
+
+
+def _render_detail_pdf(report: dict) -> bytes:
+    """Per-user login session log — generated separately, only when needed."""
+    pdf, NL = _new_pdf(report, "USER ACTIVITY DETAIL LOG")
+    if not report["users"]:
+        pdf.section_title("No user activity recorded in this period")
+        return bytes(pdf.output())
 
     for u in report["users"]:
         if pdf.get_y() > 240:
@@ -171,7 +186,7 @@ def _render_report_pdf(report: dict) -> bytes:
         pdf.ln(1)
 
         if u["sessions"]:
-            draw_session_table(u["sessions"])
+            _draw_session_table(pdf, NL, u["sessions"])
         pdf.ln(4)
 
     return bytes(pdf.output())
@@ -187,10 +202,30 @@ async def activity_report_pdf(
         raise HTTPException(status_code=400, detail="date_from must not be after date_to")
     report = await build_activity_report(date_from, date_to)
     try:
-        pdf_bytes = _render_report_pdf(report)
+        pdf_bytes = _render_summary_pdf(report)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"PDF render error: {type(e).__name__}: {e}")
-    filename = f"user_activity_{date_from}_to_{date_to}.pdf"
+    filename = f"user_activity_summary_{date_from}_to_{date_to}.pdf"
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes), media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/admin/user-activity/report/pdf/detail")
+async def activity_report_pdf_detail(
+    date_from: str = Query(...),
+    date_to: str = Query(...),
+    admin: dict = Depends(require_admin_role),
+):
+    if date_from > date_to:
+        raise HTTPException(status_code=400, detail="date_from must not be after date_to")
+    report = await build_activity_report(date_from, date_to)
+    try:
+        pdf_bytes = _render_detail_pdf(report)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"PDF render error: {type(e).__name__}: {e}")
+    filename = f"user_activity_detail_{date_from}_to_{date_to}.pdf"
     return StreamingResponse(
         io.BytesIO(pdf_bytes), media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
