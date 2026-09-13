@@ -13,6 +13,12 @@ router = APIRouter()
 NER_STATES = ["Assam", "Manipur", "Meghalaya", "Mizoram", "Tripura",
               "Nagaland", "Arunachal Pradesh", "Sikkim"]
 
+# Bangladesh/Myanmar items are tagged via `regions`/`countries_involved`, not
+# reliably via `state` — most cross-border items keep the Indian state (e.g.
+# Assam) as `state` and carry the country elsewhere. Matching `state` alone
+# missed ~70% of real coverage (313 of 1095 Bangladesh items).
+BORDER_COUNTRIES = {"Bangladesh", "Myanmar"}
+
 IST_OFFSET = timedelta(hours=5, minutes=30)
 
 
@@ -95,13 +101,17 @@ class ReportPDF(FPDF):
     def news_item(self, index, item):
         if self.get_y() > 240:
             self.add_page()
-        title = item.get('title', '')
-        summary = item.get('ai_summary', '') or item.get('summary', '')
-        severity = item.get('severity', '')
-        state = item.get('state', '')
-        priority = item.get('priority_score', 0)
-        source = item.get('source', '')
-        url = item.get('source_url', '')
+        # .get(key, default) only covers a MISSING key — several of these
+        # fields are stored as an explicit null on some docs, which slips
+        # through .get()'s default and crashed news_item() (severity.upper()
+        # on None). `or` catches both missing and explicit-None.
+        title = item.get('title') or ''
+        summary = item.get('ai_summary') or item.get('summary') or ''
+        severity = item.get('severity') or ''
+        state = item.get('state') or ''
+        priority = item.get('priority_score') or 0
+        source = item.get('source') or ''
+        url = item.get('source_url') or ''
 
         sev_label = f' [{severity.upper()}]' if severity else ''
         self.set_font('Helvetica', 'B', 9)
@@ -127,7 +137,7 @@ class ReportPDF(FPDF):
             self.set_text_color(60, 60, 60)
             self.multi_cell(0, 4, _clean(summary, 500), new_x="LMARGIN", new_y="NEXT")
 
-        why = item.get('why_it_matters', '')
+        why = item.get('why_it_matters') or ''
         if why:
             if self.get_y() > 265:
                 self.add_page()
@@ -143,7 +153,7 @@ class ReportPDF(FPDF):
             self.set_text_color(70, 100, 150)
             self.cell(0, 3, _clean(url, 80), new_x="LMARGIN", new_y="NEXT", link=url)
 
-        ts = item.get('published_at', '')
+        ts = item.get('published_at') or ''
         if ts:
             self.set_font('Helvetica', 'I', 6)
             self.set_text_color(140, 140, 140)
@@ -160,17 +170,25 @@ def _build_query(state=None, threat_type=None, severity=None, search=None,
         "is_cluster_primary": {"$ne": False},
         "severity": {"$nin": ["low", "LOW"]},
     }
+    # Collected as $and clauses (not top-level $or) so a border-country match
+    # and a keyword search can both apply without one overwriting the other.
+    and_clauses = []
     if state:
-        query["state"] = state
+        if state in BORDER_COUNTRIES:
+            and_clauses.append({"$or": [
+                {"regions": state}, {"countries_involved": state}, {"state": state},
+            ]})
+        else:
+            query["state"] = state
     if threat_type:
         query["threat_category"] = threat_type
     if severity:
         query["severity"] = severity.lower()
     if search:
-        query["$or"] = [
+        and_clauses.append({"$or": [
             {"title": {"$regex": search, "$options": "i"}},
             {"ai_summary": {"$regex": search, "$options": "i"}},
-        ]
+        ]})
     if date_from:
         query.setdefault("published_at", {})["$gte"] = date_from
     if date_to:
@@ -182,6 +200,8 @@ def _build_query(state=None, threat_type=None, severity=None, search=None,
     if not date_from and not date_to:
         cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
         query["published_at"] = {"$gte": cutoff}
+    if and_clauses:
+        query["$and"] = and_clauses
     return query
 
 
@@ -204,7 +224,7 @@ def _severity_stats(items):
 def _threat_stats(items):
     cats = {}
     for it in items:
-        c = it.get("threat_category", "Unclassified")
+        c = it.get("threat_category") or "Unclassified"
         cats[c] = cats.get(c, 0) + 1
     return dict(sorted(cats.items(), key=lambda x: -x[1])[:10])
 
@@ -212,7 +232,7 @@ def _threat_stats(items):
 def _region_stats(items):
     regions = {}
     for it in items:
-        r = it.get("state", "Unknown")
+        r = it.get("state") or "Unknown"
         regions[r] = regions.get(r, 0) + 1
     return dict(sorted(regions.items(), key=lambda x: -x[1])[:10])
 
@@ -264,7 +284,7 @@ async def filtered_feed_pdf(
 
     # Summary box
     sev = _severity_stats(items)
-    pdf.section_title(f"SUMMARY — {len(items)} Items")
+    pdf.section_title(f"SUMMARY - {len(items)} Items")
     pdf.stat_line("Filters Applied:", filter_str or "None")
     pdf.stat_line("Total Items:", str(len(items)))
     pdf.stat_line("Severity Breakdown:", f"Critical: {sev['critical']}  |  High: {sev['high']}  |  Medium: {sev['medium']}")
@@ -305,7 +325,7 @@ async def regional_threat_report(
     period_to = (date_to[:10] if date_to else datetime.now(timezone.utc).strftime('%Y-%m-%d'))
 
     pdf = ReportPDF(
-        title=f"REGIONAL THREAT SUMMARY — {region.upper()}",
+        title=f"REGIONAL THREAT SUMMARY - {region.upper()}",
         subtitle=f"REGIONAL THREAT SUMMARY  |  {region.upper()}  |  {period_from} to {period_to}",
     )
     pdf.add_page()
@@ -314,7 +334,7 @@ async def regional_threat_report(
     threats = _threat_stats(items)
 
     # Executive Summary
-    pdf.section_title(f"EXECUTIVE SUMMARY — {region}")
+    pdf.section_title(f"EXECUTIVE SUMMARY - {region}")
     pdf.stat_line("Reporting Period:", f"{period_from} to {period_to}")
     pdf.stat_line("Total Intelligence Items:", str(len(items)))
     pdf.stat_line("Critical:", str(sev['critical']))
@@ -394,7 +414,7 @@ async def cross_border_sitrep(
     period_to = (date_to[:10] if date_to else datetime.now(timezone.utc).strftime('%Y-%m-%d'))
 
     pdf = ReportPDF(
-        title=f"CROSS-BORDER SITREP — {country.upper()}",
+        title=f"CROSS-BORDER SITREP - {country.upper()}",
         subtitle=f"SITUATION REPORT  |  {country.upper()} BORDER  |  {period_from} to {period_to}",
     )
     pdf.add_page()
@@ -403,7 +423,7 @@ async def cross_border_sitrep(
     threats = _threat_stats(items)
 
     # Situation Overview
-    pdf.section_title(f"SITUATION OVERVIEW — {country}")
+    pdf.section_title(f"SITUATION OVERVIEW - {country}")
     pdf.stat_line("Reporting Period:", f"{period_from} to {period_to}")
     pdf.stat_line("Total Cross-Border Signals:", str(len(items)))
     pdf.stat_line("Critical:", str(sev['critical']))
