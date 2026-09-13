@@ -175,6 +175,7 @@ function ActivityReport({ api }) {
                 <thead>
                   <tr className="border-b border-border text-[10px] uppercase tracking-wider text-muted-foreground font-mono text-left">
                     <th className="py-1.5 pr-3">Username</th>
+                    <th className="py-1.5 pr-3">IOD</th>
                     <th className="py-1.5 pr-3">Logins</th>
                     <th className="py-1.5 pr-3">Total Active (min)</th>
                     <th className="py-1.5 pr-3">Ratings</th>
@@ -186,10 +187,13 @@ function ActivityReport({ api }) {
                   {report.users.map((u) => (
                     <tr key={u.username} className="border-b border-border/50 font-mono">
                       <td className="py-1.5 pr-3 font-semibold">{u.username}</td>
-                      <td className="py-1.5 pr-3">{u.login_count}</td>
                       <td className="py-1.5 pr-3">
-                        {u.sessions.reduce((sum, s) => sum + s.duration_minutes, 0).toFixed(1)}
+                        <Badge className="text-[9px] font-mono bg-muted/30 text-muted-foreground border-border px-1 py-0">
+                          {u.iod}
+                        </Badge>
                       </td>
+                      <td className="py-1.5 pr-3">{u.login_count}</td>
+                      <td className="py-1.5 pr-3">{u.total_active_minutes}</td>
                       <td className="py-1.5 pr-3">{u.relevance_ratings_given}</td>
                       <td className="py-1.5 pr-3">{u.manual_uploads}</td>
                       <td className="py-1.5 pr-3">{u.training_actions}</td>
