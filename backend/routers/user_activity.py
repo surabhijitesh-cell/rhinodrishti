@@ -127,15 +127,43 @@ def _render_report_pdf(report: dict) -> bytes:
         pdf.section_title("No user activity recorded in this period")
         return bytes(pdf.output())
 
+    def draw_summary_table(users):
+        headers = ["Username", "IOD", "Logins", "Active (min)", "Ratings", "Uploads", "Training"]
+        col_ws = [40, 25, 20, 25, 25, 25, 25]
+        pdf.set_fill_color(*C_TBL_HDR)
+        pdf.set_text_color(255, 255, 255)
+        pdf.set_font("Helvetica", "B", 7)
+        for j, (h, w) in enumerate(zip(headers, col_ws)):
+            kw = NL if j == len(headers) - 1 else {}
+            pdf.cell(w, 6, h, fill=True, border=1, **kw)
+        for i, u in enumerate(users):
+            if pdf.get_y() > 265:
+                pdf.add_page()
+            row = [
+                u["username"], u["iod"], u["login_count"], u["total_active_minutes"],
+                u["relevance_ratings_given"], u["manual_uploads"], u["training_actions"],
+            ]
+            pdf.set_fill_color(*C_TBL_ALT if i % 2 == 0 else (255, 255, 255))
+            pdf.set_text_color(40, 40, 40)
+            pdf.set_font("Helvetica", "", 7)
+            for j, (v, w) in enumerate(zip(row, col_ws)):
+                kw = NL if j == len(row) - 1 else {}
+                pdf.cell(w, 5.5, _ascii(str(v)), fill=True, border=1, **kw)
+
+    pdf.section_title(f"USAGE SUMMARY ({len(report['users'])} users)")
+    draw_summary_table(report["users"])
+    pdf.ln(6)
+
     for u in report["users"]:
         if pdf.get_y() > 240:
             pdf.add_page()
-        pdf.section_title(u["username"])
+        pdf.section_title(f"{u['username']}  ({u['iod']})")
 
         pdf.set_font("Helvetica", "", 9)
         pdf.set_text_color(*C_SEC_TEXT)
         pdf.cell(0, 6, _ascii(
             f"Logins: {u['login_count']}   "
+            f"Total Active: {u['total_active_minutes']} min   "
             f"Relevance ratings: {u['relevance_ratings_given']}   "
             f"Manual uploads: {u['manual_uploads']}   "
             f"Training actions: {u['training_actions']}"

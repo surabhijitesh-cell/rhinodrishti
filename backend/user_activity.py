@@ -136,6 +136,20 @@ async def build_activity_report(date_from: str, date_to: str) -> dict:
             counts[a["action_type"]] += 1
 
     usernames = sorted(set(sessions_by_user) | set(action_counts))
+
+    # Current IOD per user (not the IOD at the time of each session) — this
+    # is a summary of who's on the platform now, grouped by their present
+    # collection centre. Falls back to the static registry for the handful
+    # of users created before the `iod` field existed.
+    iod_by_username: dict[str, str] = {}
+    if usernames:
+        async for u in db.users.find({"username": {"$in": usernames}}, {"_id": 0, "username": 1, "iod": 1}):
+            iod = u.get("iod")
+            if not iod:
+                from iod_registry import resolve_user_iod
+                iod = resolve_user_iod(u["username"])
+            iod_by_username[u["username"]] = iod
+
     per_user = []
     for username in usernames:
         sessions = sessions_by_user.get(username, [])
@@ -144,7 +158,9 @@ async def build_activity_report(date_from: str, date_to: str) -> dict:
         })
         per_user.append({
             "username": username,
+            "iod": iod_by_username.get(username, "IOD-1"),
             "login_count": len(sessions),
+            "total_active_minutes": round(sum(s["duration_minutes"] for s in sessions), 1),
             "sessions": sessions,
             "relevance_ratings_given": counts["relevance_rating"],
             "manual_uploads": counts["manual_upload"],
