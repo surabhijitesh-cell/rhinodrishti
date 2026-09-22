@@ -42,6 +42,10 @@ async def login(data: UserLogin, request: Request):
     except Exception:
         pass  # DB quota full — last_login update non-fatal
 
+    iod = user.get("iod")
+    if not iod:
+        from iod_registry import resolve_user_iod
+        iod = resolve_user_iod(user["username"])
     return {
         "token": token,
         "user": {
@@ -50,6 +54,7 @@ async def login(data: UserLogin, request: Request):
             "email": user.get("email", ""),
             "name": user.get("name", ""),
             "role": user.get("role", "viewer"),
+            "iod": iod,
         }
     }
 
@@ -86,9 +91,13 @@ async def list_active_users(user: dict = Depends(get_current_user)):
 
 @router.get("/users")
 async def list_users(admin: dict = Depends(require_admin_role)):
+    from iod_registry import resolve_user_iod
     users = await users_col.find(
         {}, {"_id": 0, "password_hash": 0}
     ).sort("created_at", -1).to_list(200)
+    for u in users:
+        if not u.get("iod"):
+            u["iod"] = resolve_user_iod(u["username"])
     return {"users": users}
 
 
@@ -98,6 +107,9 @@ async def create_user(data: UserCreate, admin: dict = Depends(require_admin_role
         raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
     if data.role not in ("admin", "analyst", "viewer"):
         raise HTTPException(status_code=400, detail="Role must be admin, analyst, or viewer")
+    from iod_registry import ALL_IODS
+    if data.iod and data.iod not in ALL_IODS:
+        raise HTTPException(status_code=400, detail=f"iod must be one of {ALL_IODS}")
 
     existing = await users_col.find_one(
         {"$or": [{"username": data.username}, {"email": data.email}]} if data.email else {"username": data.username},
@@ -112,6 +124,7 @@ async def create_user(data: UserCreate, admin: dict = Depends(require_admin_role
         password_hash=hash_password(data.password),
         name=data.name,
         role=data.role,
+        iod=data.iod or "IOD-1",
     )
     doc = user.model_dump()
     await users_col.insert_one(doc)
@@ -127,6 +140,10 @@ async def update_user(user_id: str, data: UserUpdate, admin: dict = Depends(requ
         raise HTTPException(status_code=400, detail="No fields to update")
     if "role" in updates and updates["role"] not in ("admin", "analyst", "viewer"):
         raise HTTPException(status_code=400, detail="Role must be admin, analyst, or viewer")
+    if "iod" in updates:
+        from iod_registry import ALL_IODS
+        if updates["iod"] not in ALL_IODS:
+            raise HTTPException(status_code=400, detail=f"iod must be one of {ALL_IODS}")
 
     result = await users_col.update_one({"id": user_id}, {"$set": updates})
     if result.matched_count == 0:
