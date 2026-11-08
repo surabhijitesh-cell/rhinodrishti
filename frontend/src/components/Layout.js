@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { useTheme } from "./ThemeProvider";
 import { useAuth } from "../contexts/AuthContext";
+import { useAdminIod } from "../contexts/AdminIodContext";
 import {
   Shield, LayoutDashboard, Newspaper, FileText, TrendingUp,
   Globe, Bell, ChevronLeft, ChevronRight, Sun, Moon, Search,
@@ -110,6 +111,7 @@ export default function Layout({ children, alertCount = 0, onSearch, notifUnread
   const { theme, toggleTheme } = useTheme();
   const location = useLocation();
   const { user, logout } = useAuth();
+  const { viewIod, setViewIod } = useAdminIod();
   const { startTour, resetTour } = useTour();
 
   const userRole = user?.role || "viewer";
@@ -291,6 +293,24 @@ export default function Layout({ children, alertCount = 0, onSearch, notifUnread
                 >
                   <RotateCcw size={14} />
                 </Button>
+              </Tip>
+            )}
+
+            {/* Admin IOD switcher */}
+            {user?.role === "admin" && (
+              <Tip text="View any collection centre's Faultlines, PAOIs and Dashboard without switching login" side="bottom">
+                <select
+                  value={viewIod}
+                  onChange={(e) => setViewIod(e.target.value)}
+                  className="h-7 text-[10px] font-mono uppercase tracking-wider bg-muted/30 border border-border px-1.5 focus:outline-none focus:border-primary"
+                  data-testid="admin-iod-switcher"
+                >
+                  <option value="">Viewing: {user.iod || "IOD-1"}</option>
+                  <option value="IOD-1">IOD-1</option>
+                  <option value="IOD-4">IOD-4</option>
+                  <option value="IOD-5">IOD-5</option>
+                  <option value="IOD-CIJ">IOD-CIJ</option>
+                </select>
               </Tip>
             )}
 

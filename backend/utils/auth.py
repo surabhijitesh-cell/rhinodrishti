@@ -55,6 +55,13 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
     if not user.get("is_active", True):
         raise HTTPException(status_code=403, detail="Account deactivated")
 
+    # IOD: the user document's own `iod` field wins when present (admin-set
+    # via User Management). Falls back to the static username->IOD registry,
+    # then to IOD-1. See iod_registry.py.
+    if not user.get("iod"):
+        from iod_registry import resolve_user_iod
+        user["iod"] = resolve_user_iod(user["username"])
+
     # Refresh this login session's "last active" timestamp — backs the
     # Currently Online view and session-duration figures in the Activity
     # report. Never blocks/fails the actual request. See user_activity.py.

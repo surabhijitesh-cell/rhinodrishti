@@ -179,14 +179,19 @@ async def seed_priority_area_registry(
 @router.get("/faultlines/priority-areas")
 async def list_priority_areas(
     include_scores: bool = Query(True),
+    iod: Optional[str] = Query(None, description="Admin-only override — view another IOD's PAOIs"),
     current_user: dict = Depends(get_current_user),
 ):
     """
-    List PAOIs ranked. With include_scores, attaches the current aggregate
-    status of each PAOI: the max + avg score of its linked faultlines (latest
-    snapshot per faultline), plus the dominant (highest-scoring) faultline.
+    List PAOIs ranked, scoped to the current user's IOD (admins may override
+    via ?iod=). With include_scores, attaches the current aggregate status of
+    each PAOI: the max + avg score of its linked faultlines (latest snapshot
+    per faultline), plus the dominant (highest-scoring) faultline.
     """
-    cursor = priority_areas_col.find({"enabled": True}, {"_id": 0}).sort("rank", 1)
+    effective_iod = iod if (iod and current_user.get("role") == "admin") else current_user.get("iod", "IOD-1")
+    cursor = priority_areas_col.find(
+        {"enabled": True, "iod": effective_iod}, {"_id": 0}
+    ).sort("rank", 1)
     paois = [p async for p in cursor]
 
     if not include_scores:
@@ -231,18 +236,23 @@ async def list_priority_areas(
 
 
 async def _retag_faultlines(now: str) -> int:
-    """Re-derive faultline.priority_area_ids from current enabled PAOIs."""
+    """Re-derive faultline.priority_area_ids from ALL enabled PAOIs (any
+    IOD). Sets an authoritative value per faultline rather than wipe-then-
+    reapply — see priority_areas_seed.py for why the wipe was unsafe once
+    more than one IOD owns PAOIs (memory/plans/iod-scoping-plan.md, fix #1)."""
     all_paois = await priority_areas_col.find({"enabled": True}, {"_id": 0}).to_list(None)
-    await db.faultlines.update_many({}, {"$set": {"priority_area_ids": []}})
     fl_to_paois: dict[str, list] = {}
     for pa in all_paois:
         for fl_id in pa.get("linked_faultline_ids", []):
             fl_to_paois.setdefault(fl_id, []).append(pa["id"])
+
+    all_faultline_ids = {fl["id"] async for fl in db.faultlines.find({}, {"_id": 0, "id": 1})}
+
     tagged = 0
-    for fl_id, paoi_ids in fl_to_paois.items():
+    for fl_id in all_faultline_ids:
         r = await db.faultlines.update_one(
             {"id": fl_id},
-            {"$set": {"priority_area_ids": paoi_ids, "updated_at": now}},
+            {"$set": {"priority_area_ids": fl_to_paois.get(fl_id, []), "updated_at": now}},
         )
         if r.matched_count:
             tagged += 1
@@ -283,6 +293,7 @@ async def create_priority_area(
         "watch_geography": data.watch_geography or [],
         "color": data.color or "red",
         "enabled": True,
+        "iod": current_user.get("iod", "IOD-1"),
         "created_by": current_user.get("id"),
         "created_at": now,
         "updated_at": now,
@@ -339,14 +350,23 @@ async def list_faultlines(
     state: Optional[str] = Query(None, description="Filter by state"),
     active_only: bool = Query(True),
     include_score: bool = Query(True),
+    iod: Optional[str] = Query(None, description="Admin-only override — view another IOD's watch-list"),
     current_user: dict = Depends(get_current_user),
 ):
-    """List all faultlines (optionally filtered)."""
+    """List all faultlines (optionally filtered), scoped to the user's IOD
+    watch-list. IOD-1 (default for anyone not assigned to a named IOD) sees
+    every faultline — today's behavior, unchanged."""
+    from iod_registry import get_iod_faultline_ids
+    effective_iod = iod if (iod and current_user.get("role") == "admin") else current_user.get("iod", "IOD-1")
+    watchlist = get_iod_faultline_ids(effective_iod)
+
     q: dict = {}
     if state:
         q["state"] = state
     if active_only:
         q["active"] = True
+    if watchlist is not None:
+        q["id"] = {"$in": watchlist}
 
     cursor = faultlines_col.find(q, {"_id": 0}).sort([("state", 1), ("name", 1)])
     faultlines = [fl async for fl in cursor]
@@ -361,15 +381,21 @@ async def list_faultlines(
 @router.get("/faultlines/dashboard-summary")
 async def dashboard_summary(
     top_n: int = Query(5, ge=1, le=20),
+    iod: Optional[str] = Query(None, description="Admin-only override — view another IOD's watch-list"),
     current_user: dict = Depends(get_current_user),
 ):
     """
-    Top stressed faultlines (highest current score) for dashboard pulse strip.
+    Top stressed faultlines (highest current score) for dashboard pulse strip,
+    scoped to the user's IOD watch-list (IOD-1 sees everything, unchanged).
 
     Uses per-faultline most-recent score (NOT a global "as_of" date) — so a
     faultline that hasn't been scored today still contributes its latest
     available snapshot. Returns level counts across all faultlines.
     """
+    from iod_registry import get_iod_faultline_ids
+    effective_iod = iod if (iod and current_user.get("role") == "admin") else current_user.get("iod", "IOD-1")
+    watchlist = get_iod_faultline_ids(effective_iod)
+
     # Aggregation: per-faultline most recent doc by date
     pipeline = [
         {"$sort": {"date": -1}},
@@ -382,6 +408,8 @@ async def dashboard_summary(
         {"$replaceRoot": {"newRoot": "$doc"}},
         {"$project": {"_id": 0}},
     ]
+    if watchlist is not None:
+        pipeline.insert(0, {"$match": {"faultline_id": {"$in": watchlist}}})
     cursor = scores_col.aggregate(pipeline)
     snapshots = [s async for s in cursor]
 
@@ -409,12 +437,22 @@ async def dashboard_summary(
 @router.get("/faultlines/warnings")
 async def get_active_warnings(
     limit: int = Query(20, ge=1, le=100),
+    iod: Optional[str] = Query(None, description="Admin-only override — view another IOD's watch-list"),
     current_user: dict = Depends(get_current_user),
 ):
-    """All active un-ack'd faultline alerts. Powers dashboard warning banner."""
+    """All active un-ack'd faultline alerts, scoped to the user's IOD
+    watch-list (IOD-1 sees everything, unchanged). Powers dashboard warning
+    banner."""
+    from iod_registry import get_iod_faultline_ids
+    effective_iod = iod if (iod and current_user.get("role") == "admin") else current_user.get("iod", "IOD-1")
+    watchlist = get_iod_faultline_ids(effective_iod)
+
+    q: dict = {"acknowledged": {"$ne": True}}
+    if watchlist is not None:
+        q["faultline_id"] = {"$in": watchlist}
+
     cursor = alerts_col.find(
-        {"acknowledged": {"$ne": True}},
-        {"_id": 0},
+        q, {"_id": 0},
     ).sort("created_at", -1).limit(limit * 2)  # extra slack for expiry filtering
     alerts = [a async for a in cursor]
 

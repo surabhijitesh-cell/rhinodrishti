@@ -50,9 +50,14 @@ def _trend_arrow(delta: float) -> str:
 
 
 # ── 1. Per-PAOI period aggregation ────────────────────────────────────────────
-async def aggregate_paoi_period(db, start_iso: str, end_iso: str) -> dict:
+async def aggregate_paoi_period(db, start_iso: str, end_iso: str, iod: str = "IOD-1") -> dict:
     """
-    Aggregate each PAOI over [start_iso, end_iso] (date strings YYYY-MM-DD…).
+    Aggregate each PAOI over [start_iso, end_iso] (date strings YYYY-MM-DD…),
+    scoped to the given IOD's own PAOIs (default IOD-1 — today's behavior,
+    unchanged, since only IOD-1 owns PAOIs today). See
+    memory/plans/iod-scoping-plan.md cross-cutting fix #2: without this
+    default, the day another IOD creates its first PAOI it would silently
+    leak into what used to be a single global brief.
 
     Returns {
       "paois": [
@@ -77,7 +82,7 @@ async def aggregate_paoi_period(db, start_iso: str, end_iso: str) -> dict:
     end_date = end_iso[:10]
 
     paois = await db.priority_areas.find(
-        {"enabled": True}, {"_id": 0}
+        {"enabled": True, "iod": iod}, {"_id": 0}
     ).sort("rank", 1).to_list(length=50)
     if not paois:
         return {"paois": [], "as_of": end_date}
@@ -694,15 +699,28 @@ async def run_paoi_synthesis(
 
 
 # ── 4. Other Faultline Movements (not in any PAOI) ────────────────────────────
-async def other_faultline_movements(db, start_iso: str, end_iso: str, limit: int = 10) -> dict:
-    """Rising/declining faultlines NOT linked to any PAOI."""
-    from priority_areas_seed import get_priority_faultline_ids
-    priority_ids = get_priority_faultline_ids()
+async def other_faultline_movements(db, start_iso: str, end_iso: str, limit: int = 10, iod: str = "IOD-1") -> dict:
+    """Rising/declining faultlines NOT linked to any of this IOD's own
+    PAOIs, restricted to the IOD's watch-list where it has one (IOD-1 keeps
+    today's behavior: all 66 faultlines minus the 6 hardcoded PAOI links)."""
+    from iod_registry import get_iod_faultline_ids
+    priority_ids = {
+        fl_id
+        async for pa in db.priority_areas.find({"enabled": True, "iod": iod}, {"_id": 0, "linked_faultline_ids": 1})
+        for fl_id in (pa.get("linked_faultline_ids") or [])
+    }
 
     start_date, end_date = start_iso[:10], end_iso[:10]
+    query: dict = {
+        "date": {"$gte": start_date, "$lte": end_date},
+        "faultline_id": {"$nin": list(priority_ids)},
+    }
+    watchlist = get_iod_faultline_ids(iod)
+    if watchlist is not None:
+        query["faultline_id"]["$in"] = watchlist
+
     cursor = db.faultline_scores.find(
-        {"date": {"$gte": start_date, "$lte": end_date},
-         "faultline_id": {"$nin": list(priority_ids)}},
+        query,
         {"_id": 0, "faultline_id": 1, "faultline_name": 1, "state": 1,
          "date": 1, "score": 1, "level": 1},
     ).sort("date", 1)

@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
+import { useAdminIod } from "../contexts/AdminIodContext";
 import {
   Shield, AlertTriangle, Activity, TrendingUp,
   ChevronRight, RefreshCw, Target, ArrowUp,
@@ -696,6 +697,9 @@ function UnacknowledgedAlerts({ api }) {
  * with faultline name, state, score, trend direction, and reason.
  */
 function FaultlineWarnings({ api }) {
+  const { user } = useAuth();
+  const { viewIod } = useAdminIod();
+  const effectiveIod = user?.role === "admin" && viewIod ? viewIod : null;
   const [warnings, setWarnings] = useState([]);
   const [dismissing, setDismissing] = useState(null);
   const navigate = useNavigate();
@@ -703,14 +707,15 @@ function FaultlineWarnings({ api }) {
   useEffect(() => {
     const fetch = async () => {
       try {
-        const res = await axios.get(`${api}/faultlines/warnings`);
+        const iodParam = effectiveIod ? `?iod=${effectiveIod}` : "";
+        const res = await axios.get(`${api}/faultlines/warnings${iodParam}`);
         setWarnings(res.data.warnings || []);
       } catch (e) { /* silent — endpoint may not be live yet */ }
     };
     fetch();
     const interval = setInterval(fetch, 60000);
     return () => clearInterval(interval);
-  }, [api]);
+  }, [api, effectiveIod]);
 
   const acknowledge = async (id) => {
     setDismissing(id);
@@ -836,20 +841,24 @@ function OpenRouterCreditWarning({ api }) {
  * Polls /api/faultlines/dashboard-summary every 5 min (low churn).
  */
 function FaultlinePulse({ api }) {
+  const { user } = useAuth();
+  const { viewIod } = useAdminIod();
+  const effectiveIod = user?.role === "admin" && viewIod ? viewIod : null;
   const [data, setData] = useState(null);
   const navigate = useNavigate();
 
   useEffect(() => {
     const fetch = async () => {
       try {
-        const res = await axios.get(`${api}/faultlines/dashboard-summary?top_n=3`);
+        const iodParam = effectiveIod ? `&iod=${effectiveIod}` : "";
+        const res = await axios.get(`${api}/faultlines/dashboard-summary?top_n=3${iodParam}`);
         setData(res.data);
       } catch (e) { /* silent */ }
     };
     fetch();
     const interval = setInterval(fetch, 5 * 60 * 1000);
     return () => clearInterval(interval);
-  }, [api]);
+  }, [api, effectiveIod]);
 
   if (!data || !data.top_stressed?.length) return null;
 

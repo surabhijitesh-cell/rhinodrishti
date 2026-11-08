@@ -3,6 +3,8 @@ import axios from "axios";
 import { X, Plus, Edit2, Trash2, Save, ChevronDown, ChevronUp, Target } from "lucide-react";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
+import { useAuth } from "../contexts/AuthContext";
+import { useAdminIod } from "../contexts/AdminIodContext";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -245,6 +247,9 @@ function PAOIForm({ initial, allFaultlines, onSave, onCancel, saving }) {
 }
 
 export default function PAOIManager({ onClose }) {
+  const { user } = useAuth();
+  const { viewIod } = useAdminIod();
+  const effectiveIod = user?.role === "admin" && viewIod ? viewIod : null;
   const [paois, setPaois] = useState([]);
   const [allFaultlines, setAllFaultlines] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -256,8 +261,9 @@ export default function PAOIManager({ onClose }) {
   const load = useCallback(async () => {
     setLoading(true);
     try {
+      const iodParam = effectiveIod ? `?iod=${effectiveIod}` : "";
       const [paRes, flRes] = await Promise.all([
-        axios.get(`${API}/faultlines/priority-areas`, { headers: authHeader() }),
+        axios.get(`${API}/faultlines/priority-areas${iodParam}`, { headers: authHeader() }),
         axios.get(`${API}/faultlines?active_only=false&include_score=false`, { headers: authHeader() }),
       ]);
       setPaois(paRes.data.priority_areas || []);
@@ -266,7 +272,7 @@ export default function PAOIManager({ onClose }) {
       setError("Failed to load PAOIs");
     }
     setLoading(false);
-  }, []);
+  }, [effectiveIod]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -317,6 +323,11 @@ export default function PAOIManager({ onClose }) {
             <span className="text-sm font-semibold uppercase tracking-wider">
               Priority Areas of Interest
             </span>
+            {(effectiveIod || user?.iod) && (
+              <Badge className="text-[9px] font-mono bg-primary/10 text-primary border-primary/30 px-1.5 py-0">
+                {effectiveIod || user.iod}
+              </Badge>
+            )}
           </div>
           <Button variant="ghost" size="sm" onClick={onClose}>
             <X size={15} />
