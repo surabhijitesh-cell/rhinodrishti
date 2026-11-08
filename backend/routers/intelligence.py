@@ -1,4 +1,5 @@
 """Intelligence feed, alerts, acknowledgement, semantic search, embeddings, patterns."""
+import re
 from fastapi import APIRouter, Query, HTTPException, BackgroundTasks, Depends
 from typing import Optional
 from datetime import datetime, timezone, timedelta
@@ -324,11 +325,16 @@ async def get_intelligence(
         # matches "twitter", "twitter_account", "twitter_search", "twitter_list")
         query["source_type"] = {"$regex": f"^{source_type}", "$options": "i"}
     if search:
+        # Search text is literal, not a pattern: headlines contain ( ) [ ] ? + etc.
+        # which previously broke the match when "View in Feed" passed a headline.
+        pattern = re.escape(search)
         query["$or"] = [
-            {"title": {"$regex": search, "$options": "i"}},
-            {"ai_summary": {"$regex": search, "$options": "i"}},
-            {"raw_content": {"$regex": search, "$options": "i"}}
+            {"title": {"$regex": pattern, "$options": "i"}},
+            {"ai_summary": {"$regex": pattern, "$options": "i"}},
+            {"raw_content": {"$regex": pattern, "$options": "i"}}
         ]
+        # The map still shows acknowledged items; a search must be able to find them.
+        query.pop("acknowledged", None)
     if date_from:
         query.setdefault("published_at", {})["$gte"] = date_from
     if date_to:
