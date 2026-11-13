@@ -9,6 +9,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card"
 import { Button } from "../components/ui/button";
 import Tip from "../components/Tip";
 import { downloadPdf } from "../lib/downloadPdf";
+import { useAuth } from "../contexts/AuthContext";
+import { useAdminIod } from "../contexts/AdminIodContext";
 import {
   AreaChart, Area, BarChart, Bar, LineChart, Line,
   XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, Cell,
@@ -46,6 +48,9 @@ function previousMonth() {
 }
 
 export default function MonthlyBrief({ api }) {
+  const { user } = useAuth();
+  const { viewIod } = useAdminIod();
+  const effectiveIod = (user?.role === "admin" && viewIod) ? viewIod : (user?.iod || "IOD-1");
   const init = previousMonth();
   const [year, setYear]       = useState(init.year);
   const [month, setMonth]     = useState(init.month);
@@ -75,7 +80,7 @@ export default function MonthlyBrief({ api }) {
     setError(null);
     setLoading(true);
     try {
-      const r = await axios.get(`${api}/brief/monthly/${year}/${month}`);
+      const r = await axios.get(`${api}/brief/monthly/${year}/${month}?iod=${effectiveIod}`);
       setBrief(r.data);
       if (r.data.status === "generating") {
         setGenerating(true);
@@ -93,7 +98,7 @@ export default function MonthlyBrief({ api }) {
     setLoading(false);
     // Fetch previous month brief silently (for comparison)
     try {
-      const pr = await axios.get(`${api}/brief/monthly/${prevYear}/${prevMonth}`);
+      const pr = await axios.get(`${api}/brief/monthly/${prevYear}/${prevMonth}?iod=${effectiveIod}`);
       if (pr.data?.status === "ready" || pr.data?.status === "partial") {
         setPrevBrief(pr.data);
       } else {
@@ -104,12 +109,12 @@ export default function MonthlyBrief({ api }) {
     }
     // Fetch full stability history for trend chart
     try {
-      const hr = await axios.get(`${api}/brief/monthly/stability-history`);
+      const hr = await axios.get(`${api}/brief/monthly/stability-history?iod=${effectiveIod}`);
       setHistory(hr.data?.history || []);
     } catch {
       setHistory([]);
     }
-  }, [api, year, month, prevYear, prevMonth]);
+  }, [api, year, month, prevYear, prevMonth, effectiveIod]);
 
   useEffect(() => { fetchBrief(); }, [fetchBrief]);
 
@@ -124,7 +129,7 @@ export default function MonthlyBrief({ api }) {
     setGenerating(true);
     setError(null);
     try {
-      await axios.post(`${api}/brief/monthly/generate?year=${year}&month=${month}&force_rich=true`);
+      await axios.post(`${api}/brief/monthly/generate?year=${year}&month=${month}&force_rich=true&iod=${effectiveIod}`);
       // Poll for completion
       setTimeout(fetchBrief, 4000);
     } catch (e) {
@@ -135,7 +140,7 @@ export default function MonthlyBrief({ api }) {
 
   const handleCopyNotebookLM = async () => {
     try {
-      const r = await axios.get(`${api}/brief/monthly/${year}/${month}/notebooklm`);
+      const r = await axios.get(`${api}/brief/monthly/${year}/${month}/notebooklm?iod=${effectiveIod}`);
       await navigator.clipboard.writeText(r.data);
       setCopied(true);
       setTimeout(() => setCopied(false), 2500);
@@ -148,7 +153,7 @@ export default function MonthlyBrief({ api }) {
     const key = includeFaultlines ? "combined" : "brief";
     setPdfLoading(key);
     setPdfError(null);
-    const suffix = includeFaultlines ? "" : "?include_faultlines=false";
+    const suffix = includeFaultlines ? `?iod=${effectiveIod}` : `?include_faultlines=false&iod=${effectiveIod}`;
     const fname = includeFaultlines
       ? `ner_monthly_strategic_${year}_${month}.pdf`
       : `ner_monthly_brief_${year}_${month}.pdf`;
