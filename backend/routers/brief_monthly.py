@@ -1359,8 +1359,9 @@ async def generate_monthly_brief(
 
 
 @router.get("/brief/monthly/list")
-async def list_monthly_briefs(iod: str = Query("IOD-1", description="Which IOD's briefs to list")):
+async def list_monthly_briefs(iod: Optional[str] = Query(None, description="Admin-only: which IOD's briefs to list"), current_user: dict = Depends(get_current_user)):
     """List all available monthly briefs for the given IOD (newest first)."""
+    iod = _effective_iod(current_user, iod)  # non-admins always get their own IOD
     cursor = monthly_briefs_col.find(
         {**_iod_query_filter(iod)}, {"_id": 0, "year": 1, "month": 1, "status": 1, "generated_at": 1}
     ).sort([("year", -1), ("month", -1)]).limit(36)
@@ -1368,8 +1369,9 @@ async def list_monthly_briefs(iod: str = Query("IOD-1", description="Which IOD's
 
 
 @router.get("/brief/monthly/stability-history")
-async def monthly_stability_history(iod: str = Query("IOD-1")):
+async def monthly_stability_history(iod: Optional[str] = Query(None), current_user: dict = Depends(get_current_user)):
     """Return stability scores + sev_counts for all ready monthly briefs (for trend chart)."""
+    iod = _effective_iod(current_user, iod)  # non-admins always get their own IOD
     cursor = monthly_briefs_col.find(
         {"status": {"$in": ["ready", "partial"]}, **_iod_query_filter(iod)},
         {"_id": 0, "year": 1, "month": 1,
@@ -1390,7 +1392,8 @@ async def monthly_stability_history(iod: str = Query("IOD-1")):
 
 
 @router.get("/brief/monthly/{year}/{month}")
-async def get_monthly_brief(year: int, month: int, iod: str = Query("IOD-1")):
+async def get_monthly_brief(year: int, month: int, iod: Optional[str] = Query(None), current_user: dict = Depends(get_current_user)):
+    iod = _effective_iod(current_user, iod)  # non-admins always get their own IOD
     brief = await monthly_briefs_col.find_one({"year": year, "month": month, **_iod_query_filter(iod)}, {"_id": 0})
     if not brief:
         raise HTTPException(404, "Brief not generated for this month — POST to /brief/monthly/generate first")
@@ -1398,9 +1401,10 @@ async def get_monthly_brief(year: int, month: int, iod: str = Query("IOD-1")):
 
 
 @router.get("/brief/monthly/{year}/{month}/notebooklm", response_class=PlainTextResponse)
-async def get_monthly_brief_notebooklm(year: int, month: int, iod: str = Query("IOD-1")):
+async def get_monthly_brief_notebooklm(year: int, month: int, iod: Optional[str] = Query(None), current_user: dict = Depends(get_current_user)):
     """Returns the markdown script optimized for NotebookLM Video Overview generation.
     Frontend exposes this as a 'Copy for NotebookLM' button."""
+    iod = _effective_iod(current_user, iod)  # non-admins always get their own IOD
     brief = await monthly_briefs_col.find_one(
         {"year": year, "month": month, **_iod_query_filter(iod)}, {"notebooklm_script": 1}
     )
@@ -1414,13 +1418,15 @@ async def get_monthly_brief_pdf(
     year: int,
     month: int,
     include_faultlines: bool = Query(True, description="Set false to exclude the Faultline Analysis section from the combined PDF."),
-    iod: str = Query("IOD-1"),
+    iod: Optional[str] = Query(None),
+    current_user: dict = Depends(get_current_user),
 ):
     """PDF export of the monthly brief.
 
     Default behavior includes the Faultline Analysis section (full Monthly
     Strategic Brief). Pass include_faultlines=false to get the Monthly Brief
     portion only (commander option from the UI)."""
+    iod = _effective_iod(current_user, iod)  # non-admins always get their own IOD
     brief = await monthly_briefs_col.find_one({"year": year, "month": month, **_iod_query_filter(iod)}, {"_id": 0})
     if not brief:
         raise HTTPException(404, "Brief not generated")

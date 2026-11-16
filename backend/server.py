@@ -68,34 +68,30 @@ app = FastAPI(title="Rhino Drishti API")
 # ============================================================
 # Mount All Routers
 # ============================================================
-app.include_router(intelligence_router, prefix="/api")
-app.include_router(settings_router, prefix="/api")
-app.include_router(briefs_router, prefix="/api")
-app.include_router(trends_router, prefix="/api")
-app.include_router(analytics_router, prefix="/api")
-app.include_router(brief_monthly_router, prefix="/api")
-app.include_router(pipeline_router, prefix="/api")
-app.include_router(documents_router, prefix="/api")
-app.include_router(kg_router, prefix="/api")
-app.include_router(keywords_router, prefix="/api")
-app.include_router(sources_router, prefix="/api")
-app.include_router(feedback_router, prefix="/api")
-app.include_router(training_router, prefix="/api")
-app.include_router(cross_border_router, prefix="/api")
+# Every router requires a valid login except auth (its login route must be
+# public; its other routes guard themselves). Screens that are admin-only in
+# the app are admin-only here too.
+from fastapi import Depends
+from utils.auth import get_current_user, require_admin_role, require_admin_for_changes
+
+_LOGIN = [Depends(get_current_user)]
+_ADMIN = [Depends(require_admin_role)]
+_ADMIN_FOR_CHANGES = [Depends(require_admin_for_changes)]
+
 app.include_router(auth_router, prefix="/api")
-app.include_router(app_updates_router, prefix="/api")
-app.include_router(reports_router, prefix="/api")
-app.include_router(web_sources_router, prefix="/api")
-app.include_router(social_media_router, prefix="/api")
-app.include_router(admin_router, prefix="/api")
-app.include_router(relationships_router, prefix="/api")
-app.include_router(brief_fortnightly_router, prefix="/api")
-app.include_router(faultlines_router, prefix="/api")
-app.include_router(watchlist_router, prefix="/api")
-app.include_router(notifications_router, prefix="/api")
-app.include_router(flags_router, prefix="/api")
-app.include_router(report_agent_router, prefix="/api")
-app.include_router(user_activity_router, prefix="/api")
+app.include_router(admin_router, prefix="/api", dependencies=_ADMIN)
+for _r in (settings_router, web_sources_router):
+    app.include_router(_r, prefix="/api", dependencies=_ADMIN_FOR_CHANGES)
+for _r in (
+    intelligence_router, briefs_router, trends_router, analytics_router,
+    brief_monthly_router, pipeline_router, documents_router, kg_router,
+    keywords_router, sources_router, feedback_router, training_router,
+    cross_border_router, app_updates_router, reports_router,
+    social_media_router, relationships_router, brief_fortnightly_router,
+    faultlines_router, watchlist_router, notifications_router, flags_router,
+    report_agent_router, user_activity_router,
+):
+    app.include_router(_r, prefix="/api", dependencies=_LOGIN)
 
 
 # ============================================================
@@ -117,14 +113,14 @@ async def health():
 # ============================================================
 @app.websocket("/api/ws/intelligence")
 async def websocket_intelligence(websocket: WebSocket, token: str = Query(default=None)):
-    user_id = None
-    if token:
-        try:
-            from utils.auth import verify_token
-            payload = verify_token(token)
-            user_id = payload.get("sub")
-        except Exception:
-            pass  # anonymous WS still connects; targeted delivery won't work
+    try:
+        from utils.auth import verify_token
+        user_id = verify_token(token or "").get("sub")
+    except Exception:
+        user_id = None
+    if not user_id:
+        await websocket.close(code=1008)  # no anonymous live feed
+        return
     await ws_manager.connect(websocket, user_id)
     try:
         while True:

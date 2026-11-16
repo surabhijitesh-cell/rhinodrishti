@@ -378,7 +378,9 @@ const InteractiveNERMap = memo(function InteractiveNERMap({
   // Fetch insurgent actor list once when same_actor is first enabled
   useEffect(() => {
     if (!relTypes.same_actor || !api || insurgentActors.length > 0) return;
-    fetch(`${api}/knowledge-graph/insurgent-actors?min_articles=3`)
+    fetch(`${api}/knowledge-graph/insurgent-actors?min_articles=3`, {
+      headers: { Authorization: `Bearer ${localStorage.getItem("rd_token") || ""}` },
+    })
       .then(r => r.json())
       .then(d => setInsurgentActors(d.actors || []))
       .catch(() => {});
@@ -401,7 +403,7 @@ const InteractiveNERMap = memo(function InteractiveNERMap({
     const actorDoc   = insurgentActorsRef.current.find(a => a.name === selectedActorFilter);
     const actorIdSet = new Set(actorDoc?.article_ids || []);
 
-    const token = localStorage.getItem("token") || "";
+    const token = localStorage.getItem("rd_token") || "";
     fetch(`${api}/intelligence/map-timeline?hours=8760&limit=1000`, {
       headers: { Authorization: `Bearer ${token}` },
     })
@@ -800,7 +802,7 @@ const InteractiveNERMap = memo(function InteractiveNERMap({
 
     // Register global handlers for popup buttons (Leaflet popup HTML is a string)
     window.__nerDelEdge = (fromId, toId, type, lineId) => {
-      const token = localStorage.getItem("token") || "";
+      const token = localStorage.getItem("rd_token") || "";
       fetch(`${base}/relationships/soft-delete?from_id=${fromId}&to_id=${toId}&type=${type}`, {
         method: "PATCH",
         headers: { Authorization: `Bearer ${token}` },
@@ -813,7 +815,7 @@ const InteractiveNERMap = memo(function InteractiveNERMap({
       }).catch(() => {});
     };
     window.__nerExplainEdge = (fromId, toId, type, containerId) => {
-      const token = localStorage.getItem("token") || "";
+      const token = localStorage.getItem("rd_token") || "";
       const box = document.getElementById(containerId);
       if (box) box.textContent = "Loading…";
       fetch(`${base}/relationships/explain-by-pair?from_id=${fromId}&to_id=${toId}&type=${type}`, {
@@ -825,7 +827,9 @@ const InteractiveNERMap = memo(function InteractiveNERMap({
 
     Promise.all(
       chunks.map((chunk) =>
-        fetch(`${base}/relationships?item_ids=${chunk.join(",")}&types=${enabledTypes.join(",")}`)
+        fetch(`${base}/relationships?item_ids=${chunk.join(",")}&types=${enabledTypes.join(",")}`, {
+      headers: { Authorization: `Bearer ${localStorage.getItem("rd_token") || ""}` },
+    })
           .then((r) => r.json())
           .then((d) => d.edges || [])
           .catch(() => [])

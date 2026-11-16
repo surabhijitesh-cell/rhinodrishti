@@ -4,7 +4,7 @@ import jwt
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 from passlib.context import CryptContext
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -87,6 +87,14 @@ async def get_current_session_id(credentials: HTTPAuthorizationCredentials = Dep
 
 async def require_admin_role(user: dict = Depends(get_current_user)):
     if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return user
+
+
+async def require_admin_for_changes(request: Request, user: dict = Depends(get_current_user)):
+    """Any logged-in user may read; only admins may change. For routers whose
+    screens are admin-only but whose read endpoints other screens also use."""
+    if request.method not in ("GET", "HEAD") and user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Admin access required")
     return user
 

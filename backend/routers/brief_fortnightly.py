@@ -679,7 +679,8 @@ async def generate_fortnightly_brief(
 
 
 @router.get("/brief/fortnightly/list")
-async def list_fortnightly_briefs(iod: str = Query("IOD-1")):
+async def list_fortnightly_briefs(iod: Optional[str] = Query(None), current_user: dict = Depends(get_current_user)):
+    iod = _effective_iod(current_user, iod)  # non-admins always get their own IOD
     cursor = fortnightly_briefs_col.find(
         {**_iod_query_filter(iod)},
         {"_id": 0, "year": 1, "month": 1, "period": 1, "period_label": 1, "status": 1, "generated_at": 1}
@@ -688,8 +689,9 @@ async def list_fortnightly_briefs(iod: str = Query("IOD-1")):
 
 
 @router.get("/brief/fortnightly/stability-history")
-async def fortnightly_stability_history(iod: str = Query("IOD-1")):
+async def fortnightly_stability_history(iod: Optional[str] = Query(None), current_user: dict = Depends(get_current_user)):
     """Return stability scores + sev_counts for all ready fortnightly briefs (for trend chart)."""
+    iod = _effective_iod(current_user, iod)  # non-admins always get their own IOD
     cursor = fortnightly_briefs_col.find(
         {"status": {"$in": ["ready", "partial"]}, **_iod_query_filter(iod)},
         {"_id": 0, "year": 1, "month": 1, "period": 1, "period_label": 1,
@@ -717,7 +719,8 @@ async def get_fortnightly_default():
 
 
 @router.get("/brief/fortnightly/{year}/{month}/{period}")
-async def get_fortnightly_brief(year: int, month: int, period: int, iod: str = Query("IOD-1")):
+async def get_fortnightly_brief(year: int, month: int, period: int, iod: Optional[str] = Query(None), current_user: dict = Depends(get_current_user)):
+    iod = _effective_iod(current_user, iod)  # non-admins always get their own IOD
     brief = await fortnightly_briefs_col.find_one(
         {"year": year, "month": month, "period": period, **_iod_query_filter(iod)}, {"_id": 0}
     )
@@ -727,7 +730,8 @@ async def get_fortnightly_brief(year: int, month: int, period: int, iod: str = Q
 
 
 @router.get("/brief/fortnightly/{year}/{month}/{period}/notebooklm", response_class=PlainTextResponse)
-async def get_fortnightly_notebooklm(year: int, month: int, period: int, iod: str = Query("IOD-1")):
+async def get_fortnightly_notebooklm(year: int, month: int, period: int, iod: Optional[str] = Query(None), current_user: dict = Depends(get_current_user)):
+    iod = _effective_iod(current_user, iod)  # non-admins always get their own IOD
     brief = await fortnightly_briefs_col.find_one(
         {"year": year, "month": month, "period": period, **_iod_query_filter(iod)}, {"notebooklm_script": 1}
     )
@@ -737,7 +741,8 @@ async def get_fortnightly_notebooklm(year: int, month: int, period: int, iod: st
 
 
 @router.get("/brief/fortnightly/{year}/{month}/{period}/pdf")
-async def get_fortnightly_pdf(year: int, month: int, period: int, iod: str = Query("IOD-1")):
+async def get_fortnightly_pdf(year: int, month: int, period: int, iod: Optional[str] = Query(None), current_user: dict = Depends(get_current_user)):
+    iod = _effective_iod(current_user, iod)  # non-admins always get their own IOD
     brief = await fortnightly_briefs_col.find_one(
         {"year": year, "month": month, "period": period, **_iod_query_filter(iod)}, {"_id": 0}
     )
