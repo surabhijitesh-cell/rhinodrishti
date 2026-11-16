@@ -308,13 +308,14 @@ async def classify_and_analyze_article(article, source_hint: str = "") -> dict:
       classify_and_analyze_article(text_str, src_name)  — legacy (fetchers pass raw text)
     """
     if isinstance(article, str):
-        # Legacy calling pattern: (raw_text, source_name)
-        # Used by telegram_fetcher, youtube_fetcher, twitter_fetcher, etc.
-        title = source_hint or ""
-        content = article
-    else:
-        title = article.get("title", "")
-        content = article.get("raw_content", "") or article.get("description", "") or title
+        # Legacy calling pattern (raw_text, source_name) from the social, YouTube
+        # and web-source fetchers. This form never worked: the paid model call was
+        # made and its answer then lost, and the caller stored the item as
+        # unprocessed for the 15-minute retry job. Skip the wasted call and let
+        # the retry job (which passes the full item) classify it.
+        raise ValueError("queued for the retry job (text-only call form is not classified inline)")
+    title = article.get("title", "")
+    content = article.get("raw_content", "") or article.get("description", "") or title
 
     article_text = f"Title: {title}\nContent: {content[:2000]}"
 

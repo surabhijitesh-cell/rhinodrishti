@@ -373,7 +373,7 @@ async def fetch_and_process_news(source_filter: str = None):
         # Title fuzzy dedup: only compare against recent PROCESSED items
         # (unprocessed may lack clean titles; limit keeps memory sane).
         recent_processed = await intelligence_col.find(
-            {"processed": True},
+            {"processed": True, "tags": {"$ne": "not_relevant"}},
             {"title": 1, "_id": 0}
         ).sort("fetched_at", -1).limit(500).to_list(500)
         existing_titles = [normalize_for_dedup(item.get("title", "")) for item in recent_processed]
@@ -633,6 +633,17 @@ async def fetch_and_process_news(source_filter: str = None):
                     except Exception as ws_err:
                         logger.debug(f"WS broadcast error: {ws_err}")
                 else:
+                    # Remember the "not relevant" verdict. Without a stored row the
+                    # URL de-dup above cannot see it, and the same article was sent
+                    # to the model again on every fetch while it stayed in the feed.
+                    await intelligence_col.insert_one({
+                        **_make_raw_doc(article),
+                        "processed": True,
+                        "tags": ["not_relevant"],
+                        "severity": "filtered_out",
+                        "why_it_matters": "",
+                        "potential_impact": "",
+                    })
                     skip_count += 1
 
             if batch_start + BATCH_SIZE < len(new_articles):
@@ -724,6 +735,7 @@ async def _classify_with_retry_v2(article, max_retries=4):
             return result, was_rate_limited
 
         except asyncio.TimeoutError:
+            article["_classify_error"] = "timeout"
             wait = 5 * (2 ** attempt)
             logger.warning(f"  [Attempt {attempt + 1}/{max_retries}] Timeout for: "
                            f"{article.get('title', '')[:40]}... retrying in {wait}s")
@@ -731,12 +743,14 @@ async def _classify_with_retry_v2(article, max_retries=4):
 
         except json.JSONDecodeError as je:
             # JSON parse failures are NOT rate limits — fast retry, no backoff penalty.
+            article["_classify_error"] = f"bad answer format: {str(je)[:120]}"
             wait = 2
             logger.warning(f"  [Attempt {attempt + 1}/{max_retries}] JSON parse error ({str(je)[:60]}) for: "
                            f"{article.get('title', '')[:40]}... fast retry in {wait}s")
             await asyncio.sleep(wait)
 
         except Exception as e:
+            article["_classify_error"] = f"{type(e).__name__}: {str(e)[:160]}"
             err_str = str(e).lower()
             is_rate_limit = any(ind in err_str for ind in RATE_LIMIT_INDICATORS)
             if is_rate_limit:
@@ -834,6 +848,21 @@ async def bulk_scrape_all_feeds():
     except Exception as e:
         logger.error(f"Bulk scrape failed: {e}")
         raise
+
+
+MAX_CLASSIFY_CYCLES = 3  # each cycle already makes up to 3 attempts
+_PROVIDER_FAILURE_SIGNS = (
+    "timeout", "401", "402", "403", "500", "502", "503", "504", "credit",
+    "insufficient", "api key", "api_key", "connection", "unavailable", "overloaded",
+)
+
+
+def _is_provider_failure(error: str) -> bool:
+    """True when a classification error points at the AI provider, not the item."""
+    low = (error or "").lower()
+    if low.startswith("bad answer format"):
+        return False  # the model answered; the answer was unusable for this item
+    return not low or any(sign in low for sign in _PROVIDER_FAILURE_SIGNS)
 
 
 async def analyze_unprocessed_items():
@@ -965,6 +994,8 @@ async def analyze_unprocessed_items():
     # ============================================================
     success = 0
     not_relevant = 0
+    gave_up = 0
+    failed_items = []
     rate_limit_hits = 0
 
     for idx, item in enumerate(survivors):
@@ -1005,16 +1036,36 @@ async def analyze_unprocessed_items():
                 {"$set": {"processed": True, "tags": ["not_relevant"]}}
             )
             not_relevant += 1
+        elif result is None and not was_rate_limited:
+            failed_items.append(item)
 
         if (idx + 1) % 5 == 0:
             logger.info(f"  Progress: {idx + 1}/{len(survivors)} | Success: {success} | Not relevant: {not_relevant}")
 
-    remaining = total_unprocessed - success - not_relevant - stage0_rejected - stage05_rejected - stage1_rejected
+    # Stop retrying items that keep failing — but only when the failure is the
+    # item's own. If nothing got a verdict this cycle, or the error looks like
+    # the provider (credits, outage, timeout), the item is left to retry.
+    provider_working = (success + not_relevant) > 0
+    for item in failed_items:
+        error = item.get("_classify_error", "")
+        if not provider_working or _is_provider_failure(error):
+            continue
+        attempts = item.get("classify_attempts", 0) + 1
+        fields = {"classify_attempts": attempts, "classify_error": error}
+        if attempts >= MAX_CLASSIFY_CYCLES:
+            # shortcut: "not_relevant" is the tag every screen already hides;
+            # "classify_failed" tells them apart. Analysts can still Accept it.
+            fields.update({"processed": True, "tags": ["not_relevant", "classify_failed"],
+                           "severity": "filtered_out"})
+            gave_up += 1
+        await intelligence_col.update_one({"id": item["id"]}, {"$set": fields})
+
+    remaining = total_unprocessed - success - not_relevant - gave_up - stage0_rejected - stage05_rejected - stage1_rejected
     logger.info("=== AI Processing Complete ===")
     logger.info(f"  Stage 0 filtered:   {stage0_rejected} (keyword — free)")
     logger.info(f"  Stage 0.5 filtered: {stage05_rejected} (embeddings — ~free)")
     logger.info(f"  Stage 1 filtered:   {stage1_rejected} (Gemini Flash-Lite — cheap)")
-    logger.info(f"  Stage 2 Haiku:      {success} relevant | {not_relevant} not relevant")
+    logger.info(f"  Stage 2 Haiku:      {success} relevant | {not_relevant} not relevant | {gave_up} given up")
     logger.info(f"  Remaining unprocessed: {remaining}")
     logger.info(f"  Rate limit hits: {rate_limit_hits}")
 

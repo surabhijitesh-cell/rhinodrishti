@@ -1024,6 +1024,13 @@ async def run_daily_faultline_pass(
         llm_client = None
         MODEL = None
 
+    # Reused scores expire after the article has left the 7-day window.
+    try:
+        await db.faultline_score_cache.create_index("created_at", expireAfterSeconds=10 * 86400)
+        await db.faultline_score_cache.create_index([("faultline_id", 1), ("article_id", 1)])
+    except Exception as e:
+        logger.warning(f"faultline_score_cache index setup failed (non-fatal): {e}")
+
     sem = asyncio.Semaphore(llm_concurrency)
     raw_scores: dict[str, float] = {}
     breakdowns: dict[str, dict] = {}
@@ -1065,21 +1072,38 @@ async def run_daily_faultline_pass(
             continue
 
         # ── Stage 3: LLM for articles that passed Stage 2 ────────────────────
+        reused_ids: set = set()  # scored on an earlier pass — no model call
+
         async def _score_one_v2(
             art: dict, matched_si: list[dict] | None
         ) -> tuple[dict, list[dict] | None, dict | None]:
             async with sem:
+                # An article stays in the 7-day window for up to 14 passes; its
+                # score against this faultline does not change, so reuse it.
+                cache_key = {"faultline_id": fl["id"], "article_id": art["id"],
+                             "subissue_mode": bool(matched_si)}
+                cached = await db.faultline_score_cache.find_one(cache_key, {"_id": 0, "result": 1})
+                if cached:
+                    reused_ids.add(art["id"])
+                    return (art, matched_si, cached["result"])
                 result = await score_article_faultline_impact(
                     fl, art, llm_client, MODEL,
                     matched_subissues=matched_si,
                 )
+                if result is not None:
+                    await db.faultline_score_cache.update_one(
+                        cache_key,
+                        {"$set": {"result": result, "created_at": datetime.now(timezone.utc)}},
+                        upsert=True,
+                    )
                 return (art, matched_si, result)
 
         if llm_client:
             tasks = [_score_one_v2(art, msi) for art, msi in pairs]
             scored_triples = await asyncio.gather(*tasks, return_exceptions=False)
-            llm_attempts += len(pairs)
-            llm_successes += sum(1 for _, _, r in scored_triples if r is not None)
+            # Only real model calls count toward the "is the model alive" check.
+            llm_attempts += len(pairs) - len(reused_ids)
+            llm_successes += sum(1 for a, _, r in scored_triples if r is not None and a["id"] not in reused_ids)
         else:
             scored_triples = [(art, msi, None) for art, msi in pairs]
 

@@ -96,3 +96,7 @@ Test: tests/test_server_lock_v37.py sweeps all ~250 actions. Left for later batc
 ## 2026-11-17 — fix/reports-bangladesh-myanmar-filter (audit Stage 2 of 7)
 API usage widget made honest: every OpenRouter call (classification, all briefs, faultline scoring, Custom Brief Generator, sentiment, documents) is now recorded in one place in llm_client.py, with the feature that made it (`by_feature` in api_usage) and the real charge OpenRouter reports; price list updated to $0.30/$2.50. Days before this deploy keep their old under-counted figures.
 Stage 1 confirmed live after Rohit's manual Render deploy — Render does not auto-deploy this branch; Vercel builds it only as a preview.
+
+## 2026-11-17 — fix/reports-bangladesh-myanmar-filter (audit Stage 3 of 7)
+Four OpenRouter savings: (1) a "not relevant" news verdict is now stored so the article is not re-sent every 30 min; (2) social/YouTube/web-source items no longer pay for a first classification that was always lost; (3) an item that fails classification 3 cycles running is hidden as `classify_failed` (never during provider outages; reason kept in `classify_error`); (4) faultline scoring reuses an article's score per faultline (new `faultline_score_cache` collection, auto-expires after 10 days).
+Not tested against live AI; measure with `api_usage.by_feature` after deploy. Expected: about $165 → $65–90 a month.
