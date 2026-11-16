@@ -162,6 +162,9 @@ export default function DailyBrief({ api }) {
           <div className="flex-1 space-y-1.5">
             <div className="flex items-start justify-between gap-2 flex-wrap">
               <p className="text-sm font-medium flex-1">{safeStr(item.title)}</p>
+              {item.older_item && (
+                <span className="text-[10px] font-mono uppercase text-amber-500 border border-amber-500/40 px-1 shrink-0">Earlier item</span>
+              )}
               {briefItemDate && (
                 <span className="text-[10px] font-mono text-muted-foreground shrink-0">{briefItemDate}</span>
               )}

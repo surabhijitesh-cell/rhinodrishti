@@ -113,6 +113,33 @@ async def generate_brief(background_tasks: BackgroundTasks):
     return {"message": "Brief generation started", "date": date}
 
 
+def _brief_day_window(brief: dict, date: str) -> tuple:
+    """The 24 hours a Daily Brief's header numbers cover: up to the moment the
+    brief was generated (or the end of its date for old briefs without one)."""
+    try:
+        end = datetime.fromisoformat(brief.get("generated_at") or "")
+    except ValueError:
+        end = datetime.fromisoformat(f"{date}T23:59:59+00:00")
+    if end.tzinfo is None:
+        end = end.replace(tzinfo=timezone.utc)
+    return (end - timedelta(hours=24)).isoformat(), end.isoformat()
+
+
+async def _brief_day_counts(brief: dict, date: str) -> tuple:
+    """(items, critical, high) published in the brief's 24 hours, counting only
+    what the feed shows (rejected and unprocessed items excluded)."""
+    start, end = _brief_day_window(brief, date)
+    base = {
+        "processed": True,
+        "published_at": {"$gte": start, "$lte": end},
+        "tags": {"$nin": ["not_relevant", "unprocessed", "stage0_filtered", "stage05_filtered", "stage1_filtered"]},
+    }
+    total = await intelligence_col.count_documents({**base, "severity": {"$ne": "filtered_out"}})
+    critical = await intelligence_col.count_documents({**base, "severity": "critical"})
+    high = await intelligence_col.count_documents({**base, "severity": "high"})
+    return total, critical, high
+
+
 @router.get("/daily-brief/pdf")
 async def get_daily_brief_pdf(date: Optional[str] = None):
     if not date:
@@ -134,9 +161,7 @@ async def get_daily_brief_pdf(date: Optional[str] = None):
     # that exceeded Render's load-balancer timeout → connection drop → "Network Error".
     # clean_for_pdf() already handles non-Latin chars with a safe fallback string.
 
-    total = await intelligence_col.count_documents({})
-    critical = await intelligence_col.count_documents({"severity": "critical"})
-    high = await intelligence_col.count_documents({"severity": "high"})
+    total, critical, high = await _brief_day_counts(brief, date)
 
     today_start = f"{date}T00:00:00"
     today_end = f"{date}T23:59:59"
@@ -495,6 +520,11 @@ def generate_brief_pdf(brief: dict, date: str, total: int, critical: int, high: 
             sev_label = f' [{severity.upper()}]' if severity in ('critical', 'high') else ''
             clean_title = f'{index}. {title}{sev_label}'.encode('latin-1', 'replace').decode('latin-1')[:180]
             self.multi_cell(0, 5, clean_title, new_x="LMARGIN", new_y="NEXT")
+            if item.get('older_item'):
+                self.set_font('Helvetica', 'BI', 7)
+                self.set_text_color(150, 90, 0)
+                self.cell(0, 4, f"  EARLIER ITEM ({str(item.get('timestamp', ''))[:10]}) - included because few new items today",
+                          new_x="LMARGIN", new_y="NEXT")
 
             # Faultline tags from previous 24h cycle assessment
             fl_tags = item.get('faultline_tags', [])
@@ -607,9 +637,9 @@ def generate_brief_pdf(brief: dict, date: str, total: int, critical: int, high: 
     pdf.set_xy(15, y_start)
     pdf.set_font('Helvetica', 'B', 9)
     pdf.set_text_color(40, 40, 40)
-    pdf.cell(60, 5, f'Total Intelligence Items: {total}')
-    pdf.cell(60, 5, f'Critical Alerts: {critical}')
-    pdf.cell(60, 5, f'High Priority: {high}')
+    pdf.cell(60, 5, f'Items in last 24 hours: {total}')
+    pdf.cell(60, 5, f'Critical (24h): {critical}')
+    pdf.cell(60, 5, f'High (24h): {high}')
     pdf.set_xy(15, y_start + 7)
     pdf.set_font('Helvetica', '', 8)
     pdf.set_text_color(100, 100, 100)
@@ -1098,7 +1128,9 @@ async def generate_brief_for_date(date: str):
         fallback_ner_query = {
             "processed": True,
             "state": {"$in": ner_states_full},
-            "severity": {"$in": ["critical", "high", "medium"]}
+            "severity": {"$in": ["critical", "high", "medium"]},
+            # Same 7-day limit as the other quiet-day fallback above.
+            "published_at": {"$gte": (now_utc - timedelta(days=7)).isoformat()},
         }
         if previous_item_ids:
             fallback_ner_query["id"] = {"$nin": list(previous_item_ids)}
@@ -1297,6 +1329,9 @@ async def generate_brief_for_date(date: str):
             "state": item.get("state", ""),
             "source": item.get("source", ""),
         }
+        # Quiet-day top-ups come from before this brief's window: say so.
+        if (item.get("published_at") or cutoff_utc) < cutoff_utc:
+            result["older_item"] = True
         # Carry cluster metadata so PDF can show "Reported by N sources"
         cluster_size = item.get("cluster_size", 0)
         if cluster_size and cluster_size > 1:

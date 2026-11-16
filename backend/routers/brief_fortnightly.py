@@ -46,6 +46,8 @@ from routers.brief_monthly import (
     _build_attention_required,
     _iod_query_filter,
     _effective_iod,
+    _begin_generation, _fail_generation, _finish_generation, _settle_if_interrupted,
+    _infer_missing_sections,
     NER_STATES_FULL,
     BORDER_COUNTRIES,
 )
@@ -292,9 +294,8 @@ async def _run_fortnightly_generation_core(year: int, month: int, period: int, i
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "error": f"No intelligence items found for {period_label}",
         }
-        await fortnightly_briefs_col.replace_one(
-            {"year": year, "month": month, "period": period, **_iod_query_filter(iod)}, doc, upsert=True
-        )
+        # Not stored here: the caller settles the record, so an existing brief
+        # is never overwritten by an "empty" marker.
         return doc
 
     states_out = {}
@@ -536,6 +537,7 @@ async def _run_fortnightly_generation_core(year: int, month: int, period: int, i
     }
     if not llm_ok:
         brief["_llm_error"] = "LLM calls returned empty — check OpenRouter API key and rate limits. Re-generate to retry."
+    brief["missing_sections"] = _infer_missing_sections(brief)
 
     from social_pulse import get_social_pulse_for_period
     brief["social_pulse"] = await get_social_pulse_for_period(db, start_iso, end_iso)
@@ -623,6 +625,7 @@ async def _run_fortnightly_generation(year: int, month: int, period: int, iod: s
         "attention_required": attention_required,
         "generation_count": paoi_analysis.pop("_next_generation_count", 1),
     }
+    brief["missing_sections"] = _infer_missing_sections(brief)
     brief["notebooklm_script"] = _build_notebooklm_script(brief, year, month)
 
     await fortnightly_briefs_col.replace_one(
@@ -647,34 +650,22 @@ async def generate_fortnightly_brief(
     _require_brief_author(current_user)
     effective_iod = _effective_iod(current_user, iod)
 
-    # Preserve generation_count so rich/lean tier selection survives regen.
-    prior = await fortnightly_briefs_col.find_one(
-        {"year": year, "month": month, "period": period, **_iod_query_filter(effective_iod)},
-        {"_id": 0, "generation_count": 1},
-    )
-    prior_count = (prior or {}).get("generation_count", 0)
-
-    await fortnightly_briefs_col.replace_one(
-        {"year": year, "month": month, "period": period, **_iod_query_filter(effective_iod)},
-        {"year": year, "month": month, "period": period, "iod": effective_iod,
-         "status": "generating",
-         "generation_count": prior_count,
-         "started_at": datetime.now(timezone.utc).isoformat()},
-        upsert=True,
-    )
+    # Mark as generating, keeping the stored brief until the new one is written.
+    key = {"year": year, "month": month, "period": period, **_iod_query_filter(effective_iod)}
+    _, _, label = _fortnightly_range(year, month, period)
+    if not await _begin_generation(fortnightly_briefs_col, key, {"iod": effective_iod}):
+        return {"status": "generating", "year": year, "month": month, "period": period,
+                "period_label": label, "iod": effective_iod, "already_running": True}
 
     async def _bg():
         try:
-            await _run_fortnightly_generation(year, month, period, iod=effective_iod, force_rich=force_rich)
+            result = await _run_fortnightly_generation(year, month, period, iod=effective_iod, force_rich=force_rich)
+            await _finish_generation(fortnightly_briefs_col, key, result)
         except Exception as e:
             logger.exception("fortnightly brief generation crashed")
-            await fortnightly_briefs_col.update_one(
-                {"year": year, "month": month, "period": period, **_iod_query_filter(effective_iod)},
-                {"$set": {"status": "error", "error": str(e)[:300]}},
-            )
+            await _fail_generation(fortnightly_briefs_col, key, str(e))
 
     background_tasks.add_task(_bg)
-    _, _, label = _fortnightly_range(year, month, period)
     return {"status": "generating", "year": year, "month": month, "period": period, "period_label": label, "iod": effective_iod}
 
 
@@ -721,11 +712,13 @@ async def get_fortnightly_default():
 @router.get("/brief/fortnightly/{year}/{month}/{period}")
 async def get_fortnightly_brief(year: int, month: int, period: int, iod: Optional[str] = Query(None), current_user: dict = Depends(get_current_user)):
     iod = _effective_iod(current_user, iod)  # non-admins always get their own IOD
-    brief = await fortnightly_briefs_col.find_one(
-        {"year": year, "month": month, "period": period, **_iod_query_filter(iod)}, {"_id": 0}
-    )
+    key = {"year": year, "month": month, "period": period, **_iod_query_filter(iod)}
+    brief = await fortnightly_briefs_col.find_one(key, {"_id": 0})
     if not brief:
         raise HTTPException(404, f"Fortnightly brief not generated — POST to /brief/fortnightly/generate first")
+    brief = await _settle_if_interrupted(fortnightly_briefs_col, key, brief)
+    if brief.get("status") in ("ready", "partial"):
+        brief.setdefault("missing_sections", _infer_missing_sections(brief))
     return brief
 
 

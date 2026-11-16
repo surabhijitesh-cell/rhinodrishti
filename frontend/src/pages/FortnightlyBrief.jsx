@@ -1008,6 +1008,20 @@ export default function FortnightlyBrief({ api }) {
         </div>
       )}
 
+      {/* Regeneration failed — the previous brief was kept */}
+      {brief?.last_generation_error && (brief?.status === "ready" || brief?.status === "partial") && (
+        <div className="border border-red-500/40 bg-red-500/5 p-3 text-xs font-mono text-red-400 mb-2">
+          The last regeneration failed, so the previous brief is shown: {brief.last_generation_error}
+        </div>
+      )}
+
+      {/* Incomplete — some sections could not be produced */}
+      {brief?.missing_sections?.length > 0 && (brief?.status === "ready" || brief?.status === "partial") && (
+        <div className="border border-amber-500/40 bg-amber-500/5 p-3 text-xs font-mono text-amber-400 mb-2">
+          Incomplete brief — {brief.missing_sections.length} section(s) could not be produced by the AI: {brief.missing_sections.join("; ")}. Regenerate to retry.
+        </div>
+      )}
+
       {/* Sub-tab header */}
       {(brief?.status === "ready" || brief?.status === "partial") && (
         <div className="flex gap-1 border-b border-border" data-testid="fortnightly-subtabs">

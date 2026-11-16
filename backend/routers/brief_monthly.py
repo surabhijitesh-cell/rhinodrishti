@@ -62,6 +62,131 @@ def _effective_iod(current_user: dict, iod_override: Optional[str]) -> str:
             return iod_override
     return current_user.get("iod", "IOD-1")
 
+# ── Safe (re)generation ──────────────────────────────────────────────────────
+# A brief being regenerated keeps its stored content until the new one is
+# written. If the run fails, or the server restarts mid-run, the previous
+# brief comes back instead of being lost. Shared by monthly and fortnightly.
+GENERATION_STALE_MINUTES = 30
+
+
+def _generation_is_stale(doc: dict, now: Optional[datetime] = None) -> bool:
+    """True when a brief has been 'generating' longer than any real run takes."""
+    try:
+        started = datetime.fromisoformat(doc.get("started_at") or "")
+    except ValueError:
+        return True
+    return ((now or datetime.now(timezone.utc)) - started).total_seconds() > GENERATION_STALE_MINUTES * 60
+
+
+def _failed_generation_update(previous_status: Optional[str], error: str, status: str = "error") -> dict:
+    """What to write when a run did not produce a brief: restore the previous
+    brief if there was one, otherwise record the failure."""
+    if previous_status in ("ready", "partial"):
+        return {"$set": {"status": previous_status, "last_generation_error": error[:300]},
+                "$unset": {"previous_status": "", "started_at": ""}}
+    return {"$set": {"status": status, "error": error[:300]},
+            "$unset": {"previous_status": "", "started_at": ""}}
+
+
+async def _begin_generation(col, key_filter: dict, base_fields: dict) -> bool:
+    """Mark a brief as generating WITHOUT erasing it. Returns False when a run
+    is already under way, so two presses do not start two paid generations."""
+    existing = await col.find_one(key_filter, {"_id": 0, "status": 1, "started_at": 1, "previous_status": 1})
+    previous = (existing or {}).get("status")
+    if previous == "generating":
+        if not _generation_is_stale(existing):
+            return False
+        previous = existing.get("previous_status")
+    await col.update_one(
+        key_filter,
+        {"$set": {**base_fields, "status": "generating", "previous_status": previous,
+                  "started_at": datetime.now(timezone.utc).isoformat()},
+         "$unset": {"error": "", "last_generation_error": ""}},
+        upsert=True,
+    )
+    return True
+
+
+async def _fail_generation(col, key_filter: dict, error: str, status: str = "error") -> None:
+    doc = await col.find_one(key_filter, {"_id": 0, "previous_status": 1})
+    await col.update_one(key_filter, _failed_generation_update((doc or {}).get("previous_status"), error, status))
+
+
+async def _settle_if_interrupted(col, key_filter: dict, brief: dict) -> dict:
+    """A 'generating' brief whose run died (deploy or crash) would otherwise
+    show 'generating' forever. Settle it the first time someone opens it."""
+    if brief.get("status") != "generating" or not _generation_is_stale(brief):
+        return brief
+    await _fail_generation(col, key_filter, "Generation was interrupted (the server restarted). Press Regenerate to try again.")
+    return await col.find_one(key_filter, {"_id": 0}) or brief
+
+
+async def _finish_generation(col, key_filter: dict, result: Optional[dict]) -> None:
+    """After a run returns: if it produced no brief (e.g. no items in the
+    period), settle the stored record instead of leaving it 'generating'."""
+    if (result or {}).get("status") in ("ready", "partial"):
+        return
+    await _fail_generation(
+        col, key_filter,
+        (result or {}).get("error") or "No intelligence items found for this period",
+        status=(result or {}).get("status") or "error",
+    )
+
+
+# ── Incomplete-brief detection ───────────────────────────────────────────────
+def _missing_shared_sections(exec_summary, target_states, state_sections, mitigation_states,
+                             mitigation_playbook, cross_border_analysis, scenarios) -> list:
+    """Sections the AI was asked for but whose answer was empty or unreadable.
+    Listed on screen and in the PDF so a gap is never silent."""
+    missing = []
+    if not exec_summary:
+        missing.append("Executive summary")
+    missing += [f"State assessment: {st}" for st in target_states if st not in state_sections]
+    missing += [f"Mitigation playbook: {st}" for st in mitigation_states if st not in mitigation_playbook]
+    if not cross_border_analysis:
+        missing.append("Cross-border analysis")
+    if not scenarios:
+        missing.append("Scenarios")
+    return missing
+
+
+def _missing_iod_sections(paoi_analysis: dict, narrative_states=(), narratives=None) -> list:
+    """Same, for the parts that are specific to one IOD."""
+    missing = [f"Faultline narrative: {st}" for st in narrative_states if st not in (narratives or {})]
+    if not paoi_analysis.get("available", True):
+        return missing + ["Priority Areas analysis"]
+    per_paoi = (paoi_analysis.get("synthesis") or {}).get("per_paoi") or {}
+    missing += [f"Priority Area analysis: {pa.get('name') or pa.get('id')}"
+                for pa in paoi_analysis.get("paois", []) if pa.get("id") not in per_paoi]
+    return missing
+
+
+def _infer_missing_sections(brief: dict) -> list:
+    """Work out the missing sections from a brief as stored. Used when a brief
+    is assembled, and for briefs stored before this check existed, so the
+    screen and the PDF always agree."""
+    stats = brief.get("stats") or {}
+    states = stats.get("states") or {}
+    is_fortnightly = bool(brief.get("period"))
+    target_states = [st for st, sd in states.items() if (sd or {}).get("total", 0) > 0]
+    min_items = 2 if is_fortnightly else 3  # same thresholds the generators use
+    mitigation_states = [
+        s["state"] for s in stats.get("stability", [])
+        if s.get("level") in ("ELEVATED", "CRITICAL", "MONITOR")
+        and (states.get(s.get("state")) or {}).get("total", 0) > min_items
+    ]
+    faultlines = brief.get("faultline_analysis") or {}
+    narrative_states = [] if is_fortnightly or not faultlines.get("available") else [
+        st for st, fls in (faultlines.get("by_state") or {}).items() if fls
+    ]
+    return _missing_shared_sections(
+        brief.get("executive_summary"), target_states, brief.get("state_sections") or {},
+        mitigation_states, brief.get("mitigation_playbook") or {},
+        brief.get("cross_border_analysis"), brief.get("scenarios"),
+    ) + _missing_iod_sections(
+        brief.get("paoi_analysis") or {}, narrative_states, faultlines.get("state_narratives"),
+    )
+
 router = APIRouter()
 
 monthly_briefs_col = db.monthly_briefs
@@ -1197,6 +1322,7 @@ async def _run_generation_core(year: int, month: int, iod: str = "IOD-1", force_
     }
     if not llm_ok:
         brief["_llm_error"] = "LLM calls returned empty — check OpenRouter API key and rate limits. Re-generate to retry."
+    brief["missing_sections"] = _infer_missing_sections(brief)
 
     # 4b. Social Media Pulse — sentiment for this period's own window (shared
     # ground truth, same for every IOD — not filtered)
@@ -1302,6 +1428,7 @@ async def _run_generation(year: int, month: int, iod: str = "IOD-1", force_rich:
         "attention_required": attention_required,
         "generation_count": paoi_analysis.pop("_next_generation_count", 1),
     }
+    brief["missing_sections"] = _infer_missing_sections(brief)
     brief["notebooklm_script"] = _build_notebooklm_script(brief, year, month)
 
     await monthly_briefs_col.replace_one(
@@ -1327,32 +1454,20 @@ async def generate_monthly_brief(
     _require_brief_author(current_user)
     effective_iod = _effective_iod(current_user, iod)
 
-    # Preserve generation_count across regenerations so the rich/lean tier
-    # selection works. The stub below otherwise wipes it (replace_one), forcing
-    # every regen back to the expensive rich tier.
-    prior = await monthly_briefs_col.find_one(
-        {"year": year, "month": month, **_iod_query_filter(effective_iod)}, {"_id": 0, "generation_count": 1}
-    )
-    prior_count = (prior or {}).get("generation_count", 0)
-
-    # Mark as generating
-    await monthly_briefs_col.replace_one(
-        {"year": year, "month": month, **_iod_query_filter(effective_iod)},
-        {"year": year, "month": month, "iod": effective_iod, "status": "generating",
-         "generation_count": prior_count,
-         "started_at": datetime.now(timezone.utc).isoformat()},
-        upsert=True,
-    )
+    # Mark as generating, keeping the stored brief (and its generation_count,
+    # which drives the rich/lean tier) until the new one is written.
+    key = {"year": year, "month": month, **_iod_query_filter(effective_iod)}
+    if not await _begin_generation(monthly_briefs_col, key, {"iod": effective_iod}):
+        return {"status": "generating", "year": year, "month": month, "iod": effective_iod,
+                "already_running": True}
 
     async def _bg():
         try:
-            await _run_generation(year, month, iod=effective_iod, force_rich=force_rich)
+            result = await _run_generation(year, month, iod=effective_iod, force_rich=force_rich)
+            await _finish_generation(monthly_briefs_col, key, result)
         except Exception as e:
             logger.exception("monthly brief generation crashed")
-            await monthly_briefs_col.update_one(
-                {"year": year, "month": month, **_iod_query_filter(effective_iod)},
-                {"$set": {"status": "error", "error": str(e)[:300]}},
-            )
+            await _fail_generation(monthly_briefs_col, key, str(e))
 
     background_tasks.add_task(_bg)
     return {"status": "generating", "year": year, "month": month, "iod": effective_iod}
@@ -1394,9 +1509,13 @@ async def monthly_stability_history(iod: Optional[str] = Query(None), current_us
 @router.get("/brief/monthly/{year}/{month}")
 async def get_monthly_brief(year: int, month: int, iod: Optional[str] = Query(None), current_user: dict = Depends(get_current_user)):
     iod = _effective_iod(current_user, iod)  # non-admins always get their own IOD
-    brief = await monthly_briefs_col.find_one({"year": year, "month": month, **_iod_query_filter(iod)}, {"_id": 0})
+    key = {"year": year, "month": month, **_iod_query_filter(iod)}
+    brief = await monthly_briefs_col.find_one(key, {"_id": 0})
     if not brief:
         raise HTTPException(404, "Brief not generated for this month — POST to /brief/monthly/generate first")
+    brief = await _settle_if_interrupted(monthly_briefs_col, key, brief)
+    if brief.get("status") in ("ready", "partial"):
+        brief.setdefault("missing_sections", _infer_missing_sections(brief))
     return brief
 
 
@@ -1529,6 +1648,9 @@ def _render_pdf(brief: dict, prev_brief: dict = None, include_faultlines: bool =
     high_        = sev_counts.get("high", 0)
     cross        = stats.get("cross_border_count", 0)
     stability    = stats.get("stability", [])
+    missing_sections = brief.get("missing_sections")
+    if missing_sections is None:
+        missing_sections = _infer_missing_sections(brief)
 
     class BriefPDF(FPDF):
         def header(self):
@@ -1544,6 +1666,19 @@ def _render_pdf(brief: dict, prev_brief: dict = None, include_faultlines: bool =
             self.set_font("Helvetica", "", 7)
             self.cell(0, 4, _ascii(f"Classification: RESTRICTED  |  Period: {display_period}  |  Generated: {gen_ts}"), align="C", new_x="LMARGIN", new_y="NEXT")
             self.set_y(32)
+            if self.page_no() == 1 and missing_sections:
+                # Never let a gap be silent: say on page 1 what is missing.
+                self.set_fill_color(255, 243, 205)
+                self.set_text_color(120, 70, 0)
+                self.set_font("Helvetica", "B", 9)
+                cell_pad, self.c_margin = self.c_margin, 3  # even indent on wrapped lines
+                self.set_x(self.l_margin)
+                self.cell(0, 6, _ascii(f"INCOMPLETE BRIEF - {len(missing_sections)} section(s) could not be produced by the AI"), fill=True, **NL)
+                self.set_font("Helvetica", "", 8)
+                self.set_x(self.l_margin)
+                self.multi_cell(0, 4.5, _ascii("Missing: " + "; ".join(missing_sections) + ". Regenerate the brief to retry."), fill=True, **NL)
+                self.c_margin = cell_pad
+                self.ln(3)
 
         def footer(self):
             self.set_y(-12)
