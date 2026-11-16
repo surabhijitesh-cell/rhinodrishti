@@ -209,17 +209,6 @@ async def explain_edge(edge_id: str):
         )
         explanation = resp.choices[0].message.content.strip()
 
-        # Track usage
-        try:
-            from usage_tracker import track_usage_generic
-            u = resp.usage
-            await track_usage_generic(
-                input_tokens=getattr(u, "prompt_tokens", 0) or 0,
-                output_tokens=getattr(u, "completion_tokens", 0) or 0,
-                model="google/gemini-2.5-flash",
-            )
-        except Exception:
-            pass
 
         await relationships_col.update_one(
             {"_id": oid},

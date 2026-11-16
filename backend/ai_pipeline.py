@@ -359,18 +359,6 @@ async def classify_and_analyze_article(article, source_hint: str = "") -> dict:
                 extra_body={"include_reasoning": False},  # disable thinking — saves tokens + cost
             )
 
-            # Track token usage and cost
-            try:
-                from usage_tracker import track_usage_generic
-                usage = response.usage
-                if usage:
-                    await track_usage_generic(
-                        input_tokens=getattr(usage, "prompt_tokens", 0) or 0,
-                        output_tokens=getattr(usage, "completion_tokens", 0) or 0,
-                        model=MODEL,
-                    )
-            except Exception as e:
-                logger.warning(f"track_usage (classify) failed: {e}")
 
             response_text = response.choices[0].message.content or ""
         # Try to extract JSON from the response
@@ -510,17 +498,6 @@ async def generate_daily_brief_ai(items: list, date: str) -> dict:
             ],
         )
 
-        try:
-            from usage_tracker import track_usage_generic
-            usage = response.usage
-            if usage:
-                await track_usage_generic(
-                    input_tokens=getattr(usage, "prompt_tokens", 0) or 0,
-                    output_tokens=getattr(usage, "completion_tokens", 0) or 0,
-                    model=MODEL,
-                )
-        except Exception as e:
-            logger.warning(f"track_usage (brief) failed: {e}")
 
         response_text = response.choices[0].message.content or ""
         json_start = response_text.find('{')

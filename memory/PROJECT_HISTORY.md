@@ -92,3 +92,7 @@ Nothing fixed yet — Rohit picks items; each goes through plan-then-approve. Li
 ## 2026-11-17 — fix/reports-bangladesh-myanmar-filter (audit Stage 1 of 7)
 Server locked: every action now needs a login (only login and the health ping stay open); API Monitor actions, Settings changes and web-source changes need an admin; Monthly/Fortnightly briefs can be read only for the user's own IOD (admins any). Live feed refuses anonymous connections. Map requests fixed to send the login.
 Test: tests/test_server_lock_v37.py sweeps all ~250 actions. Left for later batch: viewers can still trigger fetch/classify runs; public /docs page. Plan order: usage widget, savings, briefs, alerts, engines, screens, then the other ~70 findings.
+
+## 2026-11-17 — fix/reports-bangladesh-myanmar-filter (audit Stage 2 of 7)
+API usage widget made honest: every OpenRouter call (classification, all briefs, faultline scoring, Custom Brief Generator, sentiment, documents) is now recorded in one place in llm_client.py, with the feature that made it (`by_feature` in api_usage) and the real charge OpenRouter reports; price list updated to $0.30/$2.50. Days before this deploy keep their old under-counted figures.
+Stage 1 confirmed live after Rohit's manual Render deploy — Render does not auto-deploy this branch; Vercel builds it only as a preview.

@@ -4,7 +4,7 @@ Shared AI clients for Rhino Drishti.
 Primary:  Gemini 2.5 Flash via OpenRouter — Stage 2 full classification.
 Fallback: Claude Haiku 4.5 (Anthropic) — kept as legacy, not actively used.
 
-Gemini 2.5 Flash is ~83% cheaper than Haiku ($0.15/$0.60 vs $0.80/$4.00 per MTok)
+Gemini 2.5 Flash is cheaper than Haiku ($0.30/$2.50 vs $0.80/$4.00 per MTok, Nov 2026)
 and achieves near-identical accuracy on the 10-step structured JSON NER prompt.
 
 Using OpenRouter (openrouter.ai/api/v1) instead of generativelanguage.googleapis.com
@@ -12,6 +12,7 @@ because Render's US servers are geo-blocked by Gemini's free-tier API restrictio
 OpenRouter routes through globally available infrastructure.
 """
 import os
+import sys
 import time as _time
 
 # ── Primary model ─────────────────────────────────────────────────────────────
@@ -42,8 +43,42 @@ def get_client():
             "Sign up free at openrouter.ai — no geo-restrictions unlike Gemini direct API."
         )
     from openai import AsyncOpenAI
-    _gemini_client = AsyncOpenAI(api_key=key, base_url=OPENROUTER_BASE_URL, max_retries=1)
+    _gemini_client = _with_usage_tracking(
+        AsyncOpenAI(api_key=key, base_url=OPENROUTER_BASE_URL, max_retries=1)
+    )
     return _gemini_client
+
+
+def _with_usage_tracking(client):
+    """Record every chat call made through the shared client, so the API usage
+    widget covers all features (classification, briefs, faultline scoring,
+    Custom Brief Generator, sentiment, documents) without per-call-site code.
+    Uses the cost OpenRouter itself reports when present."""
+    create = client.chat.completions.create
+
+    async def tracked_create(*args, **kwargs):
+        caller = sys._getframe(1)
+        feature = f"{caller.f_globals.get('__name__', '?').rsplit('.', 1)[-1]}__{caller.f_code.co_name}"
+        # Ask OpenRouter to include the real charge in the response.
+        kwargs["extra_body"] = {**(kwargs.get("extra_body") or {}), "usage": {"include": True}}
+        response = await create(*args, **kwargs)
+        try:
+            usage = getattr(response, "usage", None)
+            if usage:
+                from usage_tracker import track_usage_generic
+                await track_usage_generic(
+                    input_tokens=getattr(usage, "prompt_tokens", 0) or 0,
+                    output_tokens=getattr(usage, "completion_tokens", 0) or 0,
+                    model=kwargs.get("model", MODEL),
+                    feature=feature,
+                    cost_usd=getattr(usage, "cost", None),
+                )
+        except Exception:
+            pass  # usage recording must never break a model call
+        return response
+
+    client.chat.completions.create = tracked_create
+    return client
 
 
 # Alias — cheap_classifier.py imports get_gemini_client() directly

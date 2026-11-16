@@ -19,6 +19,7 @@ Collection schema (one doc per provider+model per hour):
 
 import logging
 import os
+from typing import Optional
 from datetime import datetime, timezone, timedelta
 from shared import db
 
@@ -91,7 +92,7 @@ MODEL_PRICING: dict[str, dict] = {
     # Gemini — direct API keys
     "gemini-2.5-flash": {
         "provider": "gemini",
-        "input": 0.15, "output": 0.60,
+        "input": 0.30, "output": 2.50,
         "cache_write": 0.0, "cache_read": 0.0,
     },
     "gemini-2.0-flash": {
@@ -107,7 +108,7 @@ MODEL_PRICING: dict[str, dict] = {
     # Gemini via OpenRouter (prefixed model names)
     "google/gemini-2.5-flash": {
         "provider": "gemini",
-        "input": 0.15, "output": 0.60,
+        "input": 0.30, "output": 2.50,
         "cache_write": 0.0, "cache_read": 0.0,
     },
     "google/gemini-2.5-flash-lite-preview-06-17": {
@@ -192,6 +193,8 @@ async def track_usage_generic(
     model: str,
     cr: int = 0,
     cw: int = 0,
+    feature: Optional[str] = None,
+    cost_usd: Optional[float] = None,
 ) -> None:
     """
     Record any provider's API call. Works for Anthropic, Gemini, and OpenAI.
@@ -199,7 +202,12 @@ async def track_usage_generic(
     """
     try:
         provider = MODEL_PRICING.get(model, MODEL_PRICING["_default"])["provider"]
-        cost = _cost_usd(input_tokens, output_tokens, cr, cw, model)
+        # Prefer the charge the provider reported; fall back to the price table.
+        cost = cost_usd if isinstance(cost_usd, (int, float)) else _cost_usd(input_tokens, output_tokens, cr, cw, model)
+        by_feature = {
+            f"by_feature.{feature}.call_count": 1,
+            f"by_feature.{feature}.cost_usd": round(cost, 8),
+        } if feature else {}
 
         now    = datetime.now(timezone.utc)
         date_s = now.strftime("%Y-%m-%d")
@@ -215,6 +223,7 @@ async def track_usage_generic(
                     "cache_write_tokens": cw,
                     "call_count":         1,
                     "cost_usd":           round(cost, 8),
+                    **by_feature,
                 },
                 "$set": {"last_updated": now.isoformat()},
                 "$setOnInsert": {
