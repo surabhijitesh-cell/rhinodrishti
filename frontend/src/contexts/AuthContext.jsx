@@ -18,8 +18,15 @@ export function AuthProvider({ children, api }) {
     });
 
     const resInterceptor = axios.interceptors.response.use(
-      (response) => response,
+      (response) => {
+        window.dispatchEvent(new Event("rd-server-up"));
+        return response;
+      },
       (error) => {
+        // No answer, or the host's "starting up" codes: the server is waking, not refusing us.
+        if (!error.response || [502, 503, 504].includes(error.response.status)) {
+          window.dispatchEvent(new Event("rd-server-down"));
+        }
         if (error.response?.status === 401) {
           localStorage.removeItem("rd_token");
           localStorage.removeItem("rd_user");
@@ -48,9 +55,14 @@ export function AuthProvider({ children, api }) {
           headers: { Authorization: `Bearer ${token}` },
         });
         setUser(res.data);
-      } catch {
-        localStorage.removeItem("rd_token");
-        localStorage.removeItem("rd_user");
+      } catch (e) {
+        if (e.response?.status === 401) {
+          localStorage.removeItem("rd_token");
+          localStorage.removeItem("rd_user");
+        } else {
+          // Server asleep or unreachable: keep the session; the server checks the token on every request.
+          try { setUser(JSON.parse(localStorage.getItem("rd_user") || "null")); } catch { /* stays logged out */ }
+        }
       }
       setLoading(false);
     };

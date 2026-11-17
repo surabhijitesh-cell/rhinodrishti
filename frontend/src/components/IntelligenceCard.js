@@ -341,6 +341,20 @@ export default function IntelligenceCard({ item, compact = false, api, feedbackD
           <div className="flex items-center gap-0.5">
             <FlagButton item={item} api={api} />
 
+            {item.source_url && (
+              <Tip text="Open the original article" side="left">
+                <a
+                  href={item.source_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="p-1 text-muted-foreground/40 hover:text-primary transition-colors"
+                  data-testid={`open-source-${item.id}`}
+                >
+                  <ExternalLink size={12} />
+                </a>
+              </Tip>
+            )}
+
             {api && (
               <Tip text="Re-run AI classification on this item (e.g. after severity rule changes)" side="left">
                 <button

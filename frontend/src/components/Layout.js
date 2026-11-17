@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { useTheme } from "./ThemeProvider";
 import { useAuth } from "../contexts/AuthContext";
@@ -7,7 +7,7 @@ import {
   Shield, LayoutDashboard, Newspaper, FileText, TrendingUp,
   Globe, Bell, ChevronLeft, ChevronRight, Sun, Moon, Search,
   Activity, Menu, X, Upload, GitBranch, Settings, Network, Key, BookOpen, Brain,
-  LogOut, Users, Megaphone, HelpCircle, RotateCcw, Target, Bot
+  LogOut, Users, Megaphone, HelpCircle, RotateCcw, Target, Bot, CalendarDays
 } from "lucide-react";
 import { Input } from "../components/ui/input";
 import { Button } from "../components/ui/button";
@@ -30,7 +30,7 @@ const ALL_NAV_ITEMS = [
     tooltip: "Bangladesh & Myanmar intelligence grouped by Diplomatic, Defence, Internal Politics and Economics.",
   },
   {
-    path: "/daily-brief", label: "Periodic Briefs", icon: FileText, roles: ["admin", "analyst", "viewer"],
+    path: "/daily-brief", label: "Periodic Briefs", icon: CalendarDays, roles: ["admin", "analyst", "viewer"],
     tooltip: "AI-generated daily, fortnightly and monthly intelligence briefs. Exportable as PDF.",
   },
   {
@@ -95,6 +95,16 @@ const ALL_NAV_ITEMS = [
   },
 ];
 
+// Menu groups, in display order. A group with no label is the help strip at
+// the bottom. Items a role cannot see are dropped; empty groups are hidden.
+const NAV_GROUPS = [
+  { label: "Daily work", paths: ["/", "/alerts", "/feed", "/cross-border"] },
+  { label: "Analysis", paths: ["/faultlines", "/trends", "/patterns", "/knowledge-graph"] },
+  { label: "Briefs and reports", paths: ["/daily-brief", "/reports", "/report-agent"] },
+  { label: "Tools and admin", paths: ["/upload", "/keywords", "/training", "/user-management", "/admin", "/settings"] },
+  { label: null, paths: ["/updates", "/handbook"] },
+];
+
 // Paths that show a "New" badge until user has logged in 3+ times
 const NEW_BADGE_PATHS = ["/reports", "/updates", "/trends", "/daily-brief", "/faultlines"];
 const NEW_BADGE_LOGIN_THRESHOLD = 3;
@@ -113,9 +123,25 @@ export default function Layout({ children, alertCount = 0, onSearch, notifUnread
   const { user, logout } = useAuth();
   const { viewIod, setViewIod } = useAdminIod();
   const { startTour, resetTour } = useTour();
+  const [serverDown, setServerDown] = useState(false);
+  useEffect(() => {
+    const down = () => setServerDown(true);
+    const up = () => setServerDown(false);
+    window.addEventListener("rd-server-down", down);
+    window.addEventListener("rd-server-up", up);
+    return () => {
+      window.removeEventListener("rd-server-down", down);
+      window.removeEventListener("rd-server-up", up);
+    };
+  }, []);
 
   const userRole = user?.role || "viewer";
-  const navItems = ALL_NAV_ITEMS.filter((item) => item.roles.includes(userRole));
+  const navGroups = NAV_GROUPS.map((g) => ({
+    ...g,
+    items: g.paths
+      .map((p) => ALL_NAV_ITEMS.find((item) => item.path === p))
+      .filter((item) => item && item.roles.includes(userRole)),
+  })).filter((g) => g.items.length > 0);
 
   const loginCount = useLoginCount(user?.username);
   const showNewBadge = loginCount < NEW_BADGE_LOGIN_THRESHOLD;
@@ -127,8 +153,14 @@ export default function Layout({ children, alertCount = 0, onSearch, notifUnread
   };
 
   const SidebarContent = () => (
-    <nav className="flex flex-col gap-0 mt-2 px-2" data-testid="sidebar-nav" data-tour="sidebar-nav">
-      {navItems.map((item) => {
+    <nav className="flex flex-col gap-0 mt-1 px-2 overflow-y-auto min-h-0" data-testid="sidebar-nav" data-tour="sidebar-nav">
+      {navGroups.map((group) => (
+      <div key={group.label || "help"} data-testid={`nav-group-${(group.label || "help").toLowerCase().replace(/\s+/g, "-")}`}
+        className={group.label ? "" : "mt-2 pt-1 border-t border-border"}>
+      {group.label && (collapsed
+        ? <div className="mx-2 my-2 border-t border-border" />
+        : <p className="px-3 pt-3 pb-1 text-[10px] uppercase tracking-[0.15em] text-muted-foreground/70 font-mono">{group.label}</p>)}
+      {group.items.map((item) => {
         const Icon = item.icon;
         const isActive = location.pathname === item.path;
         const badge = badgeMap[item.path];
@@ -159,6 +191,8 @@ export default function Layout({ children, alertCount = 0, onSearch, notifUnread
           </Tip>
         );
       })}
+      </div>
+      ))}
     </nav>
   );
 
@@ -340,6 +374,12 @@ export default function Layout({ children, alertCount = 0, onSearch, notifUnread
         {/* Content */}
         <main className="flex-1 overflow-y-auto p-4 md:p-6" data-testid="main-content">
           <div className="max-w-[1600px] mx-auto">
+            {serverDown && (
+              <div className="mb-4 flex items-center gap-2 p-3 border border-amber-500/40 bg-amber-500/5 text-amber-400 text-xs" role="status" data-testid="server-waking-banner">
+                <RotateCcw size={13} className="animate-spin shrink-0" />
+                Server waking up. You are still logged in; panels will fill in as soon as it answers (usually under a minute).
+              </div>
+            )}
             {children}
           </div>
         </main>

@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import {
   Globe, ShieldAlert, AlertTriangle, TrendingUp, TrendingDown,
-  Eye, Loader2, ChevronDown, ChevronUp, ExternalLink, Filter,
+  Eye, Loader2, ChevronDown, ChevronUp, Filter,
   Handshake, Swords, Landmark, BarChart3, Trash2, RefreshCw
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
@@ -9,6 +9,8 @@ import Tip from "../components/Tip";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import axios from "axios";
+import ItemActions from "../components/ItemActions";
+import LoadError from "../components/LoadError";
 
 const POSTURE_CONFIG = {
   deteriorating: { color: "text-red-400 border-red-500/40 bg-red-500/10", label: "DETERIORATING", icon: TrendingDown },
@@ -33,7 +35,7 @@ const CATEGORY_COLORS = {
   other: "text-muted-foreground border-border",
 };
 
-function SignalItem({ item, index, onDelete }) {
+function SignalItem({ item, index, onDelete, api }) {
   const [expanded, setExpanded] = useState(false);
 
   return (
@@ -121,23 +123,14 @@ function SignalItem({ item, index, onDelete }) {
               <Badge key={a} variant="outline" className="rounded-none text-[8px] px-1 py-0">{a}</Badge>
             ))}
           </div>
-          {item.source_url && (
-            <a
-              href={item.source_url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1 text-[10px] text-blue-400 hover:text-blue-300 font-mono"
-            >
-              <ExternalLink size={10} /> View source
-            </a>
-          )}
+          <ItemActions item={item} api={api} />
         </div>
       )}
     </div>
   );
 }
 
-function CategoryGroup({ group, startIndex, onDelete }) {
+function CategoryGroup({ group, startIndex, onDelete, api }) {
   const CatIcon = CATEGORY_ICONS[group.category] || Globe;
   const color = CATEGORY_COLORS[group.category] || CATEGORY_COLORS.other;
   let idx = startIndex;
@@ -153,13 +146,13 @@ function CategoryGroup({ group, startIndex, onDelete }) {
       </div>
       {group.items.map((item) => {
         idx++;
-        return <SignalItem key={item.id} item={item} index={idx} onDelete={onDelete} />;
+        return <SignalItem key={item.id} item={item} index={idx} onDelete={onDelete} api={api} />;
       })}
     </div>
   );
 }
 
-function CountrySection({ title, flag, data, isLoading, onDelete }) {
+function CountrySection({ title, flag, data, isLoading, onDelete, api }) {
   const items = data?.items || [];
   const grouped = data?.grouped || [];
   const posture = data?.posture || "stable";
@@ -196,13 +189,13 @@ function CountrySection({ title, flag, data, isLoading, onDelete }) {
             {grouped.map((group) => {
               const startIdx = runningIndex;
               runningIndex += group.items.length;
-              return <CategoryGroup key={group.category} group={group} startIndex={startIdx} onDelete={onDelete} />;
+              return <CategoryGroup key={group.category} group={group} startIndex={startIdx} onDelete={onDelete} api={api} />;
             })}
           </div>
         ) : items.length > 0 ? (
           <div className="max-h-[700px] overflow-y-auto">
             {items.map((item, i) => (
-              <SignalItem key={item.id} item={item} index={i + 1} onDelete={onDelete} />
+              <SignalItem key={item.id} item={item} index={i + 1} onDelete={onDelete} api={api} />
             ))}
           </div>
         ) : (
@@ -220,6 +213,7 @@ export default function CrossBorderWatch({ api }) {
   const [loading, setLoading] = useState(true);
   const [signalFilter, setSignalFilter] = useState("");
   const [refreshing, setRefreshing] = useState(false);
+  const [loadFailed, setLoadFailed] = useState(false);
 
   const fetchData = async () => {
     setLoading(true);
@@ -229,8 +223,9 @@ export default function CrossBorderWatch({ api }) {
       params.set("limit", "50");
       const res = await axios.get(`${api}/cross-border/watch?${params.toString()}`);
       setData(res.data);
+      setLoadFailed(false);
     } catch (e) {
-      console.error("Cross-border fetch failed:", e);
+      setLoadFailed(true);
     }
     setLoading(false);
   };
@@ -371,14 +366,16 @@ export default function CrossBorderWatch({ api }) {
         </div>
       )}
 
+      {loadFailed && !data && <LoadError what="the cross-border signals" onRetry={fetchData} />}
       {/* Two-column layout: Bangladesh | Myanmar */}
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+      <div className={`${loadFailed && !data ? "hidden" : ""} grid grid-cols-1 xl:grid-cols-2 gap-6`}>
         <CountrySection
           title="Bangladesh"
           flag="&#x1F1E7;&#x1F1E9;"
           data={data?.bangladesh}
           isLoading={loading}
           onDelete={handleDeleteItem}
+          api={api}
         />
         <CountrySection
           title="Myanmar"
@@ -386,6 +383,7 @@ export default function CrossBorderWatch({ api }) {
           data={data?.myanmar}
           isLoading={loading}
           onDelete={handleDeleteItem}
+          api={api}
         />
       </div>
     </div>

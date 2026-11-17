@@ -24,6 +24,8 @@ import IntelligenceCard from "../components/IntelligenceCard";
 import { useIntelligenceWS } from "../hooks/useIntelligenceWS";
 import SocialMediaFeedWidget from "../components/SocialMediaFeedWidget";
 import WatchlistStrip from "../components/WatchlistStrip";
+import ItemActions from "../components/ItemActions";
+import LoadError from "../components/LoadError";
 import axios from "axios";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, PieChart, Pie
@@ -279,7 +281,7 @@ function SourceDetailPanel({ platform, accentColor, borderAccent, bgAccent, icon
 
 // ─── collapsible source scanners ─────────────────────────────────────────────
 function SourceScanners({ api, socialTrigger }) {
-  const [open, setOpen]               = useState(true);   // expanded by default
+  const [open, setOpen]               = useState(false);  // folded: incidents come first
   const [selected, setSelected]       = useState(null);   // which card is drilled into
   const [rss, setRss]                 = useState(null);
   const [rssSources, setRssSources]   = useState([]);
@@ -618,24 +620,44 @@ function SourceScanners({ api, socialTrigger }) {
   );
 }
 
+function OpenableRow({ item, api, className, testId, children }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className={className} data-testid={testId}>
+      <div className="cursor-pointer" onClick={() => setOpen((v) => !v)} title={open ? "Close" : "Open this item"}>
+        {children}
+      </div>
+      {open && (
+        <div className="mt-2 pt-2 border-t border-border/50 space-y-2" data-testid={`row-detail-${item.id}`}>
+          {item.ai_summary && <p className="text-xs text-muted-foreground">{item.ai_summary}</p>}
+          <ItemActions item={item} api={api} />
+        </div>
+      )}
+    </div>
+  );
+}
+
 function UnacknowledgedAlerts({ api }) {
   const [alerts, setAlerts] = useState([]);
   const [openCount, setOpenCount] = useState(0);
   const [dismissing, setDismissing] = useState(null);
+  const [failed, setFailed] = useState(false);
   const navigate = useNavigate();
 
+  const fetch = useCallback(async () => {
+    try {
+      const res = await axios.get(`${api}/alerts/unacknowledged`);
+      setAlerts(res.data.alerts || []);
+      setOpenCount(res.data.count || 0);
+      setFailed(false);
+    } catch (e) { setFailed(true); }
+  }, [api]);
+
   useEffect(() => {
-    const fetch = async () => {
-      try {
-        const res = await axios.get(`${api}/alerts/unacknowledged`);
-        setAlerts(res.data.alerts || []);
-        setOpenCount(res.data.count || 0);
-      } catch (e) { /* silent */ }
-    };
     fetch();
     const interval = setInterval(fetch, 30000);
     return () => clearInterval(interval);
-  }, [api]);
+  }, [fetch]);
 
   const acknowledge = async (id) => {
     setDismissing(id);
@@ -647,6 +669,7 @@ function UnacknowledgedAlerts({ api }) {
     setDismissing(null);
   };
 
+  if (failed && alerts.length === 0) return <LoadError what="the alerts needing attention" onRetry={fetch} />;
   if (alerts.length === 0) return null;
 
   return (
@@ -667,7 +690,8 @@ function UnacknowledgedAlerts({ api }) {
       <CardContent className="p-3">
         <ClickToScroll className="space-y-2 max-h-48">
         {alerts.slice(0, 5).map((item) => (
-          <div key={item.id} className="flex items-center gap-3 p-2 border border-red-500/20 bg-red-950/30" data-testid={`unack-alert-${item.id}`}>
+          <OpenableRow key={item.id} item={item} api={api} className="p-2 border border-red-500/20 bg-red-950/30" testId={`unack-alert-${item.id}`}>
+          <div className="flex items-center gap-3">
             <AlertTriangle size={14} className="text-red-400 shrink-0" />
             <div className="flex-1 min-w-0">
               <p className="text-sm font-medium leading-tight truncate">{item.title}</p>
@@ -679,7 +703,7 @@ function UnacknowledgedAlerts({ api }) {
             <Button
               variant="outline" size="sm"
               className="h-7 text-[10px] rounded-none border-green-500/30 text-green-400 hover:bg-green-500/10"
-              onClick={() => acknowledge(item.id)}
+              onClick={(e) => { e.stopPropagation(); acknowledge(item.id); }}
               disabled={dismissing === item.id}
               data-testid={`ack-btn-${item.id}`}
             >
@@ -687,6 +711,7 @@ function UnacknowledgedAlerts({ api }) {
               ACK
             </Button>
           </div>
+          </OpenableRow>
         ))}
         </ClickToScroll>
       </CardContent>
@@ -990,6 +1015,8 @@ export default function Dashboard({ stats: propStats, api }) {
   const [recentItems, setRecentItems] = useState([]);
   const [loading, setLoading] = useState(false);
   const [localStats, setLocalStats] = useState(null);
+  const [statsFailed, setStatsFailed] = useState(false);
+  const [recentFailed, setRecentFailed] = useState(false);
   const [sortBy, setSortBy] = useState("priority_score");
   const [minPriority, setMinPriority] = useState("");
   // Increments every time "Fetch Intel" fires social/fetch-all so SourceScanners
@@ -1107,8 +1134,9 @@ export default function Dashboard({ stats: propStats, api }) {
     try {
       const res = await axios.get(`${api}/dashboard/stats`);
       setLocalStats(res.data);
+      setStatsFailed(false);
     } catch (e) {
-      console.error("Failed to fetch stats:", e);
+      setStatsFailed(true);
     }
   };
 
@@ -1121,8 +1149,9 @@ export default function Dashboard({ stats: propStats, api }) {
       if (minPriority) params.set("min_priority", minPriority);
       const res = await axios.get(`${api}/intelligence?${params.toString()}`);
       setRecentItems(res.data.items || []);
+      setRecentFailed(false);
     } catch (e) {
-      console.error("Failed to fetch recent items:", e);
+      setRecentFailed(true);
     }
   };
 
@@ -1266,8 +1295,12 @@ export default function Dashboard({ stats: propStats, api }) {
         </div>
       </div>
 
+      {/* Unacknowledged Critical Alerts - Sticky Panel */}
+      <UnacknowledgedAlerts api={api} />
+
       {/* Stats Row */}
-      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-4">
+      {!stats && statsFailed && <LoadError what="the dashboard counts" onRetry={fetchStats} />}
+      <div className={`${!stats ? "hidden" : ""} grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-4`}>
         <Tip text="Total AI-processed intelligence items in your retention window. Click to open the full Intelligence Feed." side="bottom">
           <div data-tour="stat-total">
             <StatBox
@@ -1319,17 +1352,6 @@ export default function Dashboard({ stats: propStats, api }) {
           />
         </div>
       )}
-
-      {/* Source Scanners */}
-      <div data-tour="source-scanners">
-        <SourceScanners
-          api={api}
-          socialTrigger={socialTrigger}
-        />
-      </div>
-
-      {/* Unacknowledged Critical Alerts - Sticky Panel */}
-      <UnacknowledgedAlerts api={api} />
 
       {/* WebSocket Live Feed - Shows items as they arrive */}
       {wsNewItems.length > 0 && (
@@ -1477,10 +1499,12 @@ export default function Dashboard({ stats: propStats, api }) {
             <CardContent className="p-3" data-testid="recent-alerts-list">
               <ClickToScroll className="space-y-3 max-h-[400px]">
               {(stats?.recent_critical || []).map((item, i) => (
-                <div
+                <OpenableRow
                   key={item.id || i}
+                  item={item}
+                  api={api}
                   className={`p-3 border border-border ${item.severity === "critical" ? "border-l-4 border-l-red-500 glow-critical" : "border-l-4 border-l-amber-500"}`}
-                  data-testid={`recent-alert-${i}`}
+                  testId={`recent-alert-${i}`}
                 >
                   <div className="flex items-start justify-between gap-2">
                     <h4 className="text-sm font-medium leading-tight line-clamp-2">{item.title}</h4>
@@ -1493,11 +1517,12 @@ export default function Dashboard({ stats: propStats, api }) {
                     <span>|</span>
                     <span>{item.source}</span>
                   </div>
-                </div>
+                </OpenableRow>
               ))}
-              {(!stats?.recent_critical || stats.recent_critical.length === 0) && (
+              {stats && (!stats.recent_critical || stats.recent_critical.length === 0) && (
                 <p className="text-sm text-muted-foreground text-center py-8">No critical alerts</p>
               )}
+              {!stats && statsFailed && <LoadError what="recent alerts" onRetry={fetchStats} />}
               </ClickToScroll>
             </CardContent>
           </Card>
@@ -1651,12 +1676,23 @@ export default function Dashboard({ stats: propStats, api }) {
           {recentItems.map((item) => (
             <IntelligenceCard key={item.id} item={item} compact api={api} onDelete={handleDeleteItem} />
           ))}
-          {recentItems.length === 0 && (
+          {recentFailed && recentItems.length === 0 && (
+            <LoadError className="col-span-full" what="the latest intelligence" onRetry={fetchRecent} />
+          )}
+          {!recentFailed && recentItems.length === 0 && (
             <p className="text-sm text-muted-foreground col-span-full text-center py-8">
               No intelligence items yet. Click "Fetch Intel" to gather data.
             </p>
           )}
         </div>
+      </div>
+
+      {/* Source Scanners */}
+      <div data-tour="source-scanners">
+        <SourceScanners
+          api={api}
+          socialTrigger={socialTrigger}
+        />
       </div>
 
       {/* ── Custom Analytics Workspace (Sprint 2) ── */}

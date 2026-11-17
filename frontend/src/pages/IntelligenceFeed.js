@@ -13,6 +13,7 @@ import {
 } from "../components/ui/select";
 import IntelligenceCard from "../components/IntelligenceCard";
 import axios from "axios";
+import LoadError from "../components/LoadError";
 import { toast } from "sonner";
 
 const STATES = [
@@ -36,6 +37,7 @@ export default function IntelligenceFeed({ api, crossBorderOnly = false, alertsO
   const [page, setPage] = useState(1);
   const [pages, setPages] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [openAlertCount, setOpenAlertCount] = useState(0);
   const [acking, setAcking] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
@@ -97,8 +99,9 @@ export default function IntelligenceFeed({ api, crossBorderOnly = false, alertsO
         setTotal(res.data.total || 0);
         setPages(res.data.pages || 0);
       }
+      setLoadFailed(false);
     } catch (e) {
-      console.error("Failed to fetch:", e);
+      setLoadFailed(true);
     }
     setLoading(false);
   }, [api, filters, page, crossBorderOnly, alertsOnly]);
@@ -349,7 +352,7 @@ export default function IntelligenceFeed({ api, crossBorderOnly = false, alertsO
         </Tip>
 
         <span className="text-xs font-mono text-muted-foreground ml-auto" data-testid="result-count">
-          {semanticMode && semanticResults.length > 0 ? `${semanticResults.length} similar` : `${total} results`}
+          {semanticMode && semanticResults.length > 0 ? `${semanticResults.length} similar` : loadFailed ? "—" : `${total} results`}
         </span>
       </div>
 
@@ -478,7 +481,10 @@ export default function IntelligenceFeed({ api, crossBorderOnly = false, alertsO
             ))}
           </div>
 
-          {items.length === 0 && (
+          {loadFailed && items.length === 0 && (
+            <LoadError what={alertsOnly ? "the alerts" : "the intelligence items"} onRetry={fetchItems} />
+          )}
+          {!loadFailed && items.length === 0 && (
             <div className="text-center py-16 border border-border bg-card">
               <p className="text-muted-foreground text-sm">No intelligence items found matching your criteria.</p>
             </div>
