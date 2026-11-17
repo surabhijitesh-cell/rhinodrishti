@@ -310,6 +310,13 @@ def finalize_score(llm_score: int, llm_severity: str, sifter_boost: int) -> tupl
     return score, severity
 
 
+def cap_youtube(score: int, source_type) -> tuple:
+    """YouTube items are capped at High (79). Returns (score, severity or None if unchanged)."""
+    if str(source_type or "").startswith("youtube") and score >= 80:
+        return 79, "high"
+    return score, None
+
+
 # One news cycle at a time: a slow cycle must not be overlapped by the next tick.
 _news_cycle_lock = asyncio.Lock()
 
@@ -496,6 +503,12 @@ async def _fetch_and_process_news_inner(source_filter: str = None):
         rate_limit_hits = 0
         states_with_new_articles: set = set()
 
+        try:
+            from model_routing import get_routing
+            use_stage1 = (await get_routing(db))["stage1_on_news"]
+        except Exception:
+            use_stage1 = False
+
         for batch_start in range(0, len(new_articles), BATCH_SIZE):
             batch = new_articles[batch_start:batch_start + BATCH_SIZE]
             batch_num = (batch_start // BATCH_SIZE) + 1
@@ -505,6 +518,23 @@ async def _fetch_and_process_news_inner(source_filter: str = None):
 
             for article in batch:
                 await asyncio.sleep(INTER_ARTICLE_DELAY)
+
+                if use_stage1:
+                    from cheap_classifier import cheap_filter
+                    s1 = await cheap_filter(article)
+                    # "stage1_*" reasons mean the cheap model failed open: classify normally.
+                    if not s1.get("relevant", True) and not str(s1.get("reason", "")).startswith("stage1_"):
+                        await intelligence_col.insert_one({
+                            **_make_raw_doc(article),
+                            "processed": True,
+                            "tags": ["not_relevant", "stage1_filtered"],
+                            "filter_reason": s1.get("reason", "stage1"),
+                            "severity": "filtered_out",
+                            "why_it_matters": "",
+                            "potential_impact": "",
+                        })
+                        skip_count += 1
+                        continue
 
                 sift_result = sift_article(article)
                 article["_sifter"] = sift_result
@@ -1058,6 +1088,11 @@ async def analyze_unprocessed_items():
                     update_fields["sifter_triggers"] = sift["triggers"]
                 except Exception as e:
                     logger.warning(f"Sifter boost skipped for {item.get('id','')}: {e}")
+
+            capped, cap_sev = cap_youtube(update_fields.get("priority_score", 0), item.get("source_type"))
+            if cap_sev:
+                update_fields["capped_from"] = update_fields.get("priority_score")
+                update_fields["priority_score"], update_fields["severity"] = capped, cap_sev
 
             # Real-time fusion: check for duplicates before saving
             try:

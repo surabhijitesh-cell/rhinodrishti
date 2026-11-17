@@ -1,5 +1,6 @@
 """
-Stage 1 cheap classifier — binary relevance filter via Gemini 2.5 Flash-Lite.
+Stage 1 cheap classifier — removes obviously off-topic items via Gemini 2.5 Flash-Lite.
+Default is PASS: the full classifier makes every real relevance decision.
 
 Sits between Stage 0 (keyword) and Stage 2 (Haiku full classify).
 Goal: kill another ~70% of items that survived Stage 0 but are still not
@@ -25,16 +26,18 @@ from typing import Optional
 
 from openai import AsyncOpenAI
 
+from model_routing import STAGE1_MODEL
+
 logger = logging.getLogger(__name__)
 
 # OpenRouter — globally available proxy for Gemini models.
 # Render's Oregon servers are geo-blocked by generativelanguage.googleapis.com
 # free-tier restrictions. OpenRouter bypasses this.
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
-GEMINI_MODEL = "google/gemini-2.0-flash-lite-001"
+GEMINI_MODEL = STAGE1_MODEL  # gemini-2.0-flash-lite-001 was retired; failed open since June
 
 # Short name for usage_tracker model key lookups
-GEMINI_MODEL_SHORT = "gemini-2.0-flash-lite"
+GEMINI_MODEL_SHORT = "gemini-2.5-flash-lite"
 
 _client: Optional[AsyncOpenAI] = None
 
@@ -58,109 +61,46 @@ def _get_client() -> Optional[AsyncOpenAI]:
     return _client
 
 
-SYSTEM_PROMPT = """You are a STRICT binary pre-filter for an Indian security intelligence
-platform tracking Northeast India (NER: Assam, Meghalaya, Manipur, Nagaland, Mizoram,
-Tripura, Arunachal Pradesh, Sikkim) and the Siliguri Corridor (Chicken's Neck).
+SYSTEM_PROMPT = """You are a cheap first screen for an Indian Army intelligence platform covering
+Northeast India (Assam, Meghalaya, Manipur, Nagaland, Mizoram, Tripura, Arunachal
+Pradesh, Sikkim), the Siliguri Corridor / North Bengal, Bangladesh and Myanmar.
+A stronger model judges everything you pass. Your only job is to remove items that
+are OBVIOUSLY off-topic, cheaply.
 
-DEFAULT DECISION: REJECT (relevant=false).
-Mark relevant=true ONLY when you are CONFIDENT the item directly threatens or
-destabilises NER security RIGHT NOW. Uncertainty → REJECT.
+DEFAULT DECISION: PASS (relevant=true). When in doubt → PASS.
+Dropping a real security item is far worse than passing junk.
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-PASS (relevant=true) — strict allowlist. Item must clearly fit one of:
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-1. ARMED MILITANCY / INSURGENCY: Active operations, encounters, IED blasts,
-   ambushes, extortion demands with violence, arms/explosives seizure (≥500g or
-   with named group) by ULFA, NSCN variants, PLA/MPA, HNLC, KCP, Bodo factions,
-   or any named insurgent group operating in NER.
+ALWAYS PASS anything touching, in or near the regions above:
+• Army, Assam Rifles, BSF, police or armed-group activity; insurgency, militancy,
+  encounters, IEDs, arms/drug seizures, extortion, infiltration, border incidents
+• Bangladesh: politics, elections, protests, army, BGB, Awami League/BNP/Jamaat,
+  violence against Hindus or minorities, India-Bangladesh relations
+• Myanmar: junta, Arakan Army, Chin/Kuki groups, refugees, cross-border fighting
+• China/LAC/Arunachal, Pakistan or China links in South Asia, diplomatic moves that
+  affect India's security
+• Communal or religious tension, Hindu-Muslim conflict, tribal vs non-tribal or
+  indigenous vs migrant tension, ethnic violence, bandhs, blockades, strikes,
+  protests and civil unrest — including ones only announced or threatened
+• Roads, highways, bridges, railways: closures, blockades, landslides, collapse,
+  traffic disruption; floods and disasters
+• Drones, cyber attacks on Indian targets, propaganda / information campaigns
+• Ex-servicemen or veterans' issues; illegal immigration; demographic change
 
-2. BORDER SECURITY INCIDENT: Confirmed infiltration; large drug/arms haul AT
-   India-Bangladesh or India-Myanmar border (not generic seizure press releases);
-   BSF/Assam Rifles operational contact; fencing breach; Siliguri Corridor
-   physical blockage or disruption.
+REJECT ONLY when the item is clearly one of these AND has no angle above:
+• Sports, entertainment, celebrities, films, music, fashion, lifestyle, recipes,
+  horoscopes, lottery
+• Stock markets, company results, personal finance, crypto, product launches
+• Exams, admissions, school/university routine news, scholarships
+• Health tips, routine hospital or vaccination news
+• Tourism promotion, cultural festivals, awards and honours
+• Routine transfers/appointments, routine court hearings, welfare payments
+• Purely foreign news with no link to India, Bangladesh, Myanmar, China or Pakistan
 
-3. ACTIVE COMMUNAL / ETHNIC VIOLENCE: Riots in progress, curfew IMPOSED,
-   targeted killings along ethnic lines, forced displacement — inside NER states.
-   (Protests/bandhs CALLED but no violence → REJECT)
-
-4. CRITICAL INFRASTRUCTURE FAILURE IN NER: Bridge/rail collapse cutting off a
-   district; dam failure or emergency release causing flooding; state-ordered
-   internet/power shutdown; landslide blocking NH in NER.
-
-5. MAJOR NATURAL DISASTER WITH CASUALTIES IN NER: Flood/earthquake/landslide/
-   cyclone with confirmed deaths or mass displacement inside NER states.
-   (Weather forecast or advisory alone, no casualties → REJECT)
-
-6. BANGLADESH / MYANMAR DIRECT BORDER THREAT: Armed group movements at the
-   India border; Rohingya/refugee wave entering Tripura or Mizoram; Tatmadaw or
-   Arakan Army shelling/crossfire near Indian territory.
-
-7. CHINA / LAC LIVE INCIDENT: New military standoff or troop ingress at LAC in
-   Arunachal; construction inside Indian claimed territory confirmed by defence
-   sources. (Diplomatic talks, historical claims, routine patrols → REJECT)
-
-8. DISEASE OUTBREAK DECLARED IN NER: Official public-health emergency or
-   epidemic declared by state/central authority in NER states.
-   (National health campaigns, AIIMS news, routine advisories → REJECT)
-
-9. MEGHALAYA / NER COMMUNITY INCIDENT: Any of the following IN Meghalaya or
-   other NER states, reported by a local/regional outlet:
-   • Murder, killing, or suspicious death involving ethnic communities
-     (Khasi, Garo, Jaintia, Hajong, Koch, Biate, Pnar, Karbi, Dimasa, Rabha)
-   • Local (indigenous) vs non-local / immigrant tension or violence
-   • Veterans, ex-servicemen, or defence personnel grievances or incidents
-   • Social unrest, community mobilisation, or strikes with unrest potential
-   • Bangladesh border area crimes, illegal settler confrontations
-   • Major crimes (armed robbery, gang conflict, organised crime) with
-     potential to trigger community protests or ethnic polarisation
-   • Economic disruption, road blockades, or supply chain disruption
-     affecting Meghalaya districts
-   (Purely personal disputes, traffic accidents, routine theft → REJECT)
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-ALWAYS REJECT — regardless of NER mention:
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-• Cricket, IPL, Olympics, sports of any kind
-• Bollywood, OTT, celebrity gossip, entertainment
-• Sensex, mutual funds, RBI rate decisions, crypto, corporate earnings
-• Lifestyle, recipes, fashion, horoscope, lottery
-• Board exams, coaching, NEP, scholarship schemes, university news
-• PM/CM inaugurations, ribbon-cutting, development project launches
-  (only infrastructure FAILURE is relevant, not construction/opening)
-• Awards, Padma honours, national rankings, achiever profiles
-• Routine judicial: bail orders, court hearings not involving armed groups
-• Routine transfers, appointments, government scheme launches
-• India-Pakistan tension without NER/China/border angle
-• India-China diplomatic talks, trade disputes (no troop movement)
-• Bangladesh/Myanmar political or economic news without armed-group/border angle
-• National vaccination drives, health awareness, hospital openings
-• Routine police crime: theft, fraud, domestic violence, cybercrime (generic)
-  EXCEPTION: Murder/killing involving ethnic communities in Meghalaya/NER → PASS (category 9)
-• NE India cultural festivals, tourism, film festivals, brand campaigns
-• MGNREGA, PM-KISAN, welfare disbursement news
-• Political protests/bandhs ANNOUNCED (no violence confirmed)
-• Routine BSF/Assam Rifles flag meetings, patrol briefings (no incident)
-• Weather alerts, IMD forecasts for NER (no casualty/disaster declared)
-• Wildlife poaching or forest crime without security-group connection
-• Opinion pieces, analysis, retrospectives without current active incident
-• Any article where NER is mentioned only as passing geography, not as the
-  location of an active incident
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-BORDERLINE → DEFAULT REJECT:
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-"NER mentioned but article is about national policy" → REJECT
-"Drug bust <500g, location unspecified" → REJECT
-"Armed group issued statement / press release" (no action) → REJECT
-"Military exercise announced" (routine, no incident) → REJECT
-"Political tension / war of words" (no violence) → REJECT
-"Economic crime / scam" (no armed group involvement) → REJECT
-
-Tier (only if relevant=true):
+Tier (only if relevant=true, a rough guess):
 - critical: active violence, mass casualty, immediate border breach
-- high:     serious incident, named-group engagement, disaster with deaths
-- medium:   contained incident, significant seizure, credible threat
-- low:      monitoring-worthy but low urgency
+- high:     serious incident, named armed group, disaster with deaths
+- medium:   contained incident, seizure, credible threat, significant unrest
+- low:      worth monitoring
 - none:     not relevant
 
 Return ONLY valid JSON. No prose, no markdown fences. Schema:
@@ -226,6 +166,8 @@ async def cheap_filter(article: dict, timeout: float = 8.0) -> dict:
                     input_tokens=getattr(usage, "prompt_tokens", 0) or 0,
                     output_tokens=getattr(usage, "completion_tokens", 0) or 0,
                     model=GEMINI_MODEL_SHORT,  # short name maps to usage_tracker pricing
+                    feature="cheap_classifier__stage1",
+                    cost_usd=getattr(usage, "cost", None),
                 )
         except Exception:
             pass

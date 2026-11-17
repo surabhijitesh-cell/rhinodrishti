@@ -1,4 +1,5 @@
 import re
+import functools
 import logging
 from datetime import datetime, timezone
 
@@ -31,7 +32,7 @@ REJECT_SUBSTRING = [
     # Football
     'premier league', 'la liga', 'champions league', 'goalkeeper',
     'midfielder', 'striker', 'chelsea', 'real madrid',
-    'arsenal', 'liverpool fc', 'tottenham', 'serie a football',
+    'liverpool fc', 'tottenham', 'serie a football',
     'fc barcelona', 'barcelona fc',
     # Other Sports
     'tennis', 'wimbledon', 'olympics', 'badminton championship',
@@ -46,7 +47,7 @@ REJECT_SUBSTRING = [
     'recipe', 'fashion week', 'beauty tips', 'skincare routine',
     'makeup tutorial', 'horoscope', 'astrology', 'zodiac',
     'lottery result', 'lottery winner', 'teer result',
-    'wedding ceremony', 'divorce settlement', 'dating app',
+    'divorce settlement', 'dating app',
     # Education spam
     'upsc coaching', 'coaching institute', 'admission open',
     # General irrelevant
@@ -225,13 +226,60 @@ GEO_RELEVANT = [
 _COMPILED_WB_PATTERNS = [re.compile(p, re.IGNORECASE) for p in REJECT_WORD_BOUNDARY]
 
 
+_KW_CACHE = {}
+
+
+def _kw_matcher(keywords):
+    """(whole-word regex or None, non-ASCII keyword list) per keyword list; compiled once."""
+    hit = _KW_CACHE.get(id(keywords))
+    if hit and hit[0] is keywords:
+        return hit[1], hit[2]
+    ascii_kws, other = [], []
+    for kw in keywords:
+        k = kw.lower()
+        (ascii_kws if re.fullmatch(r"[a-z0-9 -]+", k) else other).append(k)
+    rx = None
+    if ascii_kws:
+        alts = "|".join(re.escape(k) for k in sorted(set(ascii_kws), key=len, reverse=True))
+        rx = re.compile(r"\b(?:" + alts + r")\b", re.IGNORECASE)
+    _KW_CACHE[id(keywords)] = (keywords, rx, other)
+    return rx, other
+
+
+def keyword_hits(text_lower: str, keywords) -> list:
+    """Keywords found in text: whole-word for ASCII keywords (so 'pla' won't hit 'place'),
+    plain substring for non-ASCII scripts where word boundaries are unreliable."""
+    rx, other = _kw_matcher(keywords)
+    hits = list(dict.fromkeys(m.group(0).lower() for m in rx.finditer(text_lower))) if rx else []
+    hits.extend(k for k in other if k in text_lower)
+    return hits
+
+
+@functools.lru_cache(maxsize=4096)
+def _single_matcher(kw):
+    k = kw.lower()
+    if re.fullmatch(r"[a-z0-9 -]+", k):
+        return re.compile(chr(92) + "b" + re.escape(k) + chr(92) + "b", re.IGNORECASE)
+    return None
+
+
+def word_in(text_lower: str, kw: str) -> bool:
+    """One keyword, same rules as keyword_hits (for dynamic keyword lists)."""
+    rx = _single_matcher(kw)
+    return bool(rx.search(text_lower)) if rx else kw.lower() in text_lower
+
+
+def has_keyword(text_lower: str, keywords) -> bool:
+    return bool(keyword_hits(text_lower, keywords))
+
+
 def _check_reject(text: str) -> str:
     """Check if text matches any reject pattern. Returns matched keyword or empty string."""
     text_lower = text.lower()
     # Substring matches (long, unambiguous keywords)
-    for kw in REJECT_SUBSTRING:
-        if kw in text_lower:
-            return kw
+    hits = keyword_hits(text_lower, REJECT_SUBSTRING)
+    if hits:
+        return hits[0]
     # Word-boundary matches (short, ambiguous keywords)
     for pattern in _COMPILED_WB_PATTERNS:
         if pattern.search(text):
@@ -265,14 +313,14 @@ def hard_filter(article: dict) -> tuple:
         return True, "source_region_relevant"
 
     # RULE 3: Hard accept on security signals
-    for kw in HARD_ACCEPT_KEYWORDS:
-        if kw in text:
-            return True, f"hard_accept:{kw}"
+    hits = keyword_hits(text, HARD_ACCEPT_KEYWORDS)
+    if hits:
+        return True, f"hard_accept:{hits[0]}"
 
     # RULE 4: Geographic relevance
-    for geo in GEO_RELEVANT:
-        if geo in text:
-            return True, f"geo_relevant:{geo}"
+    hits = keyword_hits(text, GEO_RELEVANT)
+    if hits:
+        return True, f"geo_relevant:{hits[0]}"
 
     # RULE 5: NER sources accepted by default (only after passing reject check)
     if source_region in ("ner", "ner "):

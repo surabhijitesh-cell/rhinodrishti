@@ -306,7 +306,35 @@ Respond ONLY in valid JSON:
 }"""
 
 
+async def _two_step_on() -> bool:
+    """Is the two-step scoring switch on? Off on any error."""
+    try:
+        import model_routing
+        from shared import db
+        return bool((await model_routing.get_routing(db)).get("two_step_scoring"))
+    except Exception:
+        return False
+
+
 async def classify_and_analyze_article(article, source_hint: str = "") -> dict:
+    """Score one article. Switch off (default): one call with the full model.
+    Switch on: cheap first pass on a short excerpt; only items scoring at or
+    above FULL_MODEL_FROM_SCORE are re-scored by the full model (its result wins)."""
+    if isinstance(article, str):
+        raise ValueError("queued for the retry job (text-only call form is not classified inline)")
+    if is_openrouter_exhausted() or not await _two_step_on():
+        return await classify_once(article, MODEL, 2000)
+    from model_routing import FIRST_PASS_MODEL, FULL_MODEL_FROM_SCORE, FIRST_PASS_CONTENT_CHARS
+    first = await classify_once(article, FIRST_PASS_MODEL, FIRST_PASS_CONTENT_CHARS)
+    if first.get("priority_score", 0) >= FULL_MODEL_FROM_SCORE:
+        full = await classify_once(article, MODEL, 2000)
+        full["scored_by"] = MODEL
+        return full
+    first["scored_by"] = FIRST_PASS_MODEL
+    return first
+
+
+async def classify_once(article, model: str = MODEL, content_chars: int = 2000) -> dict:
     """Classify and analyze a news article using Gemini 2.5 Flash with enhanced military intelligence prompt.
     Dynamically injects analyst feedback bias when available.
 
@@ -324,7 +352,7 @@ async def classify_and_analyze_article(article, source_hint: str = "") -> dict:
     title = article.get("title", "")
     content = article.get("raw_content", "") or article.get("description", "") or title
 
-    article_text = f"Title: {title}\nContent: {content[:2000]}"
+    article_text = f"Title: {title}\nContent: {content[:content_chars]}"
 
     try:
         from feedback_bias import get_feedback_bias_context
@@ -356,7 +384,7 @@ async def classify_and_analyze_article(article, source_hint: str = "") -> dict:
         else:
             client = get_client()
             response = await client.chat.completions.create(
-                model=MODEL,
+                model=model,
                 max_tokens=4096,  # bumped: Gemini 2.5 Flash thinking uses tokens before JSON
                 temperature=0.0,
                 response_format={"type": "json_object"},

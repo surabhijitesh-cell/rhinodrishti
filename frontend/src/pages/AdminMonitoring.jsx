@@ -468,6 +468,131 @@ function SourceHealthPanel({ api }) {
   );
 }
 
+function TitleList({ titles }) {
+  if (!titles?.length) return null;
+  return (
+    <ul className="list-disc pl-5 text-[11px] text-muted-foreground space-y-0.5">
+      {titles.map((t, i) => <li key={i}>{t}</li>)}
+    </ul>
+  );
+}
+
+function ModelTrialPanel({ api }) {
+  const [trial, setTrial] = useState(null);
+  const [routing, setRouting] = useState(null);
+  const [failed, setFailed] = useState(false);
+  const [starting, setStarting] = useState(false);
+
+  const load = () => {
+    setFailed(false);
+    Promise.all([
+      axios.get(`${api}/admin/model-trial/latest`),
+      axios.get(`${api}/admin/model-routing`),
+    ]).then(([t, r]) => { setTrial(t.data); setRouting(r.data); })
+      .catch(() => setFailed(true));
+  };
+
+  useEffect(() => { load(); }, [api]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const running = trial?.status === "running";
+  useEffect(() => {
+    if (!running) return undefined;
+    const t = setInterval(load, 10000);
+    return () => clearInterval(t);
+  }, [running, api]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const start = async () => {
+    setStarting(true);
+    try {
+      await axios.post(`${api}/admin/model-trial`, { n: 300 });
+      load();
+    } catch (e) {
+      setFailed(true);
+    }
+    setStarting(false);
+  };
+
+  const sum = trial?.status === "done" ? trial.summary : null;
+  const s1 = sum?.stage1;
+  const fp = sum?.first_pass;
+  const onOff = v => (v ? "On" : "Off");
+
+  return (
+    <div className="rounded-lg border border-border bg-card p-4 space-y-3" data-testid="model-trial-panel">
+      <div className="flex items-center gap-2">
+        <Zap size={14} className="text-violet-400" />
+        <h2 className="text-sm font-semibold uppercase tracking-widest font-['Barlow_Condensed']">Model trial</h2>
+        <div className="ml-auto">
+          <ConfirmAction
+            title="Run model trial?"
+            description="Re-scores about 300 stored items with the cheaper models to compare. Costs about $0.20–$0.50 once. Nothing in the feed changes."
+            confirmLabel="Run trial"
+            onConfirm={start}
+          >
+            <button
+              disabled={running || starting}
+              className="text-[10px] font-mono uppercase border border-border px-2 py-1 hover:bg-accent disabled:opacity-50"
+              data-testid="run-model-trial"
+            >
+              {running ? "Running…" : "Run model trial"}
+            </button>
+          </ConfirmAction>
+        </div>
+      </div>
+
+      {failed && <LoadError what="the model trial" onRetry={load} />}
+
+      {!failed && routing && (
+        <p className="text-[11px] text-muted-foreground font-mono">
+          Cheap pre-filter on news: {onOff(routing.stage1_on_news)} · Two-step scoring: {onOff(routing.two_step_scoring)}
+        </p>
+      )}
+
+      {!failed && trial?.status === "none" && (
+        <p className="text-xs text-muted-foreground">No trial has been run yet.</p>
+      )}
+      {!failed && running && (
+        <p className="text-xs text-amber-400">
+          Running: {trial.done_count ?? 0} of {trial.n} items checked. Updates every 10 seconds.
+        </p>
+      )}
+      {!failed && trial?.status === "failed" && (
+        <p className="text-xs text-red-400">The last trial failed{trial.error ? `: ${trial.error}` : ""}. You can run it again.</p>
+      )}
+
+      {!failed && sum && (
+        <div className="space-y-3 text-xs">
+          <p>
+            Checked {sum.scored} items. Estimated cost of the trial: ${sum.estimated_cost_usd}.
+          </p>
+          <div className="space-y-1">
+            <p>
+              Pre-filter would drop {s1.would_reject} items, of which {s1.of_which_critical_high} were Critical/High
+              {s1.examples.length ? ":" : "."}
+            </p>
+            <TitleList titles={s1.examples} />
+            {s1.filter_failed > 0 && (
+              <p className="text-amber-400">
+                Warning: the pre-filter failed on {s1.filter_failed} items (it keeps items when it fails), so its result above is not reliable.
+              </p>
+            )}
+          </div>
+          <div className="space-y-1">
+            <p>
+              Cheaper first pass would keep {fp.critical_high_kept_pct ?? "—"}% of Critical/High above the cut-off
+              {fp.missed_examples.length ? "; these would be missed:" : "."}
+            </p>
+            <TitleList titles={fp.missed_examples} />
+            <p className="text-muted-foreground">
+              About {fp.share_to_full_model_pct ?? "—"}% of items would still go to the full model.
+            </p>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function AdminMonitoring({ api }) {
   const { user } = useAuth();
 
@@ -502,6 +627,8 @@ export default function AdminMonitoring({ api }) {
 
       {/* ── Source health ── */}
       <SourceHealthPanel api={api} />
+
+      <ModelTrialPanel api={api} />
 
       {/* ── Two-column panels ── */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">

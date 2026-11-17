@@ -118,13 +118,17 @@ async def score_comment_sentiment(comments: list[str]) -> dict | None:
     return result
 
 
+# Paid comment scrapes are not worth it for posts with only a couple of comments.
+MIN_COMMENTS_FOR_SENTIMENT = 5
+
+
 async def analyze_comments(platform: str, identifier: str, comment_count: int = 1) -> dict | None:
     """Best-effort: returns None on any failure so callers can skip the tag.
     comment_count gates the paid Apify platforms (skip when 0, save the
-    call) — YouTube's commentThreads is free, so it always attempts."""
+    call; also skip below MIN_COMMENTS_FOR_SENTIMENT) — YouTube's commentThreads is free, so it always attempts."""
     if not identifier:
         return None
-    if platform != "youtube" and comment_count <= 0:
+    if platform != "youtube" and comment_count < MIN_COMMENTS_FOR_SENTIMENT:
         return None
     try:
         comments = await fetch_post_comments(platform, identifier)

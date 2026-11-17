@@ -366,7 +366,8 @@ def is_ner_relevant(article: dict, dynamic_keyword_weights: list = None) -> bool
             return True
     
     # Fallback to static keywords
-    return any(kw in text for kw in ALL_KEYWORDS)
+    from intelligence_filter import has_keyword
+    return has_keyword(text, ALL_KEYWORDS)
 
 
 async def fetch_all_feeds(progress_callback=None, sources=None, dynamic_keyword_weights=None, db=None) -> list:

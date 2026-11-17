@@ -20,6 +20,7 @@ from datetime import datetime, timezone, timedelta
 from collections import defaultdict, Counter
 
 from llm_client import get_client, MODEL
+from intelligence_filter import word_in
 
 logger = logging.getLogger(__name__)
 
@@ -624,7 +625,7 @@ async def adaptive_feedback(db, article: dict, classification_result: dict):
         cursor = db.keyword_store.find({"score": {"$gt": 10}}, {"_id": 0, "keyword": 1})
         async for kw_doc in cursor:
             kw = kw_doc["keyword"].lower()
-            if kw in text:
+            if word_in(text, kw):
                 await db.keyword_store.update_one(
                     {"keyword": kw_doc["keyword"]},
                     {"$inc": {"score": -2}, "$set": {"last_updated": now}}
@@ -635,7 +636,7 @@ async def adaptive_feedback(db, article: dict, classification_result: dict):
         cursor = db.keyword_store.find({}, {"_id": 0, "keyword": 1, "score": 1})
         async for kw_doc in cursor:
             kw = kw_doc["keyword"].lower()
-            if kw in text:
+            if word_in(text, kw):
                 new_score = min(100, kw_doc.get("score", 50) + 5)
                 await db.keyword_store.update_one(
                     {"keyword": kw_doc["keyword"]},
@@ -734,10 +735,10 @@ def score_article_against_keywords(article: dict, keyword_weights: list) -> floa
     
     for kw, weight in keyword_weights:
         max_possible += weight
-        if kw in text:
+        if word_in(text, kw):
             total_weight += weight
             # Extra weight for title matches
-            if kw in title:
+            if word_in(title, kw):
                 title_bonus += weight * 0.5
     
     if max_possible == 0:

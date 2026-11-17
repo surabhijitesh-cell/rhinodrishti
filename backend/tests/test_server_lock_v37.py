@@ -82,6 +82,9 @@ def as_viewer():
     ("DELETE", "/api/intelligence/1"),
     ("POST", "/api/fading/cleanup-low"),
     ("POST", "/api/admin/relationships/compute"),
+    ("POST", "/api/admin/model-trial"),
+    ("POST", "/api/admin/model-routing"),
+    ("GET", "/api/admin/model-routing"),
 ])
 def test_admin_only_action_refuses_non_admin(as_viewer, method, path):
     assert client.request(method, path, json={}).status_code == 403

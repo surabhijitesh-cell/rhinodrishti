@@ -193,6 +193,16 @@ async def fetch_youtube_channels(db) -> int:
     return saved
 
 
+_GEO_WORDS = ("india", "assam", "manipur", "meghalaya", "mizoram", "tripura", "nagaland",
+              "arunachal", "sikkim", "bangladesh", "myanmar", "northeast", "north east")
+
+
+def add_region_context(kw: str) -> str:
+    """Bank keywords are generic ('attack'); anchor them to the region for YouTube search."""
+    low = kw.lower()
+    return kw if any(g in low for g in _GEO_WORDS) else f"{kw} northeast India"
+
+
 async def fetch_youtube_searches(db) -> int:
     from ai_pipeline import classify_and_analyze_article
     from keyword_engine import get_top_keywords_for_search
@@ -207,6 +217,7 @@ async def fetch_youtube_searches(db) -> int:
     bank_keywords = await get_top_keywords_for_search(db, limit=10, min_score=40)
     seen = {q[0].lower() for q in queries}
     for kw in bank_keywords:
+        kw = add_region_context(kw)
         if kw.lower() not in seen:
             queries.append((kw, 3, None, True))  # 3 results per bank query, no _id
             seen.add(kw.lower())

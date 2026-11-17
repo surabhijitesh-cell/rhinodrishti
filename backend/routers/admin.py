@@ -19,7 +19,8 @@ GET  /api/admin/filter-settings            — current filter threshold settings
 POST /api/admin/filter-settings            — update thresholds (applied to pipeline ≤5 min)
 """
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
+from utils.auth import require_admin_role
 from pydantic import BaseModel
 from typing import Optional
 from datetime import datetime, timezone
@@ -564,3 +565,59 @@ async def cleanup_old_articles(body: CleanupBody):
         "cutoff_date": cutoff,
         "message": f"Deleted {articles_result.deleted_count} articles older than {body.older_than_days} days",
     }
+
+
+# -- Model trial and cheaper-model switches ----------------------------------
+
+class ModelTrialBody(BaseModel):
+    n: int = 300
+
+
+class ModelRoutingBody(BaseModel):
+    stage1_on_news: Optional[bool] = None
+    two_step_scoring: Optional[bool] = None
+
+
+@router.post("/admin/model-trial", dependencies=[Depends(require_admin_role)])
+async def start_model_trial(body: ModelTrialBody):
+    import asyncio, uuid
+    import model_trial
+    latest = await db.model_trials.find_one({}, {"results": 0}, sort=[("started_at", -1)])
+    now = datetime.now(timezone.utc)
+    allowed, stale = model_trial.can_start(latest, now)
+    if not allowed:
+        raise HTTPException(status_code=409, detail="A model trial is already running")
+    if stale:
+        await db.model_trials.update_one({"id": latest["id"]}, {"$set": {"status": "failed", "finished_at": now}})
+    n = max(1, min(body.n, model_trial.MAX_N))
+    tid = str(uuid.uuid4())
+    task = asyncio.create_task(model_trial.run_trial(db, n, tid))
+    _TRIAL_TASKS.add(task)
+    task.add_done_callback(_TRIAL_TASKS.discard)
+    return {"id": tid, "status": "running"}
+
+
+_TRIAL_TASKS: set = set()  # keeps background runs from being garbage-collected
+
+
+@router.get("/admin/model-trial/latest", dependencies=[Depends(require_admin_role)])
+async def latest_model_trial(full: int = Query(0)):
+    doc = await db.model_trials.find_one({}, {"_id": 0} if full else {"_id": 0, "results": 0}, sort=[("started_at", -1)])
+    return doc or {"status": "none"}
+
+
+@router.get("/admin/model-routing", dependencies=[Depends(require_admin_role)])
+async def get_model_routing():
+    import model_routing
+    model_routing.clear_cache()
+    return await model_routing.get_routing(db)
+
+
+@router.post("/admin/model-routing", dependencies=[Depends(require_admin_role)])
+async def set_model_routing(body: ModelRoutingBody):
+    import model_routing
+    changes = {k: v for k, v in body.model_dump().items() if v is not None}
+    if changes:
+        await db.admin_settings.update_one({"key": "model_routing"}, {"$set": changes}, upsert=True)
+    model_routing.clear_cache()
+    return await model_routing.get_routing(db)

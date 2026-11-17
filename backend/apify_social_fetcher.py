@@ -298,9 +298,9 @@ async def _ingest(db, items: list[dict], platform: str) -> int:
             logger.warning(f"{platform} classify failed, queued unprocessed: {e}")
             item["processed"] = False
 
-        if item.get("comments_count", 0) > 0 and sentiment_lookups < MAX_SENTIMENT_LOOKUPS_PER_CYCLE:
+        from social_comment_sentiment import MIN_COMMENTS_FOR_SENTIMENT, analyze_comments
+        if item.get("comments_count", 0) >= MIN_COMMENTS_FOR_SENTIMENT and sentiment_lookups < MAX_SENTIMENT_LOOKUPS_PER_CYCLE:
             sentiment_lookups += 1
-            from social_comment_sentiment import analyze_comments
             sentiment = await analyze_comments(platform, item["source_url"], item["comments_count"])
             if sentiment:
                 item["comment_sentiment"] = sentiment
