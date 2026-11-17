@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
+import { useAuth } from "../contexts/AuthContext";
 import { Search, RefreshCw, Globe, Users, MapPin, ArrowRight, AlertTriangle, Network } from "lucide-react";
 import { Input } from "../components/ui/input";
 import { Button } from "../components/ui/button";
@@ -219,6 +220,7 @@ export default function KnowledgeGraph({ api }) {
   const [activeTab, setActiveTab] = useState("actors");
   const [search, setSearch] = useState("");
   const [building, setBuilding] = useState(false);
+  const isViewer = useAuth().user?.role === "viewer";
   const [selectedActor, setSelectedActor] = useState(null);
   const [actorDetail, setActorDetail] = useState(null);
   const [actorEdges, setActorEdges] = useState([]);
@@ -323,6 +325,7 @@ export default function KnowledgeGraph({ api }) {
             Entity relationships across intelligence corpus
           </p>
         </div>
+        {!isViewer && (
         <Button
           data-testid="rebuild-kg-btn"
           onClick={handleBuild}
@@ -333,6 +336,7 @@ export default function KnowledgeGraph({ api }) {
           <RefreshCw size={14} className={building ? "animate-spin mr-1" : "mr-1"} />
           {building ? "Building..." : "Rebuild Graph"}
         </Button>
+        )}
       </div>
 
       {/* Stats bar */}
@@ -359,7 +363,7 @@ export default function KnowledgeGraph({ api }) {
         <div className="bg-card/60 border border-border/50 p-8 text-center">
           <Network size={32} className="text-muted-foreground mx-auto mb-3" />
           <p className="text-sm text-muted-foreground font-mono">Knowledge graph not built yet.</p>
-          <Button onClick={handleBuild} className="mt-3 font-mono text-xs rounded-none">Build Now</Button>
+          {!isViewer && <Button onClick={handleBuild} className="mt-3 font-mono text-xs rounded-none">Build Now</Button>}
         </div>
       )}
 

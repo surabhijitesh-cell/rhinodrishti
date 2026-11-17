@@ -11,6 +11,7 @@ import { Badge } from "../components/ui/badge";
 import { Input } from "../components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
 import { toast } from "sonner";
+import { useAuth } from "../contexts/AuthContext";
 
 const SEV_STYLES = {
   CRITICAL: "bg-red-500/20 text-red-400 border-red-500/30",
@@ -36,6 +37,7 @@ function AnalysisCard({ doc, onDelete, onAddToFeed, onReanalyze, api }) {
   const [expanded, setExpanded] = useState(false);
   const [selectedKw, setSelectedKw] = useState(new Set());
   const [addingKw, setAddingKw] = useState(false);
+  const isViewer = useAuth().user?.role === "viewer";
   const a = doc.analysis || {};
   const tc = a.threat_classification || {};
   const pa = a.pattern_analysis || {};
@@ -94,7 +96,7 @@ function AnalysisCard({ doc, onDelete, onAddToFeed, onReanalyze, api }) {
                 <span className="text-[10px] font-mono">Analyzing...</span>
               </div>
             )}
-            {doc.processed && doc.source_type === "url" && !a?.error && (
+            {!isViewer && doc.processed && doc.source_type === "url" && !a?.error && (
               <Button
                 variant="outline" size="sm"
                 className="h-7 text-[10px] rounded-none border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/10 mr-1"
@@ -105,10 +107,12 @@ function AnalysisCard({ doc, onDelete, onAddToFeed, onReanalyze, api }) {
                 <Rss size={11} className="mr-1" /> Add to Feed
               </Button>
             )}
+            {!isViewer && (
             <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-red-400" onClick={(e) => { e.stopPropagation(); onDelete(doc.id); }}
               title="Delete" data-testid={`delete-doc-${doc.id}`}>
               <Trash2 size={13} />
             </Button>
+            )}
             {expanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
           </div>
         </div>
@@ -223,7 +227,7 @@ function AnalysisCard({ doc, onDelete, onAddToFeed, onReanalyze, api }) {
                   );
                 })}
               </div>
-              {selectedKw.size > 0 && (
+              {!isViewer && selectedKw.size > 0 && (
                 <div className="mt-3 pt-2 border-t border-border flex items-center gap-2" data-testid="kw-add-bar">
                   <span className="text-[10px] font-mono text-muted-foreground">{selectedKw.size} selected</span>
                   <Button
@@ -307,7 +311,7 @@ function AnalysisCard({ doc, onDelete, onAddToFeed, onReanalyze, api }) {
         <CardContent className="p-4">
           <div className="text-red-400 text-sm flex items-center gap-2 flex-wrap">
             <AlertTriangle size={14} /> Analysis error: {a.error}
-            {onReanalyze && (
+            {onReanalyze && !isViewer && (
               <button
                 onClick={(e) => { e.stopPropagation(); onReanalyze(doc.id); }}
                 className="ml-2 text-xs text-amber-400 hover:text-amber-300 underline underline-offset-2"
@@ -596,6 +600,7 @@ function QuickAddToFeed({ api, urlInput, setUrlInput }) {
 
 
 export default function DocumentUpload({ api }) {
+  const isViewer = useAuth().user?.role === "viewer";
   const [documents, setDocuments] = useState([]);
   const [tab, setTab] = useState("file");
   const [uploading, setUploading] = useState(false);
@@ -684,7 +689,12 @@ export default function DocumentUpload({ api }) {
         </p>
       </div>
 
+      {isViewer && (
+        <p className="text-xs text-muted-foreground font-mono">Viewers can read uploaded documents but cannot add or change them.</p>
+      )}
+
       {/* Input Tabs */}
+      {!isViewer && (
       <Card className="border border-border rounded-none bg-card" data-testid="upload-card">
         <CardHeader className="py-0 px-0 border-b border-border">
           <div className="flex">
@@ -772,6 +782,7 @@ export default function DocumentUpload({ api }) {
           )}
         </CardContent>
       </Card>
+      )}
 
       {/* Analysis Results */}
       <div className="space-y-3">

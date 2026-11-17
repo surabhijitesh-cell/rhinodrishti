@@ -1,5 +1,6 @@
 import { ExternalLink } from "lucide-react";
 import FeedbackWidget from "./FeedbackWidget";
+import { useAuth } from "../contexts/AuthContext";
 import FlagButton from "./FlagButton";
 
 /**
@@ -8,11 +9,14 @@ import FlagButton from "./FlagButton";
  * is opened — the rating part loads the item's ratings on mount.
  */
 export default function ItemActions({ item, api }) {
+  const { user } = useAuth();
   return (
     <div className="flex items-center gap-2 flex-wrap" data-testid={`item-actions-${item.id}`}>
-      <div className="flex-1 min-w-[220px] [&>div]:border-0 [&>div]:pb-0 [&>div]:mb-0">
-        <FeedbackWidget itemId={item.id} api={api} compact />
-      </div>
+      {user?.role !== "viewer" && (
+        <div className="flex-1 min-w-[220px] [&>div]:border-0 [&>div]:pb-0 [&>div]:mb-0">
+          <FeedbackWidget itemId={item.id} api={api} compact />
+        </div>
+      )}
       <FlagButton item={item} api={api} />
       {item.source_url && (
         <a

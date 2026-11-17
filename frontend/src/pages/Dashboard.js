@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
+import ConfirmAction from "../components/ConfirmAction";
 import { useAdminIod } from "../contexts/AdminIodContext";
 import {
   Shield, AlertTriangle, Activity, TrendingUp,
@@ -158,8 +159,11 @@ function ScannerCard({
   label, icon: Icon, accentColor, bgAccent, borderAccent, barColor,
   isConfigured, isActive, activeLabel, progress, stat1, stat2,
   lastFetched, onTrigger, triggering, configNote, testId,
-  isSelected, onClick, tooltip, pulse,
+  isSelected, onClick, tooltip, pulse, confirmText, adminOnly,
 }) {
+  const { user } = useAuth();
+  // Matches the server: RSS/YouTube/Telegram fetches allow analysts; Apify (paid) fetches are admin-only.
+  const canFetch = user?.role === "admin" || (user?.role === "analyst" && !adminOnly);
   const badge = isActive
     ? <Badge className={`rounded-none text-[8px] px-1 py-0 border ${bgAccent} ${accentColor} ${borderAccent} animate-pulse leading-3`}>{activeLabel || "ACTIVE"}</Badge>
     : isConfigured
@@ -218,6 +222,8 @@ function ScannerCard({
             <span className="text-[9px] font-mono text-emerald-400 shrink-0">▲{pulse.positive_pct}%</span>
           </Tip>
         )}
+        {canFetch ? (
+        <ConfirmAction when={!!confirmText} title={`Fetch ${label}?`} description={confirmText} confirmLabel="Fetch" onConfirm={() => onTrigger && onTrigger()}>
         <Button
           variant="ghost" size="sm"
           className={`h-5 flex-1 text-[9px] rounded-none font-mono border tracking-wider ${
@@ -225,12 +231,14 @@ function ScannerCard({
               ? `${borderAccent} ${accentColor} opacity-60 hover:opacity-100`
               : "border-border text-muted-foreground opacity-40 cursor-not-allowed"
           }`}
-          onClick={e => { e.stopPropagation(); onTrigger && onTrigger(); }}
+          onClick={e => { e.stopPropagation(); if (!confirmText && onTrigger) onTrigger(); }}
           disabled={!isConfigured || triggering || !onTrigger}
         >
           {triggering ? <Loader2 size={9} className="animate-spin mr-1" /> : <Zap size={9} className="mr-1" />}
           {triggering ? "FETCHING…" : "FETCH"}
         </Button>
+        </ConfirmAction>
+        ) : <div className="flex-1" />}
         {pulse && (
           <Tip text={`Social Pulse — ${pulse.post_count} scored posts`} side="top">
             <span className="text-[9px] font-mono text-red-400 shrink-0">▼{pulse.negative_pct}%</span>
@@ -281,6 +289,8 @@ function SourceDetailPanel({ platform, accentColor, borderAccent, bgAccent, icon
 
 // ─── collapsible source scanners ─────────────────────────────────────────────
 function SourceScanners({ api, socialTrigger }) {
+  const { user: scanUser } = useAuth();
+  const canScan = scanUser?.role === "admin" || scanUser?.role === "analyst";
   const [open, setOpen]               = useState(false);  // folded: incidents come first
   const [selected, setSelected]       = useState(null);   // which card is drilled into
   const [rss, setRss]                 = useState(null);
@@ -469,6 +479,7 @@ function SourceScanners({ api, socialTrigger }) {
               </span>
             </Tip>
           )}
+          {canScan && (
           <Button
             variant="ghost" size="sm"
             className="h-6 px-2 text-[9px] rounded-none font-mono text-muted-foreground border border-border hover:text-foreground"
@@ -479,6 +490,7 @@ function SourceScanners({ api, socialTrigger }) {
             {triggering["all"] ? <Loader2 size={9} className="animate-spin mr-1" /> : <RefreshCw size={9} className="mr-1" />}
             {triggering["all"] ? "FETCHING…" : "SCAN SOCIAL MEDIA"}
           </Button>
+          )}
           {open ? <ChevronUp size={13} className="text-muted-foreground" /> : <ChevronDown size={13} className="text-muted-foreground" />}
         </div>
       </div>
@@ -551,7 +563,9 @@ function SourceScanners({ api, socialTrigger }) {
                 progress={fbActive ? 100 : 0}
                 stat1={fbActive ? `${fbPostCount} posts` : ""}
                 lastFetched={apifyStatus?.last_run}
+                adminOnly
                 onTrigger={() => trigger("facebook", "/social/apify/fetch-now")}
+                confirmText="This starts paid scraping on Apify (a few cents per run). Continue?"
                 triggering={triggering["facebook"] || triggering["all"]}
                 configNote="Add APIFY_TOKEN"
                 isSelected={selected === "facebook"}
@@ -569,7 +583,9 @@ function SourceScanners({ api, socialTrigger }) {
                 progress={igActive ? 100 : 0}
                 stat1={igActive ? `${igPostCount} posts` : ""}
                 lastFetched={apifyStatus?.last_run}
+                adminOnly
                 onTrigger={() => trigger("instagram", "/social/apify/fetch-now")}
+                confirmText="This starts paid scraping on Apify (a few cents per run). Continue?"
                 triggering={triggering["instagram"] || triggering["all"]}
                 configNote="Add APIFY_TOKEN"
                 isSelected={selected === "instagram"}
@@ -587,7 +603,9 @@ function SourceScanners({ api, socialTrigger }) {
                 progress={twActive ? 100 : 0}
                 stat1={twActive ? `${twPostCount} tweets` : ""}
                 lastFetched={apifyStatus?.last_run}
+                adminOnly
                 onTrigger={() => trigger("twitter", "/social/apify/fetch-now")}
+                confirmText="This starts paid scraping on Apify (a few cents per run). Continue?"
                 triggering={triggering["twitter"] || triggering["all"]}
                 configNote="Add APIFY_TOKEN"
                 isSelected={selected === "twitter"}
@@ -1280,6 +1298,7 @@ export default function Dashboard({ stats: propStats, api }) {
               )}
             </div>
           </Tip>
+          {user?.role !== "viewer" && (
           <Tip text="Trigger a full sweep of all 3 active sources — RSS feeds, YouTube and Telegram — simultaneously" side="bottom">
             <Button
               onClick={handleFetchNews}
@@ -1292,6 +1311,7 @@ export default function Dashboard({ stats: propStats, api }) {
               Fetch Intel
             </Button>
           </Tip>
+          )}
         </div>
       </div>
 

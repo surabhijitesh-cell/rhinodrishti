@@ -450,6 +450,29 @@ async def storage_stats():
     return {"counts": result}
 
 
+def _storage_cutoff(days: int) -> str:
+    if days < 7:
+        raise HTTPException(status_code=422, detail="older_than_days must be >= 7")
+    return (
+        datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+        - __import__("datetime").timedelta(days=days)
+    ).strftime("%Y-%m-%d")
+
+
+@router.get("/admin/storage/preview")
+async def storage_preview(older_than_days: int):
+    """What Delete Articles / Strip Raw Content would touch — read only, for the confirmation box."""
+    cutoff = _storage_cutoff(older_than_days)
+    return {
+        "cutoff_date": cutoff,
+        "articles_to_delete": await intelligence_col.count_documents({"published_at": {"$lt": cutoff}}),
+        "articles_to_strip": await intelligence_col.count_documents({
+            "published_at": {"$lt": cutoff}, "processed": True,
+            "raw_content": {"$exists": True, "$nin": [None, ""]},
+        }),
+    }
+
+
 @router.post("/admin/storage/strip-raw-content")
 async def strip_raw_content(body: CleanupBody):
     """
@@ -484,9 +507,8 @@ async def strip_raw_content(body: CleanupBody):
 @router.post("/admin/storage/cleanup-articles")
 async def cleanup_old_articles(body: CleanupBody):
     """
-    Delete intelligence_items older than N days.
-    Also trims api_usage logs older than 30 days.
-    Returns deleted counts.
+    Delete intelligence_items older than N days. Cost history (api_usage) is
+    kept: the usage widget relies on it.
     """
     if body.older_than_days < 7:
         raise HTTPException(status_code=422, detail="older_than_days must be >= 7")
@@ -503,20 +525,9 @@ async def cleanup_old_articles(body: CleanupBody):
         {"published_at": {"$lt": cutoff}}
     )
 
-    # Also trim api_usage logs older than 30 days
-    usage_cutoff = (
-        datetime.now(timezone.utc).replace(
-            hour=0, minute=0, second=0, microsecond=0
-        )
-        - __import__("datetime").timedelta(days=30)
-    ).strftime("%Y-%m-%d")
-    usage_result = await db.api_usage.delete_many(
-        {"date": {"$lt": usage_cutoff}}
-    )
-
     return {
         "articles_deleted": articles_result.deleted_count,
-        "api_usage_deleted": usage_result.deleted_count,
+        "api_usage_deleted": 0,
         "cutoff_date": cutoff,
         "message": f"Deleted {articles_result.deleted_count} articles older than {body.older_than_days} days",
     }

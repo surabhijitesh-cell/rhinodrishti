@@ -142,6 +142,7 @@ export default function IntelligenceCard({ item, compact = false, api, feedbackD
   const { user } = useAuth();
 
   const canEnhance = user && (user.role === "analyst" || user.role === "admin");
+  const isViewer = user?.role === "viewer";
   const enhancement = item.analyst_enhancement;
 
   const handleSaveNote = async () => {
@@ -355,7 +356,7 @@ export default function IntelligenceCard({ item, compact = false, api, feedbackD
               </Tip>
             )}
 
-            {api && (
+            {api && !isViewer && (
               <Tip text="Re-run AI classification on this item (e.g. after severity rule changes)" side="left">
                 <button
                   onClick={handleReprocess}
@@ -368,7 +369,7 @@ export default function IntelligenceCard({ item, compact = false, api, feedbackD
               </Tip>
             )}
 
-            {onDelete && (
+            {onDelete && !isViewer && (
               <Tip text="Permanently delete this intelligence item" side="left">
                 <button
                   onClick={(e) => {
@@ -391,7 +392,7 @@ export default function IntelligenceCard({ item, compact = false, api, feedbackD
       </div>
 
       {/* Feedback Widget - TOP of card */}
-      {api && (
+      {api && !isViewer && (
         <FeedbackWidget
           itemId={item.id}
           api={api}

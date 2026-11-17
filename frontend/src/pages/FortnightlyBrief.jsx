@@ -11,6 +11,7 @@ import Tip from "../components/Tip";
 import { CommanderDashboard, PaoiDeepDives } from "../components/PaoiBriefSections";
 import { downloadPdf } from "../lib/downloadPdf";
 import { useAuth } from "../contexts/AuthContext";
+import ConfirmAction from "../components/ConfirmAction";
 import { useAdminIod } from "../contexts/AdminIodContext";
 import {
   AreaChart, Area, LineChart, Line, XAxis, YAxis, Tooltip,
@@ -207,8 +208,9 @@ export default function FortnightlyBrief({ api }) {
         <button onClick={() => adjustPeriod(-1)} className="px-2 py-1.5 border border-border text-xs font-mono hover:border-primary">&lt; Prev</button>
         <div className="text-xs font-mono uppercase tracking-wider min-w-[160px] text-center">{label}</div>
         <button onClick={() => adjustPeriod(1)}  className="px-2 py-1.5 border border-border text-xs font-mono hover:border-primary">Next &gt;</button>
+        {user?.role !== "viewer" && (
+        <ConfirmAction title={(brief?.status === "ready" || brief?.status === "partial") ? "Regenerate this brief?" : "Generate this brief?"} description={(brief?.status === "ready" || brief?.status === "partial") ? "It makes 30–40 AI calls (roughly $0.20–$0.70) and takes several minutes. The current brief stays on screen until the new one is ready." : "It makes 30–40 AI calls (roughly $0.20–$0.70) and takes several minutes."} confirmLabel={(brief?.status === "ready" || brief?.status === "partial") ? "Regenerate" : "Generate"} onConfirm={handleGenerate}>
         <Button
-          onClick={handleGenerate}
           disabled={generating}
           className="rounded-none uppercase text-xs tracking-wider"
           data-testid="generate-fortnightly-btn"
@@ -217,6 +219,8 @@ export default function FortnightlyBrief({ api }) {
             (brief?.status === "ready" || brief?.status === "partial") ? <><RefreshCw size={12} className="mr-1" /> Regenerate</> :
                                           <><FileText  size={12} className="mr-1" /> Generate</>}
         </Button>
+        </ConfirmAction>
+        )}
         {(brief?.status === "ready" || brief?.status === "partial") && (
           <>
             <div className="flex flex-col items-end gap-1">

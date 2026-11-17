@@ -13,6 +13,7 @@ import { Progress } from "../components/ui/progress";
 import { toast } from "sonner";
 import axios from "axios";
 import { useAuth } from "../contexts/AuthContext";
+import ConfirmAction from "../components/ConfirmAction";
 
 const STATUS_COLORS = {
   pending: "text-yellow-400 border-yellow-500/30",
@@ -347,6 +348,10 @@ export default function TrainingSummary({ api }) {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* ===== LEFT: UPLOAD + QUEUE ===== */}
         <div className="space-y-4">
+          {isViewer && (
+            <p className="text-xs text-muted-foreground font-mono">Viewers can see the training queue but cannot add, run or remove items.</p>
+          )}
+          {!isViewer && (<>
           {/* URL Input */}
           <Card className={`border border-border rounded-none bg-card ${isViewer ? "opacity-50" : ""}`} data-testid="url-input-card">
             <CardHeader className="py-3 px-4 border-b border-border">
@@ -430,8 +435,8 @@ export default function TrainingSummary({ api }) {
           {/* Train Button + Progress */}
           <Card className="border border-border rounded-none bg-card" data-testid="train-action-card">
             <CardContent className="p-4 space-y-3">
+              <ConfirmAction title={`Run training on ${pendingCount} queued items?`} description={`About ${pendingCount} AI calls (roughly $0.002 each).`} confirmLabel="Run training" onConfirm={startTraining}>
               <Button
-                onClick={startTraining}
                 disabled={isViewer || training || pendingCount === 0}
                 className="w-full rounded-none uppercase text-sm font-bold tracking-wider py-5 disabled:opacity-50 disabled:cursor-not-allowed"
                 data-testid="train-btn"
@@ -443,6 +448,7 @@ export default function TrainingSummary({ api }) {
                   <><Play size={16} className="mr-2" /> Train Rhino Drishti ({pendingCount} items)</>
                 )}
               </Button>
+              </ConfirmAction>
 
               {training && progress && (
                 <div className="space-y-2" data-testid="training-progress">
@@ -460,6 +466,7 @@ export default function TrainingSummary({ api }) {
               )}
             </CardContent>
           </Card>
+          </>)}
         </div>
 
         {/* ===== RIGHT: TRAINING QUEUE ===== */}
@@ -503,9 +510,13 @@ export default function TrainingSummary({ api }) {
                         )}
                       </div>
                     </div>
-                    <button onClick={() => deleteItem(item.id)} className="p-1 hover:text-red-400 transition-colors shrink-0" data-testid={`delete-queue-${item.id}`}>
+                    {!isViewer && (
+                    <ConfirmAction title="Remove this item from the training queue?" description="The item will no longer be used for training." confirmLabel="Remove" onConfirm={() => deleteItem(item.id)}>
+                    <button className="p-1 hover:text-red-400 transition-colors shrink-0" data-testid={`delete-queue-${item.id}`}>
                       <Trash2 size={12} />
                     </button>
+                    </ConfirmAction>
+                    )}
                   </div>
                 ))}
               </div>

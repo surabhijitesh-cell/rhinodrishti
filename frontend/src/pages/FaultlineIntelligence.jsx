@@ -361,6 +361,7 @@ export default function FaultlineIntelligence({ api }) {
             <Target size={12} className="mr-1" />
             Manage PAOIs
           </Button>
+          {user?.role !== "viewer" && (
           <Button
             variant="outline" size="sm"
             className="rounded-none text-xs"
@@ -370,6 +371,7 @@ export default function FaultlineIntelligence({ api }) {
             <Plus size={12} className="mr-1" />
             New Faultline
           </Button>
+          )}
           <Button
             variant="outline" size="sm"
             className="rounded-none text-xs"
@@ -380,6 +382,7 @@ export default function FaultlineIntelligence({ api }) {
             <RefreshCw size={12} className={`mr-1 ${loading ? "animate-spin" : ""}`} />
             Refresh
           </Button>
+          {user?.role !== "viewer" && (
           <Button
             variant="outline" size="sm"
             className="rounded-none text-xs"
@@ -390,7 +393,8 @@ export default function FaultlineIntelligence({ api }) {
             <Activity size={12} className="mr-1" />
             {running ? "Running…" : "Run scoring now"}
           </Button>
-          {faultlines.length === 0 && (
+          )}
+          {faultlines.length === 0 && user?.role !== "viewer" && (
             <Button
               variant="default" size="sm"
               className="rounded-none text-xs"

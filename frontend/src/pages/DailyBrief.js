@@ -11,6 +11,7 @@ import axios from "axios";
 import MonthlyBrief from "./MonthlyBrief";
 import FortnightlyBrief from "./FortnightlyBrief";
 import { useAuth } from "../contexts/AuthContext";
+import ConfirmAction from "../components/ConfirmAction";
 
 class BriefErrorBoundary extends Component {
   constructor(props) {
@@ -373,9 +374,11 @@ export default function DailyBrief({ api }) {
               )}
             </div>
           )}
+          {user?.role !== "viewer" && (
           <Tip text="Generate a fresh brief using all intelligence collected since the last brief. Runs in the background — takes ~30 seconds to complete." side="bottom">
+            <span>
+            <ConfirmAction title="Regenerate today's brief?" description="Uses one AI call (under 1 US cent)." confirmLabel="Regenerate" onConfirm={generateBrief}>
             <Button
-              onClick={generateBrief}
               disabled={generating}
               className="uppercase text-xs font-bold tracking-wider rounded-none"
               data-testid="generate-brief-btn"
@@ -384,7 +387,10 @@ export default function DailyBrief({ api }) {
               <RefreshCw size={14} className={`mr-2 ${generating ? "animate-spin" : ""}`} />
               {generating ? "Generating..." : "Regenerate Brief"}
             </Button>
+            </ConfirmAction>
+            </span>
           </Tip>
+          )}
         </div>
       </div>
 
@@ -684,9 +690,11 @@ export default function DailyBrief({ api }) {
         <div className="text-center py-16 border border-border bg-card">
           <FileText size={40} className="mx-auto text-muted-foreground mb-4" />
           <p className="text-muted-foreground text-sm mb-4">No daily brief available for today.</p>
+          {user?.role !== "viewer" && (
           <Button onClick={generateBrief} disabled={generating} className="rounded-none uppercase text-xs tracking-wider" data-testid="generate-first-brief-btn">
             Generate Brief
           </Button>
+          )}
         </div>
       )}
     </div>

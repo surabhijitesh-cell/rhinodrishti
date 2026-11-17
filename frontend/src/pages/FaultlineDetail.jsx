@@ -5,6 +5,7 @@ import {
   Network, FileText, Check,
 } from "lucide-react";
 import axios from "axios";
+import { useAuth } from "../contexts/AuthContext";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
@@ -72,6 +73,7 @@ export default function FaultlineDetail({ api }) {
   const [savingNotes, setSavingNotes] = useState(false);
   const [notesSaved, setNotesSaved] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const isViewer = useAuth().user?.role === "viewer";
   // Only initialize notesDraft from the server response on the first load.
   // Subsequent fetchAll calls (e.g. days-selector change, refresh, polling)
   // would otherwise silently overwrite the user's in-progress draft.
@@ -239,6 +241,7 @@ export default function FaultlineDetail({ api }) {
                 <SelectItem value="365">365 days</SelectItem>
               </SelectContent>
             </Select>
+            {!isViewer && (
             <Button
               variant="ghost"
               size="sm"
@@ -249,6 +252,7 @@ export default function FaultlineDetail({ api }) {
             >
               <RefreshCw size={12} className={refreshing ? "animate-spin" : ""} />
             </Button>
+            )}
           </CardHeader>
           <CardContent className="p-3 h-64">
             {history.length === 0 ? (

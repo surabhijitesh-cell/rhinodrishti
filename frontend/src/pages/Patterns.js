@@ -7,6 +7,7 @@ import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import Tip from "../components/Tip";
 import axios from "axios";
+import { useAuth } from "../contexts/AuthContext";
 
 const RISK_STYLES = {
   CRITICAL: { badge: "bg-red-500/20 text-red-400 border-red-500/30", border: "border-l-4 border-l-red-500" },
@@ -27,6 +28,7 @@ export default function Patterns({ api }) {
   const [patterns, setPatterns] = useState([]);
   const [loading, setLoading] = useState(false);
   const [detecting, setDetecting] = useState(false);
+  const isViewer = useAuth().user?.role === "viewer";
 
   const fetchPatterns = async () => {
     setLoading(true);
@@ -66,6 +68,7 @@ export default function Patterns({ api }) {
             Recurring threat patterns across intelligence items
           </p>
         </div>
+        {!isViewer && (
         <Tip text="Run pattern detection on all intelligence items in the current retention window. Looks for clusters of 3+ items sharing the same region, threat type or actor within a 7-day window." side="left">
           <Button
             onClick={triggerDetection}
@@ -77,6 +80,7 @@ export default function Patterns({ api }) {
             Run Detection
           </Button>
         </Tip>
+        )}
       </div>
 
       {/* Summary Stats */}

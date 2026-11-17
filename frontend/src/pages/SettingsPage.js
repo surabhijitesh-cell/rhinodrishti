@@ -48,23 +48,34 @@ export default function SettingsPage({ api }) {
   return <SettingsContent api={api} />;
 }
 
+function LoadFailedNote({ onRetry }) {
+  return (
+    <div className="flex items-center gap-2 text-xs text-amber-400 border border-amber-500/30 bg-amber-500/5 p-2" data-testid="settings-load-failed">
+      <span>Couldn't load the current value — Save is off so the real setting isn't overwritten.</span>
+      <button onClick={onRetry} className="underline underline-offset-2 hover:text-amber-300 shrink-0">Retry</button>
+    </div>
+  );
+}
+
 function SettingsContent({ api }) {
   const [retentionDays, setRetentionDays] = useState("30");
   const [savingRetention, setSavingRetention] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [loadFailed, setLoadFailed] = useState(false);
 
-  useEffect(() => {
-    const fetch = async () => {
-      try {
-        const res = await axios.get(`${api}/settings/retention`);
-        setRetentionDays(String(res.data.retention_days || 30));
-      } catch (e) {
-        console.error("Failed to fetch retention setting:", e);
-      }
-      setLoading(false);
-    };
-    fetch();
-  }, [api]);
+  const fetch = async () => {
+    try {
+      const res = await axios.get(`${api}/settings/retention`);
+      setRetentionDays(String(res.data.retention_days || 30));
+      setLoadFailed(false);
+    } catch (e) {
+      console.error("Failed to fetch retention setting:", e);
+      setLoadFailed(true);
+    }
+    setLoading(false);
+  };
+
+  useEffect(() => { fetch(); }, [api]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSaveRetention = async () => {
     setSavingRetention(true);
@@ -113,6 +124,7 @@ function SettingsContent({ api }) {
             <p className="text-xs text-muted-foreground">
               How many days of intelligence data to display. Older items remain in the database but won't appear in stats.
             </p>
+            {loadFailed && <LoadFailedNote onRetry={fetch} />}
             <div className="flex items-center gap-3">
               <Select value={retentionDays} onValueChange={setRetentionDays} disabled={loading}>
                 <SelectTrigger className="w-[200px] rounded-none" data-testid="retention-select">
@@ -124,7 +136,7 @@ function SettingsContent({ api }) {
                   ))}
                 </SelectContent>
               </Select>
-              <Button onClick={handleSaveRetention} disabled={savingRetention} className="uppercase text-xs font-bold tracking-wider rounded-none" data-testid="save-retention-btn">
+              <Button onClick={handleSaveRetention} disabled={savingRetention || loadFailed} className="uppercase text-xs font-bold tracking-wider rounded-none" data-testid="save-retention-btn">
                 {savingRetention ? <RefreshCw size={14} className="mr-1.5 animate-spin" /> : <Save size={14} className="mr-1.5" />}
                 Save
               </Button>
@@ -480,19 +492,21 @@ function FeedbackSettings({ api }) {
   const [maxFeedback, setMaxFeedback] = useState("20");
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [loadFailed, setLoadFailed] = useState(false);
 
-  useEffect(() => {
-    const fetchSettings = async () => {
-      try {
-        const res = await axios.get(`${api}/settings/feedback`);
-        setMaxFeedback(String(res.data.max_feedback_per_item || 20));
-      } catch (e) {
-        console.error("Failed to fetch feedback settings:", e);
-      }
-      setLoading(false);
-    };
-    fetchSettings();
-  }, [api]);
+  const fetchSettings = async () => {
+    try {
+      const res = await axios.get(`${api}/settings/feedback`);
+      setMaxFeedback(String(res.data.max_feedback_per_item || 20));
+      setLoadFailed(false);
+    } catch (e) {
+      console.error("Failed to fetch feedback settings:", e);
+      setLoadFailed(true);
+    }
+    setLoading(false);
+  };
+
+  useEffect(() => { fetchSettings(); }, [api]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSave = async () => {
     setSaving(true);
@@ -519,6 +533,7 @@ function FeedbackSettings({ api }) {
         <p className="text-xs text-muted-foreground">
           Maximum number of feedback ratings allowed per intelligence item.
         </p>
+        {loadFailed && <LoadFailedNote onRetry={fetchSettings} />}
         <div className="flex items-center gap-3">
           <Select value={maxFeedback} onValueChange={setMaxFeedback} disabled={loading}>
             <SelectTrigger className="w-[200px] rounded-none" data-testid="feedback-limit-select">
@@ -534,7 +549,7 @@ function FeedbackSettings({ api }) {
               <SelectItem value="100">100 ratings</SelectItem>
             </SelectContent>
           </Select>
-          <Button onClick={handleSave} disabled={saving} className="uppercase text-xs font-bold tracking-wider rounded-none" data-testid="save-feedback-limit-btn">
+          <Button onClick={handleSave} disabled={saving || loadFailed} className="uppercase text-xs font-bold tracking-wider rounded-none" data-testid="save-feedback-limit-btn">
             {saving ? <RefreshCw size={14} className="mr-1.5 animate-spin" /> : <Save size={14} className="mr-1.5" />}
             Save
           </Button>
@@ -554,20 +569,22 @@ function BiasSettings({ api }) {
   const [biasInfluence, setBiasInfluence] = useState("moderate");
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [loadFailed, setLoadFailed] = useState(false);
 
-  useEffect(() => {
-    const fetchSettings = async () => {
-      try {
-        const res = await axios.get(`${api}/settings/bias`);
-        setBiasWindow(res.data.bias_window || "rolling_30");
-        setBiasInfluence(res.data.bias_influence || "moderate");
-      } catch (e) {
-        console.error("Failed to fetch bias settings:", e);
-      }
-      setLoading(false);
-    };
-    fetchSettings();
-  }, [api]);
+  const fetchSettings = async () => {
+    try {
+      const res = await axios.get(`${api}/settings/bias`);
+      setBiasWindow(res.data.bias_window || "rolling_30");
+      setBiasInfluence(res.data.bias_influence || "moderate");
+      setLoadFailed(false);
+    } catch (e) {
+      console.error("Failed to fetch bias settings:", e);
+      setLoadFailed(true);
+    }
+    setLoading(false);
+  };
+
+  useEffect(() => { fetchSettings(); }, [api]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSave = async () => {
     setSaving(true);
@@ -598,6 +615,7 @@ function BiasSettings({ api }) {
         <p className="text-xs text-muted-foreground">
           Control how analyst feedback influences the AI classification pipeline.
         </p>
+        {loadFailed && <LoadFailedNote onRetry={fetchSettings} />}
 
         <div className="space-y-1.5">
           <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-mono font-semibold">Feedback Window</p>
@@ -626,7 +644,7 @@ function BiasSettings({ api }) {
           </Select>
         </div>
 
-        <Button onClick={handleSave} disabled={saving} className="w-full uppercase text-xs font-bold tracking-wider rounded-none" data-testid="save-bias-settings-btn">
+        <Button onClick={handleSave} disabled={saving || loadFailed} className="w-full uppercase text-xs font-bold tracking-wider rounded-none" data-testid="save-bias-settings-btn">
           {saving ? <RefreshCw size={14} className="mr-1.5 animate-spin" /> : <Save size={14} className="mr-1.5" />}
           Save Bias Settings
         </Button>

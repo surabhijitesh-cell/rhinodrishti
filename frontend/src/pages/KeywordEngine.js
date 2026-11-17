@@ -6,6 +6,7 @@ import { Badge } from "../components/ui/badge";
 import { Input } from "../components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
 import { toast } from "sonner";
+import { useAuth } from "../contexts/AuthContext";
 
 const TYPE_STYLES = {
   primary: { bg: "bg-red-900/30 text-red-300 border-red-800/40", label: "Primary Threat" },
@@ -27,6 +28,7 @@ const SOURCE_LABELS = {
 };
 
 export default function KeywordEngine({ api }) {
+  const isViewer = useAuth().user?.role === "viewer";
   const [keywords, setKeywords] = useState([]);
   const [typeBreakdown, setTypeBreakdown] = useState({});
   const [refreshing, setRefreshing] = useState(false);
@@ -108,6 +110,7 @@ export default function KeywordEngine({ api }) {
             AI-powered intelligence keyword generation driving RSS detection
           </p>
         </div>
+        {!isViewer && (
         <Button
           data-testid="ai-refresh-btn"
           onClick={handleRefresh}
@@ -118,6 +121,7 @@ export default function KeywordEngine({ api }) {
           <RefreshCw size={14} className={refreshing ? "animate-spin mr-1" : "mr-1"} />
           {refreshing ? "AI Generating..." : "AI Refresh Keywords"}
         </Button>
+        )}
       </div>
 
       {/* Stats bar */}
@@ -216,7 +220,7 @@ export default function KeywordEngine({ api }) {
             );
           })}
         </div>
-        {filtered.length === 0 && search.trim().length >= 2 && (
+        {!isViewer && filtered.length === 0 && search.trim().length >= 2 && (
           <div className="border border-dashed border-primary/30 bg-primary/5 p-4 mt-2" data-testid="add-keyword-prompt">
             <p className="text-xs text-muted-foreground font-mono mb-3">
               No keyword found for "<span className="text-primary font-semibold">{search.trim()}</span>". Add it manually?

@@ -10,6 +10,7 @@ import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import axios from "axios";
 import ItemActions from "../components/ItemActions";
+import { useAuth } from "../contexts/AuthContext";
 import LoadError from "../components/LoadError";
 
 const POSTURE_CONFIG = {
@@ -36,6 +37,7 @@ const CATEGORY_COLORS = {
 };
 
 function SignalItem({ item, index, onDelete, api }) {
+  const { user } = useAuth();
   const [expanded, setExpanded] = useState(false);
 
   return (
@@ -80,7 +82,7 @@ function SignalItem({ item, index, onDelete, api }) {
           </div>
         </div>
         <div className="flex items-center gap-1 shrink-0 mt-1">
-          {onDelete && (
+          {onDelete && user?.role !== "viewer" && (
             <button
               onClick={(e) => {
                 e.stopPropagation();
@@ -212,7 +214,6 @@ export default function CrossBorderWatch({ api }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [signalFilter, setSignalFilter] = useState("");
-  const [refreshing, setRefreshing] = useState(false);
   const [loadFailed, setLoadFailed] = useState(false);
 
   const fetchData = async () => {
@@ -231,21 +232,6 @@ export default function CrossBorderWatch({ api }) {
   };
 
   useEffect(() => { fetchData(); }, [api, signalFilter]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const handleRefresh = async () => {
-    setRefreshing(true);
-    try {
-      // Trigger fetch + analysis of latest RSS feeds, then reload display
-      await axios.post(`${api}/reclassify-48h`);
-      // Give background task ~3s head start before re-fetching display data
-      await new Promise((r) => setTimeout(r, 3000));
-      await fetchData();
-    } catch (e) {
-      console.error("Cross-border refresh failed:", e);
-      await fetchData();
-    }
-    setRefreshing(false);
-  };
 
   const today = new Date().toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }).toUpperCase();
 
@@ -308,13 +294,13 @@ export default function CrossBorderWatch({ api }) {
             variant="outline"
             size="sm"
             className="rounded-none text-[10px] h-6 px-2 uppercase"
-            onClick={handleRefresh}
-            disabled={refreshing}
-            title="Fetch latest news and reload"
+            onClick={fetchData}
+            disabled={loading}
+            title="Reload the latest signals"
             data-testid="cb-refresh"
           >
-            <RefreshCw size={11} className={refreshing ? "animate-spin mr-1" : "mr-1"} />
-            {refreshing ? "Scanning…" : "Refresh"}
+            <RefreshCw size={11} className={loading ? "animate-spin mr-1" : "mr-1"} />
+            Refresh
           </Button>
         </div>
       </div>

@@ -10,6 +10,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { Navigate } from "react-router-dom";
 import axios from "axios";
 import { useAuth } from "../contexts/AuthContext";
+import ConfirmAction from "../components/ConfirmAction";
 import {
   MessageSquare, Send, Sparkles, FileText, Download,
   Trash2, RefreshCw, ChevronDown, ChevronUp, Bot,
@@ -477,12 +478,18 @@ export default function ReportAgent({ api }) {
                         >
                           Load
                         </button>
+                        <ConfirmAction
+                          title={`Delete saved setup “${(s.report_type || "?").toUpperCase()} — ${s.focus_paoi_ids?.length ? s.focus_paoi_ids.join(", ") : "All PAOIs"}”?`}
+                          description="This cannot be undone."
+                          confirmLabel="Delete"
+                          onConfirm={() => deleteSpec(s.id)}
+                        >
                         <button
-                          onClick={() => deleteSpec(s.id)}
                           className="text-[10px] text-red-400 hover:text-red-300"
                         >
                           <Trash2 size={9} />
                         </button>
+                        </ConfirmAction>
                       </div>
                     </div>
                   ))}

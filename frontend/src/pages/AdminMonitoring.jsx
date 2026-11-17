@@ -14,6 +14,11 @@ import ApiUsageWidget from "../components/ApiUsageWidget";
 import FilterCascadeWidget from "../components/FilterCascadeWidget";
 import FilterThresholdSimulator from "../components/FilterThresholdSimulator";
 import { Shield, Database, Trash2, AlertTriangle, Radio, Zap } from "lucide-react";
+import ConfirmAction from "../components/ConfirmAction";
+import {
+  AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogCancel, AlertDialogAction,
+} from "../components/ui/alert-dialog";
 
 function CreditWarningBanner({ api }) {
   const [warning, setWarning] = useState(null);
@@ -63,6 +68,26 @@ function StorageCleanupPanel({ api }) {
   const [loading, setLoading] = useState(null); // "strip" | "delete" | null
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
+  // Confirmation step: { kind: "strip"|"delete", preview?: {...}, failed?: true }
+  const [pending, setPending] = useState(null);
+  const [typed, setTyped] = useState("");
+
+  async function askConfirm(kind) {
+    setTyped("");
+    setPending({ kind });
+    try {
+      const r = await axios.get(`${api}/admin/storage/preview?older_than_days=${days}`);
+      setPending({ kind, preview: r.data });
+    } catch {
+      setPending({ kind, failed: true });
+    }
+  }
+
+  function confirmPending() {
+    const kind = pending.kind;
+    setPending(null);
+    if (kind === "strip") runStrip(); else runDelete();
+  }
 
   const refreshStats = () =>
     axios.get(`${api}/admin/storage/stats`).then(r => setStats(r.data)).catch(() => {});
@@ -137,7 +162,7 @@ function StorageCleanupPanel({ api }) {
         </select>
 
         <button
-          onClick={runStrip}
+          onClick={() => askConfirm("strip")}
           disabled={!!loading}
           title="Remove raw body text — keeps source link + all AI analysis"
           className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white font-semibold transition-colors"
@@ -147,7 +172,7 @@ function StorageCleanupPanel({ api }) {
         </button>
 
         <button
-          onClick={runDelete}
+          onClick={() => askConfirm("delete")}
           disabled={!!loading}
           title="Permanently delete articles — cannot be undone"
           className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded bg-red-600 hover:bg-red-500 disabled:opacity-50 text-white font-semibold transition-colors"
@@ -165,7 +190,7 @@ function StorageCleanupPanel({ api }) {
         <div className="text-xs font-mono bg-green-950/40 border border-green-800/40 rounded p-2 text-green-300">
           {result.type === "strip"
             ? `✓ ${result.message}`
-            : `✓ ${result.message} · API usage logs deleted: ${result.api_usage_deleted} · cutoff: ${result.cutoff_date}`
+            : `✓ ${result.message} · cutoff: ${result.cutoff_date}`
           }
         </div>
       )}
@@ -174,6 +199,46 @@ function StorageCleanupPanel({ api }) {
           ✗ {error}
         </div>
       )}
+
+      <AlertDialog open={!!pending} onOpenChange={(o) => { if (!o) setPending(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {pending?.kind === "delete" ? "Delete old articles?" : "Remove stored full text?"}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {pending?.failed
+                ? "Couldn't count the items — nothing was deleted"
+                : !pending?.preview
+                  ? "Counting items…"
+                  : pending.kind === "delete"
+                    ? `This will permanently delete ${pending.preview.articles_to_delete} items older than ${days} days (published before ${pending.preview.cutoff_date}). This cannot be undone.`
+                    : `This will remove the stored full text from ${pending.preview.articles_to_strip} items older than ${days} days. Titles, summaries and analysis stay. This cannot be undone.`}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          {pending?.preview && pending.kind === "delete" && (
+            <input
+              value={typed}
+              onChange={e => setTyped(e.target.value)}
+              placeholder="Type DELETE to confirm"
+              className="text-sm bg-background border border-border rounded px-2 py-1.5 font-mono"
+              data-testid="delete-confirm-input"
+            />
+          )}
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            {pending?.preview && (
+              <AlertDialogAction
+                onClick={confirmPending}
+                disabled={pending.kind === "delete" && typed !== "DELETE"}
+                className="bg-red-600 hover:bg-red-700 text-white disabled:opacity-30"
+              >
+                {pending.kind === "delete" ? "Delete" : "Remove text"}
+              </AlertDialogAction>
+            )}
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
@@ -259,8 +324,8 @@ function SocialFetchPanel({ api }) {
           >
             Throttled
           </button>
+          <ConfirmAction when={!isFirehose} title="Switch to Firehose mode?" description="This starts paid scraping on Apify (a few cents per run). Continue?" onConfirm={() => setMode("firehose")}>
           <button
-            onClick={() => setMode("firehose")}
             disabled={switching || !status}
             className={`text-xs px-3 py-1.5 font-semibold transition-colors ${
               isFirehose ? "bg-red-600 text-white" : "bg-background text-muted-foreground hover:text-foreground"
@@ -268,10 +333,11 @@ function SocialFetchPanel({ api }) {
           >
             Firehose
           </button>
+          </ConfirmAction>
         </div>
 
+        <ConfirmAction title="Fetch now?" description="This starts paid scraping on Apify (a few cents per run). Continue?" confirmLabel="Fetch now" onConfirm={fetchNow}>
         <button
-          onClick={fetchNow}
           disabled={fetching || !status?.configured}
           title={!status?.configured ? "Set APIFY_TOKEN first" : "Fetch immediately, bypassing the schedule"}
           className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded bg-violet-600 hover:bg-violet-500 disabled:opacity-50 text-white font-semibold transition-colors ml-auto"
@@ -279,6 +345,7 @@ function SocialFetchPanel({ api }) {
           <Zap size={12} />
           {fetching ? "Starting…" : "Fetch Now"}
         </button>
+        </ConfirmAction>
       </div>
 
       <p className="text-[10px] font-mono text-muted-foreground">

@@ -10,6 +10,7 @@ import { Button } from "../components/ui/button";
 import Tip from "../components/Tip";
 import { downloadPdf } from "../lib/downloadPdf";
 import { useAuth } from "../contexts/AuthContext";
+import ConfirmAction from "../components/ConfirmAction";
 import { useAdminIod } from "../contexts/AdminIodContext";
 import {
   AreaChart, Area, BarChart, Bar, LineChart, Line,
@@ -199,8 +200,9 @@ export default function MonthlyBrief({ api }) {
         <button onClick={() => adjustMonth(-1)} className="px-2 py-1.5 border border-border text-xs font-mono hover:border-primary">&lt; Prev</button>
         <div className="text-xs font-mono uppercase tracking-wider min-w-[120px] text-center">{monthLabel}</div>
         <button onClick={() => adjustMonth(1)}  className="px-2 py-1.5 border border-border text-xs font-mono hover:border-primary">Next &gt;</button>
+        {user?.role !== "viewer" && (
+        <ConfirmAction title={brief?.status === "ready" ? "Regenerate this brief?" : "Generate this brief?"} description={brief?.status === "ready" ? "It makes 30–40 AI calls (roughly $0.20–$0.70) and takes several minutes. The current brief stays on screen until the new one is ready." : "It makes 30–40 AI calls (roughly $0.20–$0.70) and takes several minutes."} confirmLabel={brief?.status === "ready" ? "Regenerate" : "Generate"} onConfirm={handleGenerate}>
         <Button
-          onClick={handleGenerate}
           disabled={generating}
           className="rounded-none uppercase text-xs tracking-wider"
           data-testid="generate-monthly-btn"
@@ -209,6 +211,8 @@ export default function MonthlyBrief({ api }) {
             brief?.status === "ready" ? <><RefreshCw size={12} className="mr-1" /> Regenerate</> :
                                           <><FileText  size={12} className="mr-1" /> Generate</>}
         </Button>
+        </ConfirmAction>
+        )}
         {brief?.status === "ready" && activeTab === "brief" && (
           <>
             <Button
