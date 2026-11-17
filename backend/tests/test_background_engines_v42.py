@@ -4,7 +4,10 @@ Pure logic only: no database, no AI calls."""
 import math
 from datetime import datetime, timedelta, timezone
 
-from apify_social_fetcher import _parse_date, _tweet_time_from_id, _twitter_to_intel_item
+from apify_social_fetcher import (
+    INSTAGRAM_ACCOUNTS, _instagram_to_intel_item, _parse_date, _tweet_time_from_id,
+    _twitter_to_intel_item,
+)
 from fading_engine import fading_update
 from faultline_engine import DECAY_LAMBDA, compute_faultline_score, compute_faultline_score_v2
 
@@ -104,3 +107,32 @@ def test_post_time_can_be_read_from_the_post_id():
 def test_tweet_without_a_date_uses_its_id():
     item = _twitter_to_intel_item({"text": "hello", "url": "https://x.com/u/status/2076324299355672712"})
     assert item["published_at"] == _tweet_time_from_id("2076324299355672712")
+
+
+# ── Instagram: named accounts ────────────────────────────────────────────────
+
+def test_instagram_account_post_is_read_with_its_real_time():
+    # shape of a real row from the account scraper (17 Nov 2026 test run)
+    item = _instagram_to_intel_item({
+        "ownerUsername": "pratidintime", "timestamp": "2026-11-17T03:31:18.000Z",
+        "url": "https://www.instagram.com/p/Df0-IEpjvwO/", "commentsCount": 7,
+        "caption": "Triple murder in Duliajan, Dibrugarh district of Assam",
+    })
+    assert item["source"] == "Instagram - @pratidintime"
+    assert item["published_at"] == "2026-11-17T03:31:18+00:00"
+    assert item["comments_count"] == 7
+
+
+def test_instagram_row_for_an_account_with_nothing_new_is_skipped():
+    assert _instagram_to_intel_item({"error": "no_items", "inputUrl": "https://www.instagram.com/x"}) is None
+
+
+def test_instagram_accounts_are_listed_once_and_bangladesh_has_the_largest_share():
+    names = [a for group in INSTAGRAM_ACCOUNTS.values() for a in group]
+    assert len(names) == len(set(names))
+    bangladesh = {"dhakatribune", "prothomalo", "dailystar_bd", "thebusinessstandard",
+                  "jamunatv", "bdnews24", "dbcnews.tv"}
+    posts = {a: n for n, group in INSTAGRAM_ACCOUNTS.items() for a in group}
+    assam = {"pratidintime", "guwahatiplus", "news18assamne"}
+    assert sum(posts[a] for a in bangladesh) > sum(posts[a] for a in assam)
+    assert 50 <= sum(posts.values()) <= 70  # stays near the agreed ~60 posts a fetch

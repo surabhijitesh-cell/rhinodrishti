@@ -9,7 +9,9 @@ arms race, not us.
 
 Actors used (chosen for cost + reliability, see memory/plans research):
   Twitter:   apidojo/tweet-scraper       — $0.0004/tweet
-  Instagram: breathtaking_anthem/instagram-hashtag-posts-scraper — $0.0014/post
+  Instagram: apify/instagram-post-scraper — $0.0015/post (named accounts, see
+             INSTAGRAM_ACCOUNTS; the old hashtag scraper was removed from Apify
+             and Instagram no longer serves a usable "recent" hashtag feed)
   Facebook:  scraper_one/facebook-posts-search — $0.002/post
 
 All three platforms have full feature parity as of 2026-07-12 (Apify Starter
@@ -42,13 +44,36 @@ logger = logging.getLogger(__name__)
 
 # ── Actor IDs ──────────────────────────────────────────────────────────────
 ACTOR_TWITTER = "apidojo/tweet-scraper"
-ACTOR_INSTAGRAM = "breathtaking_anthem/instagram-hashtag-posts-scraper"
+ACTOR_INSTAGRAM = "apify/instagram-post-scraper"
 ACTOR_FACEBOOK = "scraper_one/facebook-posts-search"
 
 # ── Region seeds — reuse the app's existing NER state list, don't invent one ─
 from shared import NER_STATES  # ["Assam", "Meghalaya", "Mizoram", "Manipur", "Arunachal Pradesh", "Tripura"]
 
-INSTAGRAM_HASHTAGS = [s.replace(" ", "") for s in NER_STATES] + ["Northeast India", "NER"]
+# Instagram accounts followed, as {newest posts taken per account each fetch:
+# [accounts]}. Every name returned live posts on 17 Nov 2026. Order of weight
+# is Rohit's: Bangladesh, Assam, Meghalaya, Tripura, Mizoram, Manipur. No
+# working Tripura- or Manipur-only news account was found — the NE-wide
+# accounts cover those two states.
+INSTAGRAM_ACCOUNTS = {
+    4: [  # Assam
+        "pratidintime", "guwahatiplus", "news18assamne",
+    ],
+    3: [
+        # Bangladesh — the largest share by number of accounts
+        "dhakatribune", "prothomalo", "dailystar_bd", "thebusinessstandard",
+        "jamunatv", "bdnews24", "dbcnews.tv",
+        # NE-wide (Meghalaya, Tripura, Mizoram, Manipur coverage)
+        "east.mojo", "northeast.now", "ne_media_hub", "nelivetv",
+        "northeasttoday", "indiatodayne",
+        # Meghalaya, Mizoram
+        "highlandpost", "vanglaini",
+    ],
+    2: [  # Indian Army and the Bangladesh border
+        "indianarmy.adgpi", "spearcorps.indianarmy", "bsf_india",
+    ],
+}
+INSTAGRAM_MAX_POST_AGE = "2 days"  # never pay for, or ingest, old posts
 SEARCH_QUERIES = [f"{state} India" for state in NER_STATES] + ["Northeast India security"]
 
 # ── Volume modes ─────────────────────────────────────────────────────────────
@@ -180,7 +205,7 @@ def _instagram_to_intel_item(post: dict) -> Optional[dict]:
         "published_at": _parse_date(created),
         "raw_content": caption,
         "source_type": "instagram_apify",
-        "comments_count": post.get("comment_count", 0),
+        "comments_count": post.get("commentsCount") or post.get("comment_count", 0),
     }
 
 
@@ -299,9 +324,6 @@ async def fetch_twitter_posts(db, max_items: int) -> int:
     return await _ingest(db, items, "twitter")
 
 
-INSTAGRAM_MIN_ITEMS = 24  # actor-enforced floor — validation fails below this
-
-
 def _rotated(items: list, n: int) -> list:
     """Pick n items starting from a day-of-year-based offset, so repeated
     runs cycle through the full list over time instead of always hitting
@@ -314,19 +336,26 @@ def _rotated(items: list, n: int) -> list:
 
 
 async def fetch_instagram_posts(db, max_items: int) -> int:
-    # The once-per-day free-tier cap ("Access denied! Free User allowed to
-    # run once daily") is confirmed LIFTED under Apify Starter — tested live
-    # 2026-07-12 with two consecutive calls, both succeeded. Kept the
-    # one-hashtag-per-fetch rotation anyway: it's a sane default footprint,
-    # not a forced workaround anymore — loosen if you want broader coverage.
-    hashtag = _rotated(INSTAGRAM_HASHTAGS, 1)[0]
-    raw = await _run_actor(ACTOR_INSTAGRAM, {
-        "hashtag": hashtag,
-        "scrape_type": "recent",
-        "max_items": max(max_items, INSTAGRAM_MIN_ITEMS),  # 24 is a floor, not a cap
-    })
-    items = [it for it in (_instagram_to_intel_item(p) for p in raw) if it]
-    return await _ingest(db, items, "instagram")
+    """Newest posts from the named accounts. Volume is set by
+    INSTAGRAM_ACCOUNTS (about 63 posts a fetch), so max_items is not used.
+    One account group failing does not stop the others."""
+    saved = 0
+    for per_account, accounts in INSTAGRAM_ACCOUNTS.items():
+        try:
+            raw = await _run_actor(ACTOR_INSTAGRAM, {
+                "username": accounts,
+                "resultsLimit": per_account,
+                "skipPinnedPosts": True,
+                "onlyPostsNewerThan": INSTAGRAM_MAX_POST_AGE,
+                "dataDetailLevel": "basicData",
+            })
+        except Exception as e:
+            logger.error(f"Apify instagram fetch failed for {accounts}: {e}")
+            continue
+        # Accounts with nothing new come back as error rows with no caption.
+        items = [it for it in (_instagram_to_intel_item(p) for p in raw) if it]
+        saved += await _ingest(db, items, "instagram")
+    return saved
 
 
 async def fetch_facebook_posts(db, max_items: int) -> int:
