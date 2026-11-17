@@ -17,6 +17,7 @@
 import { useEffect, useRef, useState, memo, useCallback } from "react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
+import { mapLocationsFor } from "../lib/mapLocations";
 
 // Escape external/derived text before it goes into a Leaflet HTML string.
 const _HTML_ESC = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
@@ -691,26 +692,9 @@ const InteractiveNERMap = memo(function InteractiveNERMap({
       // Per-item opacity injected by the timeline (1.0 = in active window, <1 = ghost)
       const itemOpacity = typeof item._opacity === "number" ? item._opacity : 1.0;
 
-      // Collect candidate location names: named entities + state name
-      const candidates = [
-        ...(item.entities?.locations || []),
-        item.state,
-      ].filter(Boolean);
-
-      const matched = new Set();
-      candidates.forEach((loc) => {
-        // Exact match
-        if (LOCATION_COORDS[loc]) {
-          matched.add(loc);
-          return;
-        }
-        // Partial match — find key that contains or is contained in loc
-        Object.keys(LOCATION_COORDS).forEach((k) => {
-          if (loc.toLowerCase().includes(k.toLowerCase()) || k.toLowerCase().includes(loc.toLowerCase())) {
-            matched.add(k);
-          }
-        });
-      });
+      // Dots on the towns the story names; region-wide stories don't get a dot per state.
+      const { keys: matched, regionWide } = mapLocationsFor(item, LOCATION_COORDS);
+      const label = regionWide ? `[Region-wide] ${item.title || ""}` : (item.title || "");
 
       matched.forEach((locKey) => {
         if (!locationSev[locKey]) {
@@ -725,7 +709,7 @@ const InteractiveNERMap = memo(function InteractiveNERMap({
         // A location's marker opacity = MAX opacity of any item there.
         // If any item at that location is in the active window, the marker is bright.
         if (itemOpacity > existing.opacity) existing.opacity = itemOpacity;
-        if (existing.titles.length < 3) existing.titles.push(item.title || "");
+        if (existing.titles.length < 3) existing.titles.push(label);
       });
     });
 

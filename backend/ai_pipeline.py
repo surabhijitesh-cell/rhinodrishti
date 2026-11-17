@@ -105,6 +105,13 @@ Boost score if:
 + Bangladesh AND Meghalaya BOTH mentioned in same article (+20) — HIGHEST PRIORITY CO-MENTION
 + Bangladesh border + any of [North Bengal, Assam, Tripura, Mizoram] (+15)
 
+Cap (applies AFTER boosts): development and good-news items — completed or
+inaugurated projects, electrification, new trains/roads/flights opened,
+investment, freight or revenue figures, policy announcements with no incident —
+score at most 55 (MEDIUM), unless the article itself reports a disruption,
+attack, threat, or an explicit military/security use. Disruptions (blocked or
+washed-out roads, bridge collapse, derailment, blockade, shutdown) are NOT capped.
+
 --------------------------------------------------
 STEP 3: CLASSIFICATION (MULTI-LABEL)
 --------------------------------------------------
