@@ -56,9 +56,14 @@ def _with_usage_tracking(client):
     Uses the cost OpenRouter itself reports when present."""
     create = client.chat.completions.create
 
-    async def tracked_create(*args, **kwargs):
+    def tracked_create(*args, **kwargs):
+        # Name the feature here, at call time: once the call is awaited through
+        # asyncio.wait_for (faultline scoring) the caller is asyncio itself.
         caller = sys._getframe(1)
         feature = f"{caller.f_globals.get('__name__', '?').rsplit('.', 1)[-1]}__{caller.f_code.co_name}"
+        return _tracked(feature, args, kwargs)
+
+    async def _tracked(feature, args, kwargs):
         # Ask OpenRouter to include the real charge in the response.
         kwargs["extra_body"] = {**(kwargs.get("extra_body") or {}), "usage": {"include": True}}
         response = await create(*args, **kwargs)

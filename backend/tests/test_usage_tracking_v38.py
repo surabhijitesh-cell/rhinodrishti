@@ -66,3 +66,14 @@ def test_recording_failure_never_breaks_the_model_call(monkeypatch):
 
     monkeypatch.setattr(usage_tracker, "track_usage_generic", boom)
     assert asyncio.run(client.chat.completions.create(model="m", messages=[])).usage is usage
+
+
+def test_feature_is_named_even_when_the_call_is_awaited_through_wait_for(monkeypatch):
+    usage = SimpleNamespace(prompt_tokens=10, completion_tokens=1, cost=0.001)
+    client, _, written = _tracked_client(monkeypatch, usage)
+
+    async def score_faultline():
+        return await asyncio.wait_for(client.chat.completions.create(model="m", messages=[]), timeout=5)
+
+    asyncio.run(score_faultline())
+    assert "by_feature.test_usage_tracking_v38__score_faultline.call_count" in written[0][1]["$inc"]
