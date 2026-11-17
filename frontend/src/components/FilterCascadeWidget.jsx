@@ -230,8 +230,9 @@ export default function FilterCascadeWidget({ api }) {
   const scanned = d.items_scanned || 0;
   const savedUsd = d.est_cost_saved_usd || 0;
   const savedInr = d.est_cost_saved_inr || Math.round(savedUsd * 84);
+  // Only items the filters actually rejected count as saved (postponed items are not savings).
   const savedPct = scanned > 0
-    ? Math.round(((scanned - (d.haiku_relevant || 0) - (d.haiku_not_relevant || 0)) / scanned) * 100)
+    ? Math.round(((d.est_haiku_calls_saved || 0) / scanned) * 100)
     : 0;
 
   return (
@@ -257,7 +258,7 @@ export default function FilterCascadeWidget({ api }) {
             <p className="text-[9px] font-mono text-muted-foreground">{d.cycles || 0} cycles</p>
           </div>
           <div className="text-right">
-            <p className="text-[9px] font-mono text-muted-foreground uppercase tracking-wider">Gemini Calls Saved</p>
+            <p className="text-[9px] font-mono text-muted-foreground uppercase tracking-wider">AI Calls Saved</p>
             <p className="text-lg font-bold font-mono text-emerald-400">
               {(d.est_haiku_calls_saved || 0).toLocaleString()}
             </p>

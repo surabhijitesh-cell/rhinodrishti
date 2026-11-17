@@ -13,6 +13,8 @@ GET  /api/admin/filter-cascade/daily       — daily cascade history
 GET  /api/admin/filter-cascade/recent      — last N cycle docs (table)
 GET  /api/admin/filter-cascade/health      — health status (stage1 failopen, centroid)
 
+GET  /api/admin/source-health              — per-source last success/error, problems first
+
 GET  /api/admin/filter-settings            — current filter threshold settings
 POST /api/admin/filter-settings            — update thresholds (applied to pipeline ≤5 min)
 """
@@ -341,6 +343,37 @@ async def filter_cascade_health():
         return await get_cascade_health()
     except Exception as e:
         return {"status": "unknown", "error": str(e)}
+
+
+# ── Source health ─────────────────────────────────────────────────────────────
+
+_STATUS_ORDER = {"failing": 0, "silent": 1, "never": 2, "ok": 3}
+
+
+@router.get("/admin/source-health")
+async def source_health_report():
+    """Every tracked source with its health, problems first."""
+    from source_health import health_status, SILENT_AFTER_HOURS, DEFAULT_SILENT_AFTER_HOURS
+    now = datetime.now(timezone.utc)
+    docs = await db.source_health.find({}, {"_id": 0}).to_list(2000)
+    rows = []
+    counts = {"ok": 0, "silent": 0, "failing": 0, "never": 0}
+    for d in docs:
+        try:
+            status = health_status(d, now)
+        except Exception:
+            status = "never"  # unreadable timestamp: show as no data rather than break the page
+        counts[status] += 1
+        rows.append({
+            "kind": d.get("kind"), "name": d.get("name"), "status": status,
+            "last_success": d.get("last_success"),
+            "last_error": d.get("last_error"), "last_error_at": d.get("last_error_at"),
+            "last_items": d.get("last_items"),
+            "silent_after_hours": SILENT_AFTER_HOURS.get(d.get("kind"), DEFAULT_SILENT_AFTER_HOURS),
+        })
+    rows.sort(key=lambda r: (_STATUS_ORDER[r["status"]], r["kind"] or "", r["name"] or ""))
+    return {"sources": rows, "counts": counts,
+            "needs_attention": counts["failing"] + counts["silent"]}
 
 
 # ── Filter threshold settings ─────────────────────────────────────────────────

@@ -22,7 +22,7 @@ import uuid
 import asyncio
 from datetime import datetime, timezone, timedelta
 from typing import Optional
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Depends
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Depends
 from utils.roles import require_analyst_or_admin
 from pydantic import BaseModel
 from shared import db, logger
@@ -398,34 +398,12 @@ async def fetch_all_social_now(background_tasks: BackgroundTasks):
     """
     Trigger all social/web fetchers.
 
-    Strategy:
-      1. Immediately stamp last_fetched = now on every active source document
-         so the frontend scanner cards update on the very first poll (~10 s).
-      2. Queue a background task that runs the actual network fetches in
-         parallel and processes any new items through the AI pipeline.
-
-    This decouples "user clicked Fetch" feedback from "fetch completed" and
-    avoids Render's 30 s HTTP timeout killing slow sources like Telegram.
+    Runs the network fetches in a background task (avoids Render's 30 s HTTP
+    timeout on slow sources like Telegram). Each fetcher stamps last_fetched
+    itself, and only on success — nothing is pre-stamped here, because that
+    made failed sources look freshly fetched (and web sources skip their run).
     """
-    now = datetime.now(timezone.utc)
-
-    # ── 1. Instant timestamp update (awaited before response) ─────────────────
-    # Filter uses $ne False rather than == True so documents where the active
-    # field is missing or stored as a non-bool truthy value are also matched.
-    try:
-        results = await asyncio.gather(
-            db.youtube_channels.update_many({"active": {"$ne": False}}, {"$set": {"last_fetched": now}}),
-            db.telegram_channels.update_many({"active": {"$ne": False}}, {"$set": {"last_fetched": now}}),
-            db.web_sources.update_many({"active": {"$ne": False}},       {"$set": {"last_fetched": now}}),
-            db.firecrawl_searches.update_many({"active": {"$ne": False}}, {"$set": {"last_run": now}}),
-        )
-        counts = [r.modified_count for r in results]
-        labels = ["yt_ch", "tg_ch", "web_src", "fc_srch"]
-        logger.info(f"fetch-all: timestamps written — {dict(zip(labels, counts))}")
-    except Exception as e:
-        logger.error(f"fetch-all: instant timestamp update failed: {e}")
-
-    # ── 2. Background network fetches ─────────────────────────────────────────
+    # ── Background network fetches ────────────────────────────────────────────
     async def _run_all():
         try:
             from youtube_fetcher   import fetch_youtube_channels, fetch_youtube_searches
@@ -458,7 +436,7 @@ async def fetch_all_social_now(background_tasks: BackgroundTasks):
             logger.error(f"fetch-all _run_all crashed: {e}")
 
     background_tasks.add_task(_run_all)
-    return {"status": "fetch started", "message": "Timestamps updated; content fetching in background"}
+    return {"status": "fetch started", "message": "Content fetching in background"}
 
 
 # ─────────────────────────────────────────────────────────────────────────────

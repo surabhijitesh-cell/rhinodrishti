@@ -1,4 +1,5 @@
 import feedparser
+import httpx
 import logging
 import asyncio
 from datetime import datetime, timezone
@@ -268,10 +269,25 @@ ALL_KEYWORDS = NER_KEYWORDS_EN + NER_KEYWORDS_LOCAL
 executor = ThreadPoolExecutor(max_workers=6)
 
 
+FEED_DOWNLOAD_TIMEOUT = 20   # seconds to download one feed
+FEED_OVERALL_TIMEOUT = 60    # hard cap per feed, however it hangs
+_FEED_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                  "(KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+    "Accept": "application/rss+xml, application/xml, text/xml, */*",
+}
+
+
 def parse_feed(source: dict) -> list:
-    """Parse a single RSS feed (blocking operation)"""
+    """Parse a single RSS feed (blocking operation). Raises on download failure."""
+    # Download with a real timeout (feedparser.parse(url) has none), then parse the bytes.
+    with httpx.Client(timeout=FEED_DOWNLOAD_TIMEOUT, follow_redirects=True,
+                      headers=_FEED_HEADERS) as http:
+        resp = http.get(source["url"])
+        resp.raise_for_status()
+        content = resp.content
     try:
-        feed = feedparser.parse(source["url"])
+        feed = feedparser.parse(content)
         articles = []
 
         for entry in feed.entries[:25]:
@@ -310,6 +326,15 @@ def parse_feed(source: dict) -> list:
         return []
 
 
+def fetch_feed_outcome(source: dict) -> dict:
+    """Blocking: {"articles": [...], "error": None | str} — never raises."""
+    try:
+        return {"articles": parse_feed(source), "error": None}
+    except Exception as e:
+        logger.error(f"Failed to download {source['name']} ({source['url']}): {e}")
+        return {"articles": [], "error": f"{type(e).__name__}: {e}"[:300]}
+
+
 def is_ner_relevant(article: dict, dynamic_keyword_weights: list = None) -> bool:
     """Check if article is relevant to NER intelligence monitoring.
     
@@ -344,10 +369,11 @@ def is_ner_relevant(article: dict, dynamic_keyword_weights: list = None) -> bool
     return any(kw in text for kw in ALL_KEYWORDS)
 
 
-async def fetch_all_feeds(progress_callback=None, sources=None, dynamic_keyword_weights=None) -> list:
+async def fetch_all_feeds(progress_callback=None, sources=None, dynamic_keyword_weights=None, db=None) -> list:
     """Fetch and filter articles from RSS sources.
     If sources is provided, only those sources are fetched.
-    If dynamic_keyword_weights is provided, uses them for relevance matching."""
+    If dynamic_keyword_weights is provided, uses them for relevance matching.
+    If db is provided, each feed's success/error is recorded in source_health."""
     loop = asyncio.get_event_loop()
     all_articles = []
     if sources:
@@ -362,15 +388,26 @@ async def fetch_all_feeds(progress_callback=None, sources=None, dynamic_keyword_
             await progress_callback(i, len(active_sources), source_name)
         
         try:
-            result = await loop.run_in_executor(executor, parse_feed, source)
+            outcome = await asyncio.wait_for(
+                loop.run_in_executor(executor, fetch_feed_outcome, source), FEED_OVERALL_TIMEOUT)
         except Exception as e:
-            logger.error(f"Feed fetch error for {source_name}: {e}")
-            source_summary[source_name] = {"fetched": 0, "relevant": 0, "error": str(e)}
+            err = f"{type(e).__name__}: {e}" if str(e) else type(e).__name__
+            logger.error(f"Feed fetch error for {source_name}: {err}")
+            outcome = {"articles": [], "error": err}
+        if outcome["error"]:
+            source_summary[source_name] = {"fetched": 0, "relevant": 0, "error": outcome["error"]}
+            if db is not None:
+                from source_health import record_error
+                await record_error(db, "rss", source_name, outcome["error"])
             continue
-        
+        result = outcome["articles"]
+
         relevant = [a for a in result if is_ner_relevant(a, dynamic_keyword_weights)]
         all_articles.extend(relevant)
         source_summary[source_name] = {"fetched": len(result), "relevant": len(relevant)}
+        if db is not None:
+            from source_health import record_success
+            await record_success(db, "rss", source_name, len(result))
 
     if progress_callback:
         await progress_callback(len(active_sources), len(active_sources), "Complete")

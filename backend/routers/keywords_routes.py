@@ -1,5 +1,5 @@
 """Keyword Engine endpoints."""
-from fastapi import APIRouter, Query, BackgroundTasks, Depends
+from fastapi import APIRouter, Query, BackgroundTasks, Depends
 from utils.roles import require_analyst_or_admin
 from typing import Optional
 import os
@@ -60,19 +60,39 @@ async def get_keywords(
 
 
 @router.post("/keywords/refresh", dependencies=[Depends(require_analyst_or_admin)])
-async def refresh_keywords(background_tasks: BackgroundTasks):
+async def refresh_keywords():
+    """Runs the AI keyword refresh (two short model calls) and reports the
+    outcome, or HTTP 502 if the AI steps failed and produced nothing."""
+    from fastapi import HTTPException
     from keyword_engine import generate_keywords, store_keywords_to_db, _keyword_cache
 
     _keyword_cache["generated_at"] = None
     _keyword_cache["keywords"] = []
 
-    async def _refresh():
-        keywords = await generate_keywords(db, use_ai=True)
-        await store_keywords_to_db(db, keywords)
-        logger.info(f"Keyword refresh complete: {len(keywords)} keywords stored")
+    report: dict = {}
+    keywords = await generate_keywords(db, use_ai=True, ai_report=report)
+    emerging = report.get("emerging", [])
+    expanded = report.get("expanded", [])
+    errors = report.get("errors", [])
+    if errors and not emerging and not expanded:
+        _keyword_cache["generated_at"] = None  # don't cache a keyword set built without AI
+        raise HTTPException(status_code=502, detail=f"AI keyword refresh failed: {errors[0]}")
 
-    background_tasks.add_task(_refresh)
-    return {"message": "Keyword refresh started with AI expansion"}
+    existing = {
+        (d.get("keyword") or "").lower()
+        async for d in db.keyword_store.find({}, {"_id": 0, "keyword": 1})
+    }
+    kept = {k["keyword"].lower() for k in keywords}
+    ai_names = {k["keyword"].lower() for k in emerging + expanded}
+    added = len((ai_names & kept) - existing)
+
+    await store_keywords_to_db(db, keywords)
+    logger.info(f"Keyword refresh complete: {len(keywords)} keywords stored, {added} new")
+    return {
+        "added": added,
+        "emerging": [k["keyword"] for k in emerging],
+        "expanded": [k["keyword"] for k in expanded],
+    }
 
 
 @router.post("/keywords/add", dependencies=[Depends(require_analyst_or_admin)])

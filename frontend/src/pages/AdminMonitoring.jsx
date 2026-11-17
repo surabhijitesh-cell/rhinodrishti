@@ -13,7 +13,8 @@ import axios from "axios";
 import ApiUsageWidget from "../components/ApiUsageWidget";
 import FilterCascadeWidget from "../components/FilterCascadeWidget";
 import FilterThresholdSimulator from "../components/FilterThresholdSimulator";
-import { Shield, Database, Trash2, AlertTriangle, Radio, Zap } from "lucide-react";
+import { Shield, Database, Trash2, AlertTriangle, Radio, Zap, Activity } from "lucide-react";
+import LoadError from "../components/LoadError";
 import ConfirmAction from "../components/ConfirmAction";
 import {
   AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle,
@@ -370,6 +371,103 @@ function SocialFetchPanel({ api }) {
   );
 }
 
+const HEALTH_BADGES = {
+  ok:      { label: "OK",      cls: "bg-green-950/40 border-green-800/40 text-green-300" },
+  silent:  { label: "Silent",  cls: "bg-amber-950/40 border-amber-800/40 text-amber-300" },
+  failing: { label: "Failing", cls: "bg-red-950/40 border-red-800/40 text-red-300" },
+  never:   { label: "No data", cls: "bg-muted border-border text-muted-foreground" },
+};
+
+function hoursAgo(iso) {
+  if (!iso) return "never";
+  const h = (Date.now() - new Date(iso).getTime()) / 3600000;
+  if (Number.isNaN(h)) return "never";
+  if (h < 1) return "under 1 h ago";
+  if (h < 48) return `${Math.round(h)} h ago`;
+  return `${Math.round(h / 24)} days ago`;
+}
+
+function SourceHealthPanel({ api }) {
+  const [data, setData] = useState(null);
+  const [failed, setFailed] = useState(false);
+
+  const load = () => {
+    setFailed(false);
+    axios.get(`${api}/admin/source-health`)
+      .then(r => setData(r.data))
+      .catch(() => setFailed(true));
+  };
+
+  useEffect(() => { load(); }, [api]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const sources = data?.sources || [];
+  const attention = data?.needs_attention ?? 0;
+
+  return (
+    <div className="rounded-lg border border-border bg-card p-4 space-y-3" data-testid="source-health-panel">
+      <div className="flex items-center gap-2">
+        <Activity size={14} className="text-violet-400" />
+        <h2 className="text-sm font-semibold uppercase tracking-widest font-['Barlow_Condensed']">
+          Source health
+        </h2>
+        {data && (
+          <span className={`text-[10px] font-mono ml-auto ${attention ? "text-amber-400" : "text-green-400"}`}>
+            {attention === 0
+              ? "All sources reporting"
+              : `${attention} source${attention === 1 ? "" : "s"} need${attention === 1 ? "s" : ""} attention`}
+          </span>
+        )}
+      </div>
+
+      {failed && <LoadError what="source health" onRetry={load} />}
+
+      {!failed && data && sources.length === 0 && (
+        <p className="text-xs text-muted-foreground">
+          No source has reported yet. Entries appear after the next fetch cycle.
+        </p>
+      )}
+
+      {!failed && sources.length > 0 && (
+        <div className="overflow-x-auto max-h-96 overflow-y-auto">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="text-left text-[10px] uppercase text-muted-foreground">
+                <th className="py-1 pr-2">Status</th>
+                <th className="py-1 pr-2">Source</th>
+                <th className="py-1 pr-2">Type</th>
+                <th className="py-1 pr-2">Last success</th>
+                <th className="py-1 pr-2">Last error</th>
+                <th className="py-1 text-right">Items last run</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sources.map(s => {
+                const badge = HEALTH_BADGES[s.status] || HEALTH_BADGES.never;
+                return (
+                  <tr key={`${s.kind}:${s.name}`} className="border-t border-border/50">
+                    <td className="py-1 pr-2">
+                      <span className={`inline-block px-1.5 py-0.5 rounded border text-[10px] font-mono ${badge.cls}`}>
+                        {badge.label}
+                      </span>
+                    </td>
+                    <td className="py-1 pr-2 font-medium">{s.name}</td>
+                    <td className="py-1 pr-2 text-muted-foreground capitalize">{s.kind}</td>
+                    <td className="py-1 pr-2 font-mono text-muted-foreground">{hoursAgo(s.last_success)}</td>
+                    <td className="py-1 pr-2 text-muted-foreground max-w-[16rem] truncate" title={s.last_error || ""}>
+                      {s.last_error ? s.last_error.slice(0, 60) : "—"}
+                    </td>
+                    <td className="py-1 text-right font-mono">{s.last_items ?? "—"}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function AdminMonitoring({ api }) {
   const { user } = useAuth();
 
@@ -401,6 +499,9 @@ export default function AdminMonitoring({ api }) {
 
       {/* ── Social Media Scraping (Instagram / Facebook / Twitter) ── */}
       <SocialFetchPanel api={api} />
+
+      {/* ── Source health ── */}
+      <SourceHealthPanel api={api} />
 
       {/* ── Two-column panels ── */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">

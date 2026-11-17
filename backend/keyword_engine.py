@@ -368,8 +368,10 @@ def _generate_cross_border_keywords(historical: dict) -> list:
     return keywords
 
 
-async def _generate_emerging_keywords(historical: dict, emergent_key: str = "") -> list:
-    """Use Claude to generate emerging signal keywords from recent high-priority patterns."""
+async def _generate_emerging_keywords(historical: dict, emergent_key: str = "",
+                                      errors: list | None = None) -> list:
+    """Use Claude to generate emerging signal keywords from recent high-priority patterns.
+    If `errors` is given, failures are appended to it (instead of only being logged)."""
     if not historical.get("high_priority_texts"):
         return []
     
@@ -408,19 +410,23 @@ Example: ["coordinated ethnic mobilization", "infrastructure dual-use concern", 
     try:
         import json
         client = get_client()
-        response = await client.messages.create(
+        response = await client.chat.completions.create(
             model=MODEL,
             max_tokens=512,
-            system="You are a military intelligence keyword generator. Output ONLY valid JSON arrays.",
-            messages=[{"role": "user", "content": prompt}],
+            messages=[
+                {"role": "system", "content": "You are a military intelligence keyword generator. Output ONLY valid JSON arrays."},
+                {"role": "user", "content": prompt},
+            ],
         )
-        response_text = response.content[0].text
+        response_text = response.choices[0].message.content or ""
         arr_start = response_text.find('[')
         arr_end = response_text.rfind(']') + 1
         if arr_start >= 0 and arr_end > arr_start:
             emerging_list = json.loads(response_text[arr_start:arr_end])
         else:
             logger.warning("No JSON array in AI keyword response")
+            if errors is not None:
+                errors.append("emerging: model returned no keyword list")
             return []
         
         keywords = []
@@ -438,11 +444,15 @@ Example: ["coordinated ethnic mobilization", "infrastructure dual-use concern", 
     
     except Exception as e:
         logger.error(f"AI keyword generation failed: {e}")
+        if errors is not None:
+            errors.append(f"emerging: {str(e)[:120] or type(e).__name__}")
         return []
 
 
-async def _expand_keywords_with_ai(base_keywords: list, emergent_key: str = "") -> list:
-    """Use AI to expand high-score keywords into synonyms and related phrases."""
+async def _expand_keywords_with_ai(base_keywords: list, emergent_key: str = "",
+                                   errors: list | None = None) -> list:
+    """Use AI to expand high-score keywords into synonyms and related phrases.
+    If `errors` is given, failures are appended to it (instead of only being logged)."""
     
     # Pick top-scoring keywords for expansion
     top_kws = sorted(base_keywords, key=lambda k: k["score"], reverse=True)[:15]
@@ -458,19 +468,23 @@ Example: {{"border infiltration": ["unauthorized border crossing", "cross-border
     try:
         import json
         client = get_client()
-        response = await client.messages.create(
+        response = await client.chat.completions.create(
             model=MODEL,
             max_tokens=1024,
-            system="You are a military intelligence thesaurus. Output ONLY valid JSON.",
-            messages=[{"role": "user", "content": prompt}],
+            messages=[
+                {"role": "system", "content": "You are a military intelligence thesaurus. Output ONLY valid JSON."},
+                {"role": "user", "content": prompt},
+            ],
         )
-        response_text = response.content[0].text
-        
+        response_text = response.choices[0].message.content or ""
+
         json_start = response_text.find('{')
         json_end = response_text.rfind('}') + 1
         if json_start >= 0 and json_end > json_start:
             expansions = json.loads(response_text[json_start:json_end])
         else:
+            if errors is not None:
+                errors.append("expanded: model returned no synonym list")
             return []
         
         expanded = []
@@ -494,6 +508,8 @@ Example: {{"border infiltration": ["unauthorized border crossing", "cross-border
     
     except Exception as e:
         logger.error(f"AI keyword expansion failed: {e}")
+        if errors is not None:
+            errors.append(f"expanded: {str(e)[:120] or type(e).__name__}")
         return []
 
 
@@ -512,11 +528,14 @@ def _deduplicate_and_rank(all_keywords: list) -> list:
     return ranked[:MAX_KEYWORDS]
 
 
-async def generate_keywords(db, emergent_key: str = "", use_ai: bool = True) -> list:  # emergent_key kept for compat, unused
+async def generate_keywords(db, emergent_key: str = "", use_ai: bool = True,
+                            ai_report: dict | None = None) -> list:  # emergent_key kept for compat, unused
     """
     Main entry point: generate the full multi-layered keyword set.
-    
+
     Returns list of keyword dicts: [{keyword, type, score, source}, ...]
+    If `ai_report` (a dict) is given it is filled with {"emerging": [...],
+    "expanded": [...], "errors": [...]} so callers can tell AI steps failed.
     """
     # Check cache
     if (_keyword_cache["generated_at"] and
@@ -539,11 +558,14 @@ async def generate_keywords(db, emergent_key: str = "", use_ai: bool = True) -> 
     
     # Step 3: AI-powered generation (emerging signals + expansion)
     if use_ai:
-        emerging = await _generate_emerging_keywords(historical)
+        ai_errors: list = []
+        emerging = await _generate_emerging_keywords(historical, errors=ai_errors)
         all_keywords.extend(emerging)
 
-        expanded = await _expand_keywords_with_ai(all_keywords)
+        expanded = await _expand_keywords_with_ai(all_keywords, errors=ai_errors)
         all_keywords.extend(expanded)
+        if ai_report is not None:
+            ai_report.update(emerging=emerging, expanded=expanded, errors=ai_errors)
     
     # Step 4: Deduplicate and rank
     final_keywords = _deduplicate_and_rank(all_keywords)

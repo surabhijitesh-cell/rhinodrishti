@@ -22,8 +22,14 @@ from shared import db
 
 logger = logging.getLogger(__name__)
 
-# Haiku cost per classify call (rough estimate, ~800 input tokens avg)
-_HAIKU_COST_PER_CALL_USD = 0.0007
+# Measured real charge per classification call (17 Nov 2026)
+_CLASSIFY_COST_PER_CALL_USD = 0.0012
+
+
+def calls_saved(stage0_rejected: int, stage05_rejected: int, stage1_rejected: int) -> int:
+    """AI calls avoided = items the filters actually rejected. Items merely
+    postponed to a later cycle are NOT savings (they will be classified later)."""
+    return max(0, stage0_rejected + stage05_rejected + stage1_rejected)
 
 
 async def record_cycle(
@@ -50,9 +56,9 @@ async def record_cycle(
         stage1_pass = stage05_pass - stage1_rejected
         haiku_total = haiku_relevant + haiku_not_relevant + haiku_failed
 
-        # How many Haiku calls did the cascade avoid?
-        est_saved = items_scanned - haiku_total
-        est_cost_saved = max(0.0, est_saved * _HAIKU_COST_PER_CALL_USD)
+        # How many AI calls did the cascade avoid? Only items it rejected.
+        est_saved = calls_saved(stage0_rejected, stage05_rejected, stage1_rejected)
+        est_cost_saved = est_saved * _CLASSIFY_COST_PER_CALL_USD
 
         await db.filter_metrics.insert_one({
             "id": str(uuid.uuid4()),
@@ -112,7 +118,10 @@ async def get_today_totals() -> dict:
     d = docs[0]
     d.pop("_id", None)
     d["avg_duration"] = round(d.get("avg_duration", 0), 1)
-    d["est_cost_saved_usd"] = round(d.get("est_cost_saved_usd", 0), 4)
+    # Recompute from rejected counts so older, over-counted records don't inflate it.
+    d["est_haiku_calls_saved"] = calls_saved(
+        d.get("stage0_rejected", 0), d.get("stage05_rejected", 0), d.get("stage1_rejected", 0))
+    d["est_cost_saved_usd"] = round(d["est_haiku_calls_saved"] * _CLASSIFY_COST_PER_CALL_USD, 4)
     return d
 
 
@@ -136,8 +145,13 @@ async def get_daily_cascade(days: int = 7) -> list[dict]:
         {"$sort": {"_id": 1}},
     ]
     docs = await db.filter_metrics.aggregate(pipeline).to_list(length=days + 1)
-    return [{"date": d["_id"], **{k: v for k, v in d.items() if k != "_id"}}
+    rows = [{"date": d["_id"], **{k: v for k, v in d.items() if k != "_id"}}
             for d in docs]
+    for r in rows:  # recompute from rejected counts (see get_today_totals)
+        r["est_cost_saved_usd"] = round(
+            calls_saved(r.get("stage0_rejected", 0), r.get("stage05_rejected", 0),
+                        r.get("stage1_rejected", 0)) * _CLASSIFY_COST_PER_CALL_USD, 4)
+    return rows
 
 
 async def get_recent_cycles(limit: int = 20) -> list[dict]:

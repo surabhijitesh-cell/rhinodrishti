@@ -48,7 +48,8 @@ ACTOR_INSTAGRAM = "apify/instagram-post-scraper"
 ACTOR_FACEBOOK = "scraper_one/facebook-posts-search"
 
 # ── Region seeds — reuse the app's existing NER state list, don't invent one ─
-from shared import NER_STATES  # ["Assam", "Meghalaya", "Mizoram", "Manipur", "Arunachal Pradesh", "Tripura"]
+from source_health import record_error, record_success
+from shared import NER_STATES # ["Assam", "Meghalaya", "Mizoram", "Manipur", "Arunachal Pradesh", "Tripura"]
 
 # Instagram accounts followed, as {newest posts taken per account each fetch:
 # [accounts]}. Every name returned live posts on 17 Nov 2026. Order of weight
@@ -115,14 +116,14 @@ async def _should_run_now(db, mode: str) -> bool:
     return hours_since >= FETCH_CONFIG[mode]["hours_between_runs"]
 
 
-async def _mark_run(db, counts: dict) -> None:
+async def _mark_run(db, counts: dict, any_ok: bool = True) -> None:
+    # last_run moves only when at least one platform worked, so a total
+    # failure is retried at the next tick instead of waiting a full interval.
+    fields = {"last_run_counts": counts}
+    if any_ok:
+        fields["last_run"] = datetime.now(timezone.utc).isoformat()
     await db.app_settings.update_one(
-        {"id": "social_fetch"},
-        {"$set": {
-            "last_run": datetime.now(timezone.utc).isoformat(),
-            "last_run_counts": counts,
-        }},
-        upsert=True,
+        {"id": "social_fetch"}, {"$set": fields}, upsert=True,
     )
 
 
@@ -287,7 +288,9 @@ async def _ingest(db, items: list[dict], platform: str) -> int:
         if await db.intelligence_items.find_one({"source_url": item["source_url"]}):
             continue
         item.setdefault("id", str(uuid.uuid4()))
-        await db.social_posts.insert_one({**item, "platform": platform, "fetched_at": datetime.now(timezone.utc).isoformat()})
+        fetched_at = datetime.now(timezone.utc).isoformat()
+        item["fetched_at"] = fetched_at
+        await db.social_posts.insert_one({**item, "platform": platform, "fetched_at": fetched_at})
         try:
             analysis = await classify_and_analyze_article(item["raw_content"][:4000], item["title"])
             item.update(analysis)
@@ -340,6 +343,8 @@ async def fetch_instagram_posts(db, max_items: int) -> int:
     INSTAGRAM_ACCOUNTS (about 63 posts a fetch), so max_items is not used.
     One account group failing does not stop the others."""
     saved = 0
+    last_error = None
+    failed = 0
     for per_account, accounts in INSTAGRAM_ACCOUNTS.items():
         try:
             raw = await _run_actor(ACTOR_INSTAGRAM, {
@@ -351,10 +356,13 @@ async def fetch_instagram_posts(db, max_items: int) -> int:
             })
         except Exception as e:
             logger.error(f"Apify instagram fetch failed for {accounts}: {e}")
+            last_error, failed = e, failed + 1
             continue
         # Accounts with nothing new come back as error rows with no caption.
         items = [it for it in (_instagram_to_intel_item(p) for p in raw) if it]
         saved += await _ingest(db, items, "instagram")
+    if failed and failed == len(INSTAGRAM_ACCOUNTS):
+        raise last_error  # every group failed: report it, don't call it a quiet success
     return saved
 
 
@@ -387,6 +395,7 @@ async def run_social_fetch(db, force: bool = False) -> dict:
 
     max_items = FETCH_CONFIG[mode]["max_items_per_platform"]
     counts = {}
+    any_ok = False
     for platform, fn in [
         ("instagram", fetch_instagram_posts),
         ("facebook", fetch_facebook_posts),
@@ -394,9 +403,12 @@ async def run_social_fetch(db, force: bool = False) -> dict:
     ]:
         try:
             counts[platform] = await fn(db, max_items)
+            any_ok = True
+            await record_success(db, "apify", platform, counts[platform])
         except Exception as e:
             logger.error(f"Apify {platform} fetch failed: {e}")
             counts[platform] = 0
+            await record_error(db, "apify", platform, str(e) or type(e).__name__)
 
-    await _mark_run(db, counts)
+    await _mark_run(db, counts, any_ok)
     return {"status": "ok", "mode": mode, "max_items_per_platform": max_items, "counts": counts}

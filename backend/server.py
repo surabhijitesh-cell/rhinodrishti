@@ -1,5 +1,5 @@
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from starlette.middleware.cors import CORSMiddleware
 import os
 import uuid
@@ -157,6 +157,50 @@ async def initialize_sources():
         logger.warning(f"initialize_sources failed (non-fatal): {e}")
 
 
+async def _run_once(name: str, coro_fn):
+    """Run a one-time repair only if it has never completed. A raise leaves no marker (retries next boot)."""
+    key = f"migration:{name}"
+    if await db.app_settings.find_one({"key": key}):
+        return
+    await coro_fn()
+    await db.app_settings.insert_one({"key": key, "done_at": datetime.now(timezone.utc).isoformat()})
+
+
+# Catch-up after a restart: the 06:00 IST jobs must not be lost because the server was down then.
+_IST = timezone(timedelta(hours=5, minutes=30))
+_CATCHUP_AFTER_IST = (6, 10)
+
+
+def catchup_due(now_utc: datetime, last_done_ist_date) -> bool:
+    """True when it is past 06:10 IST and the morning job has not yet run for today's IST date."""
+    now_ist = now_utc.astimezone(_IST)
+    if (now_ist.hour, now_ist.minute) < _CATCHUP_AFTER_IST:
+        return False
+    return last_done_ist_date != now_ist.date().isoformat()
+
+
+async def _catchup_after_boot(run_brief, run_faultline, delay: int = 120):
+    """Once per boot, after boot settles: run the morning brief / faultline pass if today's is missing."""
+    try:
+        await asyncio.sleep(delay)
+        now = datetime.now(timezone.utc)
+        today = now.astimezone(_IST).date().isoformat()
+        brief = await db.daily_briefs.find_one({"date": today}, {"_id": 1})
+        if catchup_due(now, today if brief else None):
+            logger.info(f"Catch-up: no daily brief for {today} (IST) - generating now")
+            await run_brief()
+        else:
+            logger.info(f"Catch-up: daily brief for {today} not needed")
+        scored = await db.faultline_scores.find_one({"date": today}, {"_id": 1})
+        if catchup_due(now, today if scored else None):
+            logger.info(f"Catch-up: no faultline pass for {today} (IST) - running now")
+            await run_faultline()
+        else:
+            logger.info(f"Catch-up: faultline pass for {today} not needed")
+    except Exception as e:
+        logger.warning(f"Catch-up after restart failed: {e}")
+
+
 async def _deferred_init(item_count: int):
     """
     Heavy startup work deferred to a background task so the startup
@@ -204,7 +248,7 @@ async def _deferred_init(item_count: int):
     # One-time stage-0 filter repair: items that were incorrectly rejected by the
     # old hard_filter (empty source_region fell through to no_match instead of
     # fail-open RULE 7). Reset them to unprocessed so the fixed filter re-evaluates.
-    try:
+    async def _stage0_repair():
         r = await intelligence_col.update_many(
             {"tags": "stage0_filtered"},
             {
@@ -216,12 +260,14 @@ async def _deferred_init(item_count: int):
             logger.info(f"Startup repair: reset {r.modified_count} stage0-filtered items → unprocessed")
             from shared import invalidate_stats_cache
             invalidate_stats_cache()
+
+    try:
+        await _run_once("stage0_reset_v1", _stage0_repair)
     except Exception as e:
         logger.warning(f"Stage-0 repair failed: {e}")
 
     # One-time archive repair (update_many on 23k docs can take 5-10 s)
-    try:
-        from datetime import timedelta
+    async def _archive_repair():
         seven_days_ago = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
         r = await intelligence_col.update_many(
             {"is_archived": True, "published_at": {"$gte": seven_days_ago}, "pinned": {"$ne": True}},
@@ -229,23 +275,29 @@ async def _deferred_init(item_count: int):
         )
         if r.modified_count:
             logger.info(f"Deferred repair: un-archived {r.modified_count} fresh items (< 7 days old)")
+
+    try:
+        await _run_once("archive_unarchive_v1", _archive_repair)
     except Exception as e:
         logger.warning(f"Deferred archive repair failed: {e}")
 
     # One-time cluster-primary repair (aggregates 3000+ clusters — slow)
-    try:
+    async def _cluster_repair():
         from fusion_engine import repair_cluster_primaries
         stats = await repair_cluster_primaries(db)
         if stats.get("primaries_reassigned", 0) > 0:
             logger.info(f"Deferred cluster repair: reassigned {stats['primaries_reassigned']} primaries "
                         f"(checked {stats.get('clusters_checked', 0)} clusters)")
+
+    try:
+        await _run_once("cluster_primary_v1", _cluster_repair)
     except Exception as e:
         logger.warning(f"Deferred cluster repair failed: {e}")
 
     # Severity/priority_score consistency repair (idempotent — no-op after first run)
     # Old code stored AI's raw severity field; AI contradicted its own score frequently.
     # New code derives severity from priority_score, but existing DB items need backfill.
-    try:
+    async def _severity_repair():
         from routers.intelligence import repair_severity_mismatch
         result = await repair_severity_mismatch()
         if result["fixed_total"]:
@@ -254,8 +306,21 @@ async def _deferred_init(item_count: int):
                 f"(critical+{result['fixed_critical']}, high+{result['fixed_high']}, "
                 f"medium+{result['fixed_medium']}, low+{result['fixed_low']})"
             )
+
+    try:
+        await _run_once("severity_bands_v1", _severity_repair)
     except Exception as e:
         logger.warning(f"Startup severity repair failed: {e}")
+
+    # Saved similarity threshold survives deploys (admin saves it in the DB, the filter reads a module value)
+    try:
+        saved = await db.admin_settings.find_one({"key": "filter_thresholds"}, {"_id": 0})
+        if saved and saved.get("stage05_min_sim") is not None:
+            from relevance_filter import set_min_sim_threshold
+            set_min_sim_threshold(float(saved["stage05_min_sim"]))
+            logger.info(f"Restored saved similarity threshold: {saved['stage05_min_sim']}")
+    except Exception as e:
+        logger.warning(f"Restoring saved similarity threshold failed: {e}")
 
 
 @app.on_event("startup")
@@ -312,24 +377,25 @@ async def startup():
         from apscheduler.schedulers.asyncio import AsyncIOScheduler
         from apscheduler.triggers.cron import CronTrigger
         scheduler = AsyncIOScheduler()
-        scheduler.add_job(fetch_grassroots_sources, 'interval', minutes=60, id='grassroots_fetch')
-        scheduler.add_job(fetch_and_process_news, 'interval', minutes=30, id='news_fetch')
-        scheduler.add_job(fetch_established_sources, 'interval', hours=12, id='established_fetch')
-        scheduler.add_job(analyze_unprocessed_items, 'interval', minutes=15, id='retry_unprocessed')
+        # Fixed anchor: interval jobs fire at the same clock times regardless of boot time.
+        _A = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        # news_fetch covers all sources, so separate grassroots/established jobs are not scheduled.
+        scheduler.add_job(fetch_and_process_news, 'interval', minutes=30, id='news_fetch', start_date=_A)
+        scheduler.add_job(analyze_unprocessed_items, 'interval', minutes=15, id='retry_unprocessed', start_date=_A)
         scheduler.add_job(
             generate_scheduled_daily_brief,
             CronTrigger(hour=0, minute=30, timezone='UTC'),
             id='daily_brief_0600',
             misfire_grace_time=3600
         )
-        scheduler.add_job(run_embedding_backfill, 'interval', hours=6, id='embedding_backfill')
+        scheduler.add_job(run_embedding_backfill, 'interval', hours=6, id='embedding_backfill', start_date=_A)
         async def _run_batch_fusion():
             try:
                 stats = await run_batch_fusion(db)
                 logger.info(f"Scheduled batch fusion: {stats}")
             except Exception as e:
                 logger.warning(f"Scheduled batch fusion failed: {e}")
-        scheduler.add_job(_run_batch_fusion, 'interval', minutes=30, id='batch_fusion')
+        scheduler.add_job(_run_batch_fusion, 'interval', minutes=30, id='batch_fusion', start_date=_A)
 
         # OpenRouter credit monitor — warns at $2 (amber) and $0.50 (red)
         async def _check_openrouter_credits():
@@ -416,7 +482,7 @@ async def startup():
             except Exception as e:
                 logger.warning(f"Credit monitor check failed: {e}")
 
-        scheduler.add_job(_check_openrouter_credits, 'interval', minutes=30, id='credit_monitor')
+        scheduler.add_job(_check_openrouter_credits, 'interval', minutes=30, id='credit_monitor', start_date=_A)
         # Run once immediately so the warning level is set before the first 30-min tick.
         asyncio.create_task(_check_openrouter_credits())
 
@@ -452,6 +518,8 @@ async def startup():
             _notify_weekly_activity_report,
             CronTrigger(day_of_week='mon', hour=2, minute=30, timezone='UTC'),  # 08:00 IST Monday
             id='weekly_activity_report',
+            misfire_grace_time=3600,
+            coalesce=True,
         )
 
         # Firecrawl jobs — DISABLED (insufficient credits; re-enable when plan upgraded)
@@ -500,9 +568,9 @@ async def startup():
             except Exception as e:
                 logger.warning(f"Apify social job failed: {e}")
 
-        scheduler.add_job(_fetch_youtube,      'interval', hours=4,  id='youtube_fetch')
-        scheduler.add_job(_fetch_telegram,     'interval', hours=1,  id='telegram_fetch')
-        scheduler.add_job(_fetch_apify_social, 'interval', hours=6,  id='apify_social_fetch')
+        scheduler.add_job(_fetch_youtube,      'interval', hours=4,  id='youtube_fetch', start_date=_A)
+        scheduler.add_job(_fetch_telegram,     'interval', hours=1,  id='telegram_fetch', start_date=_A)
+        scheduler.add_job(_fetch_apify_social, 'interval', hours=6,  id='apify_social_fetch', start_date=_A)
 
         # Fading engine — recomputes visibility_score every hour
         async def _run_fading_pass():
@@ -512,7 +580,7 @@ async def startup():
             except Exception as e:
                 logger.warning(f"Fading pass failed: {e}")
 
-        scheduler.add_job(_run_fading_pass, 'interval', hours=1, id='fading_pass')
+        scheduler.add_job(_run_fading_pass, 'interval', hours=1, id='fading_pass', start_date=_A)
 
         # Daily low-severity hard-delete (runs at 02:00 IST = 20:30 UTC previous day)
         async def _delete_low_sev():
@@ -594,6 +662,7 @@ async def startup():
             'interval',
             hours=4,
             id='faultline_incremental_pass',
+            start_date=_A,
             misfire_grace_time=600,
         )
 
@@ -619,11 +688,13 @@ async def startup():
             'interval',
             hours=24,
             id='strip_raw_content',
+            start_date=_A,
             misfire_grace_time=3600,
         )
 
         scheduler.start()
-        logger.info("Scheduler: grassroots/60min, standard/30min, established/12hr, retry/15min, brief/0600 IST, embeddings/6hr, fusion/30min, youtube/4hr, telegram/1hr, apify_social/6hr (insta/fb/twitter), fading/1hr, relationships/nightly, faultlines/0600+1800 IST + incremental/4hr, credit_monitor/30min, strip_raw/24hr [firecrawl DISABLED]")
+        asyncio.create_task(_catchup_after_boot(generate_scheduled_daily_brief, _run_faultline_pass))
+        logger.info("Scheduler: news(all sources)/30min, grassroots+established jobs removed, retry/15min, brief/0600 IST, embeddings/6hr, fusion/30min, youtube/4hr, telegram/1hr, apify_social/6hr (insta/fb/twitter), fading/1hr, relationships/nightly, faultlines/0600+1800 IST + incremental/4hr, credit_monitor/30min, strip_raw/24hr [firecrawl DISABLED]")
     except Exception as e:
         logger.warning(f"Scheduler setup failed: {e}")
 

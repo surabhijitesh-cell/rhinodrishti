@@ -52,14 +52,15 @@ export default function KeywordEngine({ api }) {
   const handleRefresh = async () => {
     setRefreshing(true);
     try {
-      await axios.post(`${api}/keywords/refresh`);
-      let attempts = 0;
-      const poll = setInterval(async () => {
-        attempts++;
-        await fetchKeywords();
-        if (attempts >= 10) { clearInterval(poll); setRefreshing(false); }
-      }, 3000);
-    } catch { setRefreshing(false); }
+      const res = await axios.post(`${api}/keywords/refresh`);
+      const added = res.data?.added ?? 0;
+      toast.success(`Added ${added} new keyword${added === 1 ? "" : "s"}`);
+      await fetchKeywords();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "AI keyword refresh failed");
+    } finally {
+      setRefreshing(false);
+    }
   };
 
   const handleAddKeyword = async () => {

@@ -293,7 +293,36 @@ async def _run_elite_scrape():
                 await intelligence_col.insert_one(article)
 
 
+_BAND_TOPS = ((80, 100), (60, 79), (40, 59), (0, 39))
+
+
+def finalize_score(llm_score: int, llm_severity: str, sifter_boost: int) -> tuple:
+    """AI score + sifter boost, but never into a higher severity band than the AI's own.
+
+    Returns (score, severity). llm_severity is accepted for call-site clarity; the
+    band always comes from the numeric score, as everywhere else in the app.
+    """
+    base = max(0, min(100, int(llm_score)))
+    top = next(t for lo, t in _BAND_TOPS if base >= lo)
+    score = min(top, base + max(0, int(sifter_boost or 0)))
+    severity = ("critical" if score >= 80 else "high" if score >= 60
+                else "medium" if score >= 40 else "low")
+    return score, severity
+
+
+# One news cycle at a time: a slow cycle must not be overlapped by the next tick.
+_news_cycle_lock = asyncio.Lock()
+
+
 async def fetch_and_process_news(source_filter: str = None):
+    if _news_cycle_lock.locked():
+        logger.info("news cycle already running — skipped")
+        return
+    async with _news_cycle_lock:
+        await _fetch_and_process_news_inner(source_filter)
+
+
+async def _fetch_and_process_news_inner(source_filter: str = None):
     from rss_fetcher import fetch_all_feeds, RSS_SOURCES, get_sources_by_priority
 
     MAX_ARTICLES_PER_CYCLE = 25
@@ -340,7 +369,8 @@ async def fetch_and_process_news(source_filter: str = None):
         articles = await fetch_all_feeds(
             progress_callback=on_source_progress,
             sources=active_sources if source_filter else None,
-            dynamic_keyword_weights=dynamic_kw_weights
+            dynamic_keyword_weights=dynamic_kw_weights,
+            db=db,
         )
         scan_status["articles_found"] = len(articles)
         logger.info(f"Fetched {len(articles)} relevant articles from RSS feeds")
@@ -490,7 +520,8 @@ async def fetch_and_process_news(source_filter: str = None):
                     fail_count += 1
                 elif result.get("is_relevant", True):
                     sifter_boost = sift_result.get("boost_score", 0)
-                    result["priority_score"] = min(100, result.get("priority_score", 30) + sifter_boost)
+                    result["priority_score"], result["severity"] = finalize_score(
+                        result.get("priority_score", 30), result.get("severity", "low"), sifter_boost)
                     result["sifter_level"] = sift_result["level"]
                     result["sifter_triggers"] = sift_result["triggers"]
 
@@ -1014,6 +1045,19 @@ async def analyze_unprocessed_items():
             update_fields = {k: v for k, v in result.items() if k != "_id"}
             update_fields["processed"] = True
             update_fields.pop("is_relevant", None)
+
+            # Same sifter boost + band cap as the RSS path (news-type items only)
+            if item.get("source_type") in (None, "", "rss", "news"):
+                try:
+                    from sifter import sift_article
+                    sift = sift_article(item)
+                    update_fields["priority_score"], update_fields["severity"] = finalize_score(
+                        update_fields.get("priority_score", 30), update_fields.get("severity", "low"),
+                        sift.get("boost_score", 0))
+                    update_fields["sifter_level"] = sift["level"]
+                    update_fields["sifter_triggers"] = sift["triggers"]
+                except Exception as e:
+                    logger.warning(f"Sifter boost skipped for {item.get('id','')}: {e}")
 
             # Real-time fusion: check for duplicates before saving
             try:

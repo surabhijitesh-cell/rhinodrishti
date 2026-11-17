@@ -333,24 +333,26 @@ async def translate_to_english(text: str, source_lang: str, emergent_key: str = 
 
     try:
         client = get_client()
-        response = await client.messages.create(
+        response = await client.chat.completions.create(
             model=MODEL,
-            max_tokens=1024,
-            system=system_prompt,
-            messages=[{"role": "user", "content": text[:3000]}],
+            max_tokens=800,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": text[:3000]},
+            ],
         )
-        translated = response.content[0].text.strip()
+        translated = response.choices[0].message.content.strip()
 
         english_ratio = len(re.findall(r'[a-zA-Z]', translated)) / max(len(translated), 1)
         confidence = min(100, int(english_ratio * 120))
 
         if confidence < 50:
             logger.warning(f"Low translation confidence ({confidence}), retrying...")
-            response2 = await client.messages.create(
+            response2 = await client.chat.completions.create(
                 model=MODEL,
-                max_tokens=1024,
-                system=system_prompt,
+                max_tokens=800,
                 messages=[
+                    {"role": "system", "content": system_prompt},
                     {"role": "user", "content": text[:3000]},
                     {"role": "assistant", "content": translated},
                     {
@@ -359,7 +361,7 @@ async def translate_to_english(text: str, source_lang: str, emergent_key: str = 
                     },
                 ],
             )
-            translated = response2.content[0].text.strip()
+            translated = response2.choices[0].message.content.strip()
             english_ratio = len(re.findall(r'[a-zA-Z]', translated)) / max(len(translated), 1)
             confidence = min(100, int(english_ratio * 120))
 

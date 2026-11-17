@@ -15,6 +15,8 @@ import logging
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
+from source_health import record_error, record_success
+
 logger = logging.getLogger(__name__)
 
 # ── Northeast India news sites to seed (no RSS, JS-heavy, or paywalled) ──────
@@ -392,8 +394,10 @@ async def fetch_web_sources(db) -> int:
         # Firecrawl SDK is synchronous — run in thread pool
         loop = asyncio.get_running_loop()
         raw = await loop.run_in_executor(None, scrape_url_sync, url)
+        src_name = source.get("name") or url
         if not raw:
             # scrape_url_sync already logged the error
+            await record_error(db, "web", src_name, "no content")
             await asyncio.sleep(2)
             continue
 
@@ -407,6 +411,7 @@ async def fetch_web_sources(db) -> int:
                 {"_id": source["_id"]},
                 {"$set": {"last_fetched": datetime.now(timezone.utc)}}
             )
+            await record_success(db, "web", src_name, 0)
             skipped_dup += 1
             await asyncio.sleep(2)
             continue
@@ -421,6 +426,7 @@ async def fetch_web_sources(db) -> int:
             {"_id": source["_id"]},
             {"$set": {"last_fetched": datetime.now(timezone.utc)}}
         )
+        await record_success(db, "web", src_name, 1)
         saved += 1
         logger.info(f"Firecrawl queued: {raw['title'][:60]}")
 

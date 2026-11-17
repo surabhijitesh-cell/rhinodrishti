@@ -266,13 +266,15 @@ async def translate_to_english(text: str) -> str:
     try:
         from llm_client import get_client, MODEL
         client = get_client()
-        response = await client.messages.create(
+        response = await client.chat.completions.create(
             model=MODEL,
-            max_tokens=512,
-            system="You are a translator. Translate the following text to English. Return ONLY the English translation, nothing else.",
-            messages=[{"role": "user", "content": text[:1000]}],
+            max_tokens=400,
+            messages=[
+                {"role": "system", "content": "Translate to English. Reply with the translation only."},
+                {"role": "user", "content": text[:1000]},
+            ],
         )
-        return response.content[0].text.strip()
+        return response.choices[0].message.content.strip()
     except Exception as e:
         logger.error(f"Translation failed: {e}")
         return text.encode('ascii', 'ignore').decode('ascii') or "[Non-English content]"

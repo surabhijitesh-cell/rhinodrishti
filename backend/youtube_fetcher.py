@@ -13,6 +13,8 @@ from datetime import datetime, timezone
 from typing import Optional
 import httpx
 
+from source_health import record_error, record_success
+
 logger = logging.getLogger(__name__)
 
 YOUTUBE_SEARCH_URL = "https://www.googleapis.com/youtube/v3/search"
@@ -51,10 +53,14 @@ def _api_key() -> str:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _search_youtube(query: str = None, channel_id: str = None,
-                    max_results: int = 5) -> list:
+                    max_results: int = 5, raise_errors: bool = False) -> list:
+    """raise_errors=True lets the caller see failures (for source-health
+    recording); the default keeps the old swallow-and-return-[] behaviour."""
     key = _api_key()
     if not key:
         logger.warning("YOUTUBE_API_KEY not set — YouTube disabled")
+        if raise_errors:
+            raise RuntimeError("YOUTUBE_API_KEY not set")
         return []
 
     params = {
@@ -94,6 +100,8 @@ def _search_youtube(query: str = None, channel_id: str = None,
         return items
     except Exception as e:
         logger.error(f"YouTube API error (query='{query}', channel={channel_id}): {e}")
+        if raise_errors:
+            raise
         return []
 
 
@@ -139,9 +147,15 @@ async def fetch_youtube_channels(db) -> int:
             continue
 
         loop = asyncio.get_event_loop()
-        videos = await loop.run_in_executor(
-            None, lambda cid=channel_id: _search_youtube(channel_id=cid, max_results=5)
-        )
+        ch_name = ch.get("name") or channel_id
+        try:
+            videos = await loop.run_in_executor(
+                None, lambda cid=channel_id: _search_youtube(
+                    channel_id=cid, max_results=5, raise_errors=True)
+            )
+        except Exception as e:
+            await record_error(db, "youtube", ch_name, str(e) or type(e).__name__)
+            continue
 
         for v in videos:
             existing = await db.intelligence_items.find_one({"source_url": v["url"]})
@@ -173,6 +187,7 @@ async def fetch_youtube_channels(db) -> int:
             {"_id": ch["_id"]},
             {"$set": {"last_fetched": datetime.now(timezone.utc)}}
         )
+        await record_success(db, "youtube", ch_name, len(videos))
 
     logger.info(f"fetch_youtube_channels: {saved} new items from {len(channels)} channels")
     return saved

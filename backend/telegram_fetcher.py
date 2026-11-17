@@ -31,6 +31,8 @@ import os
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
+from source_health import record_error, record_success
+
 logger = logging.getLogger(__name__)
 
 # ── Default seeds ─────────────────────────────────────────────────────────────
@@ -143,8 +145,12 @@ async def _reset_client():
 
 async def fetch_channel_messages(username: str, channel_name: str,
                                  limit: int = 20,
-                                 since_hours: int = 6) -> list:
+                                 since_hours: int = 6,
+                                 raise_errors: bool = False) -> list:
     """
+    raise_errors=True lets the caller record failures (source health);
+    the default keeps the old swallow-and-return-[] behaviour.
+
     Fetch recent messages from a public Telegram channel using the
     singleton client. Returns list of message dicts.
 
@@ -156,6 +162,8 @@ async def fetch_channel_messages(username: str, channel_name: str,
         client = await _get_or_create_client()
     except RuntimeError as e:
         logger.error(f"Telegram client unavailable: {e}")
+        if raise_errors:
+            raise
         return []
 
     since = datetime.now(timezone.utc) - timedelta(hours=since_hours)
@@ -202,6 +210,8 @@ async def fetch_channel_messages(username: str, channel_name: str,
             await _reset_client()
         else:
             logger.error(f"Telegram fetch error for @{username}: {e}")
+        if raise_errors:
+            raise
         return []
 
 
@@ -255,9 +265,11 @@ async def fetch_telegram_channels(db) -> int:
             continue
 
         try:
-            messages = await fetch_channel_messages(username, name, limit=20, since_hours=6)
+            messages = await fetch_channel_messages(
+                username, name, limit=20, since_hours=6, raise_errors=True)
         except Exception as e:
             logger.error(f"Telegram channel fetch failed for @{username}: {e}")
+            await record_error(db, "telegram", name, str(e) or type(e).__name__)
             continue
 
         for msg in messages:
@@ -277,6 +289,7 @@ async def fetch_telegram_channels(db) -> int:
             {"_id": ch["_id"]},
             {"$set": {"last_fetched": datetime.now(timezone.utc)}}
         )
+        await record_success(db, "telegram", name, len(messages))
 
         # Polite delay between channels — avoids Telegram flood limits
         await asyncio.sleep(2)
