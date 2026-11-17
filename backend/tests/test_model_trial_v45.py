@@ -119,3 +119,26 @@ async def test_two_step_high_first_pass_goes_to_full_model(route):
     res = await ai_pipeline.classify_and_analyze_article(ARTICLE)
     assert [k["model"] for k in c.calls] == [FIRST_PASS_MODEL, ai_pipeline.MODEL]
     assert res["scored_by"] == ai_pipeline.MODEL and res["priority_score"] == 85
+
+
+def test_first_pass_failure_falls_back_to_the_full_model(monkeypatch):
+    import asyncio
+    import ai_pipeline
+    from model_routing import FIRST_PASS_MODEL
+    calls = []
+
+    async def fake_once(article, model, chars):
+        calls.append(model)
+        if model == FIRST_PASS_MODEL:
+            raise RuntimeError("429 rate limited")
+        return {"priority_score": 30}
+
+    async def on():
+        return True
+
+    monkeypatch.setattr(ai_pipeline, "classify_once", fake_once)
+    monkeypatch.setattr(ai_pipeline, "_two_step_on", on)
+    monkeypatch.setattr(ai_pipeline, "is_openrouter_exhausted", lambda: False)
+    result = asyncio.run(ai_pipeline.classify_and_analyze_article({"title": "t", "content": "c"}))
+    assert calls == [FIRST_PASS_MODEL, ai_pipeline.MODEL]
+    assert result["scored_by"] == ai_pipeline.MODEL

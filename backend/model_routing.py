@@ -5,7 +5,9 @@ import time
 FIRST_PASS_MODEL = "google/gemini-2.5-flash-lite"
 STAGE1_MODEL = "google/gemini-2.5-flash-lite"
 # Items the cheap first pass scores at or above this go on to the full model.
-FULL_MODEL_FROM_SCORE = 60
+# 40, not 60: in the 18 Nov 2026 trial a 60 line under-rated 43 of 94 Critical/High
+# items; 40 under-rated 15 (mostly routine/history pieces) and still sent only 38% on.
+FULL_MODEL_FROM_SCORE = 40
 # The trial and the first pass send at most this much article text.
 FIRST_PASS_CONTENT_CHARS = 1200
 

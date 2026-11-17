@@ -325,7 +325,14 @@ async def classify_and_analyze_article(article, source_hint: str = "") -> dict:
     if is_openrouter_exhausted() or not await _two_step_on():
         return await classify_once(article, MODEL, 2000)
     from model_routing import FIRST_PASS_MODEL, FULL_MODEL_FROM_SCORE, FIRST_PASS_CONTENT_CHARS
-    first = await classify_once(article, FIRST_PASS_MODEL, FIRST_PASS_CONTENT_CHARS)
+    try:
+        first = await classify_once(article, FIRST_PASS_MODEL, FIRST_PASS_CONTENT_CHARS)
+    except Exception as e:
+        # The cheap model is rate-limited at times (trial, 18 Nov 2026): never let that fail an item.
+        logger.warning(f"First-pass model failed ({type(e).__name__}); using the full model")
+        full = await classify_once(article, MODEL, 2000)
+        full["scored_by"] = MODEL
+        return full
     if first.get("priority_score", 0) >= FULL_MODEL_FROM_SCORE:
         full = await classify_once(article, MODEL, 2000)
         full["scored_by"] = MODEL
