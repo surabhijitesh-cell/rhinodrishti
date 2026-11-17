@@ -111,7 +111,8 @@ async def root():
 @app.get("/api/health")
 async def health():
     """Lightweight keep-alive endpoint — no DB query, no auth. Pinged every 10 min by GitHub Actions to prevent Render cold-starts."""
-    return {"status": "ok"}
+    # RENDER_GIT_COMMIT is set by Render on every deploy: shows which version is live.
+    return {"status": "ok", "version": os.environ.get("RENDER_GIT_COMMIT", "")[:7]}
 
 
 # ============================================================
