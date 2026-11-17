@@ -79,6 +79,23 @@ ALERT_SCORE_THRESHOLD = 75          # absolute score crossing → CRITICAL alert
 ALERT_DELTA_THRESHOLD = 15          # 7-day delta crossing → ELEVATED alert
 ALERT_DEDUP_HOURS = 24              # no re-alert same faultline+type within 24h
 ALERT_EXPIRY_HOURS = 48             # auto-expire un-ack'd alerts after 48h
+ALERT_ACK_QUIET_DAYS = 7            # an acknowledged alert stays quiet this long...
+ALERT_ACK_REALERT_RISE = 10         # ...unless the score rises this many points
+
+
+def should_suppress_alert(latest: Optional[dict], today_score: float, now: datetime) -> bool:
+    """Decide whether a new faultline alert would only repeat the last one.
+    Before this rule, acknowledging an alert removed it from the duplicate
+    check, so the next twice-daily pass raised (and pushed) it again."""
+    if not latest:
+        return False
+    created = latest.get("created_at") or ""
+    if created >= (now - timedelta(hours=ALERT_DEDUP_HOURS)).isoformat():
+        return True
+    if not latest.get("acknowledged"):
+        return False
+    still_quiet = created >= (now - timedelta(days=ALERT_ACK_QUIET_DAYS)).isoformat()
+    return still_quiet and today_score < (latest.get("score") or 0) + ALERT_ACK_REALERT_RISE
 
 # ── Score levels (matches stability level vocabulary) ─────────────────────────
 def _score_level(score: float) -> str:
@@ -885,15 +902,12 @@ async def evaluate_alerts(
     if not alert_type:
         return None
 
-    # Dedup: skip if recent alert exists
-    dedup_cutoff = (now - timedelta(hours=ALERT_DEDUP_HOURS)).isoformat()
-    existing = await db.faultline_alerts.find_one({
-        "faultline_id": fl_id,
-        "alert_type": alert_type,
-        "created_at": {"$gte": dedup_cutoff},
-        "acknowledged": {"$ne": True},
-    })
-    if existing:
+    # Dedup: skip if this alert was raised recently, or was acknowledged and
+    # the situation has not got materially worse since.
+    latest = await db.faultline_alerts.find_one(
+        {"faultline_id": fl_id, "alert_type": alert_type}, sort=[("created_at", -1)]
+    )
+    if should_suppress_alert(latest, today_score, now):
         return None
 
     dominant = today_breakdown.get("dominant_subissues", [])

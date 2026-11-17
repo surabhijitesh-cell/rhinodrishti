@@ -36,6 +36,8 @@ export default function IntelligenceFeed({ api, crossBorderOnly = false, alertsO
   const [page, setPage] = useState(1);
   const [pages, setPages] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [openAlertCount, setOpenAlertCount] = useState(0);
+  const [acking, setAcking] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
   const [semanticMode, setSemanticMode] = useState(false);
   const [semanticQuery, setSemanticQuery] = useState("");
@@ -87,6 +89,7 @@ export default function IntelligenceFeed({ api, crossBorderOnly = false, alertsO
         }
         setItems(alertItems);
         setTotal(alertItems.length);
+        setOpenAlertCount(res.data.count || alertItems.length);
         setPages(1);
       } else {
         const res = await axios.get(url);
@@ -103,6 +106,23 @@ export default function IntelligenceFeed({ api, crossBorderOnly = false, alertsO
   useEffect(() => {
     fetchItems();
   }, [fetchItems]);
+
+  // Alerts page: acknowledge one alert, or every alert currently shown.
+  const acknowledgeAlerts = async (ids) => {
+    if (!ids.length) return;
+    setAcking(true);
+    try {
+      if (ids.length === 1) await axios.post(`${api}/intelligence/${ids[0]}/acknowledge`);
+      else await axios.post(`${api}/alerts/acknowledge-all`, { ids });
+      setItems((prev) => prev.filter((i) => !ids.includes(i.id)));
+      setOpenAlertCount((c) => Math.max(0, c - ids.length));
+      toast.success(ids.length === 1 ? "Alert acknowledged" : `${ids.length} alerts acknowledged`);
+      if (ids.length > 1) fetchItems();
+    } catch (e) {
+      toast.error("Could not acknowledge — please try again");
+    }
+    setAcking(false);
+  };
 
   // Scroll to top when page changes
   useEffect(() => {
@@ -215,6 +235,26 @@ export default function IntelligenceFeed({ api, crossBorderOnly = false, alertsO
         </h1>
         <p className="text-xs font-mono uppercase tracking-[0.15em] text-muted-foreground mt-1">{pageDesc}</p>
       </div>
+
+      {alertsOnly && (
+        <div className="flex items-center justify-between gap-3 border border-red-500/30 bg-red-950/20 px-3 py-2" data-testid="alerts-ack-bar">
+          <span className="text-xs font-mono uppercase tracking-wider text-red-400">
+            {openAlertCount} alert{openAlertCount === 1 ? "" : "s"} need attention
+            {items.length < openAlertCount ? ` — showing ${items.length}` : ""}
+          </span>
+          <Button
+            variant="outline" size="sm"
+            className="rounded-none text-xs uppercase border-green-500/30 text-green-400 hover:bg-green-500/10"
+            disabled={acking || items.length === 0}
+            onClick={() => {
+              if (window.confirm(`Acknowledge all ${items.length} alerts shown?`)) acknowledgeAlerts(items.map((i) => i.id));
+            }}
+            data-testid="ack-all-btn"
+          >
+            ACK all shown ({items.length})
+          </Button>
+        </div>
+      )}
 
       {/* Row 1 — Search + mode toggle */}
       <div className="flex items-center gap-2">
@@ -420,7 +460,20 @@ export default function IntelligenceFeed({ api, crossBorderOnly = false, alertsO
       ) : (
         <>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4" data-testid="intelligence-items-grid">
-            {items.map((item) => (
+            {items.map((item) => alertsOnly ? (
+              <div key={item.id} className="flex flex-col" data-testid={`alert-row-${item.id}`}>
+                <IntelligenceCard item={item} api={api} feedbackData={feedbackMap[item.id]} onDelete={handleDeleteItem} onEnhanced={handleEnhanced} />
+                <Button
+                  variant="outline" size="sm"
+                  className="rounded-none border-t-0 text-xs uppercase border-green-500/30 text-green-400 hover:bg-green-500/10"
+                  disabled={acking}
+                  onClick={() => acknowledgeAlerts([item.id])}
+                  data-testid={`alert-ack-btn-${item.id}`}
+                >
+                  ACK — handled
+                </Button>
+              </div>
+            ) : (
               <IntelligenceCard key={item.id} item={item} api={api} feedbackData={feedbackMap[item.id]} onDelete={handleDeleteItem} onEnhanced={handleEnhanced} />
             ))}
           </div>

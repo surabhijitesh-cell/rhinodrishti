@@ -620,6 +620,7 @@ function SourceScanners({ api, socialTrigger }) {
 
 function UnacknowledgedAlerts({ api }) {
   const [alerts, setAlerts] = useState([]);
+  const [openCount, setOpenCount] = useState(0);
   const [dismissing, setDismissing] = useState(null);
   const navigate = useNavigate();
 
@@ -628,6 +629,7 @@ function UnacknowledgedAlerts({ api }) {
       try {
         const res = await axios.get(`${api}/alerts/unacknowledged`);
         setAlerts(res.data.alerts || []);
+        setOpenCount(res.data.count || 0);
       } catch (e) { /* silent */ }
     };
     fetch();
@@ -640,6 +642,7 @@ function UnacknowledgedAlerts({ api }) {
     try {
       await axios.post(`${api}/intelligence/${id}/acknowledge`);
       setAlerts((prev) => prev.filter((a) => a.id !== id));
+      setOpenCount((c) => Math.max(0, c - 1));
     } catch (e) { console.error(e); }
     setDismissing(null);
   };
@@ -651,7 +654,7 @@ function UnacknowledgedAlerts({ api }) {
       <div className="flex items-center gap-2 px-4 py-2 border-b border-red-500/30">
         <BellRing size={14} className="text-red-400 animate-pulse" />
         <span className="text-xs uppercase tracking-wider font-['Barlow_Condensed'] font-semibold text-red-400">
-          Unacknowledged Critical Alerts ({alerts.length})
+          Alerts needing attention ({openCount || alerts.length})
         </span>
         <Button
           variant="ghost" size="sm"

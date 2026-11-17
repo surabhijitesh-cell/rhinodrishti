@@ -59,7 +59,8 @@ function AppRoutes() {
     try {
       const res = await axios.get(`${API}/dashboard/stats`);
       setStats(res.data);
-      setAlertCount(res.data.critical_count + res.data.high_count);
+      // Same "needs attention" count the Dashboard panel and Alerts page show.
+      setAlertCount(res.data.open_alert_count ?? (res.data.critical_count + res.data.high_count));
     } catch (e) {
       console.error("Failed to fetch stats:", e);
     }

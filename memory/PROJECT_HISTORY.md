@@ -104,3 +104,7 @@ Not tested against live AI; measure with `api_usage.by_feature` after deploy. Ex
 ## 2026-11-17 — fix/reports-bangladesh-myanmar-filter (audit Stage 4 of 7)
 Safe briefs: Regenerate keeps the stored Monthly/Fortnightly brief until the new one is written (failure or restart restores it; a second press does not start a second run; empty periods settle as "empty"). Missing AI sections are listed on the brief page and on PDF page 1 ("INCOMPLETE BRIEF"), also for old stored briefs. Daily Brief PDF header counts the brief's own 24 hours; quiet-day top-ups limited to 7 days and labelled "Earlier item".
 PDFs rendered and checked from the test copy; brief-page banners NOT seen on screen (usage limit hit). Stages 2-4 await Render deploy and live confirmation; Stages 5-7 not started.
+
+## 2026-11-17 — fix/reports-bangladesh-myanmar-filter (audit Stage 5 of 7)
+Alerts agree: one "needs attention" rule (unacknowledged Critical/High, visible in feed, inside retention) now drives the sidebar badge, the Dashboard panel and the Alerts page. Alerts page has "ACK — handled" on every card and "ACK all shown"; ACK records who pressed it. Acknowledged faultline alerts stay quiet for 7 days unless the score rises 10+ points.
+Stage 2 confirmed live (real charge about $0.0012 per classification; faultline pass 637 calls / $0.28). Stages 3-5 pushed, awaiting Render deploy. Seen on local screens against the test copy; ACK buttons not pressed (would write to the database).

@@ -45,6 +45,38 @@ async def get_map_timeline(hours: int = 24, limit: int = 500):
     return {"items": items, "hours": hours, "count": len(items)}
 
 
+HIDDEN_TAGS = ["not_relevant", "unprocessed", "stage0_filtered", "stage05_filtered", "stage1_filtered"]
+MAX_ACK_BATCH = 200
+
+
+def open_alert_filter(retention_cutoff: str) -> dict:
+    """THE definition of an alert that still needs attention: a Critical or
+    High item the feed would show, inside the retention window, that nobody
+    has acknowledged. The sidebar badge, the Dashboard panel and the Alerts
+    page all use this, so their numbers agree."""
+    return {
+        "processed": True,
+        "published_at": {"$gte": retention_cutoff},
+        "severity": {"$in": ["critical", "high"]},
+        "acknowledged": {"$ne": True},
+        "is_cluster_primary": {"$ne": False},
+        "is_archived": {"$ne": True},
+        "tags": {"$nin": HIDDEN_TAGS},
+    }
+
+
+async def _retention_cutoff() -> str:
+    settings = await db.app_settings.find_one({"key": "retention_days"}, {"_id": 0})
+    retention_days = settings.get("value", 30) if settings else 30
+    return (datetime.now(timezone.utc) - timedelta(days=retention_days)).isoformat()
+
+
+async def _open_alerts(limit: int) -> dict:
+    flt = open_alert_filter(await _retention_cutoff())
+    items = await intelligence_col.find(flt, {"_id": 0}).sort("published_at", -1).limit(limit).to_list(limit)
+    return {"alerts": items, "count": await intelligence_col.count_documents(flt)}
+
+
 @router.get("/dashboard/stats")
 async def get_dashboard_stats():
     now = datetime.now(timezone.utc)
@@ -92,15 +124,11 @@ async def get_dashboard_stats():
         if doc["_id"]:
             threat_dist[doc["_id"]] = doc["count"]
 
+    open_alerts = open_alert_filter(retention_cutoff)
     recent_critical = await intelligence_col.find(
-        {
-            **visibility_filter,
-            "severity": {"$in": ["critical", "high"]},
-            # Don't surface already-acknowledged alerts in the dashboard panel
-            "acknowledged": {"$ne": True},
-        },
-        {"_id": 0}
+        open_alerts, {"_id": 0}
     ).sort("published_at", -1).limit(50).to_list(50)
+    open_alert_count = await intelligence_col.count_documents(open_alerts)
 
     today = now.strftime("%Y-%m-%d")
     today_count = await intelligence_col.count_documents(
@@ -133,6 +161,7 @@ async def get_dashboard_stats():
         "today_processed": today_processed,
         "pending_classification": pending_classification,
         "critical_count": critical, "high_count": high,
+        "open_alert_count": open_alert_count,
         "medium_count": medium, "low_count": low,
         "state_distribution": state_dist, "threat_distribution": threat_dist,
         "recent_critical": recent_critical, "trend_7d": trend_data[-7:],
@@ -420,39 +449,43 @@ async def delete_intelligence_item(item_id: str):
 
 @router.get("/alerts")
 async def get_alerts():
-    items = await intelligence_col.find(
-        {"severity": {"$in": ["critical", "high"]}, "processed": True}, {"_id": 0}
-    ).sort("published_at", -1).limit(30).to_list(30)
-    return {"alerts": items, "count": len(items)}
+    """Alerts page: every alert that still needs attention (newest first)."""
+    return await _open_alerts(MAX_ACK_BATCH)
 
 
 @router.get("/alerts/unacknowledged")
 async def get_unacknowledged_alerts():
-    items = await intelligence_col.find(
-        {
-            "severity": {"$in": ["critical", "high"]},
-            "processed": True,
-            "$or": [
-                {"acknowledged": {"$exists": False}},
-                {"acknowledged": False}
-            ]
-        },
-        {"_id": 0}
-    ).sort("published_at", -1).limit(50).to_list(50)
-    return {"alerts": items, "count": len(items)}
+    """Dashboard panel: the newest 50 of the same list; `count` is the full total."""
+    return await _open_alerts(50)
+
+
+def _ack_fields(user: dict) -> dict:
+    return {
+        "acknowledged": True,
+        "acknowledged_at": datetime.now(timezone.utc).isoformat(),
+        "acknowledged_by": user.get("username", ""),
+    }
+
+
+@router.post("/alerts/acknowledge-all")
+async def acknowledge_alerts(body: dict, user: dict = Depends(get_current_user)):
+    """ACK all visible: acknowledges exactly the alerts the analyst was shown."""
+    ids = [i for i in (body.get("ids") or []) if isinstance(i, str)][:MAX_ACK_BATCH]
+    if not ids:
+        raise HTTPException(status_code=400, detail="No alerts given")
+    result = await intelligence_col.update_many(
+        {"id": {"$in": ids}, "acknowledged": {"$ne": True}}, {"$set": _ack_fields(user)}
+    )
+    invalidate_stats_cache()
+    return {"message": "Alerts acknowledged", "acknowledged": result.modified_count}
 
 
 @router.post("/intelligence/{item_id}/acknowledge")
-async def acknowledge_alert(item_id: str):
-    result = await intelligence_col.update_one(
-        {"id": item_id},
-        {"$set": {
-            "acknowledged": True,
-            "acknowledged_at": datetime.now(timezone.utc).isoformat()
-        }}
-    )
+async def acknowledge_alert(item_id: str, user: dict = Depends(get_current_user)):
+    result = await intelligence_col.update_one({"id": item_id}, {"$set": _ack_fields(user)})
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Item not found")
+    invalidate_stats_cache()  # so the sidebar badge drops straight away
     return {"message": "Alert acknowledged", "id": item_id}
 
 
