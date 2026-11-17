@@ -20,7 +20,7 @@ class TestBiasImpactEndpoint:
         """Get auth token for tests"""
         response = requests.post(f"{BASE_URL}/api/auth/login", json={
             "username": "admin",
-            "password": "Admin@2026!"
+            "password": os.environ.get("RD_ADMIN_PASSWORD", "")
         })
         assert response.status_code == 200, f"Login failed: {response.text}"
         self.token = response.json()["token"]
@@ -107,7 +107,7 @@ class TestBiasSettingsEndpoint:
         """Get auth token for tests"""
         response = requests.post(f"{BASE_URL}/api/auth/login", json={
             "username": "admin",
-            "password": "Admin@2026!"
+            "password": os.environ.get("RD_ADMIN_PASSWORD", "")
         })
         assert response.status_code == 200
         self.token = response.json()["token"]
@@ -176,7 +176,7 @@ class TestViewerRoleRestriction:
         # First ensure viewer user exists
         admin_response = requests.post(f"{BASE_URL}/api/auth/login", json={
             "username": "admin",
-            "password": "Admin@2026!"
+            "password": os.environ.get("RD_ADMIN_PASSWORD", "")
         })
         admin_token = admin_response.json()["token"]
         admin_headers = {"Authorization": f"Bearer {admin_token}"}
@@ -192,14 +192,14 @@ class TestViewerRoleRestriction:
                 "username": "testviewer",
                 "email": "testviewer@test.com",
                 "name": "Test Viewer",
-                "password": "Viewer@2026!",
+                "password": "<set by admin — not stored here>",
                 "role": "viewer"
             })
         
         # Login as viewer
         viewer_response = requests.post(f"{BASE_URL}/api/auth/login", json={
             "username": "testviewer",
-            "password": "Viewer@2026!"
+            "password": "<set by admin — not stored here>"
         })
         assert viewer_response.status_code == 200, f"Viewer login failed: {viewer_response.text}"
         self.viewer_token = viewer_response.json()["token"]

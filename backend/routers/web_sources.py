@@ -74,7 +74,7 @@ async def firecrawl_status():
     key = os.environ.get("FIRECRAWL_API_KEY", "").strip()
     return {
         "configured": bool(key),
-        "key_preview": f"{key[:8]}..." if key else None,
+        "key_preview": "set (hidden)" if key else None,
     }
 
 
@@ -90,7 +90,7 @@ async def firecrawl_diagnose():
     # 1. API key
     key = os.environ.get("FIRECRAWL_API_KEY", "").strip()
     result["api_key_set"] = bool(key)
-    result["api_key_preview"] = f"{key[:8]}..." if key else "NOT SET"
+    result["api_key_preview"] = "set (hidden)" if key else "NOT SET"
 
     # 2. SDK version
     try:

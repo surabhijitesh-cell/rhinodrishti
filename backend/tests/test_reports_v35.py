@@ -14,7 +14,7 @@ BASE_URL = os.environ.get('REACT_APP_BACKEND_URL', '').rstrip('/')
 
 # Test credentials
 ADMIN_USERNAME = "admin"
-ADMIN_PASSWORD = "Admin@2026!"
+ADMIN_PASSWORD = os.environ.get("RD_ADMIN_PASSWORD", "")
 
 
 class TestReportsAuth:

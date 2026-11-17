@@ -16,7 +16,7 @@ class TestAuth:
         """Get auth token for admin user"""
         response = requests.post(f"{BASE_URL}/api/auth/login", json={
             "username": "admin",
-            "password": "Admin@2026!"
+            "password": os.environ.get("RD_ADMIN_PASSWORD", "")
         })
         assert response.status_code == 200, f"Login failed: {response.text}"
         data = response.json()
@@ -27,7 +27,7 @@ class TestAuth:
         """Test admin login works"""
         response = requests.post(f"{BASE_URL}/api/auth/login", json={
             "username": "admin",
-            "password": "Admin@2026!"
+            "password": os.environ.get("RD_ADMIN_PASSWORD", "")
         })
         assert response.status_code == 200
         data = response.json()
@@ -43,7 +43,7 @@ class TestBiasSettingsAPI:
         """Get auth headers"""
         response = requests.post(f"{BASE_URL}/api/auth/login", json={
             "username": "admin",
-            "password": "Admin@2026!"
+            "password": os.environ.get("RD_ADMIN_PASSWORD", "")
         })
         token = response.json()["token"]
         return {"Authorization": f"Bearer {token}"}
@@ -130,7 +130,7 @@ class TestBiasProfileReflectsSettings:
         """Get auth headers"""
         response = requests.post(f"{BASE_URL}/api/auth/login", json={
             "username": "admin",
-            "password": "Admin@2026!"
+            "password": os.environ.get("RD_ADMIN_PASSWORD", "")
         })
         token = response.json()["token"]
         return {"Authorization": f"Bearer {token}"}
@@ -211,7 +211,7 @@ class TestResetToDefaults:
         """Get auth headers"""
         response = requests.post(f"{BASE_URL}/api/auth/login", json={
             "username": "admin",
-            "password": "Admin@2026!"
+            "password": os.environ.get("RD_ADMIN_PASSWORD", "")
         })
         token = response.json()["token"]
         return {"Authorization": f"Bearer {token}"}

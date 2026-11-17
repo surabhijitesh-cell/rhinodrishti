@@ -1,6 +1,8 @@
 """Knowledge Graph endpoints."""
-from fastapi import APIRouter, Query, HTTPException, BackgroundTasks
+from fastapi import APIRouter, Query, HTTPException, BackgroundTasks, Depends
+from utils.roles import require_analyst_or_admin
 from typing import Optional
+import re
 from shared import db, logger
 
 router = APIRouter()
@@ -38,7 +40,7 @@ def _is_govt_actor(name: str) -> bool:
     return any(kw in nl for kw in _GOVT_KEYWORDS)
 
 
-@router.post("/knowledge-graph/build")
+@router.post("/knowledge-graph/build", dependencies=[Depends(require_analyst_or_admin)])
 async def build_kg(background_tasks: BackgroundTasks):
     from knowledge_graph import build_knowledge_graph
 
@@ -174,9 +176,9 @@ async def kg_edges(
 ):
     query = {"count": {"$gte": min_count}}
     if actor:
-        query["actor"] = {"$regex": actor, "$options": "i"}
+        query["actor"] = {"$regex": re.escape(actor), "$options": "i"}
     if location:
-        query["location"] = {"$regex": location, "$options": "i"}
+        query["location"] = {"$regex": re.escape(location), "$options": "i"}
 
     items = await db.kg_edges.find(query, {"_id": 0}).sort("count", -1).limit(limit).to_list(limit)
     return {"edges": items, "count": len(items)}

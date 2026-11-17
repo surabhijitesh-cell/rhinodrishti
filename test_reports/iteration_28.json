@@ -65,7 +65,7 @@
     "frontend": "100% (all UI elements verified)"
   },
 
-  "test_credentials": "Admin: username=admin, password=Admin@2026!",
+  "test_credentials": "Admin: username=admin, password=<set by admin — not stored here>",
 
   "seed_data_creation": "None - used existing analyzed document (a79cb742-43a1-4ab9-84ae-26078b78411d)",
 

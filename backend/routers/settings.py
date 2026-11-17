@@ -225,7 +225,7 @@ async def get_local_db_status():
 
     return {
         "mode":            mode,           # "atlas" | "local_tailscale" | "local_direct"
-        "mongo_url_hint":  mongo_url[:30] + "..." if mongo_url else "",
+        "mongo_url_hint":  ("MongoDB Atlas (address hidden)" if mode == "atlas" else "Local database (address hidden)") if mongo_url else "",
         "tailscale_ready": bool(tailscale_key),
         "data_size_mb":    data_size_mb,
         "storage_mb":      storage_mb,

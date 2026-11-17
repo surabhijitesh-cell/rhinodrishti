@@ -7,6 +7,9 @@ import os
 import re
 import uuid
 import json
+import socket
+import ipaddress
+from urllib.parse import urlparse, urljoin
 from shared import db, uploads_col, intelligence_col, patterns_col, logger
 from llm_client import get_client, MODEL as ANALYSIS_MODEL
 from utils.auth import get_current_user
@@ -71,6 +74,81 @@ def _extract_json(text: str) -> dict:
         "executive_summary": text[:600],
         "error": "Could not parse structured response — raw text stored",
     }
+
+
+MAX_UPLOAD_BYTES = 10 * 1024 * 1024
+MAX_REDIRECTS = 3
+
+
+def file_content_matches(file_type: str, data: bytes) -> bool:
+    """Check the real bytes match the claimed type (the browser header is untrusted)."""
+    if file_type == "pdf":
+        return data.startswith(b"%PDF")
+    if file_type in ("docx", "xlsx"):
+        return data.startswith(b"PK\x03\x04")
+    if file_type in ("doc", "xls"):
+        return data.startswith(b"\xd0\xcf\x11\xe0") or data.startswith(b"PK\x03\x04")
+    if file_type == "txt":
+        try:
+            data.decode("utf-8")
+            return True
+        except UnicodeDecodeError:
+            return False
+    return False
+
+
+def _ip_is_public(ip_text: str) -> bool:
+    try:
+        ip = ipaddress.ip_address(ip_text.split("%")[0])
+    except ValueError:
+        return False
+    return not (ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved
+                or ip.is_multicast or ip.is_unspecified)
+
+
+def is_public_http_url(url: str, resolver=socket.getaddrinfo) -> bool:
+    """True only for http/https URLs whose host resolves exclusively to public IPs (SSRF guard).
+    shortcut: DNS can change between this check and the fetch (rebinding); pin the IP if that matters."""
+    try:
+        parts = urlparse(url)
+        if parts.scheme not in ("http", "https") or not parts.hostname:
+            return False
+        infos = resolver(parts.hostname, parts.port or (443 if parts.scheme == "https" else 80))
+        addrs = [i[4][0] for i in infos]
+    except Exception:
+        return False
+    return bool(addrs) and all(_ip_is_public(a) for a in addrs)
+
+
+async def _get_public(client, url: str, headers: dict):
+    """GET following up to MAX_REDIRECTS redirects, re-checking each hop is public."""
+    for _ in range(MAX_REDIRECTS + 1):
+        if not is_public_http_url(url):
+            raise HTTPException(status_code=400, detail="That address is not allowed")
+        resp = await client.get(url, headers=headers)
+        if not resp.is_redirect:
+            return resp
+        url = urljoin(url, resp.headers.get("location", ""))
+    raise ValueError("Too many redirects")
+
+
+def _require_writer(user: dict) -> None:
+    if user.get("role") not in ("admin", "analyst"):
+        raise HTTPException(status_code=403, detail="Your role cannot do this")
+
+
+def _can_see_doc(doc: dict, user: dict) -> bool:
+    """Admins see all; others see their own IOD's docs plus old docs with no IOD."""
+    if user.get("role") == "admin" or "iod" not in doc:
+        return True
+    return doc.get("iod") == (user.get("iod") or "IOD-1")
+
+
+async def _get_visible_doc(doc_id: str, user: dict) -> dict:
+    doc = await uploads_col.find_one({"id": doc_id}, {"_id": 0})
+    if not doc or not _can_see_doc(doc, user):
+        raise HTTPException(status_code=404, detail="Document not found")
+    return doc
 
 
 class URLAnalysisRequest(BaseModel):
@@ -176,8 +254,12 @@ RULES:
 # ============================================================
 
 @router.get("/uploaded-documents")
-async def get_uploaded_documents():
-    docs = await uploads_col.find({}, {"_id": 0}).sort("uploaded_at", -1).to_list(100)
+async def get_uploaded_documents(current_user: dict = Depends(get_current_user)):
+    if current_user.get("role") == "admin":
+        query = {}
+    else:
+        query = {"$or": [{"iod": current_user.get("iod") or "IOD-1"}, {"iod": {"$exists": False}}]}
+    docs = await uploads_col.find(query, {"_id": 0}).sort("uploaded_at", -1).to_list(100)
     return {"documents": docs, "count": len(docs)}
 
 
@@ -194,12 +276,17 @@ async def upload_document(
         "application/vnd.ms-excel": "xls",
         "text/plain": "txt"
     }
+    _require_writer(current_user)
     content_type = file.content_type
     if content_type not in allowed_types:
         raise HTTPException(status_code=400, detail="File type not supported. Allowed: PDF, Word, Excel, TXT")
 
     file_type = allowed_types[content_type]
-    file_content = await file.read()
+    file_content = await file.read(MAX_UPLOAD_BYTES + 1)
+    if len(file_content) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="File too large (max 10 MB)")
+    if not file_content_matches(file_type, file_content):
+        raise HTTPException(status_code=400, detail="File contents do not match its type")
 
     extracted_text = ""
     try:
@@ -229,6 +316,8 @@ async def upload_document(
         "filename": file.filename,
         "file_type": file_type,
         "source_type": "file",
+        "uploaded_by": current_user.get("username"),
+        "iod": current_user.get("iod") or "IOD-1",
         "uploaded_at": datetime.now(timezone.utc).isoformat(),
         "extracted_text": extracted_text[:15000],
         "analysis": None,
@@ -249,22 +338,27 @@ async def analyze_url(
     current_user: dict = Depends(get_current_user),
 ):
     """Fetch a URL and run contextual intelligence analysis."""
+    _require_writer(current_user)
     url = data.url.strip()
     if not url.startswith("http"):
         raise HTTPException(status_code=400, detail="Invalid URL")
+    if not is_public_http_url(url):
+        raise HTTPException(status_code=400, detail="That address is not allowed")
 
-    # Scrape the URL
+    # Scrape the URL (redirects followed by hand so every hop is re-checked)
     try:
         import httpx
         from bs4 import BeautifulSoup
-        async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
-            resp = await client.get(url, headers={"User-Agent": "Mozilla/5.0"})
+        async with httpx.AsyncClient(timeout=15, follow_redirects=False) as client:
+            resp = await _get_public(client, url, {"User-Agent": "Mozilla/5.0"})
             resp.raise_for_status()
         soup = BeautifulSoup(resp.text, "html.parser")
         for tag in soup(["script", "style", "nav", "footer", "header"]):
             tag.decompose()
         text = soup.get_text(separator="\n", strip=True)
         title = soup.title.string if soup.title else url
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Failed to fetch URL: {str(e)}")
 
@@ -274,6 +368,8 @@ async def analyze_url(
         "file_type": "url",
         "source_type": "url",
         "source_url": url,
+        "uploaded_by": current_user.get("username"),
+        "iod": current_user.get("iod") or "IOD-1",
         "uploaded_at": datetime.now(timezone.utc).isoformat(),
         "extracted_text": text[:15000],
         "analysis_query": data.analysis_query,
@@ -290,15 +386,17 @@ async def analyze_url(
 
 
 @router.get("/uploaded-documents/{doc_id}")
-async def get_document_detail(doc_id: str):
-    doc = await uploads_col.find_one({"id": doc_id}, {"_id": 0})
-    if not doc:
-        raise HTTPException(status_code=404, detail="Document not found")
-    return doc
+async def get_document_detail(doc_id: str, current_user: dict = Depends(get_current_user)):
+    return await _get_visible_doc(doc_id, current_user)
 
 
 @router.delete("/uploaded-documents/{doc_id}")
-async def delete_uploaded_document(doc_id: str):
+async def delete_uploaded_document(doc_id: str, current_user: dict = Depends(get_current_user)):
+    _require_writer(current_user)
+    doc = await _get_visible_doc(doc_id, current_user)
+    is_admin = current_user.get("role") == "admin"
+    if not is_admin and doc.get("uploaded_by") != current_user.get("username"):
+        raise HTTPException(status_code=403, detail="Only the uploader or an admin can delete this")
     result = await uploads_col.delete_one({"id": doc_id})
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Document not found")
@@ -306,11 +404,13 @@ async def delete_uploaded_document(doc_id: str):
 
 
 @router.post("/uploaded-documents/{doc_id}/reanalyze")
-async def reanalyze_document(doc_id: str, background_tasks: BackgroundTasks):
+async def reanalyze_document(
+    doc_id: str, background_tasks: BackgroundTasks,
+    current_user: dict = Depends(get_current_user),
+):
     """Re-trigger contextual analysis for a single document (e.g. after a previous error)."""
-    doc = await uploads_col.find_one({"id": doc_id}, {"_id": 0})
-    if not doc:
-        raise HTTPException(status_code=404, detail="Document not found")
+    _require_writer(current_user)
+    await _get_visible_doc(doc_id, current_user)
     # Clear previous error so the UI shows "in progress"
     await uploads_col.update_one(
         {"id": doc_id},
@@ -321,8 +421,9 @@ async def reanalyze_document(doc_id: str, background_tasks: BackgroundTasks):
 
 
 @router.post("/reanalyze-errors")
-async def reanalyze_all_errors(background_tasks: BackgroundTasks):
+async def reanalyze_all_errors(background_tasks: BackgroundTasks, current_user: dict = Depends(get_current_user)):
     """Re-trigger analysis for all documents that previously errored (max 20)."""
+    _require_writer(current_user)
     failed = await uploads_col.find(
         {"analysis.error": {"$exists": True}},
         {"_id": 0, "id": 1}
@@ -359,11 +460,14 @@ class AddToFeedRequest(BaseModel):
 
 
 @router.post("/add-to-feed")
-async def add_url_to_feed(data: AddToFeedRequest):
+async def add_url_to_feed(data: AddToFeedRequest, current_user: dict = Depends(get_current_user)):
     """Scrape a URL and add it directly to the intelligence feed with user-defined parameters."""
+    _require_writer(current_user)
     url = data.url.strip()
     if not url.startswith("http"):
         raise HTTPException(status_code=400, detail="Invalid URL")
+    if not is_public_http_url(url):
+        raise HTTPException(status_code=400, detail="That address is not allowed")
 
     # Check for duplicate URL
     existing = await intelligence_col.find_one({"source_url": url}, {"_id": 0, "id": 1})
@@ -376,8 +480,8 @@ async def add_url_to_feed(data: AddToFeedRequest):
     try:
         import httpx
         from bs4 import BeautifulSoup
-        async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
-            resp = await client.get(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"})
+        async with httpx.AsyncClient(timeout=15, follow_redirects=False) as client:
+            resp = await _get_public(client, url, {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"})
             resp.raise_for_status()
         soup = BeautifulSoup(resp.text, "html.parser")
         for tag in soup(["script", "style", "nav", "footer", "header"]):

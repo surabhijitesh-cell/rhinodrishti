@@ -28,8 +28,8 @@ React frontend + FastAPI backend + MongoDB Atlas + Claude Haiku 4.5 (Emergent LL
 - Updates: `GET /api/app/updates`, `POST /api/admin/create-update`
 
 ## Auth
-- Admin: `admin` / `Admin@2026!`
-- Viewer: `testviewer` / `Viewer@2026!`
+- Admin: `admin` / `<set by admin — not stored here>`
+- Viewer: `testviewer` / `<set by admin — not stored here>`
 
 ## Pending/Backlog
 - P0 (Deferred): Viewer Role Restrictions Sweep

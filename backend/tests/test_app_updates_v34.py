@@ -11,8 +11,8 @@ import time
 BASE_URL = os.environ.get('REACT_APP_BACKEND_URL', '').rstrip('/')
 
 # Test credentials
-ADMIN_CREDS = {"username": "admin", "password": "Admin@2026!"}
-VIEWER_CREDS = {"username": "testviewer", "password": "Viewer@2026!"}
+ADMIN_CREDS = {"username": "admin", "password": os.environ.get("RD_ADMIN_PASSWORD", "")}
+VIEWER_CREDS = {"username": "testviewer", "password": "<set by admin — not stored here>"}
 
 
 class TestAuthSetup:

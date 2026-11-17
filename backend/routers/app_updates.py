@@ -164,7 +164,7 @@ async def get_update_logs(user: dict = Depends(require_admin_role)):
     return {"updates": updates, "total": len(updates)}
 
 
-@router.post("/admin/trigger-update-preview")
+@router.post("/admin/trigger-update-preview", dependencies=[Depends(require_admin_role)])
 async def preview_update(body: dict, user: dict = Depends(get_current_user)):
     """Preview what a specific update would look like as a notification."""
     version = (body.get("version") or "").strip()

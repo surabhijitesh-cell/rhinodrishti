@@ -77,7 +77,7 @@
     "frontend": "100% (all UI flows verified)"
   },
 
-  "test_credentials": "Admin: username=admin, password=Admin@2026!",
+  "test_credentials": "Admin: username=admin, password=<set by admin — not stored here>",
 
   "seed_data_creation": "Admin user seeded in MongoDB by main agent",
 
@@ -85,5 +85,5 @@
 
   "should_main_agent_self_test": false,
 
-  "context_for_next_testing_agent": "Iteration 27 verified JWT authentication with RBAC. Admin user (admin/Admin@2026!) can access all features including User Management and Settings. Analyst and Viewer roles have restricted sidebar (no User Management/Settings). JWT tokens stored in localStorage as 'rd_token'. Existing endpoints (/api/intelligence, /api/cross-border/watch, /api/daily-brief) are NOT protected and work without auth. Test file: /app/backend/tests/test_auth_rbac_v27.py"
+  "context_for_next_testing_agent": "Iteration 27 verified JWT authentication with RBAC. Admin user (admin/<set by admin — not stored here>) can access all features including User Management and Settings. Analyst and Viewer roles have restricted sidebar (no User Management/Settings). JWT tokens stored in localStorage as 'rd_token'. Existing endpoints (/api/intelligence, /api/cross-border/watch, /api/daily-brief) are NOT protected and work without auth. Test file: /app/backend/tests/test_auth_rbac_v27.py"
 }

@@ -62,7 +62,13 @@ from fading_engine import run_fading_pass, delete_expired_low_severity
 from faultline_engine import run_daily_faultline_pass, run_incremental_faultline_pass
 
 
-app = FastAPI(title="Rhino Drishti API")
+# The interactive action list (/docs, /redoc, /openapi.json) is switched off:
+# it listed every server action to anyone on the internet.
+app = FastAPI(title="Rhino Drishti API", docs_url=None, redoc_url=None, openapi_url=None)
+
+# Refuse to start without a login-signing key: an empty key lets anyone forge logins.
+if not os.environ.get("JWT_SECRET_KEY", "").strip():
+    raise RuntimeError("JWT_SECRET_KEY is not set; refusing to start (logins could be forged).")
 
 
 # ============================================================
@@ -273,12 +279,14 @@ async def startup():
     # Admin user seed (one count + maybe one insert — <100 ms)
     user_count = await db.users.count_documents({})
     if user_count == 0:
+        import secrets
         from utils.auth import hash_password
+        first_password = secrets.token_urlsafe(12)
         admin_doc = {
             "id": "admin-001",
             "username": "admin",
             "email": "admin@rhinodrishti.local",
-            "password_hash": hash_password("Admin@2026!"),
+            "password_hash": hash_password(first_password),
             "name": "System Administrator",
             "role": "admin",
             "is_active": True,
@@ -286,7 +294,8 @@ async def startup():
             "last_login": None,
         }
         await db.users.insert_one(admin_doc)
-        logger.info("Auto-seeded admin user (admin / Admin@2026!) — change password after first login")
+        # Shown once, only on an empty user list (a brand-new install); never stored in code.
+        print(f"First admin account created: admin / {first_password} (change it after first login)", flush=True)
 
     # RSS source sync (upserts ~95 docs — <2 s, needed before scheduler fires)
     await initialize_sources()

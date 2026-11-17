@@ -18,6 +18,12 @@ import { useEffect, useRef, useState, memo, useCallback } from "react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 
+// Escape external/derived text before it goes into a Leaflet HTML string.
+const _HTML_ESC = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
+function escapeHtml(s) {
+  return String(s ?? "").replace(/[&<>"']/g, (c) => _HTML_ESC[c]);
+}
+
 // ─── Known NER / border-region locations ─────────────────────────────────────
 // [lat, lon] — used to plot individual intelligence items at their mentioned location
 const LOCATION_COORDS = {
@@ -653,7 +659,7 @@ const InteractiveNERMap = memo(function InteractiveNERMap({
                 text-transform:uppercase; letter-spacing:0.12em;
                 text-shadow: 0 1px 3px rgba(0,0,0,0.9), 0 0 6px rgba(0,0,0,0.6);
                 white-space:nowrap; pointer-events:none;
-              ">${name}${count ? `<br/><span style="font-size:8px;opacity:0.55;letter-spacing:0.05em">${count} items</span>` : ""}</div>`,
+              ">${escapeHtml(name)}${count ? `<br/><span style="font-size:8px;opacity:0.55;letter-spacing:0.05em">${count} items</span>` : ""}</div>`,
               iconAnchor: [0, 0],
             }),
             interactive: false,
@@ -747,11 +753,11 @@ const InteractiveNERMap = memo(function InteractiveNERMap({
         bySev.medium > 0 ? `<span style="color:#06b6d4">${bySev.medium} medium</span>` : "",
       ].filter(Boolean).join(" · ");
       const popupHtml = `<div class="map-pop">
-        <b>${locKey}</b>
+        <b>${escapeHtml(locKey)}</b>
         <div style="margin-top:4px; font-size:9px; text-transform:uppercase; letter-spacing:.08em">
-          ${sevParts}${state ? ` <span style="color:#6b7280">· ${state}</span>` : ""}
+          ${sevParts}${state ? ` <span style="color:#6b7280">· ${escapeHtml(state)}</span>` : ""}
         </div>
-        ${titles.map(t => `<div style="margin-top:3px; color:#d4d4d4; font-size:10px; line-height:1.4">• ${t.slice(0,80)}${t.length>80?"…":""}</div>`).join("")}
+        ${titles.map(t => `<div style="margin-top:3px; color:#d4d4d4; font-size:10px; line-height:1.4">• ${escapeHtml(t.slice(0,80))}${t.length>80?"…":""}</div>`).join("")}
         <button class="ner-view-btn" data-title="${firstTitle}">View in Feed →</button>
       </div>`;
 
@@ -917,13 +923,13 @@ const InteractiveNERMap = memo(function InteractiveNERMap({
         const expBoxId  = `nerexp-${lineCount}`;
 
         const cascadeMeta = isCascade && edge.score_delta != null
-          ? `<div style="margin-top:3px;color:#fb923c;font-size:9px">+${edge.score_delta} priority · Pass ${edge.cascade_pass || "?"}</div>`
+          ? `<div style="margin-top:3px;color:#fb923c;font-size:9px">+${escapeHtml(edge.score_delta)} priority · Pass ${escapeHtml(edge.cascade_pass || "?")}</div>`
           : "";
         const actorMeta = edge.type === "same_actor" && selectedActorFilter
-          ? `<div style="margin-top:3px;color:#f59e0b;font-size:9px;font-weight:bold">▶ ${selectedActorFilter}</div>`
+          ? `<div style="margin-top:3px;color:#f59e0b;font-size:9px;font-weight:bold">▶ ${escapeHtml(selectedActorFilter)}</div>`
           : "";
         const aiBlock = edge.ai_explanation
-          ? `<div id="${expBoxId}" style="margin-top:5px;padding-top:5px;border-top:1px solid rgba(255,255,255,0.1);color:#a3e635;font-size:9px;font-style:italic;line-height:1.4">${edge.ai_explanation}</div>`
+          ? `<div id="${expBoxId}" style="margin-top:5px;padding-top:5px;border-top:1px solid rgba(255,255,255,0.1);color:#a3e635;font-size:9px;font-style:italic;line-height:1.4">${escapeHtml(edge.ai_explanation)}</div>`
           : `<div id="${expBoxId}" style="margin-top:5px;color:#a3e635;font-size:9px;font-style:italic;display:none"></div>`;
 
         const safeFrom = encodeURIComponent(edge.from_id);
@@ -937,10 +943,10 @@ const InteractiveNERMap = memo(function InteractiveNERMap({
             <span style="float:right;color:rgba(255,255,255,0.4);font-size:9px">${pct}%</span>
             <div style="clear:both;margin-top:4px;color:#9ca3af;font-size:9px;line-height:1.4;font-style:italic">${whyText}</div>
             <div style="margin-top:5px;color:#d4d4d4;font-size:10px;line-height:1.4">
-              ${isCascade ? "⬆" : "▲"} ${fromT}${fromT.length >= 75 ? "…" : ""}
+              ${isCascade ? "⬆" : "▲"} ${escapeHtml(fromT)}${fromT.length >= 75 ? "…" : ""}
             </div>
             <div style="margin-top:2px;color:#d4d4d4;font-size:10px;line-height:1.4">
-              ${isCascade ? "🔺" : "▼"} ${toT}${toT.length >= 75 ? "…" : ""}
+              ${isCascade ? "🔺" : "▼"} ${escapeHtml(toT)}${toT.length >= 75 ? "…" : ""}
             </div>
             ${actorMeta}
             ${cascadeMeta}
@@ -1170,7 +1176,7 @@ function _popup(name, stats) {
   const s = stats || { count: 0, critical: 0, high: 0 };
   return L.popup({ className: "ner-popup", maxWidth: 200 }).setContent(`
     <div class="map-pop">
-      <b>${name}</b>
+      <b>${escapeHtml(name)}</b>
       <div style="margin-top:4px; font-size:9px; color:#6b7280; text-transform:uppercase; letter-spacing:.08em">
         ${s.count || 0} intelligence item${s.count !== 1 ? "s" : ""}
       </div>

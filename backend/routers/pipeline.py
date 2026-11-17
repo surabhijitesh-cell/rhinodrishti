@@ -1,5 +1,6 @@
 """Pipeline endpoints: fetch, scrape, analyze, scan status."""
-from fastapi import APIRouter, BackgroundTasks
+from fastapi import APIRouter, BackgroundTasks, Depends
+from utils.roles import require_analyst_or_admin
 from pydantic import BaseModel
 from datetime import datetime, timezone, timedelta
 import asyncio
@@ -57,7 +58,7 @@ def invalidate_pipeline_settings_cache():
 router = APIRouter()
 
 
-@router.post("/reclassify-48h")
+@router.post("/reclassify-48h", dependencies=[Depends(require_analyst_or_admin)])
 async def reclassify_48h(background_tasks: BackgroundTasks):
     """Re-classify the last 48 hours of articles using updated keywords and AI scoring rules.
 
@@ -150,13 +151,13 @@ async def _reset_stage0_filtered():
     logger.info(f"Stage-0 repair: reset {result.modified_count} items to unprocessed")
 
 
-@router.post("/scrape-elite")
+@router.post("/scrape-elite", dependencies=[Depends(require_analyst_or_admin)])
 async def trigger_elite_scrape(background_tasks: BackgroundTasks):
     background_tasks.add_task(_run_elite_scrape)
     return {"message": "Elite scraping started"}
 
 
-@router.post("/fetch-news")
+@router.post("/fetch-news", dependencies=[Depends(require_analyst_or_admin)])
 async def trigger_fetch(background_tasks: BackgroundTasks):
     background_tasks.add_task(fetch_and_process_news)
     return {"message": "News fetch triggered"}
@@ -166,7 +167,7 @@ class FetchNamedSourcesRequest(BaseModel):
     names: list[str]  # case-insensitive substrings matched against source name
 
 
-@router.post("/fetch-named-sources")
+@router.post("/fetch-named-sources", dependencies=[Depends(require_analyst_or_admin)])
 async def fetch_named_sources(body: FetchNamedSourcesRequest, background_tasks: BackgroundTasks):
     """Fetch and analyze specific RSS feeds identified by name substrings.
 
@@ -202,7 +203,7 @@ async def _fetch_named_sources_task(name_patterns: list[str]):
     await analyze_unprocessed_items()
 
 
-@router.post("/bulk-scrape")
+@router.post("/bulk-scrape", dependencies=[Depends(require_analyst_or_admin)])
 async def trigger_bulk_scrape(background_tasks: BackgroundTasks):
     background_tasks.add_task(bulk_scrape_all_feeds)
     return {"message": "Bulk scrape triggered - articles will be stored for gradual AI processing"}
@@ -213,7 +214,7 @@ async def get_scan_status():
     return scan_status
 
 
-@router.post("/analyze-news")
+@router.post("/analyze-news", dependencies=[Depends(require_analyst_or_admin)])
 async def trigger_analysis(background_tasks: BackgroundTasks):
     background_tasks.add_task(analyze_unprocessed_items)
     return {"message": "Analysis triggered"}

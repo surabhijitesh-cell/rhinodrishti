@@ -4,6 +4,7 @@ from fastapi import APIRouter, HTTPException, Query, Depends
 from fastapi.responses import Response
 from typing import Optional
 from datetime import datetime, timezone, timedelta
+import re
 from fpdf import FPDF
 from shared import db, intelligence_col, logger
 from utils.auth import get_current_user
@@ -186,8 +187,8 @@ def _build_query(state=None, threat_type=None, severity=None, search=None,
         query["severity"] = severity.lower()
     if search:
         and_clauses.append({"$or": [
-            {"title": {"$regex": search, "$options": "i"}},
-            {"ai_summary": {"$regex": search, "$options": "i"}},
+            {"title": {"$regex": re.escape(search), "$options": "i"}},
+            {"ai_summary": {"$regex": re.escape(search), "$options": "i"}},
         ]})
     if date_from:
         query.setdefault("published_at", {})["$gte"] = date_from
@@ -398,8 +399,8 @@ async def cross_border_sitrep(
     # Also get items that mention the country but have different state
     alt_query = _build_query(date_from=date_from, date_to=date_to, is_cross_border=True)
     alt_query["$or"] = [
-        {"title": {"$regex": country, "$options": "i"}},
-        {"ai_summary": {"$regex": country, "$options": "i"}},
+        {"title": {"$regex": re.escape(country), "$options": "i"}},
+        {"ai_summary": {"$regex": re.escape(country), "$options": "i"}},
     ]
     alt_items = await intelligence_col.find(alt_query, {"_id": 0}).sort("priority_score", -1).limit(50).to_list(50)
     seen_ids = {it["id"] for it in items}

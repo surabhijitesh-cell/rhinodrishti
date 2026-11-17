@@ -1,6 +1,8 @@
 """Intelligence feed, alerts, acknowledgement, semantic search, embeddings, patterns."""
 import re
-from fastapi import APIRouter, Query, HTTPException, BackgroundTasks, Depends
+from fastapi import APIRouter, Query, HTTPException, BackgroundTasks, Depends
+from utils.roles import require_analyst_or_admin
+from utils.auth import require_admin_role
 from typing import Optional
 from datetime import datetime, timezone, timedelta
 from utils.auth import get_current_user, get_current_user_optional
@@ -353,7 +355,7 @@ async def get_intelligence(
     if source_type:
         # Match any source_type beginning with the given value (e.g. "twitter"
         # matches "twitter", "twitter_account", "twitter_search", "twitter_list")
-        query["source_type"] = {"$regex": f"^{source_type}", "$options": "i"}
+        query["source_type"] = {"$regex": f"^{re.escape(source_type)}", "$options": "i"}
     if search:
         # Search text is literal, not a pattern: headlines contain ( ) [ ] ? + etc.
         # which previously broke the match when "View in Feed" passed a headline.
@@ -437,7 +439,7 @@ async def get_intelligence_item(item_id: str):
     return item
 
 
-@router.delete("/intelligence/{item_id}")
+@router.delete("/intelligence/{item_id}", dependencies=[Depends(require_analyst_or_admin)])
 async def delete_intelligence_item(item_id: str):
     result = await intelligence_col.delete_one({"id": item_id})
     if result.deleted_count == 0:
@@ -495,7 +497,7 @@ async def get_patterns():
     return {"patterns": patterns, "count": len(patterns)}
 
 
-@router.post("/patterns/detect")
+@router.post("/patterns/detect", dependencies=[Depends(require_analyst_or_admin)])
 async def trigger_pattern_detection(background_tasks: BackgroundTasks):
     from pattern_engine import detect_patterns
     background_tasks.add_task(detect_patterns, db)
@@ -517,21 +519,21 @@ async def intelligence_semantic_search(body: dict):
     return {"results": results, "count": len(results), "query": query}
 
 
-@router.post("/embeddings/backfill")
+@router.post("/embeddings/backfill", dependencies=[Depends(require_analyst_or_admin)])
 async def trigger_embedding_backfill(background_tasks: BackgroundTasks):
     from embedding_service import backfill_embeddings
     background_tasks.add_task(backfill_embeddings, db, 50)
     return {"message": "Embedding backfill started (batch of 50)"}
 
 
-@router.post("/fusion/run")
+@router.post("/fusion/run", dependencies=[Depends(require_analyst_or_admin)])
 async def trigger_batch_fusion(background_tasks: BackgroundTasks):
     from fusion_engine import run_batch_fusion
     background_tasks.add_task(run_batch_fusion, db)
     return {"message": "Batch fusion started"}
 
 
-@router.post("/fading/run")
+@router.post("/fading/run", dependencies=[Depends(require_analyst_or_admin)])
 async def trigger_fading_pass(background_tasks: BackgroundTasks):
     """Manually trigger a visibility-score recomputation pass."""
     from fading_engine import run_fading_pass
@@ -625,7 +627,7 @@ async def debug_data_health():
     }
 
 
-@router.post("/intelligence/repair-severity")
+@router.post("/intelligence/repair-severity", dependencies=[Depends(require_analyst_or_admin)])
 async def repair_severity_mismatch():
     """
     Idempotent repair: re-derives `severity` from stored `priority_score` for all
@@ -682,7 +684,7 @@ async def repair_severity_mismatch():
     }
 
 
-@router.post("/fading/repair-fresh")
+@router.post("/fading/repair-fresh", dependencies=[Depends(require_analyst_or_admin)])
 async def repair_fresh_archived():
     """One-shot repair: un-archive any item younger than 7 days that was incorrectly
     soft-archived by the fading engine before the freshness guard was added.
@@ -705,7 +707,7 @@ async def repair_fresh_archived():
     }
 
 
-@router.post("/fading/cleanup-low")
+@router.post("/fading/cleanup-low", dependencies=[Depends(require_admin_role)])
 async def trigger_low_sev_cleanup(background_tasks: BackgroundTasks):
     """Manually trigger hard-deletion of expired low-severity items."""
     from fading_engine import delete_expired_low_severity
@@ -807,7 +809,7 @@ async def force_accept_item(item_id: str):
     return {"message": "Item promoted to intelligence feed", "id": item_id, "severity": final_sev}
 
 
-@router.post("/intelligence/{item_id}/reprocess")
+@router.post("/intelligence/{item_id}/reprocess", dependencies=[Depends(require_analyst_or_admin)])
 async def reprocess_item(item_id: str, background_tasks: BackgroundTasks):
     """Mark a processed item for re-classification by the AI pipeline.
 

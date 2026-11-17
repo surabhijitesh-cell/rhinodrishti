@@ -70,7 +70,7 @@
     "frontend": "100% (all UI elements verified, layout correct, viewer restriction working)"
   },
 
-  "test_credentials": "Admin: username=admin, password=Admin@2026! | Viewer: username=testviewer, password=Viewer@2026!",
+  "test_credentials": "Admin: username=admin, password=<set by admin — not stored here> | Viewer: username=testviewer, password=<set by admin — not stored here>",
 
   "seed_data_creation": "Created testviewer user with viewer role for testing",
 
@@ -78,5 +78,5 @@
 
   "should_main_agent_self_test": false,
 
-  "context_for_next_testing_agent": "Iteration 32 verified: (1) Settings page layout redesign with side-by-side cards using grid-cols-2, (2) Bias Impact Report card (data-testid='bias-impact-card') shows 41 items analyzed with 18 boosted, 0 reduced, 23 unchanged, avg delta 6.4 pts, (3) GET /api/feedback/bias-impact endpoint returns impact data with items table showing original_score, biased_score, delta, reasons, (4) Viewer role cannot access Settings page - sidebar hides link and page redirects to dashboard, (5) Test viewer user created: testviewer/Viewer@2026!. Test file: /app/backend/tests/test_iteration_32.py"
+  "context_for_next_testing_agent": "Iteration 32 verified: (1) Settings page layout redesign with side-by-side cards using grid-cols-2, (2) Bias Impact Report card (data-testid='bias-impact-card') shows 41 items analyzed with 18 boosted, 0 reduced, 23 unchanged, avg delta 6.4 pts, (3) GET /api/feedback/bias-impact endpoint returns impact data with items table showing original_score, biased_score, delta, reasons, (4) Viewer role cannot access Settings page - sidebar hides link and page redirects to dashboard, (5) Test viewer user created: testviewer/<set by admin — not stored here>. Test file: /app/backend/tests/test_iteration_32.py"
 }

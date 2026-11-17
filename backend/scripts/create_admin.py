@@ -1,5 +1,6 @@
 """Create initial admin user."""
 import asyncio
+import secrets
 import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -15,10 +16,11 @@ async def create_admin():
         print("Admin user already exists. Skipping.")
         return
 
+    first_password = secrets.token_urlsafe(12)
     admin = UserInDB(
         username="admin",
         email="admin@rhinodrishti.local",
-        password_hash=hash_password("Admin@2026!"),
+        password_hash=hash_password(first_password),
         name="System Administrator",
         role="admin",
     )
@@ -26,7 +28,7 @@ async def create_admin():
     await db.users.insert_one(doc)
     print(f"Admin user created successfully.")
     print(f"  Username: admin")
-    print(f"  Password: Admin@2026!")
+    print(f"  Password: {first_password}")
     print(f"  Role: admin")
     print(f"  CHANGE THIS PASSWORD IMMEDIATELY after first login.")
 

@@ -23,7 +23,7 @@ The platform ingests news from 89+ RSS feeds and social media sources, runs a 4-
 ### Login
 - JWT-based authentication. Sessions last 24 hours.
 - Login with username or email + password. Eye icon toggles password visibility.
-- Default admin account auto-created on first deployment: `admin` / `Admin@2026!` — must be changed immediately.
+- Default admin account auto-created on first deployment: `admin` / `<set by admin — not stored here>` — must be changed immediately.
 - Session persists across page refreshes (stored in browser). Expired sessions redirect to login.
 - Logout button in top-right bar.
 

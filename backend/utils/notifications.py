@@ -4,6 +4,8 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional
 
+from utils.roles import can_access_faultline
+
 logger = logging.getLogger("notifications")
 
 
@@ -136,11 +138,21 @@ async def resolve_system_notification_recipients(db, notif_type: str, item: dict
     all_prefs = await db.user_notification_prefs.find({}).to_list(None)
     prefs_by_user = {p["user_id"]: p for p in all_prefs}
 
-    all_users = await db.users.find({"is_active": True}, {"id": 1, "_id": 0}).to_list(None)
+    all_users = await db.users.find(
+        {"is_active": True}, {"id": 1, "username": 1, "role": 1, "iod": 1, "_id": 0}
+    ).to_list(None)
+
+    fl_doc = None
+    if notif_type == "FAULTLINE_ESCALATION" and item and item.get("faultline_id"):
+        fl_doc = await db.faultlines.find_one(
+            {"id": item["faultline_id"]}, {"_id": 0, "id": 1, "created_by": 1, "iod": 1}
+        ) or {"id": item["faultline_id"]}
 
     recipients = []
     for user in all_users:
         uid = user["id"]
+        if fl_doc and not can_access_faultline(user, fl_doc):
+            continue
         prefs = prefs_by_user.get(uid)
 
         if prefs and not prefs.get("enabled", True):

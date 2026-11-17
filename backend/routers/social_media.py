@@ -22,7 +22,8 @@ import uuid
 import asyncio
 from datetime import datetime, timezone, timedelta
 from typing import Optional
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Depends
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Depends
+from utils.roles import require_analyst_or_admin
 from pydantic import BaseModel
 from shared import db, logger
 from utils.auth import require_admin_role
@@ -392,7 +393,7 @@ async def telegram_reconnect():
 # Fetch all platforms at once (admin trigger)
 # ─────────────────────────────────────────────────────────────────────────────
 
-@router.post("/social/fetch-all")
+@router.post("/social/fetch-all", dependencies=[Depends(require_analyst_or_admin)])
 async def fetch_all_social_now(background_tasks: BackgroundTasks):
     """
     Trigger all social/web fetchers.

@@ -53,7 +53,7 @@
 ### Default Admin Account
 On first deployment, the system automatically creates an admin account:
 - **Username:** `admin`
-- **Password:** `Admin@2026!`
+- **Password:** `<set by admin — not stored here>`
 - **IMPORTANT:** Change this password immediately after first login via User Management
 
 ### Roles & Permissions

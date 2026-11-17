@@ -3,6 +3,7 @@ from fastapi import APIRouter, Query, HTTPException
 from datetime import datetime, timezone
 import uuid
 import os
+import re
 from shared import sources_col, tweets_col, intelligence_col, TWITTER_ACCOUNTS_TO_MONITOR, logger, db, invalidate_stats_cache
 
 router = APIRouter()
@@ -68,7 +69,7 @@ async def get_social_feeds(
         return {"items": [_intel_to_tweet_shape(it) for it in items], "count": len(items), "source": "intelligence_pipeline"}
 
     # All other sources: query intelligence_items directly (no AI/severity gate)
-    mongo_query: dict = {"source_type": {"$regex": f"^{source_type}", "$options": "i"}}
+    mongo_query: dict = {"source_type": {"$regex": f"^{re.escape(source_type)}", "$options": "i"}}
     if not include_unprocessed:
         mongo_query["processed"] = True
 

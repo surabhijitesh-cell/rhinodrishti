@@ -19,7 +19,7 @@ class TestAuth:
         """Test login with valid admin credentials"""
         response = requests.post(f"{BASE_URL}/api/auth/login", json={
             "username": "admin",
-            "password": "Admin@2026!"
+            "password": os.environ.get("RD_ADMIN_PASSWORD", "")
         })
         assert response.status_code == 200, f"Login failed: {response.text}"
         data = response.json()
@@ -44,7 +44,7 @@ class TestIntelligenceFilters:
         """Get auth token for authenticated requests"""
         response = requests.post(f"{BASE_URL}/api/auth/login", json={
             "username": "admin",
-            "password": "Admin@2026!"
+            "password": os.environ.get("RD_ADMIN_PASSWORD", "")
         })
         if response.status_code == 200:
             return response.json().get("token")
@@ -253,7 +253,7 @@ class TestRegressionBiasProfile:
     def auth_token(self):
         response = requests.post(f"{BASE_URL}/api/auth/login", json={
             "username": "admin",
-            "password": "Admin@2026!"
+            "password": os.environ.get("RD_ADMIN_PASSWORD", "")
         })
         if response.status_code == 200:
             return response.json().get("token")

@@ -31,7 +31,8 @@ import logging
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from utils.roles import require_analyst_or_admin, can_access_faultline, user_iod
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
@@ -97,6 +98,14 @@ def _require_analyst_or_admin(current_user: dict) -> None:
             status_code=403,
             detail="Only analysts and admins can trigger faultline operations",
         )
+
+
+def _require_paoi_owner(current_user: dict, paoi: dict) -> None:
+    """Non-admins may change only their own IOD's PAOIs (no iod field = IOD-1)."""
+    if current_user.get("role") == "admin":
+        return
+    if (paoi.get("iod") or "IOD-1") != user_iod(current_user):
+        raise HTTPException(status_code=403, detail="Not allowed for your IOD")
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -313,6 +322,7 @@ async def update_priority_area(
     existing = await priority_areas_col.find_one({"id": pa_id})
     if not existing:
         raise HTTPException(status_code=404, detail="Priority area not found")
+    _require_paoi_owner(current_user, existing)
 
     now = datetime.now(timezone.utc).isoformat()
     update = {k: v for k, v in data.model_dump().items() if v is not None}
@@ -334,6 +344,7 @@ async def delete_priority_area(
     existing = await priority_areas_col.find_one({"id": pa_id})
     if not existing:
         raise HTTPException(status_code=404, detail="Priority area not found")
+    _require_paoi_owner(current_user, existing)
 
     now = datetime.now(timezone.utc).isoformat()
     await priority_areas_col.update_one(
@@ -469,6 +480,11 @@ async def acknowledge_warning(
     The acknowledger's identity is taken from the authenticated session, not
     a query parameter — prevents impersonation in the audit trail."""
     acked_by = current_user.get("username") or current_user.get("id") or "unknown"
+    alert = await alerts_col.find_one({"id": alert_id}, {"_id": 0, "faultline_id": 1})
+    if alert and current_user.get("role") != "admin":
+        fl = await faultlines_col.find_one({"id": alert.get("faultline_id")}, {"_id": 0}) or {"id": alert.get("faultline_id")}
+        if not can_access_faultline(current_user, fl):
+            raise HTTPException(404, "Alert not found or already acknowledged")
     result = await alerts_col.update_one(
         {"id": alert_id, "acknowledged": {"$ne": True}},
         {"$set": {
@@ -508,7 +524,7 @@ async def trigger_daily_pass(
     return {"status": "started", "target_date": target_date or "today"}
 
 
-@router.post("/faultlines/refresh")
+@router.post("/faultlines/refresh", dependencies=[Depends(require_analyst_or_admin)])
 async def trigger_incremental_pass(
     background_tasks: BackgroundTasks,
     lookback_hours: int = Query(6, ge=1, le=48, description="How many hours back to scan for new articles"),
@@ -530,7 +546,7 @@ async def trigger_incremental_pass(
     return {"status": "started", "lookback_hours": lookback_hours}
 
 
-@router.post("/faultlines/{fl_id}/refresh")
+@router.post("/faultlines/{fl_id}/refresh", dependencies=[Depends(require_analyst_or_admin)])
 async def trigger_faultline_refresh(
     fl_id: str,
     background_tasks: BackgroundTasks,
@@ -544,8 +560,8 @@ async def trigger_faultline_refresh(
     Returns immediately; UI should re-fetch article list after a short delay.
     """
     fl = await db.faultlines.find_one({"id": fl_id})
-    if not fl:
-        raise HTTPException(404, f"Faultline {fl_id} not found")
+    if not fl or not can_access_faultline(current_user, fl):
+        raise HTTPException(404, "Faultline not found")
 
     async def _bg():
         try:
@@ -660,6 +676,7 @@ async def faultline_pdf_report(
     from routers.brief_monthly import _call_llm_json
 
     # Aggregate everything PDF needs (no LLM here)
+    # shortcut: report covers all IODs; scope per IOD in a later batch
     agg = await aggregate_faultline_report(db, year, month)
     if not agg.get("all_faultlines"):
         raise HTTPException(404, f"No faultline data for {year}-{month:02d}")
@@ -825,7 +842,7 @@ class KeywordRecommendRequest(BaseModel):
     description: str
 
 
-@router.post("/faultlines/recommend-keywords")
+@router.post("/faultlines/recommend-keywords", dependencies=[Depends(require_analyst_or_admin)])
 async def recommend_keywords(
     body: KeywordRecommendRequest,
     current_user: dict = Depends(get_current_user),
@@ -847,7 +864,7 @@ async def recommend_keywords(
     return {"keywords": keywords[:20]}
 
 
-@router.post("/faultlines")
+@router.post("/faultlines", dependencies=[Depends(require_analyst_or_admin)])
 async def create_custom_faultline(
     body: CustomFaultlineCreate,
     current_user: dict = Depends(get_current_user),
@@ -865,6 +882,7 @@ async def create_custom_faultline(
         "active": True,
         "is_custom": True,
         "created_by": current_user.get("username"),
+        "iod": user_iod(current_user),
         "created_at": datetime.now(_tz.utc).isoformat(),
     }
     await faultlines_col.insert_one({**doc, "_id": fl_id})
@@ -1020,8 +1038,8 @@ async def get_faultline_detail(
     Consumed by paoi_brief.py for narrative brief generation.
     """
     fl = await faultlines_col.find_one({"id": fl_id}, {"_id": 0})
-    if not fl:
-        raise HTTPException(status_code=404, detail=f"Faultline '{fl_id}' not found")
+    if not fl or not can_access_faultline(current_user, fl):
+        raise HTTPException(status_code=404, detail="Faultline not found")
 
     score_query: dict = {"faultline_id": fl_id}
     if date:
@@ -1063,8 +1081,8 @@ async def get_faultline(
 ):
     """Single faultline with latest score + linked faultlines + active alert (if any)."""
     fl = await faultlines_col.find_one({"id": fl_id}, {"_id": 0})
-    if not fl:
-        raise HTTPException(404, f"Faultline '{fl_id}' not found")
+    if not fl or not can_access_faultline(current_user, fl):
+        raise HTTPException(404, "Faultline not found")
 
     fl = await _attach_latest_score(fl)
 
@@ -1115,6 +1133,9 @@ async def update_faultline(
 
     if not update_doc:
         raise HTTPException(400, "No fields to update")
+    fl = await faultlines_col.find_one({"id": fl_id}, {"_id": 0})
+    if not fl or not can_access_faultline(current_user, fl):
+        raise HTTPException(404, "Faultline not found")
 
     update_doc["updated_at"] = datetime.now(timezone.utc).isoformat()
     update_doc["updated_by"] = current_user.get("username") or current_user.get("id")
@@ -1131,9 +1152,9 @@ async def get_faultline_history(
     current_user: dict = Depends(get_current_user),
 ):
     """Daily score history for trendline chart."""
-    fl = await faultlines_col.find_one({"id": fl_id}, {"_id": 0, "name": 1, "state": 1})
-    if not fl:
-        raise HTTPException(404, f"Faultline '{fl_id}' not found")
+    fl = await faultlines_col.find_one({"id": fl_id}, {"_id": 0, "id": 1, "name": 1, "state": 1, "created_by": 1, "iod": 1})
+    if not fl or not can_access_faultline(current_user, fl):
+        raise HTTPException(404, "Faultline not found")
 
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).date().isoformat()
     cursor = scores_col.find(
@@ -1162,6 +1183,9 @@ async def get_faultline_articles(
     current_user: dict = Depends(get_current_user),
 ):
     """Matched articles for a faultline on a given day with rationale + evidence."""
+    fl = await faultlines_col.find_one({"id": fl_id}, {"_id": 0, "id": 1, "created_by": 1, "iod": 1})
+    if not fl or not can_access_faultline(current_user, fl):
+        raise HTTPException(404, "Faultline not found")
     q: dict = {"faultline_id": fl_id}
     if date:
         q["date"] = date

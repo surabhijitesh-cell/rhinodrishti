@@ -18,6 +18,7 @@ from fastapi import APIRouter, Query, HTTPException
 from datetime import datetime, timezone, timedelta
 from typing import Optional, List
 from collections import defaultdict
+import re
 from shared import db, intelligence_col, NER_STATES, logger
 
 router = APIRouter()
@@ -42,7 +43,7 @@ def _build_mongo_filter(
     if severity and severity != "All":
         f["severity"] = severity
     if actor:
-        f["entities.organizations"] = {"$regex": actor, "$options": "i"}
+        f["entities.organizations"] = {"$regex": re.escape(actor), "$options": "i"}
     if border_only:
         f["$or"] = [
             {"state": {"$in": list(BORDER_COUNTRIES)}},

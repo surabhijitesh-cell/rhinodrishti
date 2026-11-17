@@ -22,7 +22,7 @@ class TestAuth:
         """Test login with valid admin credentials"""
         response = requests.post(f"{BASE_URL}/api/auth/login", json={
             "username": "admin",
-            "password": "Admin@2026!"
+            "password": os.environ.get("RD_ADMIN_PASSWORD", "")
         })
         assert response.status_code == 200, f"Login failed: {response.text}"
         data = response.json()

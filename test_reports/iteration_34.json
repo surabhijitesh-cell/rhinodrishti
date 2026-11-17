@@ -70,7 +70,7 @@
     "frontend": "100% (all UI elements verified, admin panel visibility correct, toast notifications working)"
   },
 
-  "test_credentials": "Admin: username=admin, password=Admin@2026! | Viewer: username=testviewer, password=Viewer@2026!",
+  "test_credentials": "Admin: username=admin, password=<set by admin — not stored here> | Viewer: username=testviewer, password=<set by admin — not stored here>",
 
   "seed_data_creation": "Created TEST_ prefixed updates during testing: TEST_10.0, TEST_10.0.1, TEST_LONGGAP_1.0 through TEST_LONGGAP_4.0, TEST_UI_2.0",
 

@@ -71,6 +71,17 @@ def as_viewer():
     ("DELETE", "/api/settings/rss-feeds"),
     ("POST", "/api/web-sources"),
     ("DELETE", "/api/web-sources/1"),
+    ("POST", "/api/fetch-news"),
+    ("POST", "/api/generate-brief"),
+    ("POST", "/api/fusion/run"),
+    ("POST", "/api/training/run"),
+    ("POST", "/api/keywords/refresh"),
+    ("POST", "/api/faultlines/refresh"),
+    ("POST", "/api/social/fetch-all"),
+    ("POST", "/api/knowledge-graph/build"),
+    ("DELETE", "/api/intelligence/1"),
+    ("POST", "/api/fading/cleanup-low"),
+    ("POST", "/api/admin/relationships/compute"),
 ])
 def test_admin_only_action_refuses_non_admin(as_viewer, method, path):
     assert client.request(method, path, json={}).status_code == 403

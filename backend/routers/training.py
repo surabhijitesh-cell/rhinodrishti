@@ -1,5 +1,6 @@
 """Training pipeline: URL/file upload, AI processing, pattern aggregation."""
-from fastapi import APIRouter, HTTPException, BackgroundTasks, UploadFile, File, Form, Depends
+from fastapi import APIRouter, HTTPException, BackgroundTasks, UploadFile, File, Form, Depends
+from utils.roles import require_analyst_or_admin
 from typing import Optional
 from datetime import datetime, timezone, timedelta
 import asyncio
@@ -17,7 +18,7 @@ router = APIRouter()
 # ============================================================
 # Add URL to training queue
 # ============================================================
-@router.post("/training/add-url")
+@router.post("/training/add-url", dependencies=[Depends(require_analyst_or_admin)])
 async def add_training_url(body: dict, current_user: dict = Depends(get_current_user)):
     url = (body.get("url") or "").strip()
     if not url or not url.startswith("http"):
@@ -55,7 +56,7 @@ async def add_training_url(body: dict, current_user: dict = Depends(get_current_
 # ============================================================
 # Upload file to training queue
 # ============================================================
-@router.post("/training/upload-file")
+@router.post("/training/upload-file", dependencies=[Depends(require_analyst_or_admin)])
 async def upload_training_file(file: UploadFile = File(...), current_user: dict = Depends(get_current_user)):
     allowed = {
         "application/pdf": "pdf",
@@ -131,7 +132,7 @@ async def get_training_queue():
 # ============================================================
 # Delete training item
 # ============================================================
-@router.delete("/training/queue/{item_id}")
+@router.delete("/training/queue/{item_id}", dependencies=[Depends(require_analyst_or_admin)])
 async def delete_training_item(item_id: str):
     result = await training_col.delete_one({"id": item_id})
     if result.deleted_count == 0:
@@ -142,7 +143,7 @@ async def delete_training_item(item_id: str):
 # ============================================================
 # Train — process all pending/ready items
 # ============================================================
-@router.post("/training/run")
+@router.post("/training/run", dependencies=[Depends(require_analyst_or_admin)])
 async def run_training(background_tasks: BackgroundTasks, current_user: dict = Depends(get_current_user)):
     pending = await training_col.count_documents({"status": {"$in": ["pending", "ready"]}})
     if pending == 0:

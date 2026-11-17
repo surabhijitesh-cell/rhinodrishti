@@ -1,7 +1,9 @@
 """Keyword Engine endpoints."""
-from fastapi import APIRouter, Query, BackgroundTasks
+from fastapi import APIRouter, Query, BackgroundTasks, Depends
+from utils.roles import require_analyst_or_admin
 from typing import Optional
 import os
+import re
 from shared import db, logger
 
 router = APIRouter()
@@ -57,7 +59,7 @@ async def get_keywords(
     }
 
 
-@router.post("/keywords/refresh")
+@router.post("/keywords/refresh", dependencies=[Depends(require_analyst_or_admin)])
 async def refresh_keywords(background_tasks: BackgroundTasks):
     from keyword_engine import generate_keywords, store_keywords_to_db, _keyword_cache
 
@@ -73,7 +75,7 @@ async def refresh_keywords(background_tasks: BackgroundTasks):
     return {"message": "Keyword refresh started with AI expansion"}
 
 
-@router.post("/keywords/add")
+@router.post("/keywords/add", dependencies=[Depends(require_analyst_or_admin)])
 async def add_keyword_manually(body: dict):
     keyword = (body.get("keyword") or "").strip()
     if not keyword or len(keyword) < 2:
@@ -93,7 +95,7 @@ async def add_keyword_manually(body: dict):
 
     # Check if keyword already exists
     existing = await db.keyword_store.find_one(
-        {"keyword": {"$regex": f"^{keyword}$", "$options": "i"}},
+        {"keyword": {"$regex": f"^{re.escape(keyword)}$", "$options": "i"}},
         {"_id": 0}
     )
     if existing:

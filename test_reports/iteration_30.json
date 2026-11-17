@@ -60,7 +60,7 @@
     "frontend": "100% (all UI elements verified, filters working)"
   },
 
-  "test_credentials": "Admin: username=admin, password=Admin@2026!",
+  "test_credentials": "Admin: username=admin, password=<set by admin — not stored here>",
 
   "seed_data_creation": "None - used existing intelligence data",
 

@@ -230,7 +230,7 @@ class TestAuthLogin:
         """Test admin login works"""
         payload = {
             "username": "admin",
-            "password": "Admin@2026!"
+            "password": os.environ.get("RD_ADMIN_PASSWORD", "")
         }
         
         response = requests.post(f"{BASE_URL}/api/auth/login", json=payload)

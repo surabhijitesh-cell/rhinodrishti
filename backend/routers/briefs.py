@@ -1,10 +1,12 @@
 """Daily Brief generation, PDF export, custom briefs, weekly trends."""
-from fastapi import APIRouter, Query, HTTPException, BackgroundTasks
+from fastapi import APIRouter, Query, HTTPException, BackgroundTasks, Depends
+from utils.roles import require_analyst_or_admin
 from fastapi.responses import StreamingResponse
 from typing import Optional
 from datetime import datetime, timezone, timedelta
 import io
 import os
+import re
 import uuid
 from shared import (
     db, intelligence_col, briefs_col, uploads_col, patterns_col,
@@ -106,7 +108,7 @@ async def get_daily_brief(date: Optional[str] = None):
     return brief
 
 
-@router.post("/generate-brief")
+@router.post("/generate-brief", dependencies=[Depends(require_analyst_or_admin)])
 async def generate_brief(background_tasks: BackgroundTasks):
     date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     background_tasks.add_task(generate_brief_for_date, date)
@@ -183,7 +185,7 @@ async def get_daily_brief_pdf(date: Optional[str] = None):
     )
 
 
-@router.post("/intelligence/custom-brief")
+@router.post("/intelligence/custom-brief", dependencies=[Depends(require_analyst_or_admin)])
 async def generate_custom_brief(body: dict):
     region = body.get("region")
     threat_type = body.get("threat_type")
@@ -204,8 +206,8 @@ async def generate_custom_brief(body: dict):
         query["severity"] = severity
     if search:
         query["$or"] = [
-            {"title": {"$regex": search, "$options": "i"}},
-            {"ai_summary": {"$regex": search, "$options": "i"}}
+            {"title": {"$regex": re.escape(search), "$options": "i"}},
+            {"ai_summary": {"$regex": re.escape(search), "$options": "i"}}
         ]
 
     items = await intelligence_col.find(query, {"_id": 0}).sort(

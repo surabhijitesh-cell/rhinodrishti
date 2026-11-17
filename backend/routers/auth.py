@@ -1,16 +1,29 @@
 """Authentication and User Management endpoints."""
 from fastapi import APIRouter, Depends, HTTPException, Request
 from datetime import datetime, timezone
+import time
 from models.user import UserCreate, UserLogin, UserUpdate, PasswordReset, UserInDB, UserResponse
 from utils.auth import (
     hash_password, verify_password, create_access_token,
-    get_current_user, get_current_session_id, require_admin_role,
+    get_current_user, get_current_session_id, get_current_token_user_id,
+    require_admin_role, LoginLimiter,
 )
 from shared import db
 from user_activity import start_session, end_session
 
 router = APIRouter()
 users_col = db.users
+login_limiter = LoginLimiter()
+# X-Forwarded-For can be faked per request, so also cap guesses per username from any address.
+user_limiter = LoginLimiter(max_fails=20)
+
+
+def _client_ip(request: Request) -> str:
+    # Render sits behind a proxy: the real client is the first X-Forwarded-For entry.
+    fwd = request.headers.get("x-forwarded-for", "")
+    if fwd:
+        return fwd.split(",")[0].strip()
+    return request.client.host if request.client else ""
 
 
 # ============================================================
@@ -19,20 +32,38 @@ users_col = db.users
 
 @router.post("/auth/login")
 async def login(data: UserLogin, request: Request):
+    ip_address = _client_ip(request)
+    user_key = data.username.strip().lower()
+    limit_key = f"{user_key}|{ip_address}"
+    now = time.time()
+    wait = max(login_limiter.retry_after(limit_key, now), user_limiter.retry_after(user_key, now))
+    if wait:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Too many failed attempts. Try again in {-(-wait // 60)} minutes.",
+        )
     user = await users_col.find_one(
         {"$or": [{"username": data.username}, {"email": data.username}]},
         {"_id": 0}
     )
     if not user:
+        login_limiter.record_failure(limit_key, time.time())
+        user_limiter.record_failure(user_key, time.time())
         raise HTTPException(status_code=401, detail="Invalid credentials")
     if not user.get("is_active", True):
         raise HTTPException(status_code=403, detail="Account deactivated")
     if not verify_password(data.password, user.get("password_hash", "")):
+        login_limiter.record_failure(limit_key, time.time())
+        user_limiter.record_failure(user_key, time.time())
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
-    ip_address = request.client.host if request.client else ""
+    login_limiter.clear(limit_key)
+    user_limiter.clear(user_key)
     session_id = await start_session(user, ip_address)
-    token = create_access_token({"sub": user["id"], "role": user.get("role", "viewer"), "session_id": session_id})
+    token = create_access_token(
+        {"sub": user["id"], "role": user.get("role", "viewer"), "session_id": session_id},
+        token_version=user.get("token_version", 0),
+    )
 
     try:
         await users_col.update_one(
@@ -60,13 +91,19 @@ async def login(data: UserLogin, request: Request):
 
 
 @router.post("/auth/logout")
-async def logout(session_id: str = Depends(get_current_session_id)):
+async def logout(
+    session_id: str = Depends(get_current_session_id),
+    user_id: str = Depends(get_current_token_user_id),
+):
     """Marks the login session's precise end time — improves the accuracy of
     the Currently Online view and session-duration figures over waiting for
     the away/offline staleness threshold. Best-effort: always returns success
     even for a missing/expired session, since the client clears its token
     regardless."""
     await end_session(session_id)
+    if user_id:
+        # Bumping the version invalidates every token issued to this user.
+        await users_col.update_one({"id": user_id}, {"$inc": {"token_version": 1}})
     return {"message": "Logged out"}
 
 
@@ -168,7 +205,7 @@ async def reset_password(user_id: str, data: PasswordReset, admin: dict = Depend
         raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
     result = await users_col.update_one(
         {"id": user_id},
-        {"$set": {"password_hash": hash_password(data.new_password)}}
+        {"$set": {"password_hash": hash_password(data.new_password)}, "$inc": {"token_version": 1}}
     )
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="User not found")

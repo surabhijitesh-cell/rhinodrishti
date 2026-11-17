@@ -11,7 +11,8 @@ GET  /api/relationships/{edge_id}/explain — lazy AI explanation for an edge (b
 POST /api/admin/relationships/compute     — manual trigger of batch job (admin)
 """
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Depends
+from utils.auth import require_admin_role
 from pydantic import BaseModel
 from typing import Optional
 from datetime import datetime, timezone
@@ -266,7 +267,7 @@ async def patch_edge(edge_id: str, body: PatchEdgeBody):
 
 # ── Admin: manual batch trigger ───────────────────────────────────────────────
 
-@router.post("/admin/relationships/compute")
+@router.post("/admin/relationships/compute", dependencies=[Depends(require_admin_role)])
 async def trigger_relationship_compute(rebuild_kg: bool = Query(False, description="Set true to rebuild Knowledge Graph + Pattern Engine before computing relationships")):
     """
     Admin: manually trigger relationship batch job.

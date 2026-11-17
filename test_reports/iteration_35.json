@@ -80,7 +80,7 @@
     "frontend": "100% (all UI elements verified, report cards expand correctly, Export PDF button works)"
   },
 
-  "test_credentials": "Admin: username=admin, password=Admin@2026!",
+  "test_credentials": "Admin: username=admin, password=<set by admin — not stored here>",
 
   "seed_data_creation": "No new seed data created - used existing intelligence items",
 
