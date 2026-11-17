@@ -153,7 +153,7 @@ def _twitter_to_intel_item(tweet: dict) -> Optional[dict]:
     url = _first(tweet, "url", "twitterUrl")
     author = tweet.get("author") or {}
     handle = author.get("userName") or author.get("username") or "unknown"
-    created = _first(tweet, "createdAt", "created_at")
+    created = _first(tweet, "createdAt", "created_at") or _tweet_time_from_id(tweet.get("id") or url)
     return {
         "title": f"Tweet by @{handle}: {text[:80]}",
         "source": f"X/Twitter - @{handle}",
@@ -204,6 +204,18 @@ def _facebook_to_intel_item(post: dict) -> Optional[dict]:
     }
 
 
+_X_EPOCH_MS = 1288834974657  # X post ids carry their creation time
+
+
+def _tweet_time_from_id(id_or_url) -> str:
+    """ISO time read from an X post id (or a .../status/<id> link); '' if none."""
+    digits = str(id_or_url or "").rstrip("/").rsplit("/", 1)[-1].split("?")[0]
+    if not digits.isdigit() or len(digits) < 15:
+        return ""
+    ms = (int(digits) >> 22) + _X_EPOCH_MS
+    return datetime.fromtimestamp(ms / 1000, tz=timezone.utc).isoformat()
+
+
 def _parse_date(value) -> str:
     if not value:
         return datetime.now(timezone.utc).isoformat()
@@ -219,6 +231,12 @@ def _parse_date(value) -> str:
             return datetime.now(timezone.utc).isoformat()
     try:
         return datetime.fromisoformat(str(value).replace("Z", "+00:00")).isoformat()
+    except ValueError:
+        pass
+    try:
+        # X's own format, "Wed Nov 11 08:15:00 +0000 2026". It used to fall
+        # through to "now", stamping every post with the scrape time.
+        return datetime.strptime(str(value), "%a %b %d %H:%M:%S %z %Y").isoformat()
     except ValueError:
         return datetime.now(timezone.utc).isoformat()
 

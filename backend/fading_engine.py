@@ -27,6 +27,10 @@ Run schedule: every hour via the scheduler in server.py.
 import math
 import logging
 from datetime import datetime, timezone
+from typing import Optional
+
+from pymongo import UpdateOne
+
 from shared import intelligence_col, db
 
 logger = logging.getLogger(__name__)
@@ -259,77 +263,102 @@ async def delete_expired_low_severity() -> dict:
 MIN_ARCHIVE_AGE_HOURS = 168   # 7 days
 
 
-async def run_fading_pass(batch_size: int = 500) -> dict:
-    """
-    Hourly background job.  Recomputes visibility_score for recent processed
-    items and marks fully-faded items as archived.
+# A stored score is rewritten only when it has moved this far, or the item has
+# changed band or archive state — so an hourly pass over everything stays cheap.
+SCORE_WRITE_STEP = 1.0
+FADING_WRITE_CHUNK = 1000
 
-    Items younger than MIN_ARCHIVE_AGE_HOURS (7 days) are never archived,
-    even if their computed visibility score falls below the threshold.
+
+def _age_hours(item: dict, now: datetime) -> float:
+    try:
+        pub_dt = datetime.fromisoformat((item.get("published_at") or "").replace("Z", "+00:00"))
+        if pub_dt.tzinfo is None:
+            pub_dt = pub_dt.replace(tzinfo=timezone.utc)
+        return max((now - pub_dt).total_seconds() / 3600, 0.0)
+    except Exception:
+        return 0.0  # treat as brand-new if date unparseable
+
+
+def fading_update(item: dict, now: datetime) -> Optional[dict]:
+    """The fields a fading pass should store for an item, or None when nothing
+    a user could notice has changed since the last pass.
+
+    Items younger than MIN_ARCHIVE_AGE_HOURS (7 days) are never archived, even
+    if their score is below the threshold; an archived item whose score
+    recovers (e.g. an analyst rated it up) is un-archived.
+    """
+    v = compute_visibility(item, now)
+    band = visibility_band(v)
+    archived = band == "archived" and _age_hours(item, now) >= MIN_ARCHIVE_AGE_HOURS
+    unchanged = (
+        item.get("visibility_updated_at")
+        and item.get("visibility_band") == band
+        and bool(item.get("is_archived")) == archived
+        and abs(float(item.get("visibility_score") or 0) - v) < SCORE_WRITE_STEP
+    )
+    if unchanged:
+        return None
+    return {
+        "visibility_score": v,
+        "visibility_band": band,
+        "visibility_updated_at": now.isoformat(),
+        "is_archived": archived,
+    }
+
+
+async def run_fading_pass() -> dict:
+    """
+    Hourly background job. Recomputes visibility for EVERY processed item the
+    app can show (not a fixed first 500) and archives fully-faded ones.
 
     Returns a summary dict with counts.
     """
     now = datetime.now(timezone.utc)
-    stats = {"updated": 0, "archived": 0, "too_fresh": 0, "errors": 0}
+    stats = {"checked": 0, "updated": 0, "archived": 0, "errors": 0}
 
-    # Only recompute items that haven't been manually pinned
     query = {
         "processed": True,
-        "pinned": {"$ne": True},          # pinned items never fade
+        "pinned": {"$ne": True},              # pinned items never fade
+        "tags": {"$ne": "not_relevant"},      # rejected items are never shown
     }
-
     cursor = intelligence_col.find(query, {
         "_id": 1, "id": 1, "priority_score": 1, "severity": 1,
         "published_at": 1, "is_cross_border": 1, "india_relevance_score": 1,
         "analyst_avg_rating": 1, "threat_trajectory": 1, "special_flags": 1,
-    }).limit(batch_size)
+        "visibility_score": 1, "visibility_band": 1, "visibility_updated_at": 1,
+        "is_archived": 1,
+    })
 
-    async for item in cursor:
+    async def _flush(ops: list) -> None:
         try:
-            v = compute_visibility(item, now)
-            band = visibility_band(v)
+            await intelligence_col.bulk_write(ops, ordered=False)
+            stats["updated"] += len(ops)
+        except Exception as e:
+            logger.warning(f"Fading write error ({len(ops)} items): {e}")
+            stats["errors"] += len(ops)
 
-            # ── Compute item age for the freshness guard ──────────────────────
-            pub_str = item.get("published_at", "")
-            try:
-                pub_dt = datetime.fromisoformat(pub_str.replace("Z", "+00:00"))
-                if pub_dt.tzinfo is None:
-                    pub_dt = pub_dt.replace(tzinfo=timezone.utc)
-                age_hours = max((now - pub_dt).total_seconds() / 3600, 0.0)
-            except Exception:
-                age_hours = 0.0  # treat as brand-new if date unparseable
-
-            update = {
-                "$set": {
-                    "visibility_score": v,
-                    "visibility_band": band,
-                    "visibility_updated_at": now.isoformat(),
-                }
-            }
-
-            if band == "archived":
-                if age_hours >= MIN_ARCHIVE_AGE_HOURS:
-                    # Old enough — safe to soft-archive
-                    update["$set"]["is_archived"] = True
-                    stats["archived"] += 1
-                else:
-                    # Too fresh to archive — keep visible even if score is low
-                    update["$set"]["is_archived"] = False
-                    stats["too_fresh"] += 1
-            else:
-                # Unarchive if score recovered (e.g. analyst rated it up)
-                update["$set"]["is_archived"] = False
-
-            await intelligence_col.update_one({"_id": item["_id"]}, update)
-            stats["updated"] += 1
-
+    ops: list = []
+    async for item in cursor:
+        stats["checked"] += 1
+        try:
+            fields = fading_update(item, now)
         except Exception as e:
             logger.warning(f"Fading error on item {item.get('id')}: {e}")
             stats["errors"] += 1
+            continue
+        if fields is None:
+            continue
+        if fields["is_archived"] and not item.get("is_archived"):
+            stats["archived"] += 1
+        ops.append(UpdateOne({"_id": item["_id"]}, {"$set": fields}))
+        if len(ops) >= FADING_WRITE_CHUNK:
+            await _flush(ops)
+            ops = []
+    if ops:
+        await _flush(ops)
 
     logger.info(
-        f"Fading pass complete — updated:{stats['updated']} "
-        f"archived:{stats['archived']} too_fresh(protected):{stats['too_fresh']} "
-        f"errors:{stats['errors']}"
+        f"Fading pass complete — checked:{stats['checked']} updated:{stats['updated']} "
+        f"newly archived:{stats['archived']} errors:{stats['errors']}"
     )
     return stats

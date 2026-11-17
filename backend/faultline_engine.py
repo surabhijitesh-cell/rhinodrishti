@@ -660,11 +660,17 @@ def compute_faultline_score(
 
     weights = [_decay(a) for a in sig_articles]
     total_w = sum(weights) or 1.0
+    # The averages below are divided by total_w, so decay alone only re-balances
+    # articles against each other: a faultline whose news is ALL old kept its
+    # full score. Freshness fades the whole score once the newest significant
+    # article is more than a day old (1.0 today/yesterday, 0.70 at 2 days,
+    # 0.17 at 6). The one-day grace keeps an early-morning pass from dipping.
+    freshness = min(1.0, max(weights) / math.exp(-DECAY_LAMBDA))
 
     # Severity load (0-100): decay-weighted average severity × 25
     sev_sum = sum(_SEV_WEIGHT.get(a.get("severity", "low"), 1) * w
                   for a, w in zip(sig_articles, weights))
-    severity_load = (sev_sum / total_w) * 25
+    severity_load = (sev_sum / total_w) * 25 * freshness
 
     # Velocity (0-100): decay-weighted effective article count
     velocity = min(100, total_w * VELOCITY_PER_ARTICLE)
@@ -677,16 +683,16 @@ def compute_faultline_score(
         entities = a.get("entities") or {}
         for loc in (entities.get("locations") or []):
             actors.add(loc)
-    actor_spread = min(100, len(actors) * 10)
+    actor_spread = min(100, len(actors) * 10) * freshness
 
     # Cross-border share (0-100) — ratio, not decayed
     cb_count = sum(1 for a in sig_articles if a.get("is_cross_border"))
-    cross_border = (cb_count / n) * 100
+    cross_border = (cb_count / n) * 100 * freshness
 
     # LLM impact — decay-weighted mean over significant mappings
     impacts = [m.get("impact_score", 0) for m in sig_mappings]
     confidences = [m.get("confidence", 0) for m in sig_mappings]
-    avg_impact = sum(imp * w for imp, w in zip(impacts, weights)) / total_w
+    avg_impact = sum(imp * w for imp, w in zip(impacts, weights)) / total_w * freshness
     avg_confidence = sum(confidences) / len(confidences) if confidences else 0
 
     # Composite
@@ -710,6 +716,7 @@ def compute_faultline_score(
         "n_significant": n,
         "avg_impact": round(avg_impact, 2),
         "avg_confidence": round(avg_confidence, 2),
+        "freshness": round(freshness, 3),
     }
 
 
@@ -791,14 +798,15 @@ def compute_faultline_score_v2(
     base = compute_faultline_score(sig_articles, fake_mappings, target_date=target_date)
 
     # Override cross_border with sub-issue-aware value
-    cb = (cross_border_count / len(combined_impacts)) * 100 if combined_impacts else 0.0
+    freshness = base.get("freshness", 1.0)  # absent when nothing was significant
+    cb = (cross_border_count / len(combined_impacts)) * 100 * freshness if combined_impacts else 0.0
     raw_score = (
         base["severity_load"] * W_SEVERITY_LOAD
         + base["velocity"] * W_VELOCITY
         + base["actor_spread"] * W_ACTOR_SPREAD
         + cb * W_CROSS_BORDER
     )
-    avg_combined = sum(combined_impacts) / len(combined_impacts)
+    avg_combined = sum(combined_impacts) / len(combined_impacts) * freshness
     final_raw = round(0.5 * raw_score + 0.5 * avg_combined, 2)
 
     # Top-3 dominant sub-issues
