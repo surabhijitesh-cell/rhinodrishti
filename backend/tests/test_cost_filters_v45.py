@@ -50,3 +50,28 @@ def test_bank_query_gets_region_context():
 async def test_low_comment_posts_skip_paid_scrape():
     assert MIN_COMMENTS_FOR_SENTIMENT == 5
     assert await analyze_comments("twitter", "https://x.com/a/1", 4) is None
+
+
+def test_regional_language_items_skip_the_english_similarity_filter(monkeypatch):
+    import asyncio
+    import relevance_filter as rf
+
+    async def centroid(db):
+        return [1.0]
+
+    async def must_not_embed(text):
+        raise AssertionError("regional-language text should not be embedded")
+
+    monkeypatch.setattr(rf, "_ensure_centroid", centroid)
+    monkeypatch.setattr(rf, "generate_embedding", must_not_embed)
+    item = {"title": "পারমাণবিক বিদ্যুৎ ক্লাবে বাংলাদেশ, বাণিজ্যিক উৎপাদন আগামী বছর"}
+    result = asyncio.run(rf.is_semantically_relevant(item, None))
+    assert result["relevant"] is True and result["reason"] == "regional_language"
+
+
+def test_regional_language_check_ignores_english_and_arabic():
+    from relevance_filter import is_regional_language
+    assert is_regional_language("असम में बंद का आह्वान")
+    assert not is_regional_language("Manipur bandh called in Imphal")
+    assert not is_regional_language("Manipur news: বাংলা")
+    assert not is_regional_language("قناة الفلوجة")

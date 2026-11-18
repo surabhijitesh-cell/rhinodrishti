@@ -17,6 +17,7 @@ the filter returns relevant=True so the item proceeds downstream.
 """
 import logging
 import os
+import re
 import time
 from typing import Optional
 
@@ -88,6 +89,16 @@ async def _ensure_centroid(db) -> Optional[np.ndarray]:
     return _centroid
 
 
+# Bengali/Assamese, Devanagari, Myanmar and Meitei scripts. The reference set is
+# English, so these score far below the threshold whatever they say.
+_REGIONAL_SCRIPT = re.compile(r"[ऀ-৿က-႟ꯀ-꯿]")
+
+
+def is_regional_language(text: str) -> bool:
+    letters = [c for c in text if c.isalpha()]
+    return bool(letters) and sum(1 for c in letters if _REGIONAL_SCRIPT.match(c)) / len(letters) > 0.3
+
+
 async def is_semantically_relevant(article: dict, db) -> dict:
     """
     Stage 0.5 semantic relevance check.
@@ -104,6 +115,8 @@ async def is_semantically_relevant(article: dict, db) -> dict:
     text = f"{title}. {content[:400]}"
     if len(text.strip()) < 10:
         return {"relevant": True, "similarity": 0.0, "reason": "text_too_short"}
+    if is_regional_language(text):
+        return {"relevant": True, "similarity": 0.0, "reason": "regional_language"}
 
     try:
         emb = await generate_embedding(text)
