@@ -1,4 +1,5 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
+import { useSearchParams } from "react-router-dom";
 import {
   Calendar, FileText, RefreshCw, Download, Copy, ChevronDown, ChevronUp,
   Shield, AlertTriangle, Users, MapPin, Phone, Mail, Activity, TrendingUp,
@@ -11,6 +12,7 @@ import Tip from "../components/Tip";
 import { downloadPdf } from "../lib/downloadPdf";
 import { useAuth } from "../contexts/AuthContext";
 import ConfirmAction from "../components/ConfirmAction";
+import LoadError from "../components/LoadError";
 import { useAdminIod } from "../contexts/AdminIodContext";
 import {
   AreaChart, Area, BarChart, Bar, LineChart, Line,
@@ -48,11 +50,16 @@ function previousMonth() {
   return { year: d.getFullYear(), month: d.getMonth() + 1 };
 }
 
+const POLL_GIVE_UP_MS = 30 * 60 * 1000;
+
 export default function MonthlyBrief({ api }) {
   const { user } = useAuth();
   const { viewIod } = useAdminIod();
   const effectiveIod = (user?.role === "admin" && viewIod) ? viewIod : (user?.iod || "IOD-1");
-  const init = previousMonth();
+  const [searchParams] = useSearchParams();
+  const qYear = parseInt(searchParams.get("year"), 10);
+  const qMonth = parseInt(searchParams.get("month"), 10);
+  const init = qYear > 2000 && qMonth >= 1 && qMonth <= 12 ? { year: qYear, month: qMonth } : previousMonth();
   const [year, setYear]       = useState(init.year);
   const [month, setMonth]     = useState(init.month);
   const [brief, setBrief]         = useState(null);
@@ -63,6 +70,9 @@ export default function MonthlyBrief({ api }) {
   const [loading,    setLoading]    = useState(true);
   const [generating, setGenerating] = useState(false);
   const [error, setError]     = useState(null);
+  const [loadError, setLoadError] = useState(false);
+  const [pollTimedOut, setPollTimedOut] = useState(false);
+  const reqRef = useRef(0);
   const [openStates, setOpenStates] = useState({});
   const [openMitig,  setOpenMitig]  = useState({});
   const [copied, setCopied]   = useState(false);
@@ -77,62 +87,82 @@ export default function MonthlyBrief({ api }) {
   const prevMonth = month === 1 ? 12 : month - 1;
   const prevMonthLabel = new Date(prevYear, prevMonth - 1, 1).toLocaleString("en-IN", { month: "long", year: "numeric" });
 
-  const fetchBrief = useCallback(async () => {
-    setError(null);
-    setLoading(true);
+  // `silent` = background poll: no loading screen, keeps what is on screen on a blip.
+  // Every call takes a ticket; answers for an older ticket (rapid Prev/Next) are dropped.
+  const fetchBrief = useCallback(async ({ silent = false } = {}) => {
+    const ticket = ++reqRef.current;
+    const isStale = () => ticket !== reqRef.current;
+    if (!silent) { setError(null); setLoadError(false); setLoading(true); }
     try {
       const r = await axios.get(`${api}/brief/monthly/${year}/${month}?iod=${effectiveIod}`);
+      if (isStale()) return;
       setBrief(r.data);
-      if (r.data.status === "generating") {
-        setGenerating(true);
-      } else {
-        setGenerating(false);
-      }
+      setGenerating(r.data.status === "generating");
+      setLoadError(false);
     } catch (e) {
+      if (isStale()) return;
       if (e?.response?.status === 404) {
         setBrief(null);
-      } else {
-        setError(e?.response?.data?.detail || "Fetch failed");
+        setGenerating(false);
+      } else if (!silent) {
+        setBrief(null);
+        setGenerating(false);
+        setLoadError(true);
       }
-      setGenerating(false);
     }
+    if (isStale()) return;
     setLoading(false);
-    // Fetch previous month brief silently (for comparison)
+    // Previous period (for comparison) and stability history load quietly.
     try {
       const pr = await axios.get(`${api}/brief/monthly/${prevYear}/${prevMonth}?iod=${effectiveIod}`);
-      if (pr.data?.status === "ready" || pr.data?.status === "partial") {
-        setPrevBrief(pr.data);
-      } else {
-        setPrevBrief(null);
-      }
+      if (isStale()) return;
+      setPrevBrief(pr.data?.status === "ready" || pr.data?.status === "partial" ? pr.data : null);
     } catch {
-      setPrevBrief(null);
+      if (!isStale()) setPrevBrief(null);
     }
-    // Fetch full stability history for trend chart
     try {
       const hr = await axios.get(`${api}/brief/monthly/stability-history?iod=${effectiveIod}`);
+      if (isStale()) return;
       setHistory(hr.data?.history || []);
     } catch {
-      setHistory([]);
+      if (!isStale()) setHistory([]);
     }
   }, [api, year, month, prevYear, prevMonth, effectiveIod]);
 
-  useEffect(() => { fetchBrief(); }, [fetchBrief]);
+  // New period or IOD: drop the old brief at once and load the new one.
+  useEffect(() => {
+    setBrief(null);
+    setPrevBrief(null);
+    setHistory([]);
+    setGenerating(false);
+    setPollTimedOut(false);
+    fetchBrief();
+  }, [fetchBrief]);
 
-  // Poll while generating
+  // Poll while generating; give up after 30 minutes and offer a Retry.
   useEffect(() => {
     if (!generating) return;
-    const t = setInterval(fetchBrief, 8000);
+    const started = Date.now();
+    const t = setInterval(() => {
+      if (Date.now() - started > POLL_GIVE_UP_MS) {
+        clearInterval(t);
+        setGenerating(false);
+        setPollTimedOut(true);
+        return;
+      }
+      fetchBrief({ silent: true });
+    }, 8000);
     return () => clearInterval(t);
   }, [generating, fetchBrief]);
 
   const handleGenerate = async () => {
     setGenerating(true);
+    setPollTimedOut(false);
     setError(null);
     try {
       await axios.post(`${api}/brief/monthly/generate?year=${year}&month=${month}&force_rich=true&iod=${effectiveIod}`);
       // Poll for completion
-      setTimeout(fetchBrief, 4000);
+      setTimeout(() => fetchBrief({ silent: true }), 4000);
     } catch (e) {
       setError(e?.response?.data?.detail || "Generation request failed");
       setGenerating(false);
@@ -201,19 +231,19 @@ export default function MonthlyBrief({ api }) {
         <div className="text-xs font-mono uppercase tracking-wider min-w-[120px] text-center">{monthLabel}</div>
         <button onClick={() => adjustMonth(1)}  className="px-2 py-1.5 border border-border text-xs font-mono hover:border-primary">Next &gt;</button>
         {user?.role !== "viewer" && (
-        <ConfirmAction title={brief?.status === "ready" ? "Regenerate this brief?" : "Generate this brief?"} description={brief?.status === "ready" ? "It makes 30–40 AI calls (roughly $0.20–$0.70) and takes several minutes. The current brief stays on screen until the new one is ready." : "It makes 30–40 AI calls (roughly $0.20–$0.70) and takes several minutes."} confirmLabel={brief?.status === "ready" ? "Regenerate" : "Generate"} onConfirm={handleGenerate}>
+        <ConfirmAction title={(brief?.status === "ready" || brief?.status === "partial") ? "Regenerate this brief?" : "Generate this brief?"} description={(brief?.status === "ready" || brief?.status === "partial") ? "It makes 30–40 AI calls (roughly $0.20–$0.70) and takes several minutes. The current brief stays on screen until the new one is ready." : "It makes 30–40 AI calls (roughly $0.20–$0.70) and takes several minutes."} confirmLabel={(brief?.status === "ready" || brief?.status === "partial") ? "Regenerate" : "Generate"} onConfirm={handleGenerate}>
         <Button
           disabled={generating}
           className="rounded-none uppercase text-xs tracking-wider"
           data-testid="generate-monthly-btn"
         >
           {generating ? <><RefreshCw size={12} className="mr-1 animate-spin" /> Generating…</> :
-            brief?.status === "ready" ? <><RefreshCw size={12} className="mr-1" /> Regenerate</> :
+            (brief?.status === "ready" || brief?.status === "partial") ? <><RefreshCw size={12} className="mr-1" /> Regenerate</> :
                                           <><FileText  size={12} className="mr-1" /> Generate</>}
         </Button>
         </ConfirmAction>
         )}
-        {brief?.status === "ready" && activeTab === "brief" && (
+        {(brief?.status === "ready" || brief?.status === "partial") && activeTab === "brief" && (
           <>
             <Button
               onClick={() => handleDownloadPDF(false)}
@@ -1083,7 +1113,7 @@ export default function MonthlyBrief({ api }) {
       setPdfError(null);
       const result = await downloadPdf(
         axios,
-        `${api}/faultlines/report?year=${year}&month=${month}`,
+        `${api}/faultlines/report?year=${year}&month=${month}&iod=${effectiveIod}`,
         `faultline_report_${year}_${month}.pdf`,
       );
       setPdfLoading(null);
@@ -1317,6 +1347,16 @@ export default function MonthlyBrief({ api }) {
         </div>
       )}
 
+      {loadError && <LoadError what={`the ${monthLabel} brief`} onRetry={() => fetchBrief()} />}
+
+      {pollTimedOut && (
+        <div className="border border-amber-500/40 bg-amber-500/5 p-3 text-xs text-amber-400 flex items-center gap-3" role="alert" data-testid="brief-timed-out">
+          <AlertTriangle size={14} className="shrink-0" />
+          This brief has been generating for over 30 minutes and may have failed. We stopped checking.
+          <button onClick={() => fetchBrief()} className="ml-auto text-[10px] font-mono uppercase border border-amber-500/40 px-2 py-1 hover:bg-amber-500/10">Retry</button>
+        </div>
+      )}
+
       {/* Generating state */}
       {generating && (
         <div className="border border-primary bg-primary/5 p-4 text-xs font-mono text-primary flex items-center gap-2">
@@ -1326,7 +1366,7 @@ export default function MonthlyBrief({ api }) {
       )}
 
       {/* No brief yet */}
-      {!brief && !generating && (
+      {!brief && !generating && !loadError && !pollTimedOut && (
         <div className="border border-border bg-card p-8 text-center">
           <FileText size={32} className="mx-auto text-muted-foreground mb-3" />
           <p className="text-sm text-muted-foreground mb-1">No monthly brief generated for {monthLabel} yet.</p>
@@ -1337,7 +1377,7 @@ export default function MonthlyBrief({ api }) {
       )}
 
       {/* Status: generating in DB, but we have stub */}
-      {brief?.status === "generating" && (
+      {brief?.status === "generating" && !pollTimedOut && (
         <div className="border border-primary bg-primary/5 p-4 text-xs font-mono text-primary">
           <Clock size={14} className="inline mr-2 animate-pulse" />
           Generation in progress — auto-refreshing every 8s.

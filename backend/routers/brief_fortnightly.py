@@ -16,6 +16,8 @@ Reuses all LLM prompts, aggregation, and rendering from brief_monthly.
 """
 import asyncio
 import io
+import brief_periods
+from utils.pdf_render import render_pdf_off_loop
 from calendar import monthrange
 from datetime import datetime, timezone
 
@@ -48,6 +50,7 @@ from routers.brief_monthly import (
     _effective_iod,
     _begin_generation, _fail_generation, _finish_generation, _settle_if_interrupted,
     _infer_missing_sections,
+    SHARED_CORE_KEYS, _shared_core_meta,
     NER_STATES_FULL,
     BORDER_COUNTRIES,
 )
@@ -93,20 +96,23 @@ async def _build_fortnightly_paoi(year, month, period, start_iso, end_iso, perio
 # ── Period helpers ─────────────────────────────────────────────────────────────
 
 def _fortnightly_range(year: int, month: int, period: int):
-    """Return (start_iso, end_iso, label) for the given fortnightly period."""
-    if period == 1:
-        start = datetime(year, month, 1, tzinfo=timezone.utc)
-        end   = datetime(year, month, 16, tzinfo=timezone.utc)
-        label = f"1-15 {start.strftime('%B %Y')}"
-    else:
-        start = datetime(year, month, 16, tzinfo=timezone.utc)
-        last_day = monthrange(year, month)[1]
-        if month == 12:
-            end = datetime(year + 1, 1, 1, tzinfo=timezone.utc)
-        else:
-            end = datetime(year, month + 1, 1, tzinfo=timezone.utc)
-        label = f"16-{last_day} {start.strftime('%B %Y')}"
-    return start.isoformat(), end.isoformat(), label
+    """Return (start_iso, end_iso, label); IST calendar days, end exclusive."""
+    return brief_periods.fortnight_range(year, month, period)
+
+
+def _prev_fortnight(year: int, month: int, period: int) -> dict:
+    """Previous fortnight key: P2 -> P1 same month; P1 -> P2 of the previous month."""
+    if period == 2:
+        return {"year": year, "month": month, "period": 1}
+    if month > 1:
+        return {"year": year, "month": month - 1, "period": 2}
+    return {"year": year - 1, "month": 12, "period": 2}
+
+
+def _fortnight_dates(year: int, month: int, period: int) -> tuple[str, str]:
+    """Inclusive IST (first, last) calendar dates of a fortnight."""
+    start_iso, end_iso, _ = _fortnightly_range(year, month, period)
+    return brief_periods.period_dates(start_iso, end_iso)
 
 
 def _current_fortnightly_default():
@@ -468,13 +474,8 @@ async def _run_fortnightly_generation_core(year: int, month: int, period: int, i
     # PAOI sections — rich on first generation of this period, lean on regen.
     paoi_analysis = await _build_fortnightly_paoi(year, month, period, start_iso, end_iso, period_label, force_rich=force_rich, iod=iod)
 
-    # Previous fortnight window: P2 -> P1 same month; P1 -> P2 of previous month
-    if period == 2:
-        prev_key = {"year": year, "month": month, "period": 1}
-    else:
-        prev_y = year if month > 1 else year - 1
-        prev_m = month - 1 if month > 1 else 12
-        prev_key = {"year": prev_y, "month": prev_m, "period": 2}
+    # Previous fortnight window
+    prev_key = _prev_fortnight(year, month, period)
     prev_start_iso, prev_end_iso, _prev_label = _fortnightly_range(
         prev_key["year"], prev_key["month"], prev_key["period"]
     )
@@ -510,7 +511,10 @@ async def _run_fortnightly_generation_core(year: int, month: int, period: int, i
         stats, (prev_doc or {}).get("stats"), category_baselines, start_iso, end_iso, iod=iod,
     )
 
-    faultline_analysis = await _aggregate_faultline_section(year, month, iod=iod)
+    fl_start, fl_end = _fortnight_dates(year, month, period)
+    faultline_analysis = await _aggregate_faultline_section(
+        year, month, iod=iod, start_date=fl_start, end_date=fl_end,
+    )
 
     llm_ok = bool(exec_summary and state_sections)
     if not llm_ok:
@@ -570,12 +574,7 @@ async def _run_fortnightly_generation(year: int, month: int, period: int, iod: s
         return {**core_doc, "iod": iod}
 
     start_iso, end_iso, period_label = _fortnightly_range(year, month, period)
-    if period == 2:
-        prev_key = {"year": year, "month": month, "period": 1}
-    else:
-        prev_y = year if month > 1 else year - 1
-        prev_m = month - 1 if month > 1 else 12
-        prev_key = {"year": prev_y, "month": prev_m, "period": 2}
+    prev_key = _prev_fortnight(year, month, period)
     prev_start_iso, prev_end_iso, _prev_label = _fortnightly_range(
         prev_key["year"], prev_key["month"], prev_key["period"]
     )
@@ -610,13 +609,14 @@ async def _run_fortnightly_generation(year: int, month: int, period: int, iod: s
         core_doc["stats"], (prev_doc or {}).get("stats"), category_baselines, start_iso, end_iso, iod=iod,
     )
 
-    faultline_analysis = await _aggregate_faultline_section(year, month, iod=iod)
+    fl_start, fl_end = _fortnight_dates(year, month, period)
+    faultline_analysis = await _aggregate_faultline_section(
+        year, month, iod=iod, start_date=fl_start, end_date=fl_end,
+    )
 
     brief = {
-        **{k: core_doc[k] for k in (
-            "status", "stats", "executive_summary", "state_sections",
-            "mitigation_playbook", "scenarios", "cross_border_analysis", "social_pulse",
-        ) if k in core_doc},
+        **{k: core_doc[k] for k in SHARED_CORE_KEYS if k in core_doc},
+        **_shared_core_meta(core_doc),
         "year": year, "month": month, "period": period, "iod": iod,
         "period_label": period_label,
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -745,18 +745,10 @@ async def get_fortnightly_pdf(year: int, month: int, period: int, iod: Optional[
         raise HTTPException(425, f"Brief status: {brief.get('status')} — wait for generation")
 
     # Fetch previous period for recap section
-    if period == 2:
-        # P2 → recap P1 of same month
-        prev_brief = await fortnightly_briefs_col.find_one(
-            {"year": year, "month": month, "period": 1, "status": {"$in": ["ready", "partial"]}, **_iod_query_filter(iod)}, {"_id": 0}
-        )
-    else:
-        # P1 → recap P2 of previous month
-        prev_year  = year if month > 1 else year - 1
-        prev_month = month - 1 if month > 1 else 12
-        prev_brief = await fortnightly_briefs_col.find_one(
-            {"year": prev_year, "month": prev_month, "period": 2, "status": {"$in": ["ready", "partial"]}, **_iod_query_filter(iod)}, {"_id": 0}
-        )
+    prev_brief = await fortnightly_briefs_col.find_one(
+        {**_prev_fortnight(year, month, period), "status": {"$in": ["ready", "partial"]}, **_iod_query_filter(iod)},
+        {"_id": 0},
+    )
 
     # Per-PAOI score history across stored fortnightly briefs (trendline at 3+)
     from collections import defaultdict
@@ -777,7 +769,8 @@ async def get_fortnightly_pdf(year: int, month: int, period: int, iod: Optional[
                 })
 
     try:
-        pdf_bytes = _render_pdf(brief, prev_brief=prev_brief, paoi_history=dict(paoi_history))
+        pdf_bytes = await render_pdf_off_loop(
+            _render_pdf, brief, prev_brief=prev_brief, paoi_history=dict(paoi_history))
     except Exception as e:
         import traceback
         logger.error(f"Fortnightly PDF render failed: {traceback.format_exc()}")

@@ -28,8 +28,9 @@ import asyncio
 import io
 import logging
 from collections import defaultdict, Counter
-from datetime import datetime, timezone, timedelta
+from datetime import date, datetime, timezone, timedelta
 
+import brief_periods
 from brief_pdf_style import (
     BriefPDF, NL, ascii_safe, concern_level,
     C_TBL_HDR, C_TBL_ALT, C_SEC_TEXT, CONCERN_COLORS,
@@ -45,16 +46,40 @@ ACTOR_SCOPE_STATES = {
 
 
 # ── Data aggregation ─────────────────────────────────────────────────────────
-async def _load_month_scores(db, year: int, month: int) -> dict:
-    """Returns {faultline_id: {first, last, peak, avg, days, state, name, level}}."""
-    start = datetime(year, month, 1, tzinfo=timezone.utc).date()
-    if month == 12:
-        end = datetime(year + 1, 1, 1, tzinfo=timezone.utc).date()
+def report_windows(year: int, month: int, period: int | None = None) -> dict:
+    """Current and previous windows for the report, as inclusive IST dates.
+    period None = whole calendar month vs previous month; 1|2 = that fortnight
+    vs the previous fortnight (P1 -> P2 of the previous month)."""
+    if period is None:
+        prev_year, prev_month = (year, month - 1) if month > 1 else (year - 1, 12)
+        prev_period = None
+        cur = brief_periods.month_range(year, month)
+        prv = brief_periods.month_range(prev_year, prev_month)
+        label = date(year, month, 1).strftime("%B %Y")
+        prev_label = date(prev_year, prev_month, 1).strftime("%B %Y")
     else:
-        end = datetime(year, month + 1, 1, tzinfo=timezone.utc).date()
+        from routers.brief_fortnightly import _prev_fortnight
+        pk = _prev_fortnight(year, month, period)
+        prev_year, prev_month, prev_period = pk["year"], pk["month"], pk["period"]
+        cur_start, cur_end, label = brief_periods.fortnight_range(year, month, period)
+        prv_start, prv_end, prev_label = brief_periods.fortnight_range(prev_year, prev_month, prev_period)
+        cur, prv = (cur_start, cur_end), (prv_start, prv_end)
+    return {
+        "current": brief_periods.period_dates(*cur),
+        "previous": brief_periods.period_dates(*prv),
+        "label": label, "prev_label": prev_label,
+        "prev_year": prev_year, "prev_month": prev_month, "prev_period": prev_period,
+    }
 
+
+async def _load_scores(db, window: tuple, fl_ids: list | None = None) -> dict:
+    """Returns {faultline_id: {first, last, peak, avg, days, state, name, level}}
+    over the inclusive (first_date, last_date) window; fl_ids None = all."""
+    query: dict = {"date": {"$gte": window[0], "$lte": window[1]}}
+    if fl_ids is not None:
+        query["faultline_id"] = {"$in": list(fl_ids)}
     cursor = db.faultline_scores.find(
-        {"date": {"$gte": start.isoformat(), "$lt": end.isoformat()}},
+        query,
         {"_id": 0},
     ).sort([("faultline_id", 1), ("date", 1)])
 
@@ -81,23 +106,20 @@ async def _load_month_scores(db, year: int, month: int) -> dict:
     return out
 
 
-async def _top_actors(db, year: int, month: int) -> list:
+async def _top_actors(db, window: tuple, fl_ids: list | None = None) -> list:
     """
     Top 10 actors/orgs by mention count across ACTOR_SCOPE_STATES faultline-mapped
-    articles this month.  Returns list of dicts:
+    articles in the window (inclusive IST dates).  Returns list of dicts:
       {name, count, faultlines[3], headline{title,date,source,severity}}
     """
-    start_iso = datetime(year, month, 1, tzinfo=timezone.utc).date().isoformat()
-    end_iso = (
-        datetime(year + 1, 1, 1, tzinfo=timezone.utc).date().isoformat()
-        if month == 12
-        else datetime(year, month + 1, 1, tzinfo=timezone.utc).date().isoformat()
-    )
+    m_query: dict = {"date": {"$gte": window[0], "$lte": window[1]}, "confidence": {"$gte": 45}}
+    if fl_ids is not None:
+        m_query["faultline_id"] = {"$in": list(fl_ids)}
 
-    # Collect article_id → set of faultline names from mappings this month.
+    # Collect article_id → set of faultline names from mappings in the window.
     article_faultlines: dict = defaultdict(set)
     m_cursor = db.faultline_mappings.find(
-        {"date": {"$gte": start_iso, "$lt": end_iso}, "confidence": {"$gte": 45}},
+        m_query,
         {"_id": 0, "article_id": 1, "faultline_name": 1, "faultline_id": 1},
     )
     async for m in m_cursor:
@@ -154,20 +176,27 @@ async def _top_actors(db, year: int, month: int) -> list:
 
 
 async def aggregate_faultline_report(
-    db, year: int, month: int, iod: str = "IOD-1"
+    db, year: int, month: int, iod: str = "IOD-1",
+    period: int | None = None, fl_ids: list | None = None,
 ) -> dict:
     """Aggregate everything the PDF needs. No LLM here — that's a separate pass.
 
     iod defaults to IOD-1 (today's only PAOI owner) — memory/plans/
     iod-scoping-plan.md cross-cutting fix #4: without this, another IOD's
-    first PAOI would leak into this report's red-flagging pass."""
-    # Actors of interest (parallel with score load — independent query)
-    actors_task = asyncio.ensure_future(_top_actors(db, year, month))
+    first PAOI would leak into this report's red-flagging pass.
 
-    # Current + previous month scores for MoM
-    curr = await _load_month_scores(db, year, month)
-    prev_year, prev_month = (year, month - 1) if month > 1 else (year - 1, 12)
-    prev = await _load_month_scores(db, prev_year, prev_month)
+    period None = the calendar month (vs previous month); 1|2 = that fortnight
+    (vs the previous fortnight). fl_ids limits the faultlines to an IOD's
+    watch-list (None = all). Dates are IST calendar days."""
+    win = report_windows(year, month, period)
+    prev_year, prev_month = win["prev_year"], win["prev_month"]
+
+    # Actors of interest (parallel with score load — independent query)
+    actors_task = asyncio.ensure_future(_top_actors(db, win["current"], fl_ids))
+
+    # Current + previous period scores for the comparison
+    curr = await _load_scores(db, win["current"], fl_ids)
+    prev = await _load_scores(db, win["previous"], fl_ids)
 
     # MoM delta per faultline (using avg as the representative monthly value).
     # If no prior month data, delta_mom = None.
@@ -200,8 +229,13 @@ async def aggregate_faultline_report(
     critical_now = [f for f in fl_list if f["last"] >= 75]
 
     # Load cached brief (state_narratives + paoi_analysis synthesis)
-    brief = await db.monthly_briefs.find_one(
-        {"year": year, "month": month},
+    from routers.brief_monthly import _iod_query_filter
+    brief_col = db.monthly_briefs if period is None else db.fortnightly_briefs
+    brief_key = {"year": year, "month": month, **_iod_query_filter(iod)}
+    if period is not None:
+        brief_key["period"] = period
+    brief = await brief_col.find_one(
+        brief_key,
         {"_id": 0, "faultline_analysis": 1, "paoi_analysis": 1, "generated_at": 1},
     ) or {}
     state_narratives = (brief.get("faultline_analysis") or {}).get("state_narratives", {}) or {}
@@ -267,13 +301,10 @@ async def aggregate_faultline_report(
     mover_ids = [m["id"] for m in top_movers]
     drivers_by_fl: dict = defaultdict(list)
     if mover_ids:
-        start_iso = datetime(year, month, 1, tzinfo=timezone.utc).date().isoformat()
-        end_iso = (datetime(year + (month // 12), (month % 12) + 1, 1, tzinfo=timezone.utc)
-                   .date().isoformat())
         m_cursor = db.faultline_mappings.find(
             {
                 "faultline_id": {"$in": mover_ids},
-                "date": {"$gte": start_iso, "$lt": end_iso},
+                "date": {"$gte": win["current"][0], "$lte": win["current"][1]},
                 "confidence": {"$gte": 45},
             },
             {"_id": 0, "faultline_id": 1, "article_id": 1, "impact_score": 1,
@@ -319,10 +350,13 @@ async def aggregate_faultline_report(
         top_actors = []
 
     return {
-        "year": year, "month": month,
+        "year": year, "month": month, "period": period, "iod": iod,
+        "is_fortnight": period is not None,
         "prev_year": prev_year, "prev_month": prev_month,
-        "month_name": datetime(year, month, 1).strftime("%B %Y"),
-        "prev_month_name": datetime(prev_year, prev_month, 1).strftime("%B %Y"),
+        "prev_period": win["prev_period"],
+        # period wording: the month name, or e.g. "1-15 November 2026"
+        "month_name": win["label"],
+        "prev_month_name": win["prev_label"],
         "generated_at": brief.get("generated_at", ""),
         "all_faultlines": fl_list,
         "key_metrics": {
@@ -341,18 +375,29 @@ async def aggregate_faultline_report(
     }
 
 
+def _pw(agg: dict) -> str:
+    """Period word for wording: Fortnight or Month."""
+    return "Fortnight" if agg.get("is_fortnight") else "Month"
+
+
+def _cmp_tag(agg: dict) -> str:
+    """Short tag for the comparison with the previous period."""
+    return "FoF" if agg.get("is_fortnight") else "MoM"
+
+
 # ── LLM synthesis (Path B — 3 calls) ──────────────────────────────────────────
 def _b1_bottom_line_prompt(agg: dict) -> str:
     km = agg["key_metrics"]
     lv = agg["mom_levels"]
     lines = [
-        f"Period: {agg['month_name']} vs {agg['prev_month_name']}.",
+        f"Period: {agg['month_name']} vs {agg['prev_month_name']} "
+        f"({'fortnight' if agg.get('is_fortnight') else 'month'}).",
         f"Total faultlines monitored: {km['total']}.",
         f"Currently CRITICAL: {km['critical_now']}.",
         f"Rising this period (Δ>=+10): {km['rising_period']}.",
         f"Declining (Δ<=-10): {km['declining_period']}.",
         "",
-        "Level distribution MoM:",
+        f"Level distribution {_cmp_tag(agg)}:",
     ]
     for lvl in ("CRITICAL", "ELEVATED", "MONITOR", "STABLE"):
         c = lv["current"].get(lvl, 0)
@@ -363,19 +408,19 @@ def _b1_bottom_line_prompt(agg: dict) -> str:
     # Top movers context
     if agg["top_movers"]:
         lines.append("")
-        lines.append("Top 5 movers (state, faultline, current score, period Δ, MoM Δ):")
+        lines.append(f"Top 5 movers (state, faultline, current score, period Δ, {_cmp_tag(agg)} Δ):")
         for f in agg["top_movers"][:5]:
             mom = f["mom_delta"] if f["mom_delta"] is not None else "n/a"
             lines.append(
                 f"  [{f['state']}] {f['name']}: now {f['last']:.0f}, "
-                f"period Δ {f['delta_period']:+.1f}, MoM Δ {mom}"
+                f"period Δ {f['delta_period']:+.1f}, {_cmp_tag(agg)} Δ {mom}"
             )
 
     return (
         "You are writing the BOTTOM LINE for a Faultline Analysis Report.\n\n"
         + "\n".join(lines) + "\n\n"
         + "Write 5-7 sentences. Open with the single most important read of the\n"
-        + "month. Cover MoM movement direction (escalation or de-escalation),\n"
+        + f"{_pw(agg).lower()}. Cover movement-vs-previous-{_pw(agg).lower()} direction (escalation or de-escalation),\n"
         + "which faultline area drove it, and the 1-2 sharpest moves. Use claim\n"
         + "labels [CONFIRMED] for direct data, [ASSESSED] for inference.\n\n"
         + "Return strict JSON: {\"bottom_line\": \"...\"}"
@@ -394,13 +439,13 @@ def _b2_movers_prompt(agg: dict) -> str:
         items.append(
             f"{i}. id={m['id']} [{m['state']}] {m['name']}: now {m['last']:.0f} "
             f"(start {m['first']:.0f}, peak {m['peak']:.0f}, period Δ {m['delta_period']:+.1f}, "
-            f"MoM Δ {mom}).{drivers_str}"
+            f"{_cmp_tag(agg)} Δ {mom}).{drivers_str}"
         )
     return (
         "You are writing FORWARD OUTLOOK statements for top mover faultlines.\n\n"
         "Top 10 movers this period:\n" + "\n".join(items) + "\n\n"
         + "For EACH faultline (by its `id`), give a 1-sentence forward outlook\n"
-        + "describing the most likely movement in the COMING MONTH and the key\n"
+        + "describing the most likely movement in the COMING PERIOD and the key\n"
         + "indicator to watch. Use [ASSESSED] for inferences, [SPECULATIVE] for\n"
         + "forecasts. Be specific and grounded — name actors, locations, or events.\n\n"
         + "Return strict JSON keyed by id: {\"<id1>\": \"outlook...\", \"<id2>\": \"...\"}"
@@ -425,7 +470,7 @@ def _b3_advisory_prompt(agg: dict) -> str:
         + "\n".join(lines) + "\n\n"
         + "Write ONE paragraph (4-6 sentences) advising:\n"
         + "  1. The single most important narrative spike or actor network to inspect\n"
-        + "     manually this month (cross-state if possible)\n"
+        + "     manually this period (cross-state if possible)\n"
         + "  2. Specific channels/sources worth checking (regional language press,\n"
         + "     local Telegram channels, influencer amplification patterns)\n"
         + "  3. The borderline / weak-signal faultline most worth a second look\n\n"
@@ -508,8 +553,9 @@ def _short_state(name: str) -> str:
 def render_faultline_pdf(agg: dict, synthesis: dict, priority_map: dict = None) -> bytes:
     """Render PDF.  priority_map is optional {faultline_id: rank(1-10)} from user watchlist."""
     pdf = BriefPDF()
-    pdf.brief_type = "FAULTLINE ANALYSIS REPORT"
+    pdf.brief_type = f"FAULTLINE ANALYSIS REPORT  |  {agg.get('iod') or 'IOD-1'}"
     pdf.display_period = agg["month_name"]
+    pw, tag = _pw(agg), _cmp_tag(agg)
     pdf.gen_ts = (agg.get("generated_at") or
                   datetime.now(timezone.utc).isoformat())[:19].replace("T", " ")
     pdf.alias_nb_pages()
@@ -541,8 +587,8 @@ def render_faultline_pdf(agg: dict, synthesis: dict, priority_map: dict = None) 
     pdf.set_fill_color(*C_TBL_HDR); pdf.set_text_color(255, 255, 255)
     pdf.set_font("Helvetica", "B", 8)
     pdf.cell(45, 6, "  Level",       fill=True)
-    pdf.cell(45, 6, "This Month",    fill=True, align="C")
-    pdf.cell(45, 6, "Last Month",    fill=True, align="C")
+    pdf.cell(45, 6, f"This {pw}",    fill=True, align="C")
+    pdf.cell(45, 6, f"Last {pw}",    fill=True, align="C")
     pdf.cell(45, 6, "Delta",         fill=True, align="C", **NL)
     pdf.set_font("Helvetica", "", 9)
     pdf.set_text_color(40, 40, 40)
@@ -568,7 +614,7 @@ def render_faultline_pdf(agg: dict, synthesis: dict, priority_map: dict = None) 
 
     # Bottom Line (B1)
     pdf.section_title("Bottom Line",
-                      f"MoM Executive Read | {agg['month_name']}")
+                      f"{tag} Executive Read | {agg['month_name']}")
     pdf.set_font("Helvetica", "", 10)
     pdf.set_text_color(40, 40, 40)
     bl = synthesis.get("bottom_line") or "Bottom line synthesis unavailable for this period."
@@ -588,7 +634,7 @@ def render_faultline_pdf(agg: dict, synthesis: dict, priority_map: dict = None) 
             max_score = 0
         level = pa.get("max_level", "STABLE")
         mom = pa.get("mom_delta")
-        mom_str = "" if mom is None else f"  MoM Δ {mom:+.1f}"
+        mom_str = "" if mom is None else f"  {tag} Δ {mom:+.1f}"
         sub_text = f"P{pa.get('rank')} {pa.get('name')}   {max_score:.0f} {level}{mom_str}"
         col = CONCERN_COLORS.get(level, (60, 80, 50))
         pdf.sub_band(sub_text, fill_rgb=col)
@@ -598,7 +644,7 @@ def render_faultline_pdf(agg: dict, synthesis: dict, priority_map: dict = None) 
         pdf.set_font("Helvetica", "B", 7)
         pdf.cell(90, 5, "  Faultline", fill=True)
         pdf.cell(30, 5, "Now",        fill=True, align="C")
-        pdf.cell(30, 5, ascii_safe("MoM D"), fill=True, align="C")
+        pdf.cell(30, 5, ascii_safe(f"{tag} D"), fill=True, align="C")
         pdf.cell(40, 5, "Level",      fill=True, align="C", **NL)
         pdf.set_font("Helvetica", "", 8)
         pdf.set_text_color(40, 40, 40)
@@ -619,18 +665,18 @@ def render_faultline_pdf(agg: dict, synthesis: dict, priority_map: dict = None) 
             pdf.set_font("Helvetica", "", 8)
 
         # Period impact + watch next (reused from cached PAOI synthesis)
-        syn = per_paoi.get(pa["id"]) or {}
+        syn = per_paoi.get(pa["id"]) if isinstance(per_paoi.get(pa["id"]), dict) else {}
         pi = syn.get("period_impact") or ""
         wn = syn.get("forward_concerns") or ""
         if pi:
             pdf.set_font("Helvetica", "", 8)
             pdf.set_text_color(60, 60, 60)
             # Trim to ~2 sentences
-            pdf.multi_cell(0, 4, ascii_safe(pi[:300]), **NL)
+            pdf.multi_cell(0, 4, ascii_safe(pi)[:300], **NL)
         if wn:
             pdf.set_font("Helvetica", "I", 8)
             pdf.set_text_color(120, 80, 20)
-            pdf.multi_cell(0, 4, ascii_safe(f"Watch next: {wn[:200]}"), **NL)
+            pdf.multi_cell(0, 4, ascii_safe(f"Watch next: {ascii_safe(wn)[:200]}"), **NL)
         pdf.ln(1)
 
     # ──────────────── PAGE 3 — State Faultline Tables ────────────────────────
@@ -651,7 +697,7 @@ def render_faultline_pdf(agg: dict, synthesis: dict, priority_map: dict = None) 
         pdf.set_font("Helvetica", "B", 7)
         pdf.cell(85, 5, "  Faultline", fill=True)
         pdf.cell(20, 5, "Now",         fill=True, align="C")
-        pdf.cell(20, 5, ascii_safe("MoM D"),    fill=True, align="C")
+        pdf.cell(20, 5, ascii_safe(f"{tag} D"),    fill=True, align="C")
         pdf.cell(20, 5, ascii_safe("Period D"), fill=True, align="C")
         pdf.cell(20, 5, "Peak",        fill=True, align="C")
         pdf.cell(25, 5, "Level",       fill=True, align="C", **NL)
@@ -680,7 +726,7 @@ def render_faultline_pdf(agg: dict, synthesis: dict, priority_map: dict = None) 
         if narr:
             pdf.set_font("Helvetica", "", 8)
             pdf.set_text_color(60, 60, 60)
-            pdf.multi_cell(0, 4, ascii_safe(narr[:240]), **NL)
+            pdf.multi_cell(0, 4, ascii_safe(narr)[:240], **NL)
         pdf.ln(1)
 
     # ──────────────── PAGE 4 — Top 10 Movers + News Drivers ──────────────────
@@ -696,7 +742,7 @@ def render_faultline_pdf(agg: dict, synthesis: dict, priority_map: dict = None) 
         level = m["level"]
         col = CONCERN_COLORS.get(level, (60, 80, 50))
         mom = m["mom_delta"]
-        mom_str = "" if mom is None else f"  MoM Δ {mom:+.1f}"
+        mom_str = "" if mom is None else f"  {tag} Δ {mom:+.1f}"
         rank_badge = f"[WL#{_pmap[m['id']]}] " if m["id"] in _pmap else ""
         hdr = (f"#{i}  {rank_badge}[{m['state']}]  {m['name']}   {m['last']:.0f} {level}   "
                f"Period Δ {m['delta_period']:+.1f}{mom_str}")
@@ -721,7 +767,7 @@ def render_faultline_pdf(agg: dict, synthesis: dict, priority_map: dict = None) 
             pdf.multi_cell(0, 3.5, ascii_safe(
                 f"    {j}. [{date}|{sev}] {title}  ({src})"
             ), **NL)
-            rationale = (d.get("rationale") or "")[:160]
+            rationale = ascii_safe(d.get("rationale"))[:160]
             if rationale:
                 pdf.set_font("Helvetica", "I", 7)
                 pdf.set_text_color(80, 80, 80)
@@ -732,7 +778,7 @@ def render_faultline_pdf(agg: dict, synthesis: dict, priority_map: dict = None) 
         if outlook:
             pdf.set_font("Helvetica", "I", 8)
             pdf.set_text_color(120, 80, 20)
-            pdf.multi_cell(0, 4, ascii_safe(f"  Watch next: {outlook[:280]}"), **NL)
+            pdf.multi_cell(0, 4, ascii_safe(f"  Watch next: {ascii_safe(outlook)[:280]}"), **NL)
         pdf.ln(1)
 
     # ──────────────── PAGE 5 — Actors of Interest ────────────────────────────
@@ -786,7 +832,7 @@ def render_faultline_pdf(agg: dict, synthesis: dict, priority_map: dict = None) 
             if profile:
                 pdf.set_font("Helvetica", "I", 8)
                 pdf.set_text_color(120, 80, 20)
-                pdf.multi_cell(0, 4, ascii_safe(f"  Assessment: {profile[:260]}"), **NL)
+                pdf.multi_cell(0, 4, ascii_safe(f"  Assessment: {ascii_safe(profile)[:260]}"), **NL)
             pdf.ln(1)
 
     # ──────────────── PAGE 6 — Manual Review Advisory ────────────────────────
@@ -823,7 +869,7 @@ def render_faultline_pdf(agg: dict, synthesis: dict, priority_map: dict = None) 
         pdf.cell(0, 5, ascii_safe(f"  {st['state']}"), **NL)
         pdf.set_font("Helvetica", "", 8)
         pdf.set_text_color(60, 60, 60)
-        pdf.multi_cell(0, 4, ascii_safe(f"    {advisory[:280]}"), **NL)
+        pdf.multi_cell(0, 4, ascii_safe(f"    {ascii_safe(advisory)[:280]}"), **NL)
         pdf.ln(1)
 
     return bytes(pdf.output())

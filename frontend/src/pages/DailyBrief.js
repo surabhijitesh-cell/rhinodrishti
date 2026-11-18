@@ -1,4 +1,5 @@
-import { useState, useEffect, Component, useMemo } from "react";
+import { useState, useEffect, useRef, useCallback, Component, useMemo } from "react";
+import { useSearchParams } from "react-router-dom";
 import {
   FileText, RefreshCw, Calendar, Shield, Globe, AlertTriangle, Download,
   Newspaper, Upload, ExternalLink, GitBranch, Layers,
@@ -12,6 +13,9 @@ import MonthlyBrief from "./MonthlyBrief";
 import FortnightlyBrief from "./FortnightlyBrief";
 import { useAuth } from "../contexts/AuthContext";
 import ConfirmAction from "../components/ConfirmAction";
+import LoadError from "../components/LoadError";
+import PastBriefs from "../components/PastBriefs";
+import { useAdminIod } from "../contexts/AdminIodContext";
 
 class BriefErrorBoundary extends Component {
   constructor(props) {
@@ -40,8 +44,25 @@ class BriefErrorBoundary extends Component {
 
 const NEW_BADGE_LOGIN_THRESHOLD = 3;
 
+const TABS = ["daily", "fortnightly", "monthly", "past"];
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const POLL_EVERY_MS = 5000;
+const POLL_GIVE_UP_MS = 3 * 60 * 1000;
+
+const todayIST = () => new Date(Date.now() + 5.5 * 3600 * 1000).toISOString().slice(0, 10);
+
+// Server times may arrive without a zone marker; they are UTC.
+function fmtIst(iso) {
+  if (!iso) return "";
+  const d = new Date(/[zZ]|[+-]\d\d:?\d\d$/.test(iso) ? iso : `${iso}Z`);
+  if (isNaN(d)) return "";
+  return `${d.toLocaleString("en-IN", { timeZone: "Asia/Kolkata", dateStyle: "medium", timeStyle: "short" })} IST`;
+}
+
 export default function DailyBrief({ api }) {
   const { user } = useAuth();
+  const { viewIod } = useAdminIod();
+  const effectiveIod = (user?.role === "admin" && viewIod) ? viewIod : (user?.iod || "IOD-1");
   const showNewBadge = useMemo(() => {
     try {
       const count = parseInt(localStorage.getItem(`rd_login_count_${user?.username}`) || "0", 10);
@@ -49,45 +70,95 @@ export default function DailyBrief({ api }) {
     } catch { return false; }
   }, [user?.username]);
 
-  const [tab, setTab] = useState("daily"); // "daily" | "fortnightly" | "monthly"
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tabParam = searchParams.get("tab");
+  const tab = TABS.includes(tabParam) ? tabParam : "daily";
+  const dateParam = DATE_RE.test(searchParams.get("date") || "") ? searchParams.get("date") : null;
+  const setTab = (t) => setSearchParams(t === "daily" ? {} : { tab: t });
+  const openPast = (kind, params) => {
+    const q = Object.fromEntries(Object.entries(params).map(([k, v]) => [k, String(v)]));
+    setSearchParams(kind === "daily" ? q : { tab: kind, ...q });
+  };
+  const setDate = (d) => setSearchParams(d && DATE_RE.test(d) ? { date: d } : {});
+
   const [brief, setBrief] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
   const [generating, setGenerating] = useState(false);
+  const [timedOut, setTimedOut] = useState(false);
+  const [genError, setGenError] = useState(null);
   const [downloading, setDownloading] = useState(false);
   const [downloadError, setDownloadError] = useState(null);
 
-  useEffect(() => {
-    fetchBrief();
-  }, [api]);
+  const reqRef = useRef(0);
+  const pollRef = useRef(null);
+  const baselineRef = useRef(null);
 
-  const fetchBrief = async () => {
+  const viewDate = dateParam || brief?.date || todayIST();
+
+  const stopPoll = useCallback(() => {
+    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+  }, []);
+
+  const fetchBrief = useCallback(async () => {
+    const id = ++reqRef.current;
     setLoading(true);
+    setBrief(null);
+    setLoadError(false);
     try {
-      const res = await axios.get(`${api}/daily-brief`);
+      const res = await axios.get(`${api}/daily-brief`, { params: dateParam ? { date: dateParam } : {} });
+      if (id !== reqRef.current) return;
       setBrief(res.data);
     } catch (e) {
-      console.error("Failed to fetch brief:", e);
+      if (id !== reqRef.current) return;
+      // 404 just means no brief for that date: the "No brief" panel shows.
+      if (e?.response?.status !== 404) setLoadError(true);
     }
     setLoading(false);
+  }, [api, dateParam]);
+
+  // Changing date (or tab back to daily) clears the old brief and loads the new one.
+  useEffect(() => {
+    stopPoll();
+    setGenerating(false);
+    setTimedOut(false);
+    setGenError(null);
+    if (tab === "daily") fetchBrief();
+    return stopPoll;
+  }, [tab, fetchBrief, stopPoll]);
+
+  // Polls only that date; replaces the brief in place (no loading state, so no flashing).
+  const startPolling = (date) => {
+    stopPoll();
+    setTimedOut(false);
+    setGenerating(true);
+    const started = Date.now();
+    pollRef.current = setInterval(async () => {
+      if (Date.now() - started > POLL_GIVE_UP_MS) {
+        stopPoll();
+        setGenerating(false);
+        setTimedOut(true);
+        return;
+      }
+      try {
+        const res = await axios.get(`${api}/daily-brief`, { params: { date } });
+        if (res.data && res.data.generated_at !== baselineRef.current) {
+          stopPoll();
+          setBrief(res.data);
+          setGenerating(false);
+        }
+      } catch { /* not there yet, or a blip: keep waiting */ }
+    }, POLL_EVERY_MS);
   };
 
   const generateBrief = async () => {
-    setGenerating(true);
+    setGenError(null);
+    baselineRef.current = brief?.generated_at ?? null;
     try {
-      await axios.post(`${api}/generate-brief`);
-      // Brief generation runs in background; poll until ready
-      let attempts = 0;
-      const poll = setInterval(async () => {
-        attempts++;
-        await fetchBrief();
-        if (brief || attempts >= 12) {
-          clearInterval(poll);
-          setGenerating(false);
-        }
-      }, 5000);
+      await axios.post(`${api}/generate-brief`, null, { params: { date: viewDate } });
+      startPolling(viewDate);
     } catch (e) {
-      console.error("Failed to generate brief:", e);
-      setGenerating(false);
+      setGenError(e?.response?.data?.detail || "Could not start the brief. Please try again.");
     }
   };
 
@@ -95,8 +166,9 @@ export default function DailyBrief({ api }) {
     setDownloading(true);
     setDownloadError(null);
     try {
-      const dateParam = brief?.date || new Date().toISOString().split("T")[0];
-      const res = await axios.get(`${api}/daily-brief/pdf?date=${dateParam}`, {
+      const dateParam = brief?.date || viewDate;
+      const res = await axios.get(`${api}/daily-brief/pdf`, {
+        params: { date: dateParam },
         responseType: "blob",
         timeout: 120000, // 2 min — Render cold-start can be slow
       });
@@ -262,7 +334,7 @@ export default function DailyBrief({ api }) {
   };
 
   // Tab bar — shared across loading and full render
-  const TabBar = () => (
+  const renderTabBar = () => (
     <div className="flex items-center gap-1 border-b border-border" data-testid="brief-tabs">
       <button onClick={() => setTab("daily")}
               className={`px-4 py-2 text-xs font-mono uppercase tracking-wider border-b-2 -mb-px flex items-center gap-2 transition-colors ${
@@ -287,43 +359,25 @@ export default function DailyBrief({ api }) {
         <Layers size={13} /> Monthly Strategic
         {showNewBadge && <span className="text-[8px] font-bold uppercase tracking-wider text-emerald-400 animate-pulse">New</span>}
       </button>
+      <button onClick={() => setTab("past")}
+              className={`px-4 py-2 text-xs font-mono uppercase tracking-wider border-b-2 -mb-px flex items-center gap-2 transition-colors ${
+                tab === "past" ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground"
+              }`}
+              data-testid="tab-past">
+        <Calendar size={13} /> Past
+      </button>
     </div>
   );
 
-  // Render Fortnightly Brief view
-  if (tab === "fortnightly") {
+  if (tab === "fortnightly" || tab === "monthly" || tab === "past") {
     return (
       <div className="space-y-4">
-        <TabBar />
-        <FortnightlyBrief api={api} />
-      </div>
-    );
-  }
-
-  // Render Monthly Brief view
-  if (tab === "monthly") {
-    return (
-      <div className="space-y-4">
-        <TabBar />
-        <MonthlyBrief api={api} />
-      </div>
-    );
-  }
-
-  if (loading) {
-    return (
-      <div className="space-y-4" data-testid="daily-brief-loading">
-        <TabBar />
-        <div className="h-10 bg-muted animate-pulse w-1/2" />
-        <div className="h-6 bg-muted animate-pulse w-1/3" />
-        {Array.from({ length: 3 }).map((_, i) => (
-          <div key={i} className="border border-border bg-card p-4 animate-pulse">
-            <div className="h-4 bg-muted w-1/4 mb-3" />
-            <div className="h-3 bg-muted w-full mb-2" />
-            <div className="h-3 bg-muted w-5/6 mb-2" />
-            <div className="h-3 bg-muted w-3/4" />
-          </div>
-        ))}
+        {renderTabBar()}
+        {tab === "fortnightly" && <FortnightlyBrief api={api} />}
+        {tab === "monthly" && <MonthlyBrief api={api} />}
+        {tab === "past" && (
+          <PastBriefs api={api} iod={effectiveIod} isAdmin={user?.role === "admin"} onOpen={openPast} />
+        )}
       </div>
     );
   }
@@ -331,7 +385,7 @@ export default function DailyBrief({ api }) {
   return (
     <BriefErrorBoundary>
     <div className="space-y-6" data-testid="daily-brief-page">
-      <TabBar />
+      {renderTabBar()}
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-4">
         <div>
@@ -340,14 +394,25 @@ export default function DailyBrief({ api }) {
           </h1>
           <div className="flex items-center gap-2 mt-1">
             <Calendar size={12} className="text-muted-foreground" />
-            <p className="text-xs font-mono uppercase tracking-[0.15em] text-muted-foreground">
-              {brief?.date || new Date().toISOString().split("T")[0]}
-            </p>
+            <input
+              type="date"
+              value={viewDate}
+              max={todayIST()}
+              onChange={(e) => setDate(e.target.value)}
+              className="bg-transparent border border-border px-2 py-0.5 text-xs font-mono text-muted-foreground rounded-none"
+              aria-label="Brief date"
+              data-testid="brief-date"
+            />
+            {dateParam && (
+              <button onClick={() => setDate(null)} className="text-[10px] font-mono uppercase text-primary hover:underline">
+                Latest
+              </button>
+            )}
             {brief?.generated_at && (
               <>
                 <span className="text-muted-foreground">|</span>
-                <p className="text-xs font-mono text-muted-foreground">
-                  Generated: {new Date(brief.generated_at).toLocaleTimeString("en-IN")}
+                <p className="text-xs font-mono text-muted-foreground" data-testid="brief-generated-at">
+                  Last generated: {fmtIst(brief.generated_at)}
                 </p>
               </>
             )}
@@ -374,10 +439,10 @@ export default function DailyBrief({ api }) {
               )}
             </div>
           )}
-          {user?.role !== "viewer" && (
+          {brief && user?.role !== "viewer" && (
           <Tip text="Generate a fresh brief using all intelligence collected since the last brief. Runs in the background — takes ~30 seconds to complete." side="bottom">
             <span>
-            <ConfirmAction title="Regenerate today's brief?" description="Uses one AI call (under 1 US cent)." confirmLabel="Regenerate" onConfirm={generateBrief}>
+            <ConfirmAction title={`Regenerate the brief for ${viewDate}?`} description="Uses one AI call (under 1 US cent)." confirmLabel="Regenerate" onConfirm={generateBrief}>
             <Button
               disabled={generating}
               className="uppercase text-xs font-bold tracking-wider rounded-none"
@@ -394,7 +459,37 @@ export default function DailyBrief({ api }) {
         </div>
       </div>
 
-      {brief ? (
+      {generating && (
+        <div className="border border-primary bg-primary/5 p-3 text-xs font-mono text-primary flex items-center gap-2" data-testid="brief-generating">
+          <RefreshCw size={14} className="animate-spin" />
+          Preparing the brief for {viewDate}. This usually takes about 30 seconds; this page will update by itself.
+        </div>
+      )}
+      {timedOut && (
+        <div className="border border-amber-500/40 bg-amber-500/5 p-3 text-xs text-amber-400 flex items-center gap-3" role="alert" data-testid="brief-timed-out">
+          <AlertTriangle size={14} className="shrink-0" />
+          The brief is taking longer than expected. It may still finish in the background.
+          <Button variant="outline" onClick={() => startPolling(viewDate)} className="ml-auto rounded-none uppercase text-[10px] tracking-wider">
+            Check again
+          </Button>
+        </div>
+      )}
+      {genError && <p className="text-xs text-red-400 font-mono" role="alert">{genError}</p>}
+
+      {loading ? (
+        <div className="space-y-4" data-testid="daily-brief-loading">
+          {Array.from({ length: 3 }).map((_, i) => (
+            <div key={i} className="border border-border bg-card p-4 animate-pulse">
+              <div className="h-4 bg-muted w-1/4 mb-3" />
+              <div className="h-3 bg-muted w-full mb-2" />
+              <div className="h-3 bg-muted w-5/6 mb-2" />
+              <div className="h-3 bg-muted w-3/4" />
+            </div>
+          ))}
+        </div>
+      ) : loadError ? (
+        <LoadError what="the daily brief" onRetry={fetchBrief} />
+      ) : brief ? (
         <div className="space-y-4">
           {/* Analyst Summary */}
           <Card className="border border-border rounded-none bg-card border-l-4 border-l-primary">
@@ -687,13 +782,15 @@ export default function DailyBrief({ api }) {
           </Card>
         </div>
       ) : (
-        <div className="text-center py-16 border border-border bg-card">
+        <div className="text-center py-16 border border-border bg-card" data-testid="no-brief-for-date">
           <FileText size={40} className="mx-auto text-muted-foreground mb-4" />
-          <p className="text-muted-foreground text-sm mb-4">No daily brief available for today.</p>
+          <p className="text-muted-foreground text-sm mb-4">No brief for this date ({viewDate}).</p>
           {user?.role !== "viewer" && (
-          <Button onClick={generateBrief} disabled={generating} className="rounded-none uppercase text-xs tracking-wider" data-testid="generate-first-brief-btn">
-            Generate Brief
-          </Button>
+          <ConfirmAction title={`Generate the brief for ${viewDate}?`} description="Uses one AI call (under 1 US cent)." confirmLabel="Generate" onConfirm={generateBrief}>
+            <Button disabled={generating} className="rounded-none uppercase text-xs tracking-wider" data-testid="generate-first-brief-btn">
+              Generate Brief
+            </Button>
+          </ConfirmAction>
           )}
         </div>
       )}

@@ -11,28 +11,31 @@ Endpoints:
   GET    /report-agent/specs               — list saved specs (latest 20)
   GET    /report-agent/specs/{id}          — get spec with conversation
   DELETE /report-agent/specs/{id}          — delete spec
-  POST   /report-agent/generate            — generate report from spec + period
-  GET    /report-agent/reports             — list generated reports
-  GET    /report-agent/reports/{id}/pdf    — download PDF
+  POST   /report-agent/generate            — start background generation; returns {id, status}
+  GET    /report-agent/reports             — list generated reports (limit, skip)
+  GET    /report-agent/reports/{id}        — status / progress / error + metadata
+  GET    /report-agent/reports/{id}/pdf    — download PDF (409 until ready)
 """
 
+import asyncio
 import io
 import json
 import logging
 import re
 import uuid
-from calendar import monthrange
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import paoi_brief
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+from brief_periods import fortnight_range, month_range
 from shared import db, intelligence_col
 from llm_client import get_client, MODEL
 from utils.auth import get_current_user
+from utils.pdf_render import render_pdf_off_loop
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -177,6 +180,7 @@ Available Priority Areas of Interest (PAOIs):
   P2 — Jamaat-e-Islami Spread & Radicalisation
   P3 — NER Lines of Communication (LOC)
   P4 — Meghalaya Internal Security
+  P5 — RAS Locations
   P5 — Tribal Dynamics — Meghalaya
 
 Once you clearly understand the commander's requirements, summarize what the report will cover and end with:
@@ -194,6 +198,7 @@ Available PAOI ids (use exact strings):
   P2_jamaat_radicalisation
   P3_ner_lines_of_communication
   P4_meghalaya_internal_security
+  P5_ras_locations
   P5_meghalaya_tribal_dynamics
 
 Schema:
@@ -299,52 +304,62 @@ async def delete_spec(spec_id: str, user: dict = Depends(_require_admin)):
 # ── Period helpers ────────────────────────────────────────────────────────────
 
 def _period_range(year: int, month: int, period: Optional[int]) -> tuple[str, str, str]:
-    """Return (start_iso, end_iso, label)."""
+    """Return (start_iso, end_iso, label); IST calendar days, ends exclusive."""
     if period is None:
-        start = datetime(year, month, 1, tzinfo=timezone.utc)
-        end = (
-            datetime(year + 1, 1, 1, tzinfo=timezone.utc)
-            if month == 12
-            else datetime(year, month + 1, 1, tzinfo=timezone.utc)
-        )
-        label = start.strftime("%B %Y")
-    elif period == 1:
-        start = datetime(year, month, 1, tzinfo=timezone.utc)
-        end = datetime(year, month, 16, tzinfo=timezone.utc)
-        label = f"1-15 {start.strftime('%B %Y')}"
-    else:
-        start = datetime(year, month, 16, tzinfo=timezone.utc)
-        last_day = monthrange(year, month)[1]
-        end = (
-            datetime(year + 1, 1, 1, tzinfo=timezone.utc)
-            if month == 12
-            else datetime(year, month + 1, 1, tzinfo=timezone.utc)
-        )
-        label = f"16-{last_day} {start.strftime('%B %Y')}"
-    return start.isoformat(), end.isoformat(), label
+        start, end = month_range(year, month)
+        return start, end, datetime(year, month, 1).strftime("%B %Y")
+    return fortnight_range(year, month, period)
+
+
 
 
 # ── Focus resolution ──────────────────────────────────────────────────────────
 
-def _resolve_focus(focus_ids: list[str], all_paois: list[dict]) -> list[dict]:
-    """Match spec focus ids to actual PAOI ids.
+def _norm(text: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", (text or "").lower()).strip()
 
-    Robust to LLM emitting slightly-off slugs (e.g. 'P2_jem_radicalisation'
-    vs actual 'P2_jamaat_radicalisation') by falling back to the P-number
-    prefix. Empty focus_ids => all PAOIs.
+
+def _resolve_focus(focus_ids: list[str], all_paois: list[dict]) -> list[dict]:
+    """Match spec focus entries to actual PAOIs.
+
+    Order: exact id, then id/name/words match ("RAS", "RAS locations",
+    "P5_ras"), then the P-number prefix for slightly-off slugs
+    (e.g. 'P2_jem_radicalisation'). Two PAOIs share the prefix P5, so a prefix
+    that is ambiguous is narrowed by shared words in the slug and never
+    silently picks the wrong PAOI. Empty focus_ids => all PAOIs.
     """
     if not focus_ids:
         return all_paois
-    valid = {p["id"] for p in all_paois}
+    by_id = {p["id"]: p for p in all_paois}
     chosen: set[str] = set()
     for fid in focus_ids:
-        if fid in valid:
+        if fid in by_id:
             chosen.add(fid)
             continue
+        key = _norm(fid)
+        words = set(key.split())
+        exact = [
+            p for p in all_paois
+            if key in (_norm(p["id"]), _norm(p.get("name", "")))
+        ]
+        if not exact and words:
+            # every word typed appears in the PAOI's id or name ("ras" -> RAS Locations)
+            exact = [
+                p for p in all_paois
+                if words <= set(_norm(p["id"]).split()) | set(_norm(p.get("name", "")).split())
+            ]
+        if len(exact) == 1:
+            chosen.add(exact[0]["id"])
+            continue
         prefix = fid.split("_", 1)[0].upper()  # 'P2'
-        for p in all_paois:
-            if p["id"].split("_", 1)[0].upper() == prefix:
-                chosen.add(p["id"])
+        same = [p for p in all_paois if p["id"].split("_", 1)[0].upper() == prefix]
+        if len(same) > 1:
+            overlap = [
+                p for p in same
+                if words & (set(_norm(p["id"]).split()) | set(_norm(p.get("name", "")).split())) - {prefix.lower()}
+            ]
+            same = overlap if len(overlap) == 1 else same
+        chosen.update(p["id"] for p in same)
     matched = [p for p in all_paois if p["id"] in chosen]
     return matched or all_paois
 
@@ -1020,16 +1035,117 @@ def _render_pdf(report: dict) -> bytes:
 
 # ── Generate report ───────────────────────────────────────────────────────────
 
+STALE_AFTER = timedelta(minutes=45)
+_JOBS: dict[str, "asyncio.Task"] = {}  # strong refs so running jobs are not garbage-collected
+_start_lock = asyncio.Lock()
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _is_stale(doc: dict) -> bool:
+    """A 'generating' job is dead if older than 45 min or lost on a restart."""
+    if doc.get("status") != "generating":
+        return False
+    if doc["id"] not in _JOBS:
+        return True
+    try:
+        started = datetime.fromisoformat(doc.get("started_at") or "")
+    except ValueError:
+        return True
+    return datetime.now(timezone.utc) - started > STALE_AFTER
+
+
+async def _expire_if_stale(doc: dict) -> dict:
+    """Read-time cleanup (no sweeper): mark a dead job failed so it can be retried."""
+    if not _is_stale(doc):
+        return doc
+    msg = "Generation was interrupted or timed out. Please retry."
+    await agent_reports_col.update_one(
+        {"id": doc["id"], "status": "generating"},
+        {"$set": {"status": "failed", "error": msg}},
+    )
+    task = _JOBS.pop(doc["id"], None)
+    if task and not task.done():
+        task.cancel()
+    return {**doc, "status": "failed", "error": msg}
+
+
+async def _set_progress(report_id: str, step: int, label: str, total: int) -> None:
+    await agent_reports_col.update_one(
+        {"id": report_id, "status": "generating"},
+        {"$set": {"progress": {"step": step, "label": label, "done": step, "total": total}}},
+    )
+
+
+async def _fail_job(report_id: str, error: str) -> None:
+    try:
+        await agent_reports_col.update_one(
+            {"id": report_id, "status": "generating"},
+            {"$set": {"status": "failed", "error": error[:300]}},
+        )
+    except Exception:  # last resort: the 45-min / restart rule still frees it
+        logger.exception("Report Agent: could not record failure for %s", report_id)
+
+
+async def _run_job(report_id: str, spec: dict, req: GenerateRequest, user: dict) -> None:
+    try:
+        await _generate_body(report_id, spec, req, user)
+    except asyncio.CancelledError:
+        await _fail_job(report_id, "Generation was cancelled.")
+        raise
+    except Exception as e:
+        logger.exception("Report Agent: generation failed for %s", report_id)
+        await _fail_job(report_id, f"Generation failed: {type(e).__name__}: {e}")
+    finally:
+        _JOBS.pop(report_id, None)
+
+
 @router.post("/report-agent/generate")
 async def generate_report(req: GenerateRequest, user: dict = Depends(_require_admin)):
     """
-    Generate a customized narrative intelligence report from a saved spec.
-    Returns full report JSON (PDF download via /reports/{id}/pdf).
+    Start generating a customized narrative report in the background.
+    Returns {id, status} at once; poll GET /reports/{id}, then fetch the PDF.
     """
+    if not 1 <= req.month <= 12 or req.period not in (None, 1, 2):
+        raise HTTPException(422, "Invalid month or period")
     spec = await specs_col.find_one({"id": req.spec_id}, {"_id": 0})
     if not spec:
         raise HTTPException(404, "Spec not found")
+    _, _, period_label = _period_range(req.year, req.month, req.period)
 
+    async with _start_lock:  # check + insert must not interleave with another click
+        running = await agent_reports_col.find_one(
+            {"spec_id": req.spec_id, "year": req.year, "month": req.month,
+             "period": req.period, "status": "generating"},
+            {"_id": 0, "paoi_reports": 0},
+        )
+        if running:
+            running = await _expire_if_stale(running)
+            if running["status"] == "generating":
+                return {"id": running["id"], "status": "generating", "already_running": True}
+        report_id = str(uuid.uuid4())[:8]
+        now = _now_iso()
+        await agent_reports_col.insert_one({
+            "id": report_id,
+            "spec_id": req.spec_id,
+            "created_by": user["username"],
+            "generated_at": now,
+            "started_at": now,
+            "report_type": spec.get("report_type", "fortnightly"),
+            "period_label": period_label,
+            "year": req.year,
+            "month": req.month,
+            "period": req.period,
+            "status": "generating",
+            "progress": {"step": 0, "label": "Starting", "done": 0, "total": 1},
+        })
+        _JOBS[report_id] = asyncio.create_task(_run_job(report_id, spec, req, user))
+    return {"id": report_id, "status": "generating", "already_running": False}
+
+
+async def _generate_body(report_id: str, spec: dict, req: GenerateRequest, user: dict) -> None:
     start_iso, end_iso, period_label = _period_range(req.year, req.month, req.period)
 
     report_type = spec.get("report_type", "fortnightly")
@@ -1044,10 +1160,16 @@ async def generate_report(req: GenerateRequest, user: dict = Depends(_require_ad
     )
 
     # 1. PAOI aggregation (reuse existing paoi_brief pipeline)
-    agg = await paoi_brief.aggregate_paoi_period(db, start_iso, end_iso, iod=user.get("iod", "IOD-1"))
+    await _set_progress(report_id, 0, "Gathering PAOI data", 4)
+    agg = await paoi_brief.aggregate_paoi_period(
+        db, start_iso, end_iso, iod=user.get("iod", "IOD-1"),
+    )
     all_paois = agg.get("paois") or []
 
     target_paois = _resolve_focus(focus_paoi_ids, all_paois)
+    has_focus = bool(commander_notes.strip())
+    total = len(target_paois) + 3 + (1 if has_focus else 0)
+    await _set_progress(report_id, 1, "Pulling intelligence items", total)
 
     # 2. Pull intelligence items for all relevant geography
     all_geo: list[str] = []
@@ -1072,7 +1194,8 @@ async def generate_report(req: GenerateRequest, user: dict = Depends(_require_ad
 
     # 3. Per-PAOI synthesis (sequential — avoids rate-limit pile-up)
     paoi_reports = []
-    for p in target_paois:
+    for idx, p in enumerate(target_paois):
+        await _set_progress(report_id, 2 + idx, f"Analysing {p.get('name') or p['id']}", total)
         # Use the PAOI's OWN curated, relevance-ranked articles (keyword_hits).
         # This decouples each PAOI from the shared top-N pool, which is otherwise
         # dominated by whichever theatre is hottest (e.g. Manipur) and starves
@@ -1128,6 +1251,7 @@ async def generate_report(req: GenerateRequest, user: dict = Depends(_require_ad
         })
 
     # 4. Executive overview
+    await _set_progress(report_id, 2 + len(target_paois), "Writing executive overview", total)
     exec_messages = _executive_overview_prompt(paoi_reports, period_label, all_items, commander_notes)
     executive_overview = await _llm_text(exec_messages, max_tokens=800)
 
@@ -1135,7 +1259,8 @@ async def generate_report(req: GenerateRequest, user: dict = Depends(_require_ad
     # Pull a broad, all-geography corpus so off-PAOI topics (weather, named
     # events, etc.) are not missed by the PAOI-scoped item set.
     special_focus = None
-    if commander_notes.strip():
+    if has_focus:
+        await _set_progress(report_id, 3 + len(target_paois), "Writing commander's special focus", total)
         # Broad topical retrieval, still gated to medium+ severity
         kws = await _extract_focus_keywords(commander_notes)
         topic_items = await _pull_topic_items(start_iso, end_iso, kws)
@@ -1172,38 +1297,50 @@ async def generate_report(req: GenerateRequest, user: dict = Depends(_require_ad
             )
 
     # 6. Persist report
-    now = datetime.now(timezone.utc).isoformat()
-    report_id = str(uuid.uuid4())[:8]
-    report = {
-        "id": report_id,
-        "spec_id": req.spec_id,
-        "created_by": user["username"],
-        "generated_at": now,
+    await _set_progress(report_id, total - 1, "Saving brief", total)
+    final = {
+        "generated_at": _now_iso(),
         "report_type": report_type,
         "period_label": period_label,
-        "year": req.year,
-        "month": req.month,
-        "period": req.period,
         "commander_notes": commander_notes,
         "executive_overview": executive_overview,
         "special_focus": special_focus,
         "paoi_reports": paoi_reports,
         "next_period_focus": next_focus,
+        "status": "ready",
+        "progress": {"step": total, "label": "Done", "done": total, "total": total},
     }
-    await agent_reports_col.insert_one({k: v for k, v in report.items() if k != "_id"})
-    report.pop("_id", None)
+    # Filter on status so a job already expired as stale cannot flip back to ready.
+    await agent_reports_col.update_one(
+        {"id": report_id, "status": "generating"}, {"$set": final},
+    )
 
     logger.info("Report Agent: %s done — %d PAOIs, report_id=%s", period_label, len(paoi_reports), report_id)
-    return report
 
 
 @router.get("/report-agent/reports")
-async def list_reports(user: dict = Depends(_require_admin)):
+async def list_reports(
+    limit: int = Query(30, ge=1, le=200),
+    skip: int = Query(0, ge=0),
+    user: dict = Depends(_require_admin),
+):
     reports = await agent_reports_col.find(
         {"created_by": user["username"]},
         {"_id": 0, "paoi_reports": 0, "executive_overview": 0},
-    ).sort("generated_at", -1).to_list(length=30)
-    return reports
+    ).sort("generated_at", -1).skip(skip).limit(limit).to_list(length=limit)
+    return [await _expire_if_stale(r) if r.get("status") == "generating"
+            else {**r, "status": r.get("status", "ready")} for r in reports]
+
+
+@router.get("/report-agent/reports/{report_id}")
+async def get_report_status(report_id: str, user: dict = Depends(_require_admin)):
+    doc = await agent_reports_col.find_one(
+        {"id": report_id}, {"_id": 0, "paoi_reports": 0, "executive_overview": 0},
+    )
+    if not doc:
+        raise HTTPException(404, "Report not found")
+    doc = await _expire_if_stale(doc)
+    return {**doc, "status": doc.get("status", "ready")}
 
 
 @router.delete("/report-agent/reports/{report_id}")
@@ -1221,7 +1358,10 @@ async def download_pdf(report_id: str, user: dict = Depends(_require_admin)):
     report = await agent_reports_col.find_one({"id": report_id}, {"_id": 0})
     if not report:
         raise HTTPException(404, "Report not found")
-    pdf_bytes = _render_pdf(report)
+    status = report.get("status", "ready")
+    if status != "ready":
+        raise HTTPException(409, f"Brief is not ready (status: {status})")
+    pdf_bytes = await render_pdf_off_loop(_render_pdf, report)
     label = (report.get("period_label") or "report").replace(" ", "_").replace("-", "_")
     filename = f"RDRISHTI_{label}_{report_id}.pdf"
     return StreamingResponse(

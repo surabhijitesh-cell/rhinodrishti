@@ -11,6 +11,7 @@ import { Navigate } from "react-router-dom";
 import axios from "axios";
 import { useAuth } from "../contexts/AuthContext";
 import ConfirmAction from "../components/ConfirmAction";
+import LoadError from "../components/LoadError";
 import {
   MessageSquare, Send, Sparkles, FileText, Download,
   Trash2, RefreshCw, ChevronDown, ChevronUp, Bot,
@@ -22,6 +23,7 @@ const PAOI_LABELS = {
   P2_jamaat_radicalisation:      "P2 · Jamaat-e-Islami Spread & Radicalisation",
   P3_ner_lines_of_communication: "P3 · NER Lines of Communication",
   P4_meghalaya_internal_security:"P4 · Meghalaya Internal Security",
+  P5_ras_locations:              "P5 · RAS Locations",
   P5_meghalaya_tribal_dynamics:  "P5 · Tribal Dynamics — Meghalaya",
   // legacy slugs (pre-correction specs)
   P2_jem_radicalisation:         "P2 · Jamaat-e-Islami Spread & Radicalisation",
@@ -37,6 +39,22 @@ function currentYearMonth() {
   const now = new Date();
   return { year: now.getFullYear(), month: now.getMonth() + 1 };
 }
+
+// Default for new briefs: the last complete month (January -> December of last year).
+function lastCompleteMonth() {
+  const { year, month } = currentYearMonth();
+  return month === 1 ? { year: year - 1, month: 12 } : { year, month: month - 1 };
+}
+
+// Dates are shown as IST calendar days, matching how brief periods are cut.
+function istDate(iso) {
+  const d = new Date(iso);
+  return isNaN(d) ? "" : d.toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
+}
+
+const POLL_MS = 5000;
+const POLL_GIVE_UP_MS = 45 * 60 * 1000;
+const PAGE_SIZE = 20;
 
 function monthLabel(year, month) {
   return new Date(year, month - 1, 1).toLocaleString("default", { month: "long", year: "numeric" });
@@ -100,6 +118,7 @@ function PeriodSelector({ reportType, value, onChange }) {
   const { year, month } = value;
   const months = Array.from({ length: 12 }, (_, i) => i + 1);
   const years = [currentYearMonth().year - 1, currentYearMonth().year];
+  if (!years.includes(year)) years.unshift(year);
 
   return (
     <div className="flex items-center gap-2 flex-wrap">
@@ -141,9 +160,12 @@ function PeriodSelector({ reportType, value, onChange }) {
 function ReportRow({ report, api, onDeleted }) {
   const [downloading, setDownloading] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [pdfError, setPdfError] = useState("");
+  const status = report.status || "ready";
 
   async function download() {
     setDownloading(true);
+    setPdfError("");
     try {
       const res = await axios.get(`${api}/report-agent/reports/${report.id}/pdf`, {
         responseType: "blob",
@@ -154,8 +176,10 @@ function ReportRow({ report, api, onDeleted }) {
       a.download = `RDRISHTI_${report.period_label?.replace(/\s/g, "_")}_${report.id}.pdf`;
       a.click();
       URL.revokeObjectURL(url);
-    } catch {
-      // silent
+    } catch (e) {
+      setPdfError(e?.response?.status === 409
+        ? "This brief is not ready yet."
+        : "Could not download the PDF. Please try again.");
     } finally {
       setDownloading(false);
     }
@@ -174,18 +198,23 @@ function ReportRow({ report, api, onDeleted }) {
   }
 
   const rt = report.report_type === "monthly" ? "MONTHLY" : "FORTNIGHTLY";
-  const dt = (report.generated_at || "")?.slice(0, 10);
+  const dt = istDate(report.generated_at);
 
   return (
-    <div className="flex items-center justify-between py-1.5 border-b border-border/40 last:border-0">
+    <div className="py-1.5 border-b border-border/40 last:border-0">
+    <div className="flex items-center justify-between">
       <div className="min-w-0">
         <div className="text-xs font-semibold truncate">{report.period_label}</div>
-        <div className="text-[10px] font-mono text-muted-foreground">{rt} · {dt}</div>
+        <div className="text-[10px] font-mono text-muted-foreground">
+          {rt} · {dt}
+          {status === "generating" && " · generating…"}
+          {status === "failed" && <span className="text-red-400"> · failed</span>}
+        </div>
       </div>
       <div className="flex items-center gap-1.5 shrink-0">
         <button
           onClick={download}
-          disabled={downloading || deleting}
+          disabled={downloading || deleting || status !== "ready"}
           className="flex items-center gap-1.5 text-[10px] px-2 py-1 rounded bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50 text-white font-semibold transition-colors"
         >
           {downloading ? <RefreshCw size={10} className="animate-spin" /> : <Download size={10} />}
@@ -201,6 +230,11 @@ function ReportRow({ report, api, onDeleted }) {
         </button>
       </div>
     </div>
+    {status === "failed" && report.error && (
+      <div className="text-[10px] text-red-400 mt-1">{report.error}</div>
+    )}
+    {pdfError && <div className="text-[10px] text-red-400 mt-1" role="alert">{pdfError}</div>}
+    </div>
   );
 }
 
@@ -214,14 +248,28 @@ export default function ReportAgent({ api }) {
   const [thinking, setThinking]               = useState(false);
   const [spec, setSpec]                       = useState(null);
   const [specId, setSpecId]                   = useState(null);
-  const [period, setPeriod]                   = useState({ ...currentYearMonth(), period: 1 });
-  const [generating, setGenerating]           = useState(false);
+  const [period, setPeriod]                   = useState({ ...lastCompleteMonth(), period: 1 });
+  const [starting, setStarting]               = useState(false);
+  const [job, setJob]                         = useState(null); // {id, status, progress, error}
+  const [alreadyRunning, setAlreadyRunning]   = useState(false);
+  const [timedOut, setTimedOut]               = useState(false);
+  const [generateError, setGenerateError]     = useState("");
+  const [pollWarn, setPollWarn]               = useState(false);
   const [generatedReport, setGeneratedReport] = useState(null);
+  const [pdfError, setPdfError]               = useState("");
   const [pastReports, setPastReports]         = useState([]);
+  const [hasMore, setHasMore]                 = useState(false);
+  const [loadingMore, setLoadingMore]         = useState(false);
+  const [reportsError, setReportsError]       = useState(false);
   const [showPast, setShowPast]               = useState(false);
   const [savedSpecs, setSavedSpecs]           = useState([]);
+  const [specsError, setSpecsError]           = useState(false);
+  const [specActionError, setSpecActionError] = useState("");
   const [showSpecs, setShowSpecs]             = useState(false);
   const chatEndRef = useRef(null);
+  const jobStartedAt = useRef(0);
+
+  const generating = starting || (job?.status === "generating" && !timedOut);
 
   const reportType = spec?.report_type || "fortnightly";
 
@@ -232,22 +280,81 @@ export default function ReportAgent({ api }) {
 
   const loadPastReports = useCallback(async () => {
     try {
-      const r = await axios.get(`${api}/report-agent/reports`);
-      setPastReports(r.data || []);
-    } catch { /* silent */ }
+      const r = await axios.get(`${api}/report-agent/reports`, { params: { limit: PAGE_SIZE, skip: 0 } });
+      const rows = r.data || [];
+      setPastReports(rows);
+      setHasMore(rows.length === PAGE_SIZE);
+      setReportsError(false);
+    } catch {
+      setReportsError(true);
+    }
   }, [api]);
+
+  async function loadMoreReports() {
+    setLoadingMore(true);
+    try {
+      const r = await axios.get(`${api}/report-agent/reports`, {
+        params: { limit: PAGE_SIZE, skip: pastReports.length },
+      });
+      const rows = r.data || [];
+      setPastReports(prev => [...prev, ...rows.filter(x => !prev.some(p => p.id === x.id))]);
+      setHasMore(rows.length === PAGE_SIZE);
+      setReportsError(false);
+    } catch {
+      setReportsError(true);
+    } finally {
+      setLoadingMore(false);
+    }
+  }
 
   const loadSavedSpecs = useCallback(async () => {
     try {
       const r = await axios.get(`${api}/report-agent/specs`);
       setSavedSpecs(r.data || []);
-    } catch { /* silent */ }
+      setSpecsError(false);
+    } catch {
+      setSpecsError(true);
+    }
   }, [api]);
 
   useEffect(() => {
     loadPastReports();
     loadSavedSpecs();
   }, [loadPastReports, loadSavedSpecs]);
+
+  // Poll the running job every 5 s until it is ready/failed, or give up after 45 min.
+  const jobId = job?.id;
+  const jobRunning = job?.status === "generating";
+  useEffect(() => {
+    if (!jobId || !jobRunning || timedOut) return undefined;
+    let misses = 0;
+    const timer = setInterval(async () => {
+      if (Date.now() - jobStartedAt.current > POLL_GIVE_UP_MS) {
+        setTimedOut(true);
+        return;
+      }
+      try {
+        const res = await axios.get(`${api}/report-agent/reports/${jobId}`);
+        misses = 0;
+        setPollWarn(false);
+        const d = res.data;
+        if (d.status === "ready") {
+          setJob({ id: jobId, status: "ready" });
+          setGeneratedReport(d);
+          loadPastReports();
+        } else if (d.status === "failed") {
+          setJob({ id: jobId, status: "failed", error: d.error });
+          loadPastReports();
+        } else {
+          setJob({ id: jobId, status: "generating", progress: d.progress });
+        }
+      } catch {
+        misses += 1;
+        if (misses >= 3) setPollWarn(true);
+      }
+    }, POLL_MS);
+    return () => clearInterval(timer);
+  }, [api, jobId, jobRunning, timedOut, loadPastReports]);
 
   if (user?.role !== "admin") return <Navigate to="/" replace />;
 
@@ -286,9 +393,13 @@ export default function ReportAgent({ api }) {
   }
 
   async function generate() {
-    if (!specId) return;
-    setGenerating(true);
+    if (!specId || generating) return;
+    setStarting(true);
     setGeneratedReport(null);
+    setGenerateError("");
+    setPdfError("");
+    setTimedOut(false);
+    setPollWarn(false);
     try {
       const res = await axios.post(`${api}/report-agent/generate`, {
         spec_id: specId,
@@ -296,17 +407,21 @@ export default function ReportAgent({ api }) {
         month: period.month,
         period: reportType === "fortnightly" ? (period.period ?? 1) : null,
       });
-      setGeneratedReport(res.data);
-      await loadPastReports();
+      jobStartedAt.current = Date.now();
+      setAlreadyRunning(!!res.data.already_running);
+      setJob({ id: res.data.id, status: "generating" });
+      loadPastReports();
     } catch (e) {
-      alert(e?.response?.data?.detail || "Generation failed. Check the server logs.");
+      setJob(null);
+      setGenerateError(e?.response?.data?.detail || "Could not start the brief. Please try again.");
     } finally {
-      setGenerating(false);
+      setStarting(false);
     }
   }
 
   async function downloadGenerated() {
     if (!generatedReport) return;
+    setPdfError("");
     try {
       const res = await axios.get(
         `${api}/report-agent/reports/${generatedReport.id}/pdf`,
@@ -318,7 +433,9 @@ export default function ReportAgent({ api }) {
       a.download = `RDRISHTI_${(generatedReport.period_label || "report").replace(/\s/g, "_")}.pdf`;
       a.click();
       URL.revokeObjectURL(url);
-    } catch { /* silent */ }
+    } catch {
+      setPdfError("Could not download the PDF. Please try again.");
+    }
   }
 
   async function resetChat() {
@@ -326,9 +443,12 @@ export default function ReportAgent({ api }) {
     setSpec(null);
     setSpecId(null);
     setGeneratedReport(null);
+    setGenerateError("");
+    setPdfError("");
   }
 
   async function loadSpec(s) {
+    setSpecActionError("");
     try {
       const res = await axios.get(`${api}/report-agent/specs/${s.id}`);
       const full = res.data;
@@ -336,12 +456,19 @@ export default function ReportAgent({ api }) {
       setSpecId(full.id);
       setMessages(full.conversation || []);
       setShowSpecs(false);
-    } catch { /* silent */ }
+    } catch {
+      setSpecActionError("Could not load that saved setup. Please try again.");
+    }
   }
 
   async function deleteSpec(id) {
-    await axios.delete(`${api}/report-agent/specs/${id}`);
-    await loadSavedSpecs();
+    setSpecActionError("");
+    try {
+      await axios.delete(`${api}/report-agent/specs/${id}`);
+      await loadSavedSpecs();
+    } catch {
+      setSpecActionError("Could not delete that saved setup. Please try again.");
+    }
   }
 
   function handleReportDeleted(id) {
@@ -447,6 +574,13 @@ export default function ReportAgent({ api }) {
               </button>
             </div>
           </div>
+
+          {specsError && <LoadError what="your saved setups" onRetry={loadSavedSpecs} />}
+          {specActionError && (
+            <div className="text-[11px] text-red-400 border border-red-400/40 rounded px-3 py-2" role="alert">
+              {specActionError}
+            </div>
+          )}
 
           {/* Saved specs accordion */}
           {savedSpecs.length > 0 && (
@@ -554,10 +688,52 @@ export default function ReportAgent({ api }) {
                 )}
               </button>
 
+              {generating && alreadyRunning && (
+                <p className="text-[10px] font-mono text-amber-400 text-center" role="status">
+                  This brief is already being generated (started earlier). Showing its progress — nothing new was started.
+                </p>
+              )}
               {generating && (
                 <p className="text-[10px] font-mono text-muted-foreground text-center">
-                  Running PAOI synthesis — this takes 30-90 seconds…
+                  {job?.progress?.label
+                    ? `${job.progress.label} — step ${job.progress.done} of ${job.progress.total}`
+                    : "Starting…"}
+                  {" "}· you can leave this page open; it checks every 5 seconds.
                 </p>
+              )}
+              {generating && pollWarn && (
+                <p className="text-[10px] font-mono text-amber-400 text-center" role="alert">
+                  Can't reach the server right now. Still trying…
+                </p>
+              )}
+              {timedOut && (
+                <div className="space-y-1" role="alert">
+                  <p className="text-[10px] font-mono text-red-400 text-center">
+                    This is taking over 45 minutes, so we stopped checking. It may have failed.
+                  </p>
+                  <button
+                    onClick={generate}
+                    className="w-full py-1.5 rounded border border-red-400/50 text-red-400 text-xs font-semibold hover:bg-red-400/10"
+                  >
+                    Retry
+                  </button>
+                </div>
+              )}
+              {job?.status === "failed" && (
+                <div className="space-y-1" role="alert">
+                  <p className="text-[10px] font-mono text-red-400 text-center">
+                    {job.error || "Generation failed."}
+                  </p>
+                  <button
+                    onClick={generate}
+                    className="w-full py-1.5 rounded border border-red-400/50 text-red-400 text-xs font-semibold hover:bg-red-400/10"
+                  >
+                    Retry
+                  </button>
+                </div>
+              )}
+              {generateError && (
+                <p className="text-[10px] font-mono text-red-400 text-center" role="alert">{generateError}</p>
               )}
             </div>
           )}
@@ -570,10 +746,7 @@ export default function ReportAgent({ api }) {
                 Brief Ready
               </div>
               <div className="text-[10px] font-mono text-muted-foreground">
-                {generatedReport.period_label} · {(generatedReport.generated_at || "")?.slice(0, 10)}
-              </div>
-              <div className="text-[10px] font-mono text-muted-foreground">
-                {generatedReport.paoi_reports?.length || 0} PAOIs analysed
+                {generatedReport.period_label} · {istDate(generatedReport.generated_at)}
               </div>
               <button
                 onClick={downloadGenerated}
@@ -581,24 +754,35 @@ export default function ReportAgent({ api }) {
               >
                 <Download size={11} /> Download PDF
               </button>
+              {pdfError && <p className="text-[10px] text-red-400" role="alert">{pdfError}</p>}
             </div>
           )}
 
           {/* Past briefs */}
+          {reportsError && <LoadError what="your past briefs" onRetry={loadPastReports} />}
           {pastReports.length > 0 && (
             <div className="rounded border border-border bg-card p-3 space-y-2">
               <button
                 onClick={() => setShowPast(v => !v)}
                 className="w-full flex items-center justify-between text-[10px] uppercase tracking-widest font-semibold font-['Barlow_Condensed'] text-muted-foreground hover:text-foreground"
               >
-                Past Briefs ({pastReports.length})
+                Past Briefs ({pastReports.length}{hasMore ? "+" : ""})
                 {showPast ? <ChevronUp size={10} /> : <ChevronDown size={10} />}
               </button>
               {showPast && (
                 <div>
-                  {pastReports.slice(0, 20).map(r => (
+                  {pastReports.map(r => (
                     <ReportRow key={r.id} report={r} api={api} onDeleted={handleReportDeleted} />
                   ))}
+                  {hasMore && (
+                    <button
+                      onClick={loadMoreReports}
+                      disabled={loadingMore}
+                      className="w-full mt-2 py-1.5 rounded border border-border text-[10px] font-semibold text-muted-foreground hover:text-foreground disabled:opacity-50"
+                    >
+                      {loadingMore ? "Loading…" : "Load more"}
+                    </button>
+                  )}
                 </div>
               )}
             </div>

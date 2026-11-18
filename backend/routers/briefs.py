@@ -1,5 +1,5 @@
 """Daily Brief generation, PDF export, custom briefs, weekly trends."""
-from fastapi import APIRouter, Query, HTTPException, BackgroundTasks, Depends
+from fastapi import APIRouter, Query, HTTPException, BackgroundTasks, Depends
 from utils.roles import require_analyst_or_admin
 from fastapi.responses import StreamingResponse
 from typing import Optional
@@ -8,6 +8,8 @@ import io
 import os
 import re
 import uuid
+from brief_periods import IST, ist_today
+from utils.pdf_render import render_pdf_off_loop
 from shared import (
     db, intelligence_col, briefs_col, uploads_col, patterns_col,
     DailyBrief, logger, NER_STATES,
@@ -98,19 +100,47 @@ async def attach_faultline_tags(items: list[dict]) -> None:
 # Brief Endpoints
 # ============================================================
 
-@router.get("/daily-brief")
-async def get_daily_brief(date: Optional[str] = None):
-    if not date:
-        date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    brief = await briefs_col.find_one({"date": date}, {"_id": 0})
+def _check_date(date: str) -> str:
+    """Reject anything that is not a real YYYY-MM-DD day (422)."""
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date or ""):
+        raise HTTPException(status_code=422, detail="date must be YYYY-MM-DD")
+    try:
+        datetime.strptime(date, "%Y-%m-%d")
+    except ValueError:
+        raise HTTPException(status_code=422, detail="date must be YYYY-MM-DD")
+    return date
+
+
+async def _load_stored_brief(date: Optional[str]) -> dict:
+    """Stored brief for `date`, or the newest one when no date. Never generates."""
+    if date:
+        brief = await briefs_col.find_one({"date": _check_date(date)}, {"_id": 0})
+    else:
+        brief = await briefs_col.find_one({}, {"_id": 0}, sort=[("date", -1)])
     if not brief:
-        brief = await generate_brief_for_date(date)
+        raise HTTPException(status_code=404, detail="No brief for this date")
     return brief
 
 
+@router.get("/daily-brief")
+async def get_daily_brief(date: Optional[str] = None):
+    return await _load_stored_brief(date)
+
+
+@router.get("/daily-brief/list")
+async def list_daily_briefs(limit: int = Query(60, ge=1, le=366)):
+    rows = await briefs_col.find(
+        {}, {"_id": 0, "date": 1, "generated_at": 1, "window_start": 1, "window_end": 1}
+    ).sort("date", -1).limit(limit).to_list(limit)
+    return [{k: v for k, v in r.items() if v is not None} for r in rows]
+
+
 @router.post("/generate-brief", dependencies=[Depends(require_analyst_or_admin)])
-async def generate_brief(background_tasks: BackgroundTasks):
-    date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+async def generate_brief(background_tasks: BackgroundTasks, date: Optional[str] = None):
+    today = ist_today()
+    date = _check_date(date) if date else today
+    if date > today:
+        raise HTTPException(status_code=400, detail="Cannot generate a brief for a future date")
     background_tasks.add_task(generate_brief_for_date, date)
     return {"message": "Brief generation started", "date": date}
 
@@ -118,6 +148,8 @@ async def generate_brief(background_tasks: BackgroundTasks):
 def _brief_day_window(brief: dict, date: str) -> tuple:
     """The 24 hours a Daily Brief's header numbers cover: up to the moment the
     brief was generated (or the end of its date for old briefs without one)."""
+    if brief.get("window_start") and brief.get("window_end"):
+        return brief["window_start"], brief["window_end"]
     try:
         end = datetime.fromisoformat(brief.get("generated_at") or "")
     except ValueError:
@@ -144,11 +176,8 @@ async def _brief_day_counts(brief: dict, date: str) -> tuple:
 
 @router.get("/daily-brief/pdf")
 async def get_daily_brief_pdf(date: Optional[str] = None):
-    if not date:
-        date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    brief = await briefs_col.find_one({"date": date}, {"_id": 0})
-    if not brief:
-        brief = await generate_brief_for_date(date)
+    brief = await _load_stored_brief(date)
+    date = brief.get("date") or date
 
     # Re-attach faultline tags so the PDF always reflects current mappings,
     # even when the stored brief predates faultline mapping data.
@@ -173,7 +202,7 @@ async def get_daily_brief_pdf(date: Optional[str] = None):
     ).sort("uploaded_at", -1).to_list(20)
 
     try:
-        pdf_bytes = generate_brief_pdf(brief, date, total, critical, high, fresh_uploads)
+        pdf_bytes = await render_pdf_off_loop(generate_brief_pdf, brief, date, total, critical, high, fresh_uploads)
     except Exception as e:
         logger.error(f"PDF generation failed for {date}: {e}")
         raise HTTPException(status_code=500, detail=f"PDF generation failed: {str(e)}")
@@ -217,7 +246,7 @@ async def generate_custom_brief(body: dict):
     if not items:
         raise HTTPException(status_code=404, detail="No items match the given filters")
 
-    pdf_bytes = _generate_custom_pdf(items, title_override, region, threat_type, hours)
+    pdf_bytes = await render_pdf_off_loop(_generate_custom_pdf, items, title_override, region, threat_type, hours)
 
     filename = f"custom_brief_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M')}.pdf"
     return StreamingResponse(
@@ -329,6 +358,8 @@ async def translate_brief_for_pdf(brief: dict) -> dict:
 def clean_for_pdf(text: str) -> str:
     if not text:
         return ""
+    if not isinstance(text, str):  # AI output occasionally returns lists/dicts
+        text = str(text)
     replacements = {
         '\u201c': '"', '\u201d': '"', '\u2018': "'", '\u2019': "'",
         '\u2013': '-', '\u2014': '-', '\u2026': '...', '\u2022': '*',
@@ -903,56 +934,60 @@ def generate_brief_pdf(brief: dict, date: str, total: int, critical: int, high: 
 # Brief Generation Logic
 # ============================================================
 
+def pick_prior_brief(prev_day: Optional[dict], any_previous: Optional[dict]) -> Optional[dict]:
+    """The earlier brief the new one follows: yesterday's, else the newest older one."""
+    for b in (prev_day, any_previous):
+        if b and (b.get("window_end") or b.get("generated_at")):
+            return b
+    return None
+
+
+def choose_brief_window(date: str, today: str, now_utc: datetime, prior: Optional[dict]) -> tuple:
+    """(start_iso, end_iso_or_None) in UTC. end is None for today's open window.
+
+    Past date: 06:00 IST that day, minus 24 h. Today: from the prior brief's
+    `window_end or generated_at` (a back-filled old brief carries an old
+    window_end, so it cannot push the window forward), capped at 48 h.
+    """
+    if date < today:
+        end = datetime.strptime(date, "%Y-%m-%d").replace(hour=6, tzinfo=IST).astimezone(timezone.utc)
+        return (end - timedelta(hours=24)).isoformat(), end.isoformat()
+    if prior:
+        start = prior.get("window_end") or prior["generated_at"]
+    else:
+        today_0600 = now_utc.astimezone(IST).replace(hour=6, minute=0, second=0, microsecond=0)
+        start = (today_0600 - timedelta(days=1)).astimezone(timezone.utc).isoformat()
+    return max(start, (now_utc - timedelta(hours=48)).isoformat()), None
+
+
+def _published_range(lower: str, upper: Optional[str]) -> dict:
+    return {"$gte": lower, **({"$lte": upper} if upper else {})}
+
+
 async def generate_brief_for_date(date: str):
-    import pytz
     import re
 
-    ist = pytz.timezone("Asia/Kolkata")
     now_utc = datetime.now(timezone.utc)
-    now_ist = now_utc.astimezone(ist)
+    today = ist_today()
 
-    previous_date = (now_ist - timedelta(days=1)).strftime("%Y-%m-%d")
+    previous_date = (datetime.strptime(date, "%Y-%m-%d") - timedelta(days=1)).strftime("%Y-%m-%d")
+    prior_fields = {"_id": 0, "generated_at": 1, "window_end": 1, "included_item_ids": 1, "date": 1, "event_fingerprints": 1}
 
     prev_day_brief = await briefs_col.find_one(
-        {"date": previous_date},
-        {"_id": 0, "generated_at": 1, "included_item_ids": 1, "date": 1, "event_fingerprints": 1},
-        sort=[("generated_at", -1)]
+        {"date": previous_date}, prior_fields, sort=[("generated_at", -1)]
     )
-
     any_previous_brief = await briefs_col.find_one(
-        {"date": {"$lt": date}},
-        {"_id": 0, "generated_at": 1, "included_item_ids": 1, "date": 1, "event_fingerprints": 1},
-        sort=[("date", -1)]
+        {"date": {"$lt": date}}, prior_fields, sort=[("date", -1)]
     )
 
-    previous_item_ids = set()
-    today_0600_ist = now_ist.replace(hour=6, minute=0, second=0, microsecond=0)
-
-    prev_brief_for_fingerprints = None
-    if prev_day_brief and prev_day_brief.get("generated_at"):
-        cutoff_utc = prev_day_brief["generated_at"]
-        if prev_day_brief.get("included_item_ids"):
-            previous_item_ids.update(prev_day_brief["included_item_ids"])
-        prev_brief_for_fingerprints = prev_day_brief
-        logger.info(f"Brief window: prev day brief ({previous_date}) generated at {cutoff_utc} -> now")
-    elif any_previous_brief and any_previous_brief.get("generated_at"):
-        cutoff_utc = any_previous_brief["generated_at"]
-        if any_previous_brief.get("included_item_ids"):
-            previous_item_ids.update(any_previous_brief["included_item_ids"])
-        prev_brief_for_fingerprints = any_previous_brief
-        logger.info(f"Brief window: last brief ({any_previous_brief.get('date')}) generated at {cutoff_utc} -> now")
-    else:
-        cutoff_ist = today_0600_ist - timedelta(days=1)
-        cutoff_utc = cutoff_ist.astimezone(timezone.utc).isoformat()
-        logger.info(f"Brief window (first brief): {cutoff_utc} -> now")
-
-    # ── Hard cap: brief window must never exceed 48 hours ────────────────────
-    # Without this cap, if a previous brief ran days ago (e.g. after a gap day),
-    # the window stretches back days and the brief surfaces stale items.
-    max_cutoff_utc = (now_utc - timedelta(hours=48)).isoformat()
-    if cutoff_utc < max_cutoff_utc:
-        logger.info(f"Brief: capping window from {cutoff_utc} to {max_cutoff_utc} (48 h max)")
-        cutoff_utc = max_cutoff_utc
+    prev_brief_for_fingerprints = pick_prior_brief(prev_day_brief, any_previous_brief)
+    previous_item_ids = set((prev_brief_for_fingerprints or {}).get("included_item_ids") or [])
+    cutoff_utc, window_end_utc = choose_brief_window(date, today, now_utc, prev_brief_for_fingerprints)
+    # Upper bound applies to past-date runs only; today's run stays open-ended.
+    # Reach of quiet-day top-ups is measured from the window's end.
+    reach_from = datetime.fromisoformat(window_end_utc) if window_end_utc else now_utc
+    window_end_stored = window_end_utc or now_utc.isoformat()
+    logger.info(f"Brief window for {date}: {cutoff_utc} -> {window_end_utc or 'now'}")
 
     logger.info(f"Excluding {len(previous_item_ids)} items from previous briefs")
 
@@ -1045,7 +1080,7 @@ async def generate_brief_for_date(date: str):
         return is_duplicate_title(title, prev_fp_titles, prev_fp_entities, threshold=0.55)
 
     # 1. GET CRITICAL/HIGH ITEMS
-    base_filter = {"processed": True, "published_at": {"$gte": cutoff_utc}}
+    base_filter = {"processed": True, "published_at": _published_range(cutoff_utc, window_end_utc)}
     if previous_item_ids:
         base_filter["id"] = {"$nin": list(previous_item_ids)}
 
@@ -1070,10 +1105,10 @@ async def generate_brief_for_date(date: str):
         logger.info(f"Brief: Only {len(critical_high_items)} items in time window, expanding to 7d")
         # Fallback still respects a maximum 7-day window so the brief never
         # surfaces items older than one week.
-        fallback_cutoff = (now_utc - timedelta(days=7)).isoformat()
+        fallback_cutoff = (reach_from - timedelta(days=7)).isoformat()
         fallback_filter = {
             "processed": True,
-            "published_at": {"$gte": fallback_cutoff},
+            "published_at": _published_range(fallback_cutoff, window_end_utc),
         }
         if previous_item_ids:
             fallback_filter["id"] = {"$nin": list(previous_item_ids)}
@@ -1109,7 +1144,7 @@ async def generate_brief_for_date(date: str):
     ner_states_full = NER_STATES + ["Nagaland", "Sikkim", "Multiple"]
     ner_query = {
         "processed": True,
-        "published_at": {"$gte": cutoff_utc},
+        "published_at": _published_range(cutoff_utc, window_end_utc),
         "state": {"$in": ner_states_full},
         "$or": [
             {"priority_score": {"$gte": 30}},
@@ -1132,7 +1167,7 @@ async def generate_brief_for_date(date: str):
             "state": {"$in": ner_states_full},
             "severity": {"$in": ["critical", "high", "medium"]},
             # Same 7-day limit as the other quiet-day fallback above.
-            "published_at": {"$gte": (now_utc - timedelta(days=7)).isoformat()},
+            "published_at": _published_range((reach_from - timedelta(days=7)).isoformat(), window_end_utc),
         }
         if previous_item_ids:
             fallback_ner_query["id"] = {"$nin": list(previous_item_ids)}
@@ -1175,7 +1210,7 @@ async def generate_brief_for_date(date: str):
     national_query = {
         "processed": True,
         "is_relevant": True,
-        "published_at": {"$gte": cutoff_utc},
+        "published_at": _published_range(cutoff_utc, window_end_utc),
         "source": {"$in": all_national_sources},
         "state": {"$nin": NER_STATES + ["Bangladesh", "Myanmar", "Multiple"]},
         "severity": {"$in": ["critical", "high", "medium"]},
@@ -1226,7 +1261,7 @@ async def generate_brief_for_date(date: str):
     # 4. GET INTERNATIONAL NEWS
     intl_query = {
         "processed": True,
-        "published_at": {"$gte": cutoff_utc},
+        "published_at": _published_range(cutoff_utc, window_end_utc),
         "$or": [
             {"state": {"$in": ["Bangladesh", "Myanmar"]}},
             {"countries_involved": {"$in": ["China", "Pakistan"]}},
@@ -1304,7 +1339,7 @@ async def generate_brief_for_date(date: str):
 
     # 6. UPLOADED DOCUMENT INSIGHTS (only for current brief period)
     uploaded_docs = await uploads_col.find(
-        {"processed": True, "uploaded_at": {"$gte": cutoff_utc}},
+        {"processed": True, "uploaded_at": _published_range(cutoff_utc, window_end_utc)},
         {"_id": 0}
     ).sort("uploaded_at", -1).limit(10).to_list(10)
 
@@ -1419,13 +1454,13 @@ async def generate_brief_for_date(date: str):
     # time) so the same BD/MM articles never appear in consecutive briefs.
     # 7-day hard cap kept as safety net for gap days.
     from routers.cross_border import _auto_categorize, CATEGORY_LABELS
-    seven_days_ago = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+    seven_days_ago = (reach_from - timedelta(days=7)).isoformat()
     cb_cutoff = max(cutoff_utc, seven_days_ago)
     cb_query = {
         "processed": True,
         "ai_summary": {"$exists": True, "$ne": ""},
         "severity": {"$nin": ["low", "LOW"]},
-        "published_at": {"$gte": cb_cutoff},
+        "published_at": _published_range(cb_cutoff, window_end_utc),
         "$or": [
             {"is_cross_border": True},
             {"countries_involved": {"$elemMatch": {"$in": ["Bangladesh", "Myanmar"]}}},
@@ -1565,7 +1600,7 @@ async def generate_brief_for_date(date: str):
 
     # 12c. SOCIAL MEDIA PULSE — sentiment for this brief's own window, not all-time
     from social_pulse import get_social_pulse_for_period
-    brief_data["social_pulse"] = await get_social_pulse_for_period(db, cutoff_utc, now_utc.isoformat())
+    brief_data["social_pulse"] = await get_social_pulse_for_period(db, cutoff_utc, window_end_stored)
 
     # 13. SAVE AND RETURN
     brief = DailyBrief(**brief_data)
@@ -1573,6 +1608,8 @@ async def generate_brief_for_date(date: str):
     doc.pop("twitter_highlights", None)
     # Persist fingerprints (not in DailyBrief schema; stored directly for next brief's dedup)
     doc["event_fingerprints"] = brief_data.get("event_fingerprints", [])
+    doc["window_start"] = cutoff_utc
+    doc["window_end"] = window_end_stored
     await briefs_col.replace_one({"date": date}, doc, upsert=True)
 
     logger.info(f"Brief generated: {len(key_developments)} NER developments, {len(brief_data.get('national_news', []))} national, {len(brief_data.get('international_news', []))} international, {len(brief_data.get('pattern_insights', []))} patterns, {len(added_ids)} items tracked")

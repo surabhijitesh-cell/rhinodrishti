@@ -38,6 +38,7 @@ from pydantic import BaseModel
 
 from shared import db, logger
 from utils.auth import get_current_user
+from utils.pdf_render import render_pdf_off_loop
 from faultline_seed import seed_faultlines, FAULTLINES, STATE_TO_REGIONS
 from priority_areas_seed import seed_priority_areas, PRIORITY_AREAS
 from faultline_engine import (
@@ -651,11 +652,23 @@ async def backfill_status(
     return latest or {"status": "no_jobs"}
 
 
+def _report_iod(user: dict, iod: Optional[str]) -> str:
+    """Non-admins always get their own IOD; admins may pick one."""
+    if iod and user.get("role") == "admin":
+        from iod_registry import ALL_IODS
+        if iod not in ALL_IODS:
+            raise HTTPException(400, f"Unknown IOD: {iod}")
+        return iod
+    return user_iod(user)
+
+
 # ── Standalone Faultline Analysis Report PDF (5 pages, Path B LLM) ────────────
 @router.get("/faultlines/report")
 async def faultline_pdf_report(
     year: int = Query(...),
     month: int = Query(..., ge=1, le=12),
+    period: Optional[int] = Query(None, ge=1, le=2, description="1|2 = fortnight report; omit for the monthly report"),
+    iod: Optional[str] = Query(None, description="Admin-only: which IOD's faultlines to report"),
     current_user: dict = Depends(get_current_user),
 ):
     """
@@ -668,18 +681,27 @@ async def faultline_pdf_report(
       P5  Cross-cutting Manual Review Advisory + per-state advisory roll-up
 
     3 LLM calls (Path B): bottom line, batched mover outlooks, cross-state advisory.
-    Reuses cached PAOI synthesis + state_narratives from the monthly brief.
+    Reuses cached PAOI synthesis + state_narratives from the stored brief.
+
+    period=1|2 gives the fortnight report (compared with the previous
+    fortnight). Non-admins always get their own IOD's faultlines; admins may
+    pass ?iod=. Faultlines are limited to that IOD's watch-list.
     """
     from faultline_pdf import (
         aggregate_faultline_report, run_pdf_synthesis, render_faultline_pdf,
     )
     from routers.brief_monthly import _call_llm_json
 
+    from iod_registry import get_iod_faultline_ids
+    report_iod = _report_iod(current_user, iod)
+
     # Aggregate everything PDF needs (no LLM here)
-    # shortcut: report covers all IODs; scope per IOD in a later batch
-    agg = await aggregate_faultline_report(db, year, month)
+    agg = await aggregate_faultline_report(
+        db, year, month, iod=report_iod, period=period,
+        fl_ids=get_iod_faultline_ids(report_iod),
+    )
     if not agg.get("all_faultlines"):
-        raise HTTPException(404, f"No faultline data for {year}-{month:02d}")
+        raise HTTPException(404, f"No faultline data for {agg['month_name']}")
 
     # Run B1+B2+B3+B4 LLM synthesis in parallel
     synthesis = await run_pdf_synthesis(agg, _call_llm_json)
@@ -694,9 +716,11 @@ async def faultline_pdf_report(
             priority_map[entry["faultline_id"]] = entry["rank"]
 
     # Render PDF
-    pdf_bytes = render_faultline_pdf(agg, synthesis, priority_map=priority_map)
+    pdf_bytes = await render_pdf_off_loop(
+        render_faultline_pdf, agg, synthesis, priority_map=priority_map)
 
-    filename = f"faultline_analysis_{year}_{month:02d}.pdf"
+    suffix = f"_p{period}" if period else ""
+    filename = f"faultline_analysis_{year}_{month:02d}{suffix}.pdf"
     return StreamingResponse(
         io.BytesIO(pdf_bytes),
         media_type="application/pdf",

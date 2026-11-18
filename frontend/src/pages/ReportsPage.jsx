@@ -66,8 +66,8 @@ function RegionalThreatReport({ api }) {
     setLoading(true);
     try {
       const params = new URLSearchParams({ region });
-      if (dateFrom) params.set("date_from", new Date(dateFrom).toISOString());
-      if (dateTo) params.set("date_to", new Date(dateTo).toISOString());
+      if (dateFrom) params.set("date_from", dateFrom);
+      if (dateTo) params.set("date_to", dateTo);
       const res = await axios.get(`${api}/reports/regional-threat?${params}`, { responseType: "blob" });
       downloadBlob(res.data, `${region}_Threat_Report.pdf`);
       toast.success("Regional Threat Report downloaded");
@@ -118,8 +118,8 @@ function CrossBorderSitrep({ api }) {
     setLoading(true);
     try {
       const params = new URLSearchParams({ country });
-      if (dateFrom) params.set("date_from", new Date(dateFrom).toISOString());
-      if (dateTo) params.set("date_to", new Date(dateTo).toISOString());
+      if (dateFrom) params.set("date_from", dateFrom);
+      if (dateTo) params.set("date_to", dateTo);
       const res = await axios.get(`${api}/reports/cross-border-sitrep?${params}`, { responseType: "blob" });
       downloadBlob(res.data, `${country}_SITREP.pdf`);
       toast.success("Cross-Border SITREP downloaded");
@@ -185,8 +185,8 @@ function CustomReport({ api }) {
       if (minPriority) params.set("min_priority", minPriority);
       if (crossBorder === "yes") params.set("is_cross_border", "true");
       if (source) params.set("source", source);
-      if (dateFrom) params.set("date_from", new Date(dateFrom).toISOString());
-      if (dateTo) params.set("date_to", new Date(dateTo).toISOString());
+      if (dateFrom) params.set("date_from", dateFrom);
+      if (dateTo) params.set("date_to", dateTo);
       const res = await axios.get(`${api}/reports/custom?${params}`, { responseType: "blob" });
       downloadBlob(res.data, `${title.replace(/\s+/g, '_')}.pdf`);
       toast.success("Custom report downloaded");

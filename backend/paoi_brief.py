@@ -23,9 +23,12 @@ import json
 import logging
 import re
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+
+from brief_periods import period_dates
 
 logger = logging.getLogger("paoi_brief")
+
 
 _SEV_SCORE = {"LOW": 25, "MEDIUM": 50, "HIGH": 75, "CRITICAL": 100}
 
@@ -78,8 +81,8 @@ async def aggregate_paoi_period(db, start_iso: str, end_iso: str, iod: str = "IO
       "as_of": end_date
     }
     """
-    start_date = start_iso[:10]
-    end_date = end_iso[:10]
+    # end_iso is exclusive; faultline dates are IST calendar days, inclusive.
+    start_date, end_date = period_dates(start_iso, end_iso)
 
     paois = await db.priority_areas.find(
         {"enabled": True, "iod": iod}, {"_id": 0}
@@ -236,11 +239,9 @@ async def _keyword_article_pull(db, keyword_pull: dict, start_iso: str, end_iso:
         return {"n_articles": 0, "top_articles": []}
 
     # Region gate (regions[] or state) + window.
-    # published_at is stored as a date-only string ("YYYY-MM-DD"); compare
-    # against date-only bounds so first-day articles aren't dropped by a
-    # datetime suffix on the lower bound (ASCII ordering).
+    # Exact IST period edges; old date-only values also compare correctly.
     q: dict = {
-        "published_at": {"$gte": start_iso[:10], "$lt": end_iso[:10]},
+        "published_at": {"$gte": start_iso, "$lt": end_iso},
         "processed": True,
     }
     if regions:
@@ -710,7 +711,7 @@ async def other_faultline_movements(db, start_iso: str, end_iso: str, limit: int
         for fl_id in (pa.get("linked_faultline_ids") or [])
     }
 
-    start_date, end_date = start_iso[:10], end_iso[:10]
+    start_date, end_date = period_dates(start_iso, end_iso)
     query: dict = {
         "date": {"$gte": start_date, "$lte": end_date},
         "faultline_id": {"$nin": list(priority_ids)},

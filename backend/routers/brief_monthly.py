@@ -27,6 +27,8 @@ import asyncio
 import io
 import json
 import logging
+import brief_periods
+from utils.pdf_render import render_pdf_off_loop
 from collections import Counter, defaultdict
 from datetime import datetime, timezone, timedelta
 from typing import Optional
@@ -199,13 +201,8 @@ _SEV_WEIGHT = {"critical": 4, "high": 3, "medium": 2, "low": 1}
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _month_range(year: int, month: int) -> tuple[str, str]:
-    """Return ISO start (inclusive) and end (exclusive) for the given month."""
-    start = datetime(year, month, 1, tzinfo=timezone.utc)
-    if month == 12:
-        end = datetime(year + 1, 1, 1, tzinfo=timezone.utc)
-    else:
-        end = datetime(year, month + 1, 1, tzinfo=timezone.utc)
-    return start.isoformat(), end.isoformat()
+    """ISO start (inclusive) and end (exclusive) of the IST calendar month."""
+    return brief_periods.month_range(year, month)
 
 
 async def _aggregate_month_stats(year: int, month: int) -> dict:
@@ -836,9 +833,20 @@ def _build_notebooklm_script(brief: dict, year: int, month: int) -> str:
 
 # ── Faultline section (Phase 5a) ─────────────────────────────────────────────
 
-async def _aggregate_faultline_section(year: int, month: int, iod: str = "IOD-1") -> dict:
+def _faultline_window(year: int, month: int, start_date: Optional[str] = None,
+                      end_date: Optional[str] = None) -> tuple[str, str]:
+    """Inclusive IST calendar dates for the faultline section: the given
+    fortnight dates, or the whole month by default."""
+    month_first, month_last = brief_periods.period_dates(*_month_range(year, month))
+    return start_date or month_first, end_date or month_last
+
+
+async def _aggregate_faultline_section(year: int, month: int, iod: str = "IOD-1",
+                                       start_date: Optional[str] = None,
+                                       end_date: Optional[str] = None) -> dict:
     """
-    Aggregate faultline_scores for the calendar month, grouped by state.
+    Aggregate faultline_scores for the period (default: calendar month; the
+    fortnight generators pass their own inclusive IST start/end dates), grouped by state.
     Returns:
       {
         "available": bool,             # True if any scores exist for this month
@@ -854,13 +862,9 @@ async def _aggregate_faultline_section(year: int, month: int, iod: str = "IOD-1"
       }
     """
     from collections import defaultdict
-    start = datetime(year, month, 1, tzinfo=timezone.utc).date()
-    if month == 12:
-        end = datetime(year + 1, 1, 1, tzinfo=timezone.utc).date()
-    else:
-        end = datetime(year, month + 1, 1, tzinfo=timezone.utc).date()
+    first_date, last_date = _faultline_window(year, month, start_date, end_date)
 
-    match: dict = {"date": {"$gte": start.isoformat(), "$lt": end.isoformat()}}
+    match: dict = {"date": {"$gte": first_date, "$lte": last_date}}
     if iod != "IOD-1":
         from iod_registry import get_iod_faultline_ids
         watchlist = get_iod_faultline_ids(iod)
@@ -1019,7 +1023,7 @@ async def _paoi_window_map_points(keyword_pull: dict, start_iso: str, end_iso: s
     if not keywords:
         return [], []
     q: dict = {
-        "published_at": {"$gte": start_iso[:10], "$lt": end_iso[:10]},
+        "published_at": {"$gte": start_iso, "$lt": end_iso},
         "processed": True,
         "severity": {"$in": ["critical", "high"]},
     }
@@ -1340,6 +1344,23 @@ async def _run_generation_core(year: int, month: int, iod: str = "IOD-1", force_
     return brief
 
 
+# Sections an IOD brief copies from IOD-1's core brief (same for every IOD).
+SHARED_CORE_KEYS = (
+    "status", "stats", "executive_summary", "state_sections",
+    "mitigation_playbook", "scenarios", "cross_border_analysis", "social_pulse",
+)
+
+
+def _shared_core_meta(core_doc: dict) -> dict:
+    """Stored on a non-IOD-1 brief so the PDF can say which sections are IOD-1's
+    shared core and when that core was generated. Old briefs lack these."""
+    return {
+        "shared_core_iod": "IOD-1",
+        "shared_core_generated_at": core_doc.get("generated_at"),
+        "shared_sections": [k for k in SHARED_CORE_KEYS if k in core_doc],
+    }
+
+
 async def _run_generation(year: int, month: int, iod: str = "IOD-1", force_rich: bool = False) -> dict:
     """Entry point used by the generate endpoint / background task.
 
@@ -1417,10 +1438,8 @@ async def _run_generation(year: int, month: int, iod: str = "IOD-1", force_rich:
     )
 
     brief = {
-        **{k: core_doc[k] for k in (
-            "status", "stats", "executive_summary", "state_sections",
-            "mitigation_playbook", "scenarios", "cross_border_analysis", "social_pulse",
-        ) if k in core_doc},
+        **{k: core_doc[k] for k in SHARED_CORE_KEYS if k in core_doc},
+        **_shared_core_meta(core_doc),
         "year": year, "month": month, "iod": iod,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "faultline_analysis": faultline_section,
@@ -1576,8 +1595,9 @@ async def get_monthly_brief_pdf(
                 })
 
     try:
-        pdf_bytes = _render_pdf(brief, prev_brief=prev_brief, include_faultlines=include_faultlines,
-                                paoi_history=dict(paoi_history))
+        pdf_bytes = await render_pdf_off_loop(
+            _render_pdf, brief, prev_brief=prev_brief, include_faultlines=include_faultlines,
+            paoi_history=dict(paoi_history))
     except Exception as e:
         import traceback
         logger.error(f"PDF render failed: {traceback.format_exc()}")
@@ -1651,6 +1671,23 @@ def _render_pdf(brief: dict, prev_brief: dict = None, include_faultlines: bool =
     missing_sections = brief.get("missing_sections")
     if missing_sections is None:
         missing_sections = _infer_missing_sections(brief)
+    brief_iod = brief.get("iod") or "IOD-1"
+    shares_iod1_core = brief_iod != "IOD-1"
+    shared_note = ""
+    if shares_iod1_core:
+        shared_from = "the IOD-1 brief"
+        core_ts = brief.get("shared_core_generated_at")
+        if core_ts:
+            core_day = datetime.fromisoformat(core_ts.replace("Z", "+00:00")).astimezone(brief_periods.IST)
+            shared_from += f" generated {core_day.strftime('%d %b %Y')}"
+        shared_note = (f"Regional overview, period overview, state assessments, social pulse, cross-border, "
+                       f"scenarios and mitigation are shared from {shared_from}. "
+                       f"Faultline and PAOI sections are specific to {brief_iod}.")
+
+    def shared_sub(sub=""):
+        if not shares_iod1_core:
+            return sub
+        return f"{sub}  |  Shared from IOD-1" if sub else "Shared from IOD-1"
 
     class BriefPDF(FPDF):
         def header(self):
@@ -1664,7 +1701,7 @@ def _render_pdf(brief: dict, prev_brief: dict = None, include_faultlines: bool =
             self.set_text_color(160, 170, 150)
             self.cell(0, 4, f"NER INTELLIGENCE PLATFORM  |  {brief_type}", align="C", new_x="LMARGIN", new_y="NEXT")
             self.set_font("Helvetica", "", 7)
-            self.cell(0, 4, _ascii(f"Classification: RESTRICTED  |  Period: {display_period}  |  Generated: {gen_ts}"), align="C", new_x="LMARGIN", new_y="NEXT")
+            self.cell(0, 4, _ascii(f"Classification: RESTRICTED  |  {brief_iod}  |  Period: {display_period}  |  Generated: {gen_ts}"), align="C", new_x="LMARGIN", new_y="NEXT")
             self.set_y(32)
             if self.page_no() == 1 and missing_sections:
                 # Never let a gap be silent: say on page 1 what is missing.
@@ -1677,6 +1714,15 @@ def _render_pdf(brief: dict, prev_brief: dict = None, include_faultlines: bool =
                 self.set_font("Helvetica", "", 8)
                 self.set_x(self.l_margin)
                 self.multi_cell(0, 4.5, _ascii("Missing: " + "; ".join(missing_sections) + ". Regenerate the brief to retry."), fill=True, **NL)
+                self.c_margin = cell_pad
+                self.ln(3)
+            if self.page_no() == 1 and shared_note:
+                self.set_fill_color(*C_SEC_BG)
+                self.set_text_color(*C_SEC_TEXT)
+                self.set_font("Helvetica", "", 8)
+                cell_pad, self.c_margin = self.c_margin, 3
+                self.set_x(self.l_margin)
+                self.multi_cell(0, 4.5, _ascii(shared_note), fill=True, **NL)
                 self.c_margin = cell_pad
                 self.ln(3)
 
@@ -2266,7 +2312,7 @@ def _render_pdf(brief: dict, prev_brief: dict = None, include_faultlines: bool =
         pdf.add_page()
     else:
         pdf.ln(4)
-    pdf.section_title("REGIONAL OVERVIEW", display_period)
+    pdf.section_title("REGIONAL OVERVIEW", shared_sub(display_period))
 
     draw_stat_boxes(
         ["TOTAL ITEMS", "CRITICAL", "HIGH PRIORITY", "CROSS-BORDER"],
@@ -2297,7 +2343,7 @@ def _render_pdf(brief: dict, prev_brief: dict = None, include_faultlines: bool =
     if pulse and pulse.get("platforms"):
         if pdf.get_y() > 240:
             pdf.add_page()
-        pdf.section_title("SOCIAL MEDIA PULSE", display_period)
+        pdf.section_title("SOCIAL MEDIA PULSE", shared_sub(display_period))
         platform_labels = {"facebook": "Facebook", "instagram": "Instagram", "twitter": "Twitter/X", "youtube": "YouTube"}
         pulse_rows = [
             [platform_labels.get(p, p.title()), f"{s['positive_pct']}%", f"{s['negative_pct']}%", s["post_count"]]
@@ -2402,6 +2448,8 @@ def _render_pdf(brief: dict, prev_brief: dict = None, include_faultlines: bool =
             pdf.set_fill_color(248, 252, 245)
             pdf.set_font("Helvetica", "I", 8)
             pdf.set_text_color(70, 80, 60)
+            if not isinstance(prev_exec, str):  # AI/stored value may be a list or dict
+                prev_exec = _ascii(prev_exec)
             excerpt = _ascii(prev_exec[:700]) + ("..." if len(prev_exec) > 700 else "")
             pdf.multi_cell(0, 4, excerpt, fill=True, **NL)
 
@@ -2413,7 +2461,7 @@ def _render_pdf(brief: dict, prev_brief: dict = None, include_faultlines: bool =
     else:
         pdf.ln(4)
 
-    pdf.section_title("PERIOD OVERVIEW", display_period)
+    pdf.section_title("PERIOD OVERVIEW", shared_sub(display_period))
     pdf.set_font("Helvetica", "", 9)
     pdf.set_text_color(40, 40, 40)
     pdf.multi_cell(0, 5, _ascii(brief.get("executive_summary", "")), **NL)
@@ -2478,7 +2526,7 @@ def _render_pdf(brief: dict, prev_brief: dict = None, include_faultlines: bool =
     cba = brief.get("cross_border_analysis") or {}
     if cba:
         pdf.add_page()
-        pdf.section_title("CROSS-BORDER THREAT ANALYSIS")
+        pdf.section_title("CROSS-BORDER THREAT ANALYSIS", shared_sub())
 
         for border_key, border_label in [
             ("bangladesh_border", "INDO-BANGLADESH BORDER"),
@@ -2527,7 +2575,7 @@ def _render_pdf(brief: dict, prev_brief: dict = None, include_faultlines: bool =
             pdf.add_page()
         else:
             pdf.ln(4)
-        pdf.section_title("PREDICTIVE SCENARIOS")
+        pdf.section_title("PREDICTIVE SCENARIOS", shared_sub())
 
         for sc in brief["scenarios"]:
             if pdf.get_y() > 250:
@@ -2559,9 +2607,11 @@ def _render_pdf(brief: dict, prev_brief: dict = None, include_faultlines: bool =
     # ══════════════════════════════════════════════════════════════════════════
     if brief.get("mitigation_playbook"):
         pdf.add_page()
-        pdf.section_title("MITIGATION PLAYBOOK")
+        pdf.section_title("MITIGATION PLAYBOOK", shared_sub())
 
         for state, plan in brief["mitigation_playbook"].items():
+            if not isinstance(plan, dict):
+                continue
             if pdf.get_y() > 250:
                 pdf.add_page()
             pdf.set_font("Helvetica", "B", 10)
@@ -2575,7 +2625,7 @@ def _render_pdf(brief: dict, prev_brief: dict = None, include_faultlines: bool =
                 ("long_term",   "LONG TERM"),
             ]:
                 actions = plan.get(horizon, [])
-                if not actions:
+                if not actions or not isinstance(actions, list):
                     continue
                 pdf.set_font("Helvetica", "B", 8)
                 pdf.set_text_color(80, 100, 60)
@@ -2583,6 +2633,8 @@ def _render_pdf(brief: dict, prev_brief: dict = None, include_faultlines: bool =
                 pdf.set_font("Helvetica", "", 8)
                 pdf.set_text_color(40, 40, 40)
                 for a in actions:
+                    if not isinstance(a, dict):
+                        a = {"action": a}
                     action_txt = _ascii(a.get("action", ""))
                     lead       = _ascii(a.get("lead_agency", ""))
                     pdf.multi_cell(0, 4, f"    - {action_txt}  [Lead: {lead}]", **NL)
