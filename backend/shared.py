@@ -104,6 +104,7 @@ class IntelligenceItem(BaseModel):
     entities: Dict = Field(default_factory=lambda: {"persons": [], "organizations": [], "locations": []})
     sifter_level: int = 1
     sifter_triggers: List[str] = []
+    scored_by: Optional[str] = None  # which AI model set the score (two-step scoring)
     relationships: List[Dict] = []
     embedding: Optional[List[float]] = Field(default=None, exclude=True)
 
