@@ -1627,7 +1627,7 @@ def _ascii(s) -> str:
     }
     for o, r in replacements.items():
         s = s.replace(o, r)
-    return s.encode("latin-1", errors="replace").decode("latin-1")
+    return s.encode("latin-1", "pdf_safe").decode("latin-1")
 
 
 def _render_pdf(brief: dict, prev_brief: dict = None, include_faultlines: bool = True,

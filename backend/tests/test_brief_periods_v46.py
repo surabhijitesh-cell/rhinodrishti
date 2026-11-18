@@ -30,3 +30,7 @@ def test_a_midnight_ist_item_falls_in_the_new_period():
 
 def test_pdf_render_helper_returns_the_result():
     assert asyncio.run(render_pdf_off_loop(lambda a, b=0: a + b, 2, b=3)) == 5
+
+
+def test_pdf_text_prints_rupee_as_rs_and_other_unknowns_as_question_marks():
+    assert "₹14,327 Cr → x".encode("latin-1", "pdf_safe").decode("latin-1") == "Rs 14,327 Cr ? x"

@@ -371,7 +371,7 @@ def clean_for_pdf(text: str) -> str:
     if has_non_latin_chars(text):
         return "[Content requires translation - see original source]"
 
-    return text.encode('latin-1', 'replace').decode('latin-1')
+    return text.encode('latin-1', 'pdf_safe').decode('latin-1')
 
 
 # ============================================================
@@ -403,7 +403,7 @@ def _generate_custom_pdf(items: list, title: str, region: str, threat: str, hour
 
     pdf.set_font('Helvetica', 'B', 16)
     pdf.set_text_color(34, 50, 30)
-    clean_title = title.encode('latin-1', 'replace').decode('latin-1')
+    clean_title = title.encode('latin-1', 'pdf_safe').decode('latin-1')
     pdf.cell(0, 10, clean_title, new_x="LMARGIN", new_y="NEXT")
 
     pdf.set_font('Helvetica', '', 9)
@@ -434,7 +434,7 @@ def _generate_custom_pdf(items: list, title: str, region: str, threat: str, hour
 
         pdf.set_font('Helvetica', 'B', 10)
         item_title = item.get('title', 'Untitled')[:90]
-        clean_item_title = item_title.encode('latin-1', 'replace').decode('latin-1')
+        clean_item_title = item_title.encode('latin-1', 'pdf_safe').decode('latin-1')
         pdf.set_x(pdf.l_margin)
         pdf.multi_cell(effective_w, 6, f'{i}. [{sev}|P{priority}] {clean_item_title}')
 
@@ -443,13 +443,13 @@ def _generate_custom_pdf(items: list, title: str, region: str, threat: str, hour
         meta = f"Source: {item.get('source', '')[:40]} | {item.get('state', '')} | {item.get('published_at', '')[:16]}"
         if trajectory and trajectory != 'INDETERMINATE':
             meta += f" | {trajectory}"
-        clean_meta = meta.encode('latin-1', 'replace').decode('latin-1')
+        clean_meta = meta.encode('latin-1', 'pdf_safe').decode('latin-1')
         pdf.set_x(pdf.l_margin)
         pdf.cell(effective_w, 4, clean_meta, new_x="LMARGIN", new_y="NEXT")
 
         summary = item.get('ai_summary', '')[:400]
         if summary:
-            clean_summary = summary.encode('latin-1', 'replace').decode('latin-1')
+            clean_summary = summary.encode('latin-1', 'pdf_safe').decode('latin-1')
             pdf.set_x(pdf.l_margin)
             pdf.multi_cell(effective_w, 4, clean_summary)
 
@@ -457,7 +457,7 @@ def _generate_custom_pdf(items: list, title: str, region: str, threat: str, hour
         if why:
             pdf.set_font('Helvetica', 'I', 8)
             pdf.set_text_color(100, 80, 40)
-            clean_why = why.encode('latin-1', 'replace').decode('latin-1')
+            clean_why = why.encode('latin-1', 'pdf_safe').decode('latin-1')
             pdf.set_x(pdf.l_margin)
             pdf.multi_cell(effective_w, 4, f"Why: {clean_why}")
 
@@ -504,7 +504,7 @@ def generate_brief_pdf(brief: dict, date: str, total: int, critical: int, high: 
         def body_text(self, text):
             self.set_font('Helvetica', '', 9)
             self.set_text_color(40, 40, 40)
-            clean_text = text.encode('latin-1', 'replace').decode('latin-1')
+            clean_text = text.encode('latin-1', 'pdf_safe').decode('latin-1')
             self.multi_cell(0, 5, clean_text)
             self.ln(2)
 
@@ -514,13 +514,13 @@ def generate_brief_pdf(brief: dict, date: str, total: int, critical: int, high: 
 
             self.set_font('Helvetica', 'B', 9)
             self.set_text_color(40, 60, 80)
-            clean_title = title.encode('latin-1', 'replace').decode('latin-1')[:150]
+            clean_title = title.encode('latin-1', 'pdf_safe').decode('latin-1')[:150]
             self.multi_cell(0, 5, f'{index}. {clean_title}', new_x="LMARGIN", new_y="NEXT")
 
             if summary:
                 self.set_font('Helvetica', '', 8)
                 self.set_text_color(60, 60, 60)
-                clean_summary = summary.encode('latin-1', 'replace').decode('latin-1')[:400]
+                clean_summary = summary.encode('latin-1', 'pdf_safe').decode('latin-1')[:400]
                 if clean_summary:
                     self.multi_cell(0, 4, clean_summary, new_x="LMARGIN", new_y="NEXT")
 
@@ -551,7 +551,7 @@ def generate_brief_pdf(brief: dict, date: str, total: int, critical: int, high: 
             self.set_font('Helvetica', 'B', 9)
             self.set_text_color(40, 60, 80)
             sev_label = f' [{severity.upper()}]' if severity in ('critical', 'high') else ''
-            clean_title = f'{index}. {title}{sev_label}'.encode('latin-1', 'replace').decode('latin-1')[:180]
+            clean_title = f'{index}. {title}{sev_label}'.encode('latin-1', 'pdf_safe').decode('latin-1')[:180]
             self.multi_cell(0, 5, clean_title, new_x="LMARGIN", new_y="NEXT")
             if item.get('older_item'):
                 self.set_font('Helvetica', 'BI', 7)
@@ -568,12 +568,12 @@ def generate_brief_pdf(brief: dict, date: str, total: int, critical: int, high: 
                     self.set_font('Helvetica', 'B', 7)
                     self.set_text_color(160, 40, 40)
                     tag_str = '[PAOI] ' + ' | '.join(t['name'][:28] for t in paoi_tags[:3])
-                    self.cell(0, 4, tag_str.encode('latin-1', 'replace').decode('latin-1'), new_x="LMARGIN", new_y="NEXT")
+                    self.cell(0, 4, tag_str.encode('latin-1', 'pdf_safe').decode('latin-1'), new_x="LMARGIN", new_y="NEXT")
                 if other_tags:
                     self.set_font('Helvetica', '', 7)
                     self.set_text_color(90, 90, 130)
                     tag_str = 'Faultlines: ' + ' | '.join(t['name'][:28] for t in other_tags[:3])
-                    self.cell(0, 4, tag_str.encode('latin-1', 'replace').decode('latin-1'), new_x="LMARGIN", new_y="NEXT")
+                    self.cell(0, 4, tag_str.encode('latin-1', 'pdf_safe').decode('latin-1'), new_x="LMARGIN", new_y="NEXT")
 
             cluster_size = item.get('cluster_size', 0)
             if cluster_size and cluster_size > 1:
@@ -584,7 +584,7 @@ def generate_brief_pdf(brief: dict, date: str, total: int, critical: int, high: 
             if summary:
                 self.set_font('Helvetica', '', 8)
                 self.set_text_color(60, 60, 60)
-                self.multi_cell(0, 4, summary.encode('latin-1', 'replace').decode('latin-1')[:500], new_x="LMARGIN", new_y="NEXT")
+                self.multi_cell(0, 4, summary.encode('latin-1', 'pdf_safe').decode('latin-1')[:500], new_x="LMARGIN", new_y="NEXT")
 
             why = item.get('why_it_matters', '')
             if why:
@@ -594,7 +594,7 @@ def generate_brief_pdf(brief: dict, date: str, total: int, critical: int, high: 
                 self.cell(30, 4, 'Why it matters: ', new_x="END")
                 self.set_font('Helvetica', '', 7)
                 self.set_text_color(80, 80, 80)
-                self.multi_cell(0, 4, why.encode('latin-1', 'replace').decode('latin-1')[:300], new_x="LMARGIN", new_y="NEXT")
+                self.multi_cell(0, 4, why.encode('latin-1', 'pdf_safe').decode('latin-1')[:300], new_x="LMARGIN", new_y="NEXT")
 
             impact = item.get('potential_impact', '')
             if impact:
@@ -604,7 +604,7 @@ def generate_brief_pdf(brief: dict, date: str, total: int, critical: int, high: 
                 self.cell(30, 4, 'Potential impact: ', new_x="END")
                 self.set_font('Helvetica', '', 7)
                 self.set_text_color(80, 80, 80)
-                self.multi_cell(0, 4, impact.encode('latin-1', 'replace').decode('latin-1')[:300], new_x="LMARGIN", new_y="NEXT")
+                self.multi_cell(0, 4, impact.encode('latin-1', 'pdf_safe').decode('latin-1')[:300], new_x="LMARGIN", new_y="NEXT")
 
             warning = item.get('early_warning', '')
             if warning:
@@ -614,20 +614,20 @@ def generate_brief_pdf(brief: dict, date: str, total: int, critical: int, high: 
                 self.cell(30, 4, 'EARLY WARNING: ', new_x="END")
                 self.set_font('Helvetica', '', 7)
                 self.set_text_color(150, 50, 50)
-                self.multi_cell(0, 4, warning.encode('latin-1', 'replace').decode('latin-1')[:300], new_x="LMARGIN", new_y="NEXT")
+                self.multi_cell(0, 4, warning.encode('latin-1', 'pdf_safe').decode('latin-1')[:300], new_x="LMARGIN", new_y="NEXT")
 
             flags = item.get('special_flags', [])
             if flags and isinstance(flags, list) and len(flags) > 0:
                 self.set_font('Helvetica', 'I', 7)
                 self.set_text_color(140, 100, 40)
                 flags_text = 'Flags: ' + ' | '.join(str(f) for f in flags[:5])
-                self.cell(0, 4, flags_text.encode('latin-1', 'replace').decode('latin-1')[:150], new_x="LMARGIN", new_y="NEXT")
+                self.cell(0, 4, flags_text.encode('latin-1', 'pdf_safe').decode('latin-1')[:150], new_x="LMARGIN", new_y="NEXT")
 
             actors = item.get('actors', '')
             if actors:
                 self.set_font('Helvetica', 'I', 7)
                 self.set_text_color(100, 100, 120)
-                self.cell(0, 4, f'Actors: {str(actors)[:120]}'.encode('latin-1', 'replace').decode('latin-1'), new_x="LMARGIN", new_y="NEXT")
+                self.cell(0, 4, f'Actors: {str(actors)[:120]}'.encode('latin-1', 'pdf_safe').decode('latin-1'), new_x="LMARGIN", new_y="NEXT")
 
             analyst_note = item.get('analyst_note', '')
             if analyst_note:
@@ -637,7 +637,7 @@ def generate_brief_pdf(brief: dict, date: str, total: int, critical: int, high: 
                 self.cell(0, 4, 'ANALYST NOTE:', new_x="LMARGIN", new_y="NEXT")
                 self.set_font('Helvetica', 'I', 8)
                 self.set_text_color(70, 40, 120)
-                note_clean = analyst_note[:400].encode('latin-1', 'replace').decode('latin-1')
+                note_clean = analyst_note[:400].encode('latin-1', 'pdf_safe').decode('latin-1')
                 self.multi_cell(0, 4, note_clean, new_x="LMARGIN", new_y="NEXT")
 
             meta_parts = []
@@ -652,9 +652,9 @@ def generate_brief_pdf(brief: dict, date: str, total: int, critical: int, high: 
                 self.set_text_color(100, 100, 100)
                 meta_text = ' | '.join(meta_parts)
                 if source_url:
-                    self.cell(0, 4, meta_text.encode('latin-1', 'replace').decode('latin-1')[:180], new_x="LMARGIN", new_y="NEXT", link=source_url)
+                    self.cell(0, 4, meta_text.encode('latin-1', 'pdf_safe').decode('latin-1')[:180], new_x="LMARGIN", new_y="NEXT", link=source_url)
                 else:
-                    self.cell(0, 4, meta_text.encode('latin-1', 'replace').decode('latin-1')[:180], new_x="LMARGIN", new_y="NEXT")
+                    self.cell(0, 4, meta_text.encode('latin-1', 'pdf_safe').decode('latin-1')[:180], new_x="LMARGIN", new_y="NEXT")
 
             self.ln(3)
 
@@ -718,7 +718,7 @@ def generate_brief_pdf(brief: dict, date: str, total: int, critical: int, high: 
             else:
                 pdf.set_font('Helvetica', '', 9)
                 pdf.set_text_color(40, 40, 40)
-                clean_dev = str(dev).encode('latin-1', 'replace').decode('latin-1')
+                clean_dev = str(dev).encode('latin-1', 'pdf_safe').decode('latin-1')
                 pdf.multi_cell(0, 5, f'{i:02d}. {clean_dev}')
                 pdf.ln(1)
     else:
@@ -748,7 +748,7 @@ def generate_brief_pdf(brief: dict, date: str, total: int, critical: int, high: 
             for cat_name, cat_items in by_cat.items():
                 pdf.set_font('Helvetica', 'I', 9)
                 pdf.set_text_color(80, 80, 80)
-                cat_clean = cat_name.encode('latin-1', 'replace').decode('latin-1')
+                cat_clean = cat_name.encode('latin-1', 'pdf_safe').decode('latin-1')
                 pdf.cell(0, 5, f"  {cat_clean}", new_x="LMARGIN", new_y="NEXT")
                 pdf.ln(0.5)
                 for idx, item in enumerate(cat_items, 1):
@@ -758,7 +758,7 @@ def generate_brief_pdf(brief: dict, date: str, total: int, critical: int, high: 
                     sev_marker = f"[{severity}] " if severity and severity != "MEDIUM" else ""
                     raw_title = item.get('title', '')
                     title_text = f"  {idx}. {sev_marker}{raw_title}"
-                    title_clean = title_text.encode('latin-1', 'replace').decode('latin-1')[:150]
+                    title_clean = title_text.encode('latin-1', 'pdf_safe').decode('latin-1')[:150]
                     pdf.set_font('Helvetica', 'B', 9)
                     pdf.set_text_color(40, 60, 80)
                     pdf.multi_cell(0, 4.5, title_clean, new_x="LMARGIN", new_y="NEXT")
@@ -771,23 +771,23 @@ def generate_brief_pdf(brief: dict, date: str, total: int, critical: int, high: 
                             pdf.set_font('Helvetica', 'B', 7)
                             pdf.set_text_color(160, 40, 40)
                             tag_str = '     [PAOI] ' + ' | '.join(t['name'][:28] for t in paoi_fl[:3])
-                            pdf.cell(0, 3.5, tag_str.encode('latin-1', 'replace').decode('latin-1'), new_x="LMARGIN", new_y="NEXT")
+                            pdf.cell(0, 3.5, tag_str.encode('latin-1', 'pdf_safe').decode('latin-1'), new_x="LMARGIN", new_y="NEXT")
                         if other_fl:
                             pdf.set_font('Helvetica', '', 7)
                             pdf.set_text_color(90, 90, 130)
                             tag_str = '     Faultlines: ' + ' | '.join(t['name'][:28] for t in other_fl[:3])
-                            pdf.cell(0, 3.5, tag_str.encode('latin-1', 'replace').decode('latin-1'), new_x="LMARGIN", new_y="NEXT")
+                            pdf.cell(0, 3.5, tag_str.encode('latin-1', 'pdf_safe').decode('latin-1'), new_x="LMARGIN", new_y="NEXT")
                     summary = item.get('summary', '')
                     if summary:
                         pdf.set_font('Helvetica', '', 8)
                         pdf.set_text_color(40, 40, 40)
-                        s_clean = summary[:300].encode('latin-1', 'replace').decode('latin-1')
+                        s_clean = summary[:300].encode('latin-1', 'pdf_safe').decode('latin-1')
                         pdf.multi_cell(0, 4, f"     {s_clean}", new_x="LMARGIN", new_y="NEXT")
                     source = item.get('source', '')
                     if source:
                         pdf.set_font('Helvetica', 'I', 7)
                         pdf.set_text_color(100, 100, 100)
-                        source_clean = str(source)[:80].encode('latin-1', 'replace').decode('latin-1')
+                        source_clean = str(source)[:80].encode('latin-1', 'pdf_safe').decode('latin-1')
                         pdf.cell(0, 3.5, f"     Source: {source_clean}", new_x="LMARGIN", new_y="NEXT")
                     pdf.ln(1)
             pdf.ln(1)
@@ -818,7 +818,7 @@ def generate_brief_pdf(brief: dict, date: str, total: int, critical: int, high: 
                 severity = (item.get('severity', '') or '').upper()
                 sev_marker = f"[{severity}] " if severity and severity not in ("MEDIUM", "LOW") else ""
                 raw_title = item.get('title', '')
-                title_clean = f"  {idx}. {sev_marker}{raw_title}".encode('latin-1', 'replace').decode('latin-1')[:160]
+                title_clean = f"  {idx}. {sev_marker}{raw_title}".encode('latin-1', 'pdf_safe').decode('latin-1')[:160]
                 pdf.set_font('Helvetica', 'B', 9)
                 pdf.set_text_color(40, 60, 80)
                 pdf.multi_cell(0, 4.5, title_clean, new_x="LMARGIN", new_y="NEXT")
@@ -831,22 +831,22 @@ def generate_brief_pdf(brief: dict, date: str, total: int, critical: int, high: 
                         pdf.set_font('Helvetica', 'B', 7)
                         pdf.set_text_color(160, 40, 40)
                         tag_str = '     [PAOI] ' + ' | '.join(t['name'][:28] for t in paoi_fl[:3])
-                        pdf.cell(0, 3.5, tag_str.encode('latin-1', 'replace').decode('latin-1'), new_x="LMARGIN", new_y="NEXT")
+                        pdf.cell(0, 3.5, tag_str.encode('latin-1', 'pdf_safe').decode('latin-1'), new_x="LMARGIN", new_y="NEXT")
                     if other_fl:
                         pdf.set_font('Helvetica', '', 7)
                         pdf.set_text_color(90, 90, 130)
                         tag_str = '     Faultlines: ' + ' | '.join(t['name'][:28] for t in other_fl[:3])
-                        pdf.cell(0, 3.5, tag_str.encode('latin-1', 'replace').decode('latin-1'), new_x="LMARGIN", new_y="NEXT")
+                        pdf.cell(0, 3.5, tag_str.encode('latin-1', 'pdf_safe').decode('latin-1'), new_x="LMARGIN", new_y="NEXT")
                 summary = item.get('summary', '')
                 if summary:
                     pdf.set_font('Helvetica', '', 8)
                     pdf.set_text_color(40, 40, 40)
-                    pdf.multi_cell(0, 4, f"     {summary[:280].encode('latin-1', 'replace').decode('latin-1')}", new_x="LMARGIN", new_y="NEXT")
+                    pdf.multi_cell(0, 4, f"     {summary[:280].encode('latin-1', 'pdf_safe').decode('latin-1')}", new_x="LMARGIN", new_y="NEXT")
                 source = item.get('source', '')
                 if source:
                     pdf.set_font('Helvetica', 'I', 7)
                     pdf.set_text_color(100, 100, 100)
-                    pdf.cell(0, 3.5, f"     Source: {str(source)[:80].encode('latin-1', 'replace').decode('latin-1')}", new_x="LMARGIN", new_y="NEXT")
+                    pdf.cell(0, 3.5, f"     Source: {str(source)[:80].encode('latin-1', 'pdf_safe').decode('latin-1')}", new_x="LMARGIN", new_y="NEXT")
                 pdf.ln(1)
         pdf.ln(2)
 
@@ -865,13 +865,13 @@ def generate_brief_pdf(brief: dict, date: str, total: int, critical: int, high: 
         for i, doc in enumerate(same_date_docs[:10], 1):
             pdf.set_font('Helvetica', 'B', 9)
             pdf.set_text_color(80, 60, 40)
-            filename = str(doc.get('filename', 'Unknown Document')).encode('latin-1', 'replace').decode('latin-1')
+            filename = str(doc.get('filename', 'Unknown Document')).encode('latin-1', 'pdf_safe').decode('latin-1')
             pdf.cell(0, 5, f'{i}. {filename}', new_x="LMARGIN", new_y="NEXT")
 
             pdf.set_font('Helvetica', '', 8)
             pdf.set_text_color(60, 60, 60)
             analysis = doc.get('ai_analysis', doc.get('content_summary', ''))[:500]
-            clean_analysis = analysis.encode('latin-1', 'replace').decode('latin-1')
+            clean_analysis = analysis.encode('latin-1', 'pdf_safe').decode('latin-1')
             pdf.multi_cell(0, 4, clean_analysis)
             pdf.ln(2)
 
@@ -898,7 +898,7 @@ def generate_brief_pdf(brief: dict, date: str, total: int, critical: int, high: 
 
             pdf.set_font('Helvetica', 'B', 9)
             header = f'{i}. [{risk}] {region} - {detail}'
-            clean_header = header.encode('latin-1', 'replace').decode('latin-1')
+            clean_header = header.encode('latin-1', 'pdf_safe').decode('latin-1')
             pdf.cell(0, 5, clean_header, new_x="LMARGIN", new_y="NEXT")
 
             pdf.set_font('Helvetica', '', 8)
@@ -911,7 +911,7 @@ def generate_brief_pdf(brief: dict, date: str, total: int, critical: int, high: 
                 pdf.set_font('Helvetica', 'I', 7)
                 pdf.set_text_color(100, 100, 100)
                 for title in samples[:2]:
-                    clean_t = str(title).encode('latin-1', 'replace').decode('latin-1')[:120]
+                    clean_t = str(title).encode('latin-1', 'pdf_safe').decode('latin-1')[:120]
                     pdf.cell(0, 4, f'     - {clean_t}', new_x="LMARGIN", new_y="NEXT")
             pdf.ln(2)
 

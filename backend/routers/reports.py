@@ -49,7 +49,7 @@ def _to_ddmmyyyy_ist(iso_str):
 def _clean(text, max_len=500):
     if not text:
         return ""
-    return str(text).encode('latin-1', 'replace').decode('latin-1')[:max_len]
+    return str(text).encode('latin-1', 'pdf_safe').decode('latin-1')[:max_len]
 
 
 class ReportPDF(FPDF):

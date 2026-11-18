@@ -679,7 +679,7 @@ def _safe(text: str) -> str:
     }
     for src, dst in replacements.items():
         text = text.replace(src, dst)
-    return text.encode("latin-1", "replace").decode("latin-1")
+    return text.encode("latin-1", "pdf_safe").decode("latin-1")
 
 
 def _render_pdf(report: dict) -> bytes:

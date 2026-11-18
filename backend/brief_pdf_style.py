@@ -39,6 +39,8 @@ CONCERN_COLORS = {
 
 
 # ── Layout helpers ────────────────────────────────────────────────────────────
+import utils.pdf_render  # registers the pdf_safe text rule
+
 NL = {"new_x": XPos.LMARGIN, "new_y": YPos.NEXT}
 
 
@@ -61,7 +63,7 @@ def ascii_safe(s) -> str:
     }
     for o, r in replacements.items():
         s = s.replace(o, r)
-    return s.encode("latin-1", errors="replace").decode("latin-1")
+    return s.encode("latin-1", "pdf_safe").decode("latin-1")
 
 
 def concern_level(score: float) -> str:
