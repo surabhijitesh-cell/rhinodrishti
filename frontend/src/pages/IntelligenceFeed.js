@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
   Search, Filter, X, ChevronLeft, ChevronRight, SlidersHorizontal, ArrowUpDown, Sparkles, Star,
@@ -14,7 +14,30 @@ import {
 import IntelligenceCard from "../components/IntelligenceCard";
 import axios from "axios";
 import LoadError from "../components/LoadError";
+import ConfirmAction from "../components/ConfirmAction";
+import { useAuth } from "../contexts/AuthContext";
+import { useAdminIod } from "../contexts/AdminIodContext";
+import { formatIST } from "../lib/time";
 import { toast } from "sonner";
+
+const SEARCH_DELAY_MS = 400;        // wait this long after typing stops before searching
+const FRESHNESS_CHECK_MS = 60000;   // look for newer items this often while the page is visible
+const FRESHNESS_BUFFER_MS = 15 * 60000; // items are collected a little before they are classified
+
+/** Only the ids the page is not already showing count as new. */
+export function countNewItems(candidateIds, shownIds) {
+  const shown = new Set(shownIds);
+  return (candidateIds || []).filter((id) => !shown.has(id)).length;
+}
+
+/** The time (ISO) to ask the server "what is newer than this?" about. */
+export function freshSince(loadedAtMs) {
+  return new Date(loadedAtMs - FRESHNESS_BUFFER_MS).toISOString();
+}
+
+export function newItemsLabel(n) {
+  return n === 1 ? "1 new item" : `${n} new items`;
+}
 
 const STATES = [
   "Assam", "Meghalaya", "Mizoram", "Manipur", "Arunachal Pradesh", "Tripura",
@@ -44,7 +67,20 @@ export default function IntelligenceFeed({ api, crossBorderOnly = false, alertsO
   const [semanticMode, setSemanticMode] = useState(false);
   const [semanticQuery, setSemanticQuery] = useState("");
   const [semanticResults, setSemanticResults] = useState([]);
-  const [semanticLoading, setSemanticLoading] = useState(false);
+  // idle -> searching -> results | empty | failed. Anything but "results" shows no old items.
+  const [semanticStatus, setSemanticStatus] = useState("idle");
+  const semanticLoading = semanticStatus === "searching";
+  const [newCount, setNewCount] = useState(0);
+  const [lastLoadedAt, setLastLoadedAt] = useState(null);
+  const fetchSeq = useRef(0);       // a slower, older answer must not replace a newer one
+  const semanticSeq = useRef(0);
+  const loadedAtMs = useRef(Date.now());
+  const itemsRef = useRef([]);
+  const { user } = useAuth();
+  const { viewIod } = useAdminIod();
+  const isAdmin = user?.role === "admin";
+  const adminViewIod = isAdmin && viewIod ? viewIod : "";
+  const viewedIod = adminViewIod || user?.iod || "IOD-1";
   const [feedbackMap, setFeedbackMap] = useState({});
   const [generatingPdf, setGeneratingPdf] = useState(false);
   const [pdfClickCount, setPdfClickCount] = useState(() => {
@@ -61,54 +97,105 @@ export default function IntelligenceFeed({ api, crossBorderOnly = false, alertsO
     sort_by: searchParams.get("sort_by") || "published_at",
     sort_order: "desc",
   });
+  // What is typed in the box; it becomes filters.search once typing pauses.
+  const [searchText, setSearchText] = useState(filters.search);
+
+  // The filters the server understands, shared by the list, the new-items check and the PDF.
+  const filterParams = useCallback(() => {
+    const params = new URLSearchParams();
+    if (filters.state) params.set("state", filters.state);
+    if (filters.threat_type) params.set("threat_type", filters.threat_type);
+    if (filters.severity && !alertsOnly) params.set("severity", filters.severity);
+    if (filters.search) params.set("search", filters.search);
+    if (filters.min_priority) params.set("min_priority", filters.min_priority);
+    return params;
+  }, [filters, alertsOnly]);
 
   const fetchItems = useCallback(async () => {
+    const seq = ++fetchSeq.current;
     setLoading(true);
     try {
-      const params = new URLSearchParams();
-      if (filters.state) params.set("state", filters.state);
-      if (filters.threat_type) params.set("threat_type", filters.threat_type);
-      if (filters.severity) params.set("severity", filters.severity);
-      if (filters.search) params.set("search", filters.search);
-      if (crossBorderOnly) params.set("is_cross_border", "true");
-      if (filters.min_priority) params.set("min_priority", filters.min_priority);
+      const params = filterParams();
       if (filters.sort_by) params.set("sort_by", filters.sort_by);
       if (filters.sort_order) params.set("sort_order", filters.sort_order);
-      params.set("page", String(page));
-      params.set("limit", "15");
-
-      let url = `${api}/intelligence?${params.toString()}`;
+      if (adminViewIod) params.set("iod", adminViewIod);
+      let data;
       if (alertsOnly) {
-        const res = await axios.get(`${api}/alerts`);
-        let alertItems = res.data.alerts || [];
-        if (filters.state) alertItems = alertItems.filter((i) => i.state === filters.state);
-        if (filters.threat_type) alertItems = alertItems.filter((i) => i.threat_category === filters.threat_type);
-        if (filters.search) {
-          const q = filters.search.toLowerCase();
-          alertItems = alertItems.filter((i) =>
-            i.title?.toLowerCase().includes(q) || i.ai_summary?.toLowerCase().includes(q)
-          );
-        }
+        data = (await axios.get(`${api}/alerts?${params.toString()}`)).data;
+      } else {
+        if (crossBorderOnly) params.set("is_cross_border", "true");
+        params.set("page", String(page));
+        params.set("limit", "15");
+        data = (await axios.get(`${api}/intelligence?${params.toString()}`)).data;
+      }
+      if (seq !== fetchSeq.current) return;
+      if (alertsOnly) {
+        const alertItems = data.alerts || [];
         setItems(alertItems);
-        setTotal(alertItems.length);
-        setOpenAlertCount(res.data.count || alertItems.length);
+        setTotal(data.matched ?? alertItems.length);
+        setOpenAlertCount(data.count ?? alertItems.length);
         setPages(1);
       } else {
-        const res = await axios.get(url);
-        setItems(res.data.items || []);
-        setTotal(res.data.total || 0);
-        setPages(res.data.pages || 0);
+        setItems(data.items || []);
+        setTotal(data.total || 0);
+        setPages(data.pages || 0);
       }
+      loadedAtMs.current = Date.now();
+      setLastLoadedAt(new Date().toISOString());
+      setNewCount(0);
       setLoadFailed(false);
     } catch (e) {
+      if (seq !== fetchSeq.current) return;
       setLoadFailed(true);
     }
     setLoading(false);
-  }, [api, filters, page, crossBorderOnly, alertsOnly]);
+  }, [api, filters.sort_by, filters.sort_order, filterParams, page, crossBorderOnly, alertsOnly, adminViewIod]);
 
   useEffect(() => {
     fetchItems();
   }, [fetchItems]);
+
+  useEffect(() => { itemsRef.current = items; }, [items]);
+
+  // Typing waits for a short pause, then searches once.
+  useEffect(() => {
+    if (searchText === filters.search) return undefined;
+    const timer = setTimeout(() => {
+      setFilters((prev) => ({ ...prev, search: searchText }));
+      setPage(1);
+    }, SEARCH_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [searchText, filters.search]);
+
+  // Every minute (while this tab is visible) ask whether anything newer has arrived.
+  const checkForNewItems = useCallback(async () => {
+    if (document.visibilityState !== "visible" || semanticMode) return;
+    try {
+      const params = filterParams();
+      params.set("since", freshSince(loadedAtMs.current));
+      if (alertsOnly) params.set("alerts_only", "true");
+      else if (crossBorderOnly) params.set("is_cross_border", "true");
+      const res = await axios.get(`${api}/intelligence/new-since?${params.toString()}`);
+      setNewCount(countNewItems(res.data.ids, itemsRef.current.map((i) => i.id)));
+    } catch {
+      // quiet: the next check tries again
+    }
+  }, [api, filterParams, alertsOnly, crossBorderOnly, semanticMode]);
+
+  useEffect(() => {
+    const timer = setInterval(checkForNewItems, FRESHNESS_CHECK_MS);
+    document.addEventListener("visibilitychange", checkForNewItems);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", checkForNewItems);
+    };
+  }, [checkForNewItems]);
+
+  // Loads the new items with the same filters; the list never jumps by itself.
+  const showNewItems = () => {
+    if (page !== 1) setPage(1);
+    else fetchItems();
+  };
 
   // Alerts page: acknowledge one alert, or every alert currently shown.
   const acknowledgeAlerts = async (ids) => {
@@ -158,25 +245,26 @@ export default function IntelligenceFeed({ api, crossBorderOnly = false, alertsO
   };
 
   const handleDeleteItem = async (itemId) => {
-    try {
-      await axios.delete(`${api}/intelligence/${itemId}`);
-      setItems((prev) => prev.filter((i) => i.id !== itemId));
-      setTotal((prev) => Math.max(0, prev - 1));
-    } catch (e) {
-      console.error("Delete failed:", e);
-    }
+    // A failure is thrown back to the card, which tells the person and restores its button.
+    await axios.delete(`${api}/intelligence/${itemId}`);
+    setItems((prev) => prev.filter((i) => i.id !== itemId));
+    setSemanticResults((prev) => prev.filter((i) => i.id !== itemId));
+    setTotal((prev) => Math.max(0, prev - 1));
   };
 
   const handleGeneratePdf = async () => {
     setGeneratingPdf(true);
     try {
-      const params = new URLSearchParams();
-      if (filters.state) params.set("state", filters.state);
-      if (filters.threat_type) params.set("threat_type", filters.threat_type);
-      if (filters.severity) params.set("severity", filters.severity);
-      if (filters.search) params.set("search", filters.search);
-      if (filters.min_priority) params.set("min_priority", filters.min_priority);
+      // Same filters as the list on screen; on the Alerts page the server exports the alert list itself.
+      const params = filterParams();
       if (filters.sort_by) params.set("sort_by", filters.sort_by);
+      if (filters.sort_order) params.set("sort_order", filters.sort_order);
+      if (alertsOnly) {
+        params.set("alerts_only", "true");
+        if (adminViewIod) params.set("iod", adminViewIod);
+      } else if (crossBorderOnly) {
+        params.set("is_cross_border", "true");
+      }
       const res = await axios.get(`${api}/reports/filtered-feed?${params.toString()}`, { responseType: "blob" });
       const url = window.URL.createObjectURL(new Blob([res.data], { type: "application/pdf" }));
       const a = document.createElement("a");
@@ -197,28 +285,40 @@ export default function IntelligenceFeed({ api, crossBorderOnly = false, alertsO
     setPage(1);
   };
 
+  const resetSemantic = () => {
+    semanticSeq.current += 1;   // forget any search still on its way
+    setSemanticResults([]);
+    setSemanticStatus("idle");
+  };
+
   const clearFilters = () => {
     setFilters({ state: "", threat_type: "", severity: "", search: "", min_priority: "", sort_by: "published_at", sort_order: "desc" });
+    setSearchText("");
     setPage(1);
     setSemanticMode(false);
-    setSemanticResults([]);
     setSemanticQuery("");
+    resetSemantic();
   };
 
   const runSemanticSearch = async () => {
     if (!semanticQuery.trim()) return;
-    setSemanticLoading(true);
+    const seq = ++semanticSeq.current;
+    setSemanticResults([]);
+    setSemanticStatus("searching");
     try {
       const res = await axios.post(`${api}/intelligence/semantic-search`, {
         query: semanticQuery,
         limit: 15,
         min_score: 0.25,
       });
-      setSemanticResults(res.data.results || []);
+      if (seq !== semanticSeq.current) return;
+      const found = res.data.results || [];
+      setSemanticResults(found);
+      setSemanticStatus(found.length ? "results" : "empty");
     } catch (e) {
-      console.error("Semantic search failed:", e);
+      if (seq !== semanticSeq.current) return;
+      setSemanticStatus("failed");
     }
-    setSemanticLoading(false);
   };
 
   const activeFilterCount = Object.entries(filters).filter(([k, v]) => v && k !== "sort_by" && k !== "sort_order").length;
@@ -228,6 +328,11 @@ export default function IntelligenceFeed({ api, crossBorderOnly = false, alertsO
     : crossBorderOnly === true
     ? "Bangladesh, Myanmar & regional border activity"
     : "All monitored intelligence across NER";
+  // Ranking favours the viewed IOD's faultlines; the list itself still covers every IOD.
+  const iodNote = !crossBorderOnly && viewedIod !== "IOD-1"
+    ? `Items for ${viewedIod}${adminViewIod ? " (admin view)" : ""} are ranked first; the list still includes all IODs.`
+    : "";
+  const semanticFailedMsg = "Search failed. The AI search could not run, so no results are shown. Please try again.";
 
   return (
     <div className="space-y-4" data-testid="intelligence-feed-page">
@@ -237,6 +342,7 @@ export default function IntelligenceFeed({ api, crossBorderOnly = false, alertsO
           {pageTitle}
         </h1>
         <p className="text-xs font-mono uppercase tracking-[0.15em] text-muted-foreground mt-1">{pageDesc}</p>
+        {iodNote && <p className="text-[11px] text-muted-foreground mt-1" data-testid="iod-note">{iodNote}</p>}
       </div>
 
       {alertsOnly && (
@@ -245,17 +351,21 @@ export default function IntelligenceFeed({ api, crossBorderOnly = false, alertsO
             {openAlertCount} alert{openAlertCount === 1 ? "" : "s"} need attention
             {items.length < openAlertCount ? ` — showing ${items.length}` : ""}
           </span>
-          <Button
-            variant="outline" size="sm"
-            className="rounded-none text-xs uppercase border-green-500/30 text-green-400 hover:bg-green-500/10"
-            disabled={acking || items.length === 0}
-            onClick={() => {
-              if (window.confirm(`Acknowledge all ${items.length} alerts shown?`)) acknowledgeAlerts(items.map((i) => i.id));
-            }}
-            data-testid="ack-all-btn"
+          <ConfirmAction
+            title={`Acknowledge all ${items.length} alerts shown?`}
+            description="They will leave the Alerts list and the sidebar count."
+            confirmLabel="Acknowledge all"
+            onConfirm={() => acknowledgeAlerts(items.map((i) => i.id))}
           >
-            ACK all shown ({items.length})
-          </Button>
+            <Button
+              variant="outline" size="sm"
+              className="rounded-none text-xs uppercase border-green-500/30 text-green-400 hover:bg-green-500/10"
+              disabled={acking || items.length === 0}
+              data-testid="ack-all-btn"
+            >
+              ACK all shown ({items.length})
+            </Button>
+          </ConfirmAction>
         </div>
       )}
 
@@ -265,8 +375,12 @@ export default function IntelligenceFeed({ api, crossBorderOnly = false, alertsO
           <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
           <Input
             placeholder={semanticMode ? "Describe what you're looking for… (press Enter to search)" : "Search articles by keyword…"}
-            value={semanticMode ? semanticQuery : filters.search}
-            onChange={(e) => semanticMode ? setSemanticQuery(e.target.value) : updateFilter("search", e.target.value)}
+            value={semanticMode ? semanticQuery : searchText}
+            onChange={(e) => {
+              if (!semanticMode) { setSearchText(e.target.value); return; }
+              setSemanticQuery(e.target.value);
+              resetSemantic();   // an edited query never shows the old answer
+            }}
             onKeyDown={(e) => { if (e.key === "Enter" && semanticMode) runSemanticSearch(); }}
             className="pl-9 rounded-none h-9 text-sm"
             data-testid="feed-search-input"
@@ -279,8 +393,8 @@ export default function IntelligenceFeed({ api, crossBorderOnly = false, alertsO
             className={`rounded-none uppercase text-xs tracking-wider shrink-0 ${semanticMode ? "bg-primary" : ""}`}
             onClick={() => {
               setSemanticMode(!semanticMode);
-              setSemanticResults([]);
               setSemanticQuery("");
+              resetSemantic();
             }}
             data-testid="semantic-search-toggle"
           >
@@ -351,10 +465,32 @@ export default function IntelligenceFeed({ api, crossBorderOnly = false, alertsO
           </Button>
         </Tip>
 
-        <span className="text-xs font-mono text-muted-foreground ml-auto" data-testid="result-count">
-          {semanticMode && semanticResults.length > 0 ? `${semanticResults.length} similar` : loadFailed ? "—" : `${total} results`}
+        <span className="text-xs font-mono text-muted-foreground ml-auto text-right" data-testid="result-count">
+          {semanticMode
+            ? (semanticStatus === "results" ? `${semanticResults.length} similar`
+              : semanticStatus === "empty" ? "0 similar" : "—")
+            : loadFailed ? "—" : `${total} results`}
+          {!semanticMode && lastLoadedAt && !loadFailed && (
+            <span className="block text-[10px] opacity-70">Updated {formatIST(lastLoadedAt)}</span>
+          )}
         </span>
       </div>
+
+      {semanticMode && (
+        <p className="text-[11px] text-muted-foreground" data-testid="semantic-scope-note">
+          AI search looks across all IODs; it is not limited to the IOD being viewed.
+        </p>
+      )}
+
+      {!semanticMode && newCount > 0 && (
+        <button
+          onClick={showNewItems}
+          className="w-full border border-primary/40 bg-primary/10 text-primary text-xs font-mono uppercase tracking-wider py-2 hover:bg-primary/20"
+          data-testid="new-items-btn"
+        >
+          {newItemsLabel(newCount)} - click to load
+        </button>
+      )}
 
       {/* Filter panel */}
       {showFilters && (
@@ -431,7 +567,7 @@ export default function IntelligenceFeed({ api, crossBorderOnly = false, alertsO
       )}
 
       {/* Items grid */}
-      {loading ? (
+      {(semanticMode ? semanticStatus === "searching" : loading) ? (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4" data-testid="loading-skeleton">
           {Array.from({ length: 6 }).map((_, i) => (
             <div key={i} className="border border-border bg-card p-4 h-40 animate-pulse">
@@ -442,7 +578,23 @@ export default function IntelligenceFeed({ api, crossBorderOnly = false, alertsO
             </div>
           ))}
         </div>
-      ) : semanticMode && semanticResults.length > 0 ? (
+      ) : semanticMode && semanticStatus === "failed" ? (
+        <div className="text-center py-12 border border-amber-500/40 bg-amber-500/5" role="alert" data-testid="semantic-failed">
+          <p className="text-amber-400 text-sm font-semibold">Search failed</p>
+          <p className="text-muted-foreground text-xs mt-1">{semanticFailedMsg}</p>
+          <Button size="sm" variant="outline" className="rounded-none mt-3 text-xs uppercase" onClick={runSemanticSearch}>
+            Try again
+          </Button>
+        </div>
+      ) : semanticMode && semanticStatus === "empty" ? (
+        <div className="text-center py-12 border border-border bg-card" data-testid="semantic-empty">
+          <p className="text-muted-foreground text-sm">No matching items</p>
+        </div>
+      ) : semanticMode && semanticStatus === "idle" ? (
+        <div className="text-center py-12 border border-border bg-card" data-testid="semantic-idle">
+          <p className="text-muted-foreground text-sm">Describe what you are looking for, then press Enter.</p>
+        </div>
+      ) : semanticMode ? (
         <>
           <div className="flex items-center gap-2 mb-2">
             <Sparkles size={14} className="text-primary" />
@@ -482,7 +634,7 @@ export default function IntelligenceFeed({ api, crossBorderOnly = false, alertsO
             ))}
           </div>
 
-          {loadFailed && items.length === 0 && (
+          {loadFailed && (
             <LoadError what={alertsOnly ? "the alerts" : "the intelligence items"} onRetry={fetchItems} />
           )}
           {!loadFailed && items.length === 0 && (

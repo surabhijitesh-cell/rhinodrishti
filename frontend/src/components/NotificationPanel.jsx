@@ -8,6 +8,8 @@ import {
 } from "lucide-react";
 import { Button } from "./ui/button";
 import { useNotifications } from "../hooks/useNotifications";
+import { formatIST, timeAgo } from "../lib/time";
+import LoadError from "./LoadError";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
@@ -31,17 +33,6 @@ const TYPE_COLOR = {
   USER_FILTER_MATCH: "text-blue-400",
   REPORT_READY: "text-green-400",
 };
-
-function timeAgo(isoStr) {
-  if (!isoStr) return "";
-  const diff = Date.now() - new Date(isoStr).getTime();
-  const m = Math.floor(diff / 60000);
-  if (m < 1) return "just now";
-  if (m < 60) return `${m}m ago`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h ago`;
-  return `${Math.floor(h / 24)}d ago`;
-}
 
 function PrefsPanel({ prefs, onSave }) {
   const [local, setLocal] = useState(prefs || {});
@@ -142,17 +133,27 @@ export default function NotificationPanel({ onClose }) {
 
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
-  const [total, setTotal] = useState(0);
+  const [hasMore, setHasMore] = useState(false);
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [moreFailed, setMoreFailed] = useState(false);
   const [tab, setTab] = useState("all");
   const [pushError, setPushError] = useState(null);
   const [testPushStatus, setTestPushStatus] = useState(null); // null | "sending" | "ok" | "error"
 
   const load = useCallback(async (p = 1, unreadOnly = false) => {
-    setLoading(true);
+    if (p === 1) { setLoading(true); setLoadFailed(false); setMoreFailed(false); }
+    else { setLoadingMore(true); setMoreFailed(false); }
     const res = await fetchNotifications(p, unreadOnly);
-    setTotal(res?.total || 0);
-    setPage(p);
+    if (res?.failed) {
+      if (p === 1) setLoadFailed(true); else setMoreFailed(true);
+    } else {
+      setPage(p);
+      const got = (res?.notifications || []).length;
+      setHasMore(got > 0 && (res?.has_more ?? p * 20 < (res?.total || 0)));
+    }
     setLoading(false);
+    setLoadingMore(false);
   }, [fetchNotifications]);
 
   // Mark all as seen when panel opens, and load prefs
@@ -326,6 +327,8 @@ export default function NotificationPanel({ onClose }) {
           <div className="flex-1 overflow-y-auto">
             {loading ? (
               <div className="flex items-center justify-center h-32 text-muted-foreground text-sm">Loading…</div>
+            ) : loadFailed && notifications.length === 0 ? (
+              <LoadError what="notifications" onRetry={() => load(1, tab === "unread")} className="m-3" />
             ) : notifications.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-32 gap-2 text-muted-foreground">
                 <Bell size={24} className="opacity-30" />
@@ -358,7 +361,7 @@ export default function NotificationPanel({ onClose }) {
                         <p className="text-xs text-muted-foreground leading-snug mt-0.5 line-clamp-2">
                           {n.body}
                         </p>
-                        <p className="text-[10px] text-muted-foreground/60 font-mono mt-1">
+                        <p className="text-[10px] text-muted-foreground/60 font-mono mt-1" title={formatIST(n.created_at)}>
                           {timeAgo(n.created_at)}
                         </p>
                       </div>
@@ -369,17 +372,26 @@ export default function NotificationPanel({ onClose }) {
                   );
                 })}
 
-                {notifications.length < total && (
+                {moreFailed && (
+                  <LoadError what="more notifications" onRetry={() => load(page + 1, tab === "unread")} className="m-3" />
+                )}
+                {hasMore && !moreFailed && (
                   <div className="p-3 text-center">
                     <Button
                       variant="ghost"
                       size="sm"
                       className="text-xs"
+                      disabled={loadingMore}
                       onClick={() => load(page + 1, tab === "unread")}
                     >
-                      Load more
+                      {loadingMore ? "Loading…" : "Load more"}
                     </Button>
                   </div>
+                )}
+                {!hasMore && !moreFailed && (
+                  <p className="p-3 text-center text-[11px] text-muted-foreground font-mono" data-testid="no-more-notifications">
+                    No more notifications
+                  </p>
                 )}
               </>
             )}

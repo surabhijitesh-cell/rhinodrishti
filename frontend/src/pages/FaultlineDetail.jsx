@@ -5,6 +5,8 @@ import {
   Network, FileText, Check,
 } from "lucide-react";
 import axios from "axios";
+import LoadError from "../components/LoadError";
+import { formatIST } from "../lib/time";
 import { useAuth } from "../contexts/AuthContext";
 import { formatLastScored, scoreWarning, waitForScoring } from "./FaultlineIntelligence";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
@@ -68,6 +70,7 @@ export default function FaultlineDetail({ api }) {
   const [history, setHistory] = useState([]);
   const [articles, setArticles] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [days, setDays] = useState(30);
   const [tab, setTab] = useState("articles");
   const [notesDraft, setNotesDraft] = useState("");
@@ -86,6 +89,7 @@ export default function FaultlineDetail({ api }) {
 
   const fetchAll = useCallback(async () => {
     setLoading(true);
+    setLoadFailed(false);
     try {
       const [fl, hist, arts] = await Promise.all([
         axios.get(`${api}/faultlines/${id}`),
@@ -101,6 +105,7 @@ export default function FaultlineDetail({ api }) {
       }
     } catch (e) {
       console.error("Failed to load faultline detail", e);
+      setLoadFailed(e.response?.status !== 404);
     }
     setLoading(false);
   }, [api, id, days]);
@@ -173,7 +178,9 @@ export default function FaultlineDetail({ api }) {
         <Button variant="ghost" onClick={() => navigate("/faultlines")}>
           <ArrowLeft size={14} className="mr-1" /> Back
         </Button>
-        <p className="text-sm text-red-400 mt-2">Faultline not found.</p>
+        {loadFailed
+          ? <LoadError what="this faultline" onRetry={fetchAll} className="mt-2" />
+          : <p className="text-sm text-red-400 mt-2">Faultline not found.</p>}
       </div>
     );
   }
@@ -250,7 +257,7 @@ export default function FaultlineDetail({ api }) {
               </p>
               <p className="text-sm">{alert.reason}</p>
               <p className="text-[10px] text-muted-foreground font-mono">
-                created {alert.created_at} · expires {alert.expires_at}
+                created {formatIST(alert.created_at)} · expires {formatIST(alert.expires_at)}
               </p>
             </div>
             <Button
@@ -309,7 +316,7 @@ export default function FaultlineDetail({ api }) {
                   </defs>
                   <XAxis dataKey="date" tick={{ fontSize: 10 }} stroke="#555" />
                   <YAxis domain={[0, 100]} tick={{ fontSize: 10 }} stroke="#555" />
-                  <Tooltip contentStyle={tooltipStyle} />
+                  <Tooltip contentStyle={tooltipStyle} labelFormatter={(d) => formatIST(d, { dateOnly: true })} />
                   <ReferenceLine y={75} stroke="#ef4444" strokeDasharray="3 3" label={{ value: "CRITICAL", fontSize: 9, fill: "#ef4444" }} />
                   <ReferenceLine y={55} stroke="#f59e0b" strokeDasharray="3 3" label={{ value: "ELEVATED", fontSize: 9, fill: "#f59e0b" }} />
                   <Area type="monotone" dataKey="score" stroke={style.color} strokeWidth={2} fill="url(#trendGrad)" />
@@ -363,7 +370,7 @@ export default function FaultlineDetail({ api }) {
                           {a.article_title}
                         </p>
                         <p className="text-[10px] text-muted-foreground font-mono mt-0.5">
-                          {a.source || a.article_source} · {a.article_published_at?.slice(0, 10)} · {a.article_severity}
+                          {a.source || a.article_source} · {formatIST(a.article_published_at, { dateOnly: true })} · {a.article_severity}
                         </p>
                         <p className="text-xs italic text-muted-foreground mt-2">
                           "{a.rationale}"

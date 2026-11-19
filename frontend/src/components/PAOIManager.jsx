@@ -280,7 +280,10 @@ export default function PAOIManager({ onClose }) {
     setSaving(true);
     setError(null);
     try {
-      await axios.post(`${API}/faultlines/priority-areas`, payload, { headers: authHeader() });
+      await axios.post(`${API}/faultlines/priority-areas`, payload, {
+        headers: authHeader(),
+        params: effectiveIod ? { iod: effectiveIod } : undefined,
+      });
       setCreating(false);
       await load();
     } catch (e) {
@@ -419,7 +422,7 @@ export default function PAOIManager({ onClose }) {
               {creating ? (
                 <div className="border border-primary/40 bg-primary/5 p-4">
                   <p className="text-[10px] uppercase tracking-wider font-mono text-primary mb-3">
-                    New Priority Area
+                    New Priority Area - will be saved under {effectiveIod || user?.iod || "your IOD"}
                   </p>
                   <PAOIForm
                     initial={null}

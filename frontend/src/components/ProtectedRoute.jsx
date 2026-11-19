@@ -1,8 +1,9 @@
-import { Navigate } from "react-router-dom";
+import { Navigate, Link } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 
-export default function ProtectedRoute({ children }) {
-  const { isAuthenticated, loading } = useAuth();
+// roles (optional): only these roles may open the screen; others see a plain notice.
+export default function ProtectedRoute({ children, roles }) {
+  const { isAuthenticated, loading, user } = useAuth();
 
   if (loading) {
     return (
@@ -17,6 +18,15 @@ export default function ProtectedRoute({ children }) {
 
   if (!isAuthenticated) {
     return <Navigate to="/login" replace />;
+  }
+
+  if (roles && !roles.includes(user?.role)) {
+    return (
+      <div className="p-8 text-center space-y-3" data-testid="not-available-for-role">
+        <p className="text-sm font-semibold">Not available for your role</p>
+        <Link to="/" className="text-xs text-primary hover:underline">Back to the Dashboard</Link>
+      </div>
+    );
   }
 
   return children;

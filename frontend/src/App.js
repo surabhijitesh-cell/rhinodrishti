@@ -37,6 +37,7 @@ import PushPermissionPrompt from "./components/PushPermissionPrompt";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
+const ADMIN_ONLY = ["admin"];
 
 function AppRoutes() {
   const [alertCount, setAlertCount] = useState(0);
@@ -107,17 +108,17 @@ function AppRoutes() {
                 <Route path="/weekly-trends" element={<Trends api={API} />} />
                 <Route path="/patterns" element={<Patterns api={API} />} />
                 <Route path="/knowledge-graph" element={<KnowledgeGraph api={API} />} />
-                <Route path="/settings" element={<SettingsPage api={API} />} />
+                <Route path="/settings" element={<ProtectedRoute roles={ADMIN_ONLY}><SettingsPage api={API} /></ProtectedRoute>} />
                 <Route path="/alerts" element={<IntelligenceFeed api={API} alertsOnly={true} />} />
                 <Route path="/keywords" element={<KeywordEngine api={API} />} />
                 <Route path="/training" element={<TrainingSummary api={API} />} />
                 <Route path="/upload" element={<DocumentUpload api={API} />} />
                 <Route path="/handbook" element={<Handbook api={API} />} />
-                <Route path="/user-management" element={<UserManagement api={API} />} />
+                <Route path="/user-management" element={<ProtectedRoute roles={ADMIN_ONLY}><UserManagement api={API} /></ProtectedRoute>} />
                 <Route path="/updates" element={<UpdatesPage api={API} />} />
                 <Route path="/reports" element={<ReportsPage api={API} />} />
-                <Route path="/admin" element={<AdminMonitoring api={API} />} />
-                <Route path="/report-agent" element={<ReportAgent api={API} />} />
+                <Route path="/admin" element={<ProtectedRoute roles={ADMIN_ONLY}><AdminMonitoring api={API} /></ProtectedRoute>} />
+                <Route path="/report-agent" element={<ProtectedRoute roles={ADMIN_ONLY}><ReportAgent api={API} /></ProtectedRoute>} />
                 <Route path="/faultlines" element={<FaultlineIntelligence api={API} />} />
                 <Route path="/faultlines/:id" element={<FaultlineDetail api={API} />} />
               </Routes>

@@ -28,6 +28,7 @@ import WatchlistStrip from "../components/WatchlistStrip";
 import ItemActions from "../components/ItemActions";
 import LoadError from "../components/LoadError";
 import axios from "axios";
+import { timeAgo } from "../lib/time";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, PieChart, Pie
 } from "recharts";
@@ -133,25 +134,10 @@ function StatBox({ label, value, icon: Icon, color, sub, testId, onClick }) {
   );
 }
 
-// ─── helpers ────────────────────────────────────────────────────────────────
-function formatIST(isoStr) {
-  if (!isoStr) return null;
-  try {
-    const d = new Date(isoStr);
-    return d.toLocaleString("en-IN", {
-      timeZone: "Asia/Kolkata", day: "2-digit", month: "short",
-      hour: "2-digit", minute: "2-digit", hour12: true,
-    });
-  } catch { return null; }
-}
-
-function timeAgo(isoStr) {
-  if (!isoStr) return "never";
-  const diff = Math.floor((Date.now() - new Date(isoStr)) / 1000);
-  if (diff < 60) return `${diff}s ago`;
-  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
-  return `${Math.floor(diff / 86400)}d ago`;
+// What to tell the user when the server turns a fetch down.
+function refusalMessage(e) {
+  const d = e?.response?.data?.detail;
+  return typeof d === "string" && d ? d : "Could not start this fetch";
 }
 
 // ─── compact scanner card (grid item) ───────────────────────────────────────
@@ -301,6 +287,9 @@ function SourceScanners({ api, socialTrigger }) {
   const [ytData, setYtData]           = useState({ channels: [], searches: [] });
   const [tgData, setTgData]           = useState({ channels: [] });
   const [triggering, setTriggering]   = useState({});
+  const [triggerError, setTriggerError] = useState(null);
+  const pollTimers = useRef([]);
+  useEffect(() => () => pollTimers.current.forEach(clearTimeout), []);
   // Local timestamp set immediately when any fetch fires so cards show the
   // correct elapsed time even when MongoDB Atlas doesn't persist last_fetched.
   // Persisted to localStorage so it survives page refreshes.
@@ -374,15 +363,23 @@ function SourceScanners({ api, socialTrigger }) {
   // slow sources (Telegram can take 60-90s, Firecrawl up to 3 min).
   const trigger = async (key, endpoint) => {
     setTriggering(t => ({ ...t, [key]: true }));
-    recordScan(); // instant local timestamp — persisted to localStorage
-    try { await axios.post(`${api}${endpoint}`); } catch {}
+    setTriggerError(null);
+    try {
+      await axios.post(`${api}${endpoint}`);
+    } catch (e) {
+      // Refused: say why and stop the spinner. Nothing was started.
+      setTriggering(t => ({ ...t, [key]: false }));
+      setTriggerError(refusalMessage(e));
+      return;
+    }
+    recordScan(); // only once the server accepted the fetch
 
     const pollDelays = [10000, 20000, 35000, 55000, 80000, 110000, 150000];
     pollDelays.forEach((delay, i) => {
-      setTimeout(() => {
+      pollTimers.current.push(setTimeout(() => {
         refreshSocial();
         if (i === pollDelays.length - 1) setTriggering(t => ({ ...t, [key]: false }));
-      }, delay);
+      }, delay));
     });
   };
 
@@ -430,21 +427,21 @@ function SourceScanners({ api, socialTrigger }) {
   const detailData = {
     rss: {
       icon: Rss, accentColor: "text-green-400", borderAccent: "border-green-500/20", bgAccent: "bg-green-500/5",
-      items: rssSources.map(s => ({ label: s.name || s.url, sub: s.category, time: timeAgo(s.last_fetched) })),
+      items: rssSources.map(s => ({ label: s.name || s.url, sub: s.category, time: timeAgo(s.last_fetched) || "never" })),
       emptyMsg: "No RSS sources configured.",
     },
     youtube: {
       icon: Youtube, accentColor: "text-red-400", borderAccent: "border-red-500/20", bgAccent: "bg-red-500/5",
       items: [
-        ...ytChannels.map(c => ({ label: c.name, sub: "channel", time: timeAgo(c.last_fetched) })),
-        ...ytData.searches.filter(s=>s.active).map(s => ({ label: s.query, sub: "search", time: timeAgo(s.last_run) })),
+        ...ytChannels.map(c => ({ label: c.name, sub: "channel", time: timeAgo(c.last_fetched) || "never" })),
+        ...ytData.searches.filter(s=>s.active).map(s => ({ label: s.query, sub: "search", time: timeAgo(s.last_run) || "never" })),
       ],
-      emptyMsg: "No YouTube channels configured. Add YOUTUBE_API_KEY to Render.",
+      emptyMsg: "No YouTube channels set up yet. Ask your administrator.",
     },
     telegram: {
       icon: Send, accentColor: "text-sky-400", borderAccent: "border-sky-500/20", bgAccent: "bg-sky-500/5",
-      items: tgChannels.map(c => ({ label: c.name, sub: `@${c.username}`, time: timeAgo(c.last_fetched) })),
-      emptyMsg: "No Telegram channels configured. Run telegram_setup.py to generate session.",
+      items: tgChannels.map(c => ({ label: c.name, sub: `@${c.username}`, time: timeAgo(c.last_fetched) || "never" })),
+      emptyMsg: "No Telegram channels set up yet. Ask your administrator.",
     },
   };
 
@@ -495,6 +492,14 @@ function SourceScanners({ api, socialTrigger }) {
         </div>
       </div>
 
+      {triggerError && (
+        <div role="alert" className="flex items-center gap-2 px-4 py-1.5 border-t border-red-500/30 bg-red-500/5 text-red-400 text-[11px]" data-testid="fetch-refused">
+          <AlertTriangle size={11} className="shrink-0" />
+          <span>{triggerError}</span>
+          <button className="ml-auto text-[10px] uppercase font-mono" onClick={() => setTriggerError(null)}>Dismiss</button>
+        </div>
+      )}
+
       {/* ── expanded grid ── */}
       {open && (
         <>
@@ -529,11 +534,11 @@ function SourceScanners({ api, socialTrigger }) {
                 lastFetched={freshTime(latest(ytChannels, "last_fetched"))}
                 onTrigger={() => trigger("youtube", "/social/fetch-all")}
                 triggering={triggering["youtube"] || triggering["all"]}
-                configNote="Add YOUTUBE_API_KEY"
+                configNote="Not set up — ask your administrator"
                 isSelected={selected === "youtube"}
                 onClick={() => handleCardClick("youtube")}
                 testId="scanner-youtube"
-                tooltip={`YouTube — ${ytChannels.length} subscribed channels + ${ytData.searches.filter(s=>s.active).length} keyword searches. Requires YOUTUBE_API_KEY on Render. Fetches video metadata and transcripts.`}
+                tooltip={`YouTube — ${ytChannels.length} subscribed channels + ${ytData.searches.filter(s=>s.active).length} keyword searches. Needs to be set up by your administrator. Collects video details and transcripts.`}
                 pulse={sentimentPulse.youtube}
               />
 
@@ -548,11 +553,11 @@ function SourceScanners({ api, socialTrigger }) {
                 lastFetched={freshTime(latest(tgChannels, "last_fetched"))}
                 onTrigger={() => trigger("telegram", "/social/fetch-all")}
                 triggering={triggering["telegram"] || triggering["all"]}
-                configNote="Run telegram_setup.py"
+                configNote="Not set up — ask your administrator"
                 isSelected={selected === "telegram"}
                 onClick={() => handleCardClick("telegram")}
                 testId="scanner-telegram"
-                tooltip={`Telegram — ${tgChannels.length} monitored channels via Telethon client. Session ID required (run telegram_setup.py). High-value for militant and political org communications.`}
+                tooltip={`Telegram — ${tgChannels.length} monitored channels via Telethon client. Needs to be set up by your administrator. High-value for militant and political org communications.`}
               />
 
               <ScannerCard
@@ -565,13 +570,13 @@ function SourceScanners({ api, socialTrigger }) {
                 lastFetched={apifyStatus?.last_run}
                 adminOnly
                 onTrigger={() => trigger("facebook", "/social/apify/fetch-now")}
-                confirmText="This starts paid scraping on Apify (a few cents per run). Continue?"
+                confirmText="This starts paid scraping (a few cents per run). Continue?"
                 triggering={triggering["facebook"] || triggering["all"]}
-                configNote="Add APIFY_TOKEN"
+                configNote="Not set up — ask your administrator"
                 isSelected={selected === "facebook"}
                 onClick={() => handleCardClick("facebook")}
                 testId="scanner-facebook"
-                tooltip={`Facebook — Apify-scraped public posts via APIFY_TOKEN. ${fbPostCount} posts captured so far. Comment sentiment scored per post where comments exist.`}
+                tooltip={`Facebook — public posts collected through the paid scraping service. ${fbPostCount} posts captured so far. Comment sentiment scored per post where comments exist.`}
                 pulse={sentimentPulse.facebook}
               />
 
@@ -585,13 +590,13 @@ function SourceScanners({ api, socialTrigger }) {
                 lastFetched={apifyStatus?.last_run}
                 adminOnly
                 onTrigger={() => trigger("instagram", "/social/apify/fetch-now")}
-                confirmText="This starts paid scraping on Apify (a few cents per run). Continue?"
+                confirmText="This starts paid scraping (a few cents per run). Continue?"
                 triggering={triggering["instagram"] || triggering["all"]}
-                configNote="Add APIFY_TOKEN"
+                configNote="Not set up — ask your administrator"
                 isSelected={selected === "instagram"}
                 onClick={() => handleCardClick("instagram")}
                 testId="scanner-instagram"
-                tooltip={`Instagram — Apify-scraped public posts via APIFY_TOKEN. ${igPostCount} posts captured so far. Comment sentiment scored per post where comments exist.`}
+                tooltip={`Instagram — public posts collected through the paid scraping service. ${igPostCount} posts captured so far. Comment sentiment scored per post where comments exist.`}
                 pulse={sentimentPulse.instagram}
               />
 
@@ -605,13 +610,13 @@ function SourceScanners({ api, socialTrigger }) {
                 lastFetched={apifyStatus?.last_run}
                 adminOnly
                 onTrigger={() => trigger("twitter", "/social/apify/fetch-now")}
-                confirmText="This starts paid scraping on Apify (a few cents per run). Continue?"
+                confirmText="This starts paid scraping (a few cents per run). Continue?"
                 triggering={triggering["twitter"] || triggering["all"]}
-                configNote="Add APIFY_TOKEN"
+                configNote="Not set up — ask your administrator"
                 isSelected={selected === "twitter"}
                 onClick={() => handleCardClick("twitter")}
                 testId="scanner-twitter"
-                tooltip={`Twitter/X — Apify-scraped tweets via APIFY_TOKEN. ${twPostCount} tweets captured so far. Comment sentiment scored per tweet where replies exist.`}
+                tooltip={`Twitter/X — public tweets collected through the paid scraping service. ${twPostCount} tweets captured so far. Comment sentiment scored per tweet where replies exist.`}
                 pulse={sentimentPulse.twitter}
               />
 
@@ -747,6 +752,8 @@ function FaultlineWarnings({ api }) {
   const { viewIod } = useAdminIod();
   const effectiveIod = user?.role === "admin" && viewIod ? viewIod : null;
   const [warnings, setWarnings] = useState([]);
+  const [failed, setFailed] = useState(false);
+  const [reload, setReload] = useState(0);
   const [dismissing, setDismissing] = useState(null);
   const navigate = useNavigate();
 
@@ -756,12 +763,13 @@ function FaultlineWarnings({ api }) {
         const iodParam = effectiveIod ? `?iod=${effectiveIod}` : "";
         const res = await axios.get(`${api}/faultlines/warnings${iodParam}`);
         setWarnings(res.data.warnings || []);
-      } catch (e) { /* silent — endpoint may not be live yet */ }
+        setFailed(false);
+      } catch (e) { setFailed(true); }
     };
     fetch();
     const interval = setInterval(fetch, 60000);
     return () => clearInterval(interval);
-  }, [api, effectiveIod]);
+  }, [api, effectiveIod, reload]);
 
   const acknowledge = async (id) => {
     setDismissing(id);
@@ -772,6 +780,7 @@ function FaultlineWarnings({ api }) {
     setDismissing(null);
   };
 
+  if (failed && warnings.length === 0) return <LoadError what="the faultline warnings" onRetry={() => setReload(r => r + 1)} />;
   if (warnings.length === 0) return null;
 
   const levelStyle = (level) => {
@@ -891,6 +900,8 @@ function FaultlinePulse({ api }) {
   const { viewIod } = useAdminIod();
   const effectiveIod = user?.role === "admin" && viewIod ? viewIod : null;
   const [data, setData] = useState(null);
+  const [failed, setFailed] = useState(false);
+  const [reload, setReload] = useState(0);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -899,13 +910,15 @@ function FaultlinePulse({ api }) {
         const iodParam = effectiveIod ? `&iod=${effectiveIod}` : "";
         const res = await axios.get(`${api}/faultlines/dashboard-summary?top_n=3${iodParam}`);
         setData(res.data);
-      } catch (e) { /* silent */ }
+        setFailed(false);
+      } catch (e) { setFailed(true); }
     };
     fetch();
     const interval = setInterval(fetch, 5 * 60 * 1000);
     return () => clearInterval(interval);
-  }, [api, effectiveIod]);
+  }, [api, effectiveIod, reload]);
 
+  if (failed && !data) return <LoadError what="the most stressed faultlines" onRetry={() => setReload(r => r + 1)} />;
   if (!data || !data.top_stressed?.length) return null;
 
   const levelColor = (level) => {
@@ -970,17 +983,21 @@ function FaultlinePulse({ api }) {
 
 function PatternInsights({ api }) {
   const [patterns, setPatterns] = useState([]);
+  const [failed, setFailed] = useState(false);
+  const [reload, setReload] = useState(0);
 
   useEffect(() => {
     const fetch = async () => {
       try {
         const res = await axios.get(`${api}/patterns`);
         setPatterns(res.data.patterns || []);
-      } catch (e) { /* silent */ }
+        setFailed(false);
+      } catch (e) { setFailed(true); }
     };
     fetch();
-  }, [api]);
+  }, [api, reload]);
 
+  if (failed && patterns.length === 0) return <LoadError what="the detected patterns" onRetry={() => setReload(r => r + 1)} />;
   if (patterns.length === 0) return null;
 
   const riskColors = {
@@ -1035,6 +1052,8 @@ export default function Dashboard({ stats: propStats, api }) {
   const [localStats, setLocalStats] = useState(null);
   const [statsFailed, setStatsFailed] = useState(false);
   const [recentFailed, setRecentFailed] = useState(false);
+  const [fetchError, setFetchError] = useState(null);
+  const [deleteError, setDeleteError] = useState(null);
   const [sortBy, setSortBy] = useState("priority_score");
   const [minPriority, setMinPriority] = useState("");
   // Increments every time "Fetch Intel" fires social/fetch-all so SourceScanners
@@ -1046,27 +1065,17 @@ export default function Dashboard({ stats: propStats, api }) {
   const { user } = useAuth();
   const isAdmin = user?.role === "admin";
 
-  // Twitter Live Feed widget pin state — persisted to localStorage so the
-  // user's choice survives page reloads.
-  const [twitterPinned, setTwitterPinned] = useState(
-    () => localStorage.getItem("dashboard_twitter_pinned") === "1"
-  );
-  const toggleTwitterPin = () => {
-    setTwitterPinned(p => {
-      const next = !p;
-      localStorage.setItem("dashboard_twitter_pinned", next ? "1" : "0");
-      return next;
-    });
-  };
-
   // stats reference is used by the timeline mapItems memo below — declare it early
-  const stats = propStats || localStats;
+  // Our own fetch is always newer than what the parent handed down.
+  const stats = localStats || propStats;
 
   // ── Map timeline state ──────────────────────────────────────────────────────
   // Wider time-window items for the temporal map (fetched from /intelligence/map-timeline).
   // The active window is controlled by MapTimelineSlider; items outside the active
   // window are still rendered on the map but faded ("historical ghosting").
   const [timelineItems, setTimelineItems] = useState([]);
+  const [timelineFailed, setTimelineFailed] = useState(false);
+  const [timelineReload, setTimelineReload] = useState(0);
   // When arriving from KG "View on Map", default to 30d range + fullscreen
   const [timelineRangeHours, setTimelineRangeHours] = useState(
     () => focusActor ? 720 : 24
@@ -1089,10 +1098,10 @@ export default function Dashboard({ stats: propStats, api }) {
   useEffect(() => {
     let cancelled = false;
     axios.get(`${api}/intelligence/map-timeline?hours=${timelineRangeHours}&limit=500`)
-      .then((r) => { if (!cancelled) setTimelineItems(r.data.items || []); })
-      .catch(() => { if (!cancelled) setTimelineItems([]); });
+      .then((r) => { if (!cancelled) { setTimelineItems(r.data.items || []); setTimelineFailed(false); } })
+      .catch(() => { if (!cancelled) setTimelineFailed(true); });
     return () => { cancelled = true; };
-  }, [api, timelineRangeHours]);
+  }, [api, timelineRangeHours, timelineReload]);
 
   // Stable callback for slider so MapTimelineSlider's effects don't loop
   const handleTimelineWindow = useCallback((windowStart, windowEnd, rangeStart, rangeEnd) => {
@@ -1158,6 +1167,14 @@ export default function Dashboard({ stats: propStats, api }) {
     }
   };
 
+  // "Refresh Dashboard": counts, charts, recent items and the map's items.
+  const refreshAll = () => {
+    clearNewItems();
+    fetchRecent();
+    fetchStats();
+    setTimelineReload(k => k + 1);
+  };
+
   const fetchRecent = async () => {
     try {
       const params = new URLSearchParams();
@@ -1175,17 +1192,18 @@ export default function Dashboard({ stats: propStats, api }) {
 
   const handleFetchNews = async () => {
     setLoading(true);
-    try {
-      // Trigger all 6 sources: RSS + social/web in parallel
-      await Promise.allSettled([
-        axios.post(`${api}/fetch-news`),
-        axios.post(`${api}/social/fetch-all`),
-      ]);
-      // Tell SourceScanners a global social fetch just fired so it can
-      // show FETCHING badges and kick off its own polling schedule.
-      setSocialTrigger(t => t + 1);
-    } catch (e) {
-      console.error("Fetch failed:", e);
+    setFetchError(null);
+    const [news, social] = await Promise.allSettled([
+      axios.post(`${api}/fetch-news`),
+      axios.post(`${api}/social/fetch-all`),
+    ]);
+    const refused = [news, social].find((r) => r.status === "rejected");
+    if (refused) setFetchError(refusalMessage(refused.reason));
+    // Tell SourceScanners a social fetch started (only if it was accepted).
+    if (social.status === "fulfilled") setSocialTrigger(t => t + 1);
+    if (news.status === "rejected" && social.status === "rejected") {
+      setLoading(false); // nothing started, so nothing to wait for
+      return;
     }
     setTimeout(() => {
       setLoading(false);
@@ -1199,43 +1217,11 @@ export default function Dashboard({ stats: propStats, api }) {
 
   const trendData = stats?.trend_7d || [];
 
-  // Memoized stateStatsMap — otherwise every Dashboard re-render (timeline
-  // tick, scrub, WS update) creates a fresh object reference, which causes
-  // NERMap's polygon useEffect to fire, remove + re-fetch + re-add all state
-  // polygons. That looked like the state-boundary layer "becoming opaque" when
-  // scrubbing the timeline. State coloring is timeline-INDEPENDENT.
-  const stateStatsMap = useMemo(() => {
-    const m = {};
-    if (stats?.state_distribution) {
-      Object.entries(stats.state_distribution).forEach(([state, count]) => {
-        m[state] = {
-          count,
-          critical: stats.recent_critical?.filter((i) => i.state === state && i.severity === "critical").length || 0,
-          high: stats.recent_critical?.filter((i) => i.state === state && i.severity === "high").length || 0,
-        };
-      });
-    }
-    ["Bangladesh", "Myanmar"].forEach((region) => {
-      if (!m[region]) {
-        const crossBorderItems = stats?.recent_critical?.filter(
-          (i) => i.countries_involved?.includes(region) || i.state === region
-        ) || [];
-        if (crossBorderItems.length > 0) {
-          m[region] = {
-            count: crossBorderItems.length,
-            critical: crossBorderItems.filter((i) => i.severity === "critical").length,
-            high: crossBorderItems.filter((i) => i.severity === "high").length,
-          };
-        }
-      }
-    });
-    return m;
-  }, [stats?.state_distribution, stats?.recent_critical]);
-
-  // Timeline-driven state stats: only items in the ACTIVE window (opacity ≥ 0.95)
-  // Used to color state/country borders as the slider scrubs through time.
+  // The one set of per-region counts the map uses for outline colours, labels
+  // and popups: items in the ACTIVE window (opacity ≥ 0.95), or every shown item
+  // until the slider has reported a window.
   const windowStateStats = useMemo(() => {
-    const active = mapItems.filter(it => (it._opacity || 0) >= 0.95);
+    const active = timelineWindowMs ? mapItems.filter(it => (it._opacity || 0) >= 0.95) : mapItems;
     if (!active.length) return {};
     const m = {};
     active.forEach(item => {
@@ -1250,7 +1236,7 @@ export default function Dashboard({ stats: propStats, api }) {
       (item.countries_involved || []).forEach(addRegion);
     });
     return m;
-  }, [mapItems]);
+  }, [mapItems, timelineWindowMs]);
 
   // Stable onStateClick — prevents NERMap polygon re-render every tick
   const handleStateClick = useCallback(
@@ -1261,11 +1247,13 @@ export default function Dashboard({ stats: propStats, api }) {
   const PIE_COLORS = ["#ef4444", "#f59e0b", "#eab308", "#a3e635", "#3b82f6", "#8b5cf6", "#06b6d4", "#6366f1"];
 
   const handleDeleteItem = async (itemId) => {
+    setDeleteError(null);
     try {
       await axios.delete(`${api}/intelligence/${itemId}`);
       setRecentItems((prev) => prev.filter((i) => i.id !== itemId));
     } catch (e) {
-      console.error("Delete failed:", e);
+      // Item stays on screen; say plainly that it was not deleted.
+      setDeleteError("Could not delete this item");
     }
   };
 
@@ -1315,11 +1303,19 @@ export default function Dashboard({ stats: propStats, api }) {
         </div>
       </div>
 
+      {fetchError && (
+        <div role="alert" className="flex items-center gap-2 p-2 border border-red-500/40 bg-red-500/5 text-red-400 text-xs" data-testid="fetch-intel-refused">
+          <AlertTriangle size={13} className="shrink-0" />
+          <span>{fetchError}</span>
+          <button className="ml-auto text-[10px] uppercase font-mono" onClick={() => setFetchError(null)}>Dismiss</button>
+        </div>
+      )}
+
       {/* Unacknowledged Critical Alerts - Sticky Panel */}
       <UnacknowledgedAlerts api={api} />
 
       {/* Stats Row */}
-      {!stats && statsFailed && <LoadError what="the dashboard counts" onRetry={fetchStats} />}
+      {statsFailed && <LoadError what={stats ? "the latest counts (older numbers are shown)" : "the dashboard counts"} onRetry={fetchStats} />}
       <div className={`${!stats ? "hidden" : ""} grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-4`}>
         <Tip text="Total AI-processed intelligence items in your retention window. Click to open the full Intelligence Feed." side="bottom">
           <div data-tour="stat-total">
@@ -1360,19 +1356,6 @@ export default function Dashboard({ stats: propStats, api }) {
         </Tip>
       </div>
 
-      {/* Pinned Twitter Live Feed — disabled (Twitter API costs suspended) */}
-      {false && twitterPinned && (
-        <div className="border border-slate-500/30 rounded-none bg-card overflow-hidden" data-testid="pinned-twitter-feed">
-          <SocialMediaFeedWidget
-            api={api}
-            sourceType="twitter"
-            compact={false}
-            pinned={true}
-            onTogglePin={toggleTwitterPin}
-          />
-        </div>
-      )}
-
       {/* WebSocket Live Feed - Shows items as they arrive */}
       {wsNewItems.length > 0 && (
         <Card className="border border-green-500/30 rounded-none bg-green-950/10 animate-slide-in" data-testid="ws-live-feed">
@@ -1384,7 +1367,7 @@ export default function Dashboard({ stats: propStats, api }) {
             <Button
               variant="ghost" size="sm"
               className="ml-auto text-xs text-green-400 hover:text-green-300"
-              onClick={() => { clearNewItems(); fetchRecent(); fetchStats(); }}
+              onClick={refreshAll}
               data-testid="ws-refresh-btn"
             >
               <RefreshCw size={12} className="mr-1" /> Refresh Dashboard
@@ -1425,12 +1408,14 @@ export default function Dashboard({ stats: propStats, api }) {
             : "lg:col-span-7"}
           data-tour="ner-map"
         >
+          {timelineFailed && (
+            <LoadError what="the map timeline" onRetry={() => setTimelineReload(k => k + 1)} />
+          )}
           {/* Map area only — ternary here, slider is outside it */}
           {isMapFullscreen ? (
             /* ── Fullscreen: free map interaction, fills all available height ── */
             <div style={{ flex: 1, minHeight: 0, position: "relative" }}>
               <NERMap
-                stateStats={stateStatsMap}
                 windowStateStats={windowStateStats}
                 items={mapItems}
                 navigate={navigate}
@@ -1458,7 +1443,6 @@ export default function Dashboard({ stats: propStats, api }) {
             <MapClickWrapper>
               <div style={{ minHeight: 380, position: "relative" }}>
                 <NERMap
-                  stateStats={stateStatsMap}
                   windowStateStats={windowStateStats}
                   items={mapItems}
                   navigate={navigate}
@@ -1570,7 +1554,11 @@ export default function Dashboard({ stats: propStats, api }) {
             </Tip>
           </CardHeader>
           <CardContent className="p-4" data-testid="threat-distribution-chart">
-            {threatData.length > 0 ? (
+            {!stats ? (
+              statsFailed
+                ? <LoadError what="the threat distribution" onRetry={fetchStats} />
+                : <div className="h-[250px] flex items-center justify-center text-muted-foreground text-sm">Loading…</div>
+            ) : threatData.length > 0 ? (
               <ResponsiveContainer width="100%" height={250}>
                 <BarChart data={threatData} layout="vertical">
                   <XAxis type="number" tick={{ fontSize: 10, fill: "hsl(120,5%,60%)" }} />
@@ -1603,7 +1591,11 @@ export default function Dashboard({ stats: propStats, api }) {
             </Tip>
           </CardHeader>
           <CardContent className="p-4" data-testid="state-distribution-chart">
-            {stats?.state_distribution && Object.keys(stats.state_distribution).length > 0 ? (
+            {!stats ? (
+              statsFailed
+                ? <LoadError what="the state-wise distribution" onRetry={fetchStats} />
+                : <div className="h-[250px] flex items-center justify-center text-muted-foreground text-sm">Loading…</div>
+            ) : stats.state_distribution && Object.keys(stats.state_distribution).length > 0 ? (
               <div className="flex items-center">
                 <ResponsiveContainer width="60%" height={250}>
                   <PieChart>
@@ -1692,6 +1684,13 @@ export default function Dashboard({ stats: propStats, api }) {
             </Button>
           </div>
         </div>
+        {deleteError && (
+          <div role="alert" className="flex items-center gap-2 p-2 mb-3 border border-red-500/40 bg-red-500/5 text-red-400 text-xs" data-testid="delete-failed">
+            <AlertTriangle size={13} className="shrink-0" />
+            <span>{deleteError}</span>
+            <button className="ml-auto text-[10px] uppercase font-mono" onClick={() => setDeleteError(null)}>Dismiss</button>
+          </div>
+        )}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4" data-testid="recent-intelligence-grid">
           {recentItems.map((item) => (
             <IntelligenceCard key={item.id} item={item} compact api={api} onDelete={handleDeleteItem} />

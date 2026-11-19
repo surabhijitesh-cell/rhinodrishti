@@ -116,6 +116,28 @@ def _require_paoi_owner(current_user: dict, paoi: dict) -> None:
         raise HTTPException(status_code=403, detail="Not allowed for your IOD")
 
 
+def _target_iod(current_user: dict, iod: Optional[str]) -> str:
+    """IOD a new PAOI / custom faultline is saved under. An admin viewing
+    another IOD (?iod=) saves there; everyone else always saves under their own."""
+    if iod and current_user.get("role") == "admin":
+        from iod_registry import ALL_IODS
+        if iod not in ALL_IODS:
+            raise HTTPException(status_code=400, detail=f"Unknown IOD '{iod}'")
+        return iod
+    return user_iod(current_user)
+
+
+def _faultline_list_filter(watchlist, effective_iod: str, own_username: Optional[str]) -> dict:
+    """Mongo filter for the faultline list. A watch-list IOD sees its watch-list
+    plus custom faultlines tagged to it (and, for its own users, ones they made)."""
+    if watchlist is None:
+        return {}
+    custom = [{"is_custom": True, "iod": effective_iod}]
+    if own_username:
+        custom.append({"is_custom": True, "created_by": own_username})
+    return {"$or": [{"id": {"$in": watchlist}}, *custom]}
+
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 async def _attach_latest_score(fl: dict) -> dict:
     """Add latest score snapshot to a faultline dict."""
@@ -279,6 +301,7 @@ async def _retag_faultlines(now: str) -> int:
 @router.post("/faultlines/priority-areas")
 async def create_priority_area(
     data: PAOICreate,
+    iod: Optional[str] = Query(None, description="Admin-only: save under the IOD being viewed"),
     current_user: dict = Depends(get_current_user),
 ):
     _require_analyst_or_admin(current_user)
@@ -310,7 +333,7 @@ async def create_priority_area(
         "watch_geography": data.watch_geography or [],
         "color": data.color or "red",
         "enabled": True,
-        "iod": current_user.get("iod", "IOD-1"),
+        "iod": _target_iod(current_user, iod),
         "created_by": current_user.get("id"),
         "created_at": now,
         "updated_at": now,
@@ -384,8 +407,8 @@ async def list_faultlines(
         q["state"] = state
     if active_only:
         q["active"] = True
-    if watchlist is not None:
-        q["id"] = {"$in": watchlist}
+    own = None if effective_iod != current_user.get("iod", "IOD-1") else current_user.get("username")
+    q.update(_faultline_list_filter(watchlist, effective_iod, own))
 
     cursor = faultlines_col.find(q, {"_id": 0}).sort([("state", 1), ("name", 1)])
     faultlines = [fl async for fl in cursor]
@@ -945,9 +968,48 @@ async def recommend_keywords(
     return {"keywords": keywords[:20]}
 
 
+MAX_HISTORY_IDS = 200
+MAX_HISTORY_DAYS = 90
+
+
+@router.get("/faultlines/history-batch")
+async def get_faultlines_history_batch(
+    ids: str = Query(..., description="Comma-separated faultline ids (max 200)"),
+    days: int = Query(7, ge=1, le=MAX_HISTORY_DAYS),
+    current_user: dict = Depends(get_current_user),
+):
+    """Score history for many faultlines in one call (sparklines). Faultlines the
+    user cannot see are left out, never reported as forbidden."""
+    id_list = list(dict.fromkeys(i.strip() for i in ids.split(",") if i.strip()))
+    if not id_list:
+        raise HTTPException(400, "No faultline ids given")
+    if len(id_list) > MAX_HISTORY_IDS:
+        raise HTTPException(400, f"At most {MAX_HISTORY_IDS} faultlines per request")
+    if not 1 <= days <= MAX_HISTORY_DAYS:
+        raise HTTPException(422, f"days must be 1-{MAX_HISTORY_DAYS}")
+
+    docs = await faultlines_col.find(
+        {"id": {"$in": id_list}},
+        {"_id": 0, "id": 1, "created_by": 1, "iod": 1},
+    ).to_list(length=MAX_HISTORY_IDS)
+    allowed = [d["id"] for d in docs if can_access_faultline(current_user, d)]
+
+    series: dict = {i: [] for i in allowed}
+    if allowed:
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).date().isoformat()
+        rows = await scores_col.find(
+            {"faultline_id": {"$in": allowed}, "date": {"$gte": cutoff}},
+            {"_id": 0, "faultline_id": 1, "date": 1, "score": 1, "level": 1},
+        ).sort("date", 1).to_list(length=None)
+        for r in rows:
+            series[r["faultline_id"]].append({k: r.get(k) for k in ("date", "score", "level")})
+    return {"days": days, "series": series}
+
+
 @router.post("/faultlines", dependencies=[Depends(require_analyst_or_admin)])
 async def create_custom_faultline(
     body: CustomFaultlineCreate,
+    iod: Optional[str] = Query(None, description="Admin-only: save under the IOD being viewed"),
     current_user: dict = Depends(get_current_user),
 ):
     """Create a user-defined custom faultline."""
@@ -963,7 +1025,7 @@ async def create_custom_faultline(
         "active": True,
         "is_custom": True,
         "created_by": current_user.get("username"),
-        "iod": user_iod(current_user),
+        "iod": _target_iod(current_user, iod),
         "created_at": datetime.now(_tz.utc).isoformat(),
     }
     await faultlines_col.insert_one({**doc, "_id": fl_id})

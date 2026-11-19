@@ -54,7 +54,7 @@ const SOURCE_CFG = {
     shareLabel: "RT",
     likeLabel: "Likes",
     emptyHint: [
-      "Add APIFY_TOKEN to backend .env",
+      "This source must be set up by your administrator",
       "Runs automatically via the scheduler (throttled/firehose toggle above)",
       "Click Fetch Now below",
     ],
@@ -79,7 +79,7 @@ const SOURCE_CFG = {
     shareLabel: "",
     likeLabel: "",
     emptyHint: [
-      "Add APIFY_TOKEN to backend .env",
+      "This source must be set up by your administrator",
       "Runs automatically via the scheduler (throttled/firehose toggle above)",
       "Click Fetch Now below",
     ],
@@ -104,7 +104,7 @@ const SOURCE_CFG = {
     shareLabel: "",
     likeLabel: "Views",
     emptyHint: [
-      "Run telegram_setup.py to generate a session",
+      "This source must be set up by your administrator",
       "Add channels in Settings → Social Scan → Telegram",
       "Click Fetch Now below",
     ],
@@ -129,7 +129,7 @@ const SOURCE_CFG = {
     shareLabel: "",
     likeLabel: "",
     emptyHint: [
-      "Add YOUTUBE_API_KEY to backend .env",
+      "This source must be set up by your administrator",
       "Add channels in Settings → Social Scan → YouTube",
       "Click Fetch Now below",
     ],
@@ -154,7 +154,7 @@ const SOURCE_CFG = {
     shareLabel: "",
     likeLabel: "",
     emptyHint: [
-      "Add APIFY_TOKEN to backend .env",
+      "This source must be set up by your administrator",
       "Runs automatically via the scheduler (throttled/firehose toggle above)",
       "Click Fetch Now below",
     ],
@@ -179,7 +179,7 @@ const SOURCE_CFG = {
     shareLabel: "",
     likeLabel: "",
     emptyHint: [
-      "Add FIRECRAWL_API_KEY to backend .env",
+      "This source must be set up by your administrator",
       "Add sites in Settings → Social Scan → Firecrawl",
       "Click Fetch Now below",
     ],
@@ -666,14 +666,8 @@ export default function SocialMediaFeedWidget({
           <div className="text-[10px] font-mono leading-relaxed">
             <span className="font-semibold text-amber-300">Free API tier — Twitter data unavailable.</span>
             <span className="text-amber-300/70 ml-1">
-              X/Twitter API v2 requires the <span className="text-amber-300">Basic plan ($100/mo)</span> to
-              read public tweets. Your current Bearer Token is Free tier (post-only).
-              Upgrade at{" "}
-              <a href="https://developer.x.com/en/portal/dashboard"
-                target="_blank" rel="noopener noreferrer"
-                className="underline hover:text-amber-200">developer.x.com</a>
-              , then update TWITTER_BEARER_TOKEN on Render — this banner will disappear automatically
-              once tweets start flowing.
+              Reading public tweets needs a paid X plan. Ask your administrator to upgrade it;
+              this notice disappears automatically once tweets start flowing.
             </span>
           </div>
         </div>

@@ -8,7 +8,8 @@ const STATES = [
   "Tripura", "Arunachal Pradesh", "North Bengal", "Bangladesh", "Myanmar",
 ];
 
-export default function CustomFaultlineModal({ api, onClose, onCreated }) {
+// targetIod: IOD the faultline is saved under; viewIod: set only when an admin views another IOD.
+export default function CustomFaultlineModal({ api, onClose, onCreated, targetIod, viewIod }) {
   const [step, setStep] = useState(1); // 1 = describe, 2 = keywords
   const [form, setForm] = useState({ name: "", state: STATES[0], description: "" });
   const [keywords, setKeywords] = useState([]);
@@ -60,7 +61,7 @@ export default function CustomFaultlineModal({ api, onClose, onCreated }) {
       const res = await axios.post(`${api}/faultlines`, {
         ...form,
         keywords: Array.from(selected),
-      });
+      }, { params: viewIod ? { iod: viewIod } : undefined });
       onCreated(res.data.faultline);
     } catch (e) {
       setError(e?.response?.data?.detail || "Failed to create faultline.");
@@ -81,6 +82,9 @@ export default function CustomFaultlineModal({ api, onClose, onCreated }) {
         <h2 className="text-sm font-bold uppercase tracking-wider font-mono mb-4">
           {step === 1 ? "New Custom Faultline" : "Select Monitoring Keywords"}
         </h2>
+        <p className="text-[10px] font-mono text-muted-foreground -mt-2 mb-3" data-testid="faultline-target-iod">
+          Will be saved under {targetIod || "your IOD"}
+        </p>
 
         {step === 1 && (
           <div className="space-y-3">

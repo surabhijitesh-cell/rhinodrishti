@@ -13,6 +13,7 @@ import FeedbackWidget from "./FeedbackWidget";
 import Tip from "./Tip";
 import { useAuth } from "../contexts/AuthContext";
 import FlagButton from "./FlagButton";
+import { formatIST, timeAgo } from "../lib/time";
 
 const THREAT_ICONS = {
   "Insurgency": Target,
@@ -53,22 +54,10 @@ const SPECIAL_FLAG_LABELS = {
   "PATTERN_DETECTED": "Pattern Alert",
 };
 
+// "5 h ago · 19 Nov 2026" - always India Standard Time.
 function formatTime(isoStr) {
-  if (!isoStr) return "";
-  try {
-    const d = new Date(isoStr);
-    const now = new Date();
-    const diff = now - d;
-    const hours = Math.floor(diff / 3600000);
-    const days = Math.floor(diff / 86400000);
-    const abs = d.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: days > 300 ? "numeric" : undefined });
-    if (hours < 1) return `Just now · ${abs}`;
-    if (hours < 24) return `${hours}h ago · ${abs}`;
-    if (days < 7)   return `${days}d ago · ${abs}`;
-    return abs;
-  } catch {
-    return "";
-  }
+  const abs = formatIST(isoStr, { dateOnly: true });
+  return abs ? `${timeAgo(isoStr)} · ${abs}` : "";
 }
 
 // ── Fading helpers ────────────────────────────────────────────────────────────
@@ -189,6 +178,19 @@ export default function IntelligenceCard({ item, compact = false, api, feedbackD
       toast.error(err.response?.data?.detail || "Re-queue failed");
     }
     setTimeout(() => setReprocessing(false), 5000);
+  };
+  // The parent removes the card on success; on failure we say so and give the button back.
+  const handleDelete = async (e) => {
+    e.stopPropagation();
+    if (!window.confirm("Delete this intelligence item? This cannot be undone.")) return;
+    setDeleting(true);
+    try {
+      await onDelete(item.id);
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Could not delete this item. Please try again.");
+    } finally {
+      setDeleting(false);
+    }
   };
   const ThreatIcon = THREAT_ICONS[item.threat_category] || THREAT_ICONS[item.tags?.[0]] || AlertTriangle;
   const severityClass = SEVERITY_CLASSES[item.severity] || "severity-low";
@@ -372,13 +374,7 @@ export default function IntelligenceCard({ item, compact = false, api, feedbackD
             {onDelete && !isViewer && (
               <Tip text="Permanently delete this intelligence item" side="left">
                 <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    if (window.confirm("Delete this intelligence item? This cannot be undone.")) {
-                      setDeleting(true);
-                      onDelete(item.id);
-                    }
-                  }}
+                  onClick={handleDelete}
                   disabled={deleting}
                   className="p-1 text-muted-foreground/40 hover:text-red-400 transition-colors"
                   data-testid={`delete-intel-${item.id}`}
@@ -583,7 +579,7 @@ export default function IntelligenceCard({ item, compact = false, api, feedbackD
                   <p className="text-[10px] uppercase tracking-widest text-violet-400 font-mono">Analyst Note</p>
                   <p className="text-sm text-violet-100 leading-relaxed whitespace-pre-wrap">{enhancement.analyst_note}</p>
                   <p className="text-[10px] text-violet-400/60 font-mono">
-                    {enhancement.enhanced_by_name} · {enhancement.enhanced_at ? new Date(enhancement.enhanced_at).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }) : ""}
+                    {enhancement.enhanced_by_name} · {formatIST(enhancement.enhanced_at, { dateOnly: true })}
                   </p>
                 </div>
               )}

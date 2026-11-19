@@ -153,3 +153,21 @@ h1, h2, h3, h4, h5, h6 {
 .animate-pulse-critical {
     animation: pulse-critical 2s ease-in-out infinite;
 }
+
+/* Faultlines "Print / Save PDF": print only the faultline content. */
+@media print {
+  body.print-faultlines aside,
+  body.print-faultlines [data-testid="top-bar"],
+  body.print-faultlines [data-sonner-toaster],
+  body.print-faultlines .no-print {
+    display: none !important;
+  }
+  body.print-faultlines,
+  body.print-faultlines #root,
+  body.print-faultlines #root div:has(> main),
+  body.print-faultlines main {
+    height: auto !important;
+    max-height: none !important;
+    overflow: visible !important;
+  }
+}

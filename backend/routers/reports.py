@@ -291,16 +291,30 @@ async def filtered_feed_pdf(
     is_cross_border: Optional[bool] = None,
     min_priority: Optional[int] = None,
     sort_by: Optional[str] = "priority_score",
+    sort_order: Optional[str] = "desc",
+    alerts_only: bool = False,
+    iod: Optional[str] = None,
     user: dict = Depends(get_current_user),
 ):
-    query = _build_query(state, threat_type, severity, search, date_from, date_to, is_cross_border, min_priority)
-    items = await intelligence_col.find(query, {"_id": 0}).sort("priority_score", -1).limit(200).to_list(200)
-    total = await intelligence_col.count_documents(query)
+    if alerts_only:
+        # Alerts page export: the very same list the page shows (same query,
+        # sort and IOD ranking), never the general feed.
+        from routers.intelligence import fetch_open_alerts, effective_iod, get_iod_faultline_ids
+        got = await fetch_open_alerts(
+            200, state, threat_type, search, min_priority, sort_by, sort_order,
+            iod_faultline_ids=get_iod_faultline_ids(effective_iod(user, iod)),
+        )
+        items, total = got["alerts"], got["matched"]
+        severity = None
+    else:
+        query = _build_query(state, threat_type, severity, search, date_from, date_to, is_cross_border, min_priority)
+        items = await intelligence_col.find(query, {"_id": 0}).sort("priority_score", -1).limit(200).to_list(200)
+        total = await intelligence_col.count_documents(query)
 
     if not items:
         raise HTTPException(status_code=404, detail="No items match the current filters")
 
-    filter_desc = []
+    filter_desc = ["Open Critical & High alerts"] if alerts_only else []
     if state:
         filter_desc.append(f"Region: {state}")
     if severity:
@@ -316,10 +330,11 @@ async def filtered_feed_pdf(
     if min_priority:
         filter_desc.append(f"Min Priority: {min_priority}")
     filter_str = " | ".join(filter_desc) if filter_desc else "All Intelligence"
+    brief_name = "OPEN ALERTS BRIEF" if alerts_only else "FILTERED INTELLIGENCE BRIEF"
 
     pdf = ReportPDF(
-        title="FILTERED INTELLIGENCE BRIEF",
-        subtitle=f"FILTERED INTELLIGENCE BRIEF  |  {filter_str}",
+        title=brief_name,
+        subtitle=f"{brief_name}  |  {filter_str}",
     )
     pdf.add_page()
 

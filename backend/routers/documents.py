@@ -448,7 +448,8 @@ async def reanalyze_all_errors(background_tasks: BackgroundTasks, current_user: 
 # ============================================================
 
 class AddToFeedRequest(BaseModel):
-    url: str
+    url: str = ""
+    document_id: str = ""   # set to add an uploaded file instead of a link
     title: str = ""
     severity: str = "medium"
     priority_score: int = 50
@@ -463,6 +464,8 @@ class AddToFeedRequest(BaseModel):
 async def add_url_to_feed(data: AddToFeedRequest, current_user: dict = Depends(get_current_user)):
     """Scrape a URL and add it directly to the intelligence feed with user-defined parameters."""
     _require_writer(current_user)
+    if data.document_id.strip():
+        return await _add_document_to_feed(data, current_user)
     url = data.url.strip()
     if not url.startswith("http"):
         raise HTTPException(status_code=400, detail="Invalid URL")
@@ -546,6 +549,61 @@ async def add_url_to_feed(data: AddToFeedRequest, current_user: dict = Depends(g
         "message": "Article added to intelligence feed",
         "item_id": item["id"],
         "title": title,
+        "severity": severity,
+        "priority_score": priority_score,
+    }
+
+
+def _clean_severity(value: str) -> str:
+    severity = (value or "medium").lower()
+    return severity if severity in ("critical", "high", "medium", "low") else "medium"
+
+
+async def _add_document_to_feed(data: "AddToFeedRequest", current_user: dict) -> dict:
+    """Add an uploaded file's analysis to the feed. Same role and IOD rules as the document itself."""
+    doc = await _get_visible_doc(data.document_id.strip(), current_user)
+    if doc.get("source_type") == "url":
+        raise HTTPException(status_code=400, detail="This is a link; add it using its address")
+    if not doc.get("processed") or (doc.get("analysis") or {}).get("error"):
+        raise HTTPException(status_code=400, detail="Wait for a finished analysis before adding to the feed")
+    if await intelligence_col.find_one({"source_document_id": doc["id"]}, {"_id": 0, "id": 1}):
+        raise HTTPException(status_code=409, detail="This file already exists in the intelligence feed")
+
+    title = data.title.strip() or doc.get("filename") or "Uploaded document"
+    summary = data.ai_summary or (doc.get("analysis") or {}).get("executive_summary") or title
+    severity = _clean_severity(data.severity)
+    priority_score = max(0, min(100, data.priority_score))
+    now = datetime.now(timezone.utc).isoformat()
+    item = {
+        "id": str(uuid.uuid4()),
+        "title": title[:300],
+        "source": "Manual Upload",
+        "source_url": "",
+        "source_document_id": doc["id"],
+        "iod": doc.get("iod") or current_user.get("iod") or "IOD-1",
+        "published_at": now,
+        "fetched_at": now,
+        "raw_content": (doc.get("extracted_text") or "")[:5000],
+        "severity": severity,
+        "priority_score": priority_score,
+        "threat_category": data.threat_category or "Unclassified",
+        "state": data.state or "Unknown",
+        "ai_summary": summary,
+        "is_cross_border": data.is_cross_border,
+        "tags": data.tags or [],
+        "countries_involved": [],
+        "processed": True,
+        "is_relevant": True,
+        "why_it_matters": summary,
+        "attention_level": "Priority Monitoring" if priority_score >= 60 else "Standard Monitoring",
+        "potential_impact": "",
+    }
+    await intelligence_col.insert_one(item)
+    logger.info(f"Manual feed item added from file: '{title[:60]}' severity={severity}")
+    return {
+        "message": "File added to intelligence feed",
+        "item_id": item["id"],
+        "title": item["title"],
         "severity": severity,
         "priority_score": priority_score,
     }

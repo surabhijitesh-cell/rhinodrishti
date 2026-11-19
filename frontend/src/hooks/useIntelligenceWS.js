@@ -1,6 +1,11 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { toast } from "sonner";
 
+// Wait 2 s after the first failure, doubling each time, never more than 60 s.
+export function reconnectDelay(attempt) {
+  return Math.min(60000, 2000 * 2 ** Math.max(0, attempt));
+}
+
 /**
  * Custom hook for WebSocket connection to the intelligence feed.
  * Provides real-time new items, critical alerts, scan status, and targeted notifications.
@@ -11,35 +16,49 @@ export function useIntelligenceWS(apiUrl, { onNotification } = {}) {
   const [newItems, setNewItems] = useState([]);
   const [criticalAlerts, setCriticalAlerts] = useState([]);
   const [unreadNotifCount, setUnreadNotifCount] = useState(0);
-  const wsRef = useRef(null);
   const reconnectTimer = useRef(null);
   const pingTimer = useRef(null);
   const onNotificationRef = useRef(onNotification);
   onNotificationRef.current = onNotification;
 
-  const connect = useCallback(() => {
-    if (!apiUrl) return;
+  useEffect(() => {
+    if (!apiUrl) return undefined;
+    let stopped = false; // set on unmount so nothing reconnects afterwards
+    let attempt = 0;
+    let ws = null;
 
-    // Convert http(s) URL to ws(s) URL — /api prefix for K8s routing
-    const token = localStorage.getItem("rd_token") || "";
-    const base = apiUrl.replace(/^http/, "ws") + "/ws/intelligence";
-    const wsUrl = token ? `${base}?token=${encodeURIComponent(token)}` : base;
+    const connect = () => {
+      if (stopped) return;
+      // Convert http(s) URL to ws(s) URL — /api prefix for K8s routing
+      const token = localStorage.getItem("rd_token") || "";
+      const base = apiUrl.replace(/^http/, "ws") + "/ws/intelligence";
+      const wsUrl = token ? `${base}?token=${encodeURIComponent(token)}` : base;
 
-    try {
-      const ws = new WebSocket(wsUrl);
-      wsRef.current = ws;
+      const retry = () => {
+        if (stopped) return;
+        reconnectTimer.current = setTimeout(connect, reconnectDelay(attempt));
+        attempt += 1;
+      };
 
-      ws.onopen = () => {
+      try {
+        ws = new WebSocket(wsUrl);
+      } catch (e) {
+        retry();
+        return;
+      }
+      const mine = ws;
+
+      mine.onopen = () => {
+        attempt = 0;
         setConnected(true);
         // Send ping every 30s to keep alive
         pingTimer.current = setInterval(() => {
-          if (ws.readyState === WebSocket.OPEN) {
-            ws.send("ping");
-          }
+          if (mine.readyState === WebSocket.OPEN) mine.send("ping");
         }, 30000);
       };
 
-      ws.onmessage = (event) => {
+      mine.onmessage = (event) => {
+        if (stopped) return;
         try {
           const data = JSON.parse(event.data);
           if (data.type === "pong") return;
@@ -58,6 +77,8 @@ export function useIntelligenceWS(apiUrl, { onNotification } = {}) {
             setUnreadNotifCount((c) => c + 1);
             const n = data.notification;
             toast(n.title, {
+              // Same id means a repeat shows once, not twice.
+              id: n.id || `${n.title}|${n.body}`,
               description: n.body,
               action: n.deep_link
                 ? { label: "View", onClick: () => { window.location.href = n.deep_link; } }
@@ -73,30 +94,31 @@ export function useIntelligenceWS(apiUrl, { onNotification } = {}) {
         }
       };
 
-      ws.onclose = () => {
-        setConnected(false);
+      mine.onclose = () => {
         clearInterval(pingTimer.current);
-        // Reconnect after 5s
-        reconnectTimer.current = setTimeout(connect, 5000);
+        if (stopped) return;
+        setConnected(false);
+        retry();
       };
 
-      ws.onerror = () => {
-        ws.close();
+      mine.onerror = () => {
+        mine.close();
       };
-    } catch (e) {
-      // Reconnect on error
-      reconnectTimer.current = setTimeout(connect, 5000);
-    }
-  }, [apiUrl]);
+    };
 
-  useEffect(() => {
     connect();
     return () => {
+      stopped = true;
       clearTimeout(reconnectTimer.current);
       clearInterval(pingTimer.current);
-      if (wsRef.current) wsRef.current.close();
+      if (ws) {
+        ws.onclose = null;
+        ws.onmessage = null;
+        ws.onerror = null;
+        ws.close();
+      }
     };
-  }, [connect]);
+  }, [apiUrl]);
 
   const clearAlerts = useCallback(() => setCriticalAlerts([]), []);
   const clearNewItems = useCallback(() => setNewItems([]), []);

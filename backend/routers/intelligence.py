@@ -6,6 +6,7 @@ from utils.auth import require_admin_role
 from typing import Optional
 from datetime import datetime, timezone, timedelta
 from utils.auth import get_current_user, get_current_user_optional
+from iod_registry import ALL_IODS, get_iod_faultline_ids
 from shared import (
     db, intelligence_col, patterns_col, _stats_cache, STATS_CACHE_TTL,
     invalidate_stats_cache, SEVERITY_LEVELS, logger,
@@ -73,10 +74,76 @@ async def _retention_cutoff() -> str:
     return (datetime.now(timezone.utc) - timedelta(days=retention_days)).isoformat()
 
 
-async def _open_alerts(limit: int) -> dict:
+def effective_iod(user: Optional[dict], iod: Optional[str]) -> str:
+    """Whose IOD ranks the feed. Only an admin may look through another IOD's
+    eyes; for everyone else the request is ignored and their own IOD applies."""
+    if iod and iod not in ALL_IODS:
+        raise HTTPException(status_code=400, detail=f"Unknown IOD: {iod}")
+    if iod and user and user.get("role") == "admin":
+        return iod
+    return (user or {}).get("iod") or "IOD-1"
+
+
+def build_alert_query(base: dict, state=None, threat_type=None, search=None, min_priority=None) -> dict:
+    """The open-alert definition plus the Alerts page filters. The list, the
+    count and the PDF export all use this, so they always show the same alerts."""
+    query = dict(base)
+    if state:
+        query["state"] = state
+    if threat_type:
+        query["threat_category"] = threat_type
+    if min_priority is not None:
+        query["priority_score"] = {"$gte": min_priority}
+    if search:
+        pattern = re.escape(search)
+        query["$or"] = [
+            {"title": {"$regex": pattern, "$options": "i"}},
+            {"ai_summary": {"$regex": pattern, "$options": "i"}},
+        ]
+    return query
+
+
+def resolve_sort(sort_by: Optional[str], sort_order: Optional[str]) -> tuple:
+    """(field, direction) for the feed and alerts; unknown values mean newest first."""
+    field = sort_by if sort_by in ("priority_score", "severity") else "published_at"
+    return field, (1 if sort_order == "asc" else -1)
+
+
+async def fetch_open_alerts(limit: int, state=None, threat_type=None, search=None, min_priority=None,
+                            sort_by=None, sort_order="desc", iod_faultline_ids=None) -> dict:
     flt = open_alert_filter(await _retention_cutoff())
-    items = await intelligence_col.find(flt, {"_id": 0}).sort("published_at", -1).limit(limit).to_list(limit)
-    return {"alerts": items, "count": await intelligence_col.count_documents(flt)}
+    query = build_alert_query(flt, state, threat_type, search, min_priority)
+    sort_field, sort_dir = resolve_sort(sort_by, sort_order)
+    if iod_faultline_ids or sort_field == "severity":
+        pipeline = build_feed_pipeline(query, sort_field, sort_dir, 0, limit, iod_faultline_ids)
+        items = await intelligence_col.aggregate(pipeline).to_list(limit)
+    else:
+        items = await intelligence_col.find(query, {"_id": 0}).sort(sort_field, sort_dir).limit(limit).to_list(limit)
+    return {
+        "alerts": items,
+        "count": await intelligence_col.count_documents(flt),          # every open alert
+        "matched": await intelligence_col.count_documents(query),      # after the page filters
+    }
+
+
+async def _open_alerts(limit: int) -> dict:
+    return await fetch_open_alerts(limit)
+
+
+def rank_semantic(query_embedding, items: list, limit: int, min_score: float, similarity) -> list:
+    """Items closest in meaning to the query, best first, embeddings stripped."""
+    results = []
+    for item in items:
+        emb = item.get("embedding")
+        if not emb:
+            continue
+        score = similarity(query_embedding, emb)
+        if score >= min_score:
+            copy = {k: v for k, v in item.items() if k != "embedding"}
+            copy["similarity_score"] = round(score, 4)
+            results.append(copy)
+    results.sort(key=lambda x: x["similarity_score"], reverse=True)
+    return results[:limit]
 
 
 @router.get("/dashboard/stats")
@@ -367,24 +434,9 @@ def build_feed_pipeline(query: dict, sort_field: str, sort_dir: int, skip: int, 
     return pipeline
 
 
-@router.get("/intelligence")
-async def get_intelligence(
-    state: Optional[str] = None,
-    threat_type: Optional[str] = None,
-    severity: Optional[str] = None,
-    search: Optional[str] = None,
-    date_from: Optional[str] = None,
-    date_to: Optional[str] = None,
-    is_cross_border: Optional[bool] = None,
-    min_priority: Optional[int] = None,
-    source_type: Optional[str] = None,   # filter by source_type field (twitter, youtube, telegram, ...)
-    sort_by: Optional[str] = Query(None, description="Sort field: published_at, priority_score, severity"),
-    sort_order: Optional[str] = Query("desc", description="Sort order: asc or desc"),
-    page: int = Query(1, ge=1),
-    limit: int = Query(20, ge=1, le=100),
-    translate: bool = Query(True),
-    user: Optional[dict] = Depends(get_current_user_optional),
-):
+async def build_feed_query(state=None, threat_type=None, severity=None, search=None, date_from=None,
+                           date_to=None, is_cross_border=None, min_priority=None, source_type=None) -> dict:
+    """What the Feed shows for a set of filters (also used by the new-items check)."""
     query = {
         "processed": True,
         "is_cluster_primary": {"$ne": False},
@@ -439,7 +491,30 @@ async def get_intelligence(
         query["is_cross_border"] = is_cross_border
     if min_priority is not None:
         query["priority_score"] = {"$gte": min_priority}
+    return query
 
+
+@router.get("/intelligence")
+async def get_intelligence(
+    state: Optional[str] = None,
+    threat_type: Optional[str] = None,
+    severity: Optional[str] = None,
+    search: Optional[str] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    is_cross_border: Optional[bool] = None,
+    min_priority: Optional[int] = None,
+    source_type: Optional[str] = None,   # filter by source_type field (twitter, youtube, telegram, ...)
+    sort_by: Optional[str] = Query(None, description="Sort field: published_at, priority_score, severity"),
+    sort_order: Optional[str] = Query("desc", description="Sort order: asc or desc"),
+    page: int = Query(1, ge=1),
+    limit: int = Query(20, ge=1, le=100),
+    translate: bool = Query(True),
+    iod: Optional[str] = Query(None, description="Admins only: rank as if viewing this IOD"),
+    user: Optional[dict] = Depends(get_current_user_optional),
+):
+    query = await build_feed_query(state, threat_type, severity, search, date_from, date_to,
+                                   is_cross_border, min_priority, source_type)
     sort_dir = -1 if sort_order == "desc" else 1
     sort_field = "published_at"
     if sort_by == "priority_score":
@@ -450,14 +525,11 @@ async def get_intelligence(
     skip = (page - 1) * limit
     total = await intelligence_col.count_documents(query)
 
-    # IOD ranking boost: items mapped to the user's IOD faultlines float to the
+    # IOD ranking boost: items mapped to the viewed IOD's faultlines float to the
     # top of the default sort. Free — reuses article↔faultline mappings the
     # daily scoring pass already writes, no new LLM calls. IOD-1 (or no user)
-    # sees today's order, byte-identical.
-    boost_faultline_ids = None
-    if user and user.get("iod", "IOD-1") != "IOD-1":
-        from iod_registry import get_iod_faultline_ids
-        boost_faultline_ids = get_iod_faultline_ids(user["iod"])
+    # sees today's order, byte-identical. An admin may pick another IOD to view.
+    boost_faultline_ids = get_iod_faultline_ids(effective_iod(user, iod))
 
     if boost_faultline_ids or sort_field == "severity":
         pipeline = build_feed_pipeline(query, sort_field, sort_dir, skip, limit, boost_faultline_ids)
@@ -472,8 +544,32 @@ async def get_intelligence(
 
     return {
         "items": items, "total": total, "page": page,
-        "limit": limit, "pages": max((total + limit - 1) // limit, 0)
+        "limit": limit, "pages": max((total + limit - 1) // limit, 0),
+        "iod": effective_iod(user, iod),
     }
+
+
+@router.get("/intelligence/new-since")
+async def get_new_since(
+    since: str = Query(..., min_length=10, max_length=40, description="ISO time; items collected after it count as new"),
+    alerts_only: bool = False,
+    state: Optional[str] = None,
+    threat_type: Optional[str] = None,
+    severity: Optional[str] = None,
+    search: Optional[str] = None,
+    is_cross_border: Optional[bool] = None,
+    min_priority: Optional[int] = None,
+):
+    """Cheap 60-second check behind the 'N new items' button: ids of items that
+    match the page's filters and were collected after `since`. The page counts
+    the ones it is not already showing."""
+    if alerts_only:
+        base = build_alert_query(open_alert_filter(await _retention_cutoff()), state, threat_type, search, min_priority)
+    else:
+        base = await build_feed_query(state, threat_type, severity, search, None, None, is_cross_border, min_priority)
+    base["fetched_at"] = {"$gt": since}
+    rows = await intelligence_col.find(base, {"_id": 0, "id": 1}).sort("fetched_at", -1).limit(100).to_list(100)
+    return {"ids": [r["id"] for r in rows if r.get("id")]}
 
 
 @router.get("/intelligence/{item_id}")
@@ -495,9 +591,24 @@ async def delete_intelligence_item(item_id: str):
 
 
 @router.get("/alerts")
-async def get_alerts():
-    """Alerts page: every alert that still needs attention (newest first)."""
-    return await _open_alerts(MAX_ACK_BATCH)
+async def get_alerts(
+    state: Optional[str] = None,
+    threat_type: Optional[str] = None,
+    search: Optional[str] = None,
+    min_priority: Optional[int] = None,
+    sort_by: Optional[str] = None,
+    sort_order: Optional[str] = "desc",
+    iod: Optional[str] = Query(None, description="Admins only: rank as if viewing this IOD"),
+    user: Optional[dict] = Depends(get_current_user_optional),
+):
+    """Alerts page: alerts that still need attention, filtered and sorted
+    (newest first by default). `count` = all open alerts, `matched` = after filters."""
+    eff = effective_iod(user, iod)
+    result = await fetch_open_alerts(
+        MAX_ACK_BATCH, state, threat_type, search, min_priority, sort_by, sort_order,
+        iod_faultline_ids=get_iod_faultline_ids(eff),
+    )
+    return {**result, "iod": eff}
 
 
 @router.get("/alerts/unacknowledged")
@@ -558,8 +669,17 @@ async def intelligence_semantic_search(body: dict):
     if not query or len(query.strip()) < 3:
         raise HTTPException(status_code=400, detail="Query must be at least 3 characters")
 
-    from embedding_service import semantic_search
-    results = await semantic_search(db, query, limit=limit, min_score=min_score)
+    from embedding_service import generate_embedding, cosine_similarity
+    query_embedding = await generate_embedding(query)
+    if not query_embedding:
+        # Not "no matches": the search itself could not run.
+        raise HTTPException(status_code=503, detail="AI search is unavailable right now. Please try again later.")
+    items = await db.intelligence_items.find(
+        {"embedding": {"$exists": True, "$ne": None}},
+        {"_id": 0, "id": 1, "title": 1, "ai_summary": 1, "severity": 1, "state": 1, "source": 1,
+         "published_at": 1, "priority_score": 1, "embedding": 1, "threat_category": 1},
+    ).to_list(2000)
+    results = rank_semantic(query_embedding, items, limit, min_score, cosine_similarity)
 
     return {"results": results, "count": len(results), "query": query}
 

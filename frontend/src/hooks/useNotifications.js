@@ -54,15 +54,25 @@ export function useNotifications() {
   const fetchNotifications = useCallback(async (page = 1, unreadOnly = false) => {
     try {
       const token = localStorage.getItem("rd_token");
-      if (!token) return { notifications: [], total: 0 };
+      if (!token) return { notifications: [], total: 0, failed: true };
       const res = await axios.get(`${API}/notifications`, {
         params: { page, limit: 20, unread_only: unreadOnly },
         headers: { Authorization: `Bearer ${token}` },
       });
-      if (page === 1) setNotifications(res.data.notifications || []);
+      const incoming = res.data.notifications || [];
+      if (page === 1) {
+        setNotifications(incoming);
+      } else {
+        // Next page: add only what is not already shown (new alerts can shift the pages).
+        setNotifications((prev) => {
+          const seen = new Set(prev.map((n) => n.notification_id));
+          return [...prev, ...incoming.filter((n) => !seen.has(n.notification_id))];
+        });
+      }
       return res.data;
     } catch (_) {
-      return { notifications: [], total: 0 };
+      // failed: true lets the panel say so instead of showing an empty list
+      return { notifications: [], total: 0, failed: true };
     }
   }, []);
 

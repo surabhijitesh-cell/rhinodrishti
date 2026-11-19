@@ -12,6 +12,17 @@ import { Input } from "../components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
 import { toast } from "sonner";
 import { useAuth } from "../contexts/AuthContext";
+import { formatIST } from "../lib/time";
+import ConfirmAction from "../components/ConfirmAction";
+
+// The server gives up on a model call after 90s; past this the run has almost certainly stalled.
+const ANALYSIS_STUCK_MS = 4 * 60 * 1000;
+
+export function isAnalysisStuck(doc, now = Date.now()) {
+  if (!doc || doc.processed) return false;
+  const started = Date.parse(/[zZ]|[+-]\d\d:?\d\d$/.test(doc.uploaded_at || "") ? doc.uploaded_at : `${doc.uploaded_at}Z`);
+  return Number.isFinite(started) && now - started > ANALYSIS_STUCK_MS;
+}
 
 const SEV_STYLES = {
   CRITICAL: "bg-red-500/20 text-red-400 border-red-500/30",
@@ -38,6 +49,7 @@ function AnalysisCard({ doc, onDelete, onAddToFeed, onReanalyze, api }) {
   const [selectedKw, setSelectedKw] = useState(new Set());
   const [addingKw, setAddingKw] = useState(false);
   const isViewer = useAuth().user?.role === "viewer";
+  const stuck = isAnalysisStuck(doc);
   const a = doc.analysis || {};
   const tc = a.threat_classification || {};
   const pa = a.pattern_analysis || {};
@@ -84,19 +96,32 @@ function AnalysisCard({ doc, onDelete, onAddToFeed, onReanalyze, api }) {
                   </Badge>
                 )}
                 <span className="text-[10px] text-muted-foreground font-mono">
-                  {doc.source_type === "url" ? "URL" : doc.file_type?.toUpperCase()} | {new Date(doc.uploaded_at).toLocaleString("en-IN", { dateStyle: "short", timeStyle: "short" })}
+                  {doc.source_type === "url" ? "URL" : doc.file_type?.toUpperCase()} | {formatIST(doc.uploaded_at)}
                 </span>
               </div>
             </div>
           </div>
           <div className="flex items-center gap-1 shrink-0">
-            {!doc.processed && (
+            {!doc.processed && !stuck && (
               <div className="flex items-center gap-1 text-amber-400 mr-2">
                 <RefreshCw size={14} className="animate-spin" />
                 <span className="text-[10px] font-mono">Analyzing...</span>
               </div>
             )}
-            {!isViewer && doc.processed && doc.source_type === "url" && !a?.error && (
+            {!doc.processed && stuck && (
+              <div className="flex items-center gap-1 text-red-400 mr-2" data-testid={`analysis-stuck-${doc.id}`}>
+                <AlertTriangle size={14} />
+                <span className="text-[10px] font-mono">Analysis stalled</span>
+                {!isViewer && onReanalyze && (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); onReanalyze(doc.id); }}
+                    className="ml-1 text-[10px] text-amber-400 hover:text-amber-300 underline underline-offset-2"
+                    data-testid={`retry-analysis-${doc.id}`}
+                  >Retry</button>
+                )}
+              </div>
+            )}
+            {!isViewer && doc.processed && !a?.error && (
               <Button
                 variant="outline" size="sm"
                 className="h-7 text-[10px] rounded-none border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/10 mr-1"
@@ -108,10 +133,17 @@ function AnalysisCard({ doc, onDelete, onAddToFeed, onReanalyze, api }) {
               </Button>
             )}
             {!isViewer && (
-            <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-red-400" onClick={(e) => { e.stopPropagation(); onDelete(doc.id); }}
-              title="Delete" data-testid={`delete-doc-${doc.id}`}>
-              <Trash2 size={13} />
-            </Button>
+            <ConfirmAction
+              title="Delete this analysis?"
+              description="The uploaded item and its analysis will be removed. Items already added to the Feed stay there."
+              confirmLabel="Delete"
+              onConfirm={() => onDelete(doc.id)}
+            >
+              <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-red-400" onClick={(e) => e.stopPropagation()}
+                title="Delete" data-testid={`delete-doc-${doc.id}`}>
+                <Trash2 size={13} />
+              </Button>
+            </ConfirmAction>
             )}
             {expanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
           </div>
@@ -323,11 +355,23 @@ function AnalysisCard({ doc, onDelete, onAddToFeed, onReanalyze, api }) {
         </CardContent>
       )}
 
-      {expanded && !doc.processed && (
+      {expanded && !doc.processed && !stuck && (
         <CardContent className="p-4">
           <div className="flex items-center gap-2 text-amber-400 text-sm">
             <RefreshCw size={14} className="animate-spin" />
             Analysis in progress — this may take 15-30 seconds...
+          </div>
+        </CardContent>
+      )}
+
+      {expanded && !doc.processed && stuck && (
+        <CardContent className="p-4">
+          <div className="text-red-400 text-sm flex items-center gap-2 flex-wrap">
+            <AlertTriangle size={14} /> This analysis has been running for over 4 minutes and has probably stalled. It has not failed for certain; you can try again.
+            {!isViewer && onReanalyze && (
+              <button onClick={(e) => { e.stopPropagation(); onReanalyze(doc.id); }}
+                className="ml-2 text-xs text-amber-400 hover:text-amber-300 underline underline-offset-2">Retry</button>
+            )}
           </div>
         </CardContent>
       )}
@@ -356,7 +400,7 @@ function AddToFeedModal({ doc, api, onClose, onSuccess }) {
     setSubmitting(true);
     try {
       const res = await axios.post(`${api}/add-to-feed`, {
-        url: doc.source_url,
+        ...(doc.source_type === "url" ? { url: doc.source_url } : { document_id: doc.id }),
         title: title.trim(),
         severity,
         priority_score: priorityScore,
@@ -621,7 +665,7 @@ export default function DocumentUpload({ api }) {
   useEffect(() => { fetchDocuments(); }, [fetchDocuments]);
 
   useEffect(() => {
-    const hasPending = documents.some(d => !d.processed);
+    const hasPending = documents.some(d => !d.processed && !isAnalysisStuck(d));
     if (!hasPending) return;
     const interval = setInterval(fetchDocuments, 5000);
     return () => clearInterval(interval);
@@ -658,7 +702,6 @@ export default function DocumentUpload({ api }) {
   };
 
   const handleDelete = async (docId) => {
-    if (!window.confirm("Delete this analysis?")) return;
     try {
       await axios.delete(`${api}/uploaded-documents/${docId}`);
       toast.success("Deleted");

@@ -150,11 +150,13 @@ async def list_notifications(
     if unread_only:
         query["is_read"] = False
 
+    page = max(1, page)
+    limit = max(1, min(limit, 100))
     skip = (page - 1) * limit
     total = await db.notification_recipients.count_documents(query)
     recs = await db.notification_recipients.find(
         query, {"_id": 0}
-    ).sort("created_at", -1).skip(skip).limit(limit).to_list(None)
+    ).sort([("created_at", -1), ("id", -1)]).skip(skip).limit(limit).to_list(None)
 
     # Enrich with notification body
     notif_ids = [r["notification_id"] for r in recs]
@@ -179,7 +181,8 @@ async def list_notifications(
             "created_at": rec.get("created_at"),
         })
 
-    return {"notifications": results, "total": total, "page": page}
+    return {"notifications": results, "total": total, "page": page,
+            "has_more": skip + len(recs) < total}
 
 
 @router.post("/notifications/seen")

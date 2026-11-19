@@ -10,11 +10,11 @@
  *  6. State name labels
  *
  * Props:
- *   stateStats  — { [regionName]: { count, critical, high } }
+ *   windowStateStats — { [regionName]: { count, critical, high } } for the selected time window
  *   items       — raw intelligence items array (for exact-location markers)
  *   onStateClick — (stateName) => void
  */
-import { useEffect, useRef, useState, memo, useCallback } from "react";
+import { useEffect, useRef, useState, memo, useCallback, useMemo } from "react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { mapLocationsFor } from "../lib/mapLocations";
@@ -329,8 +329,7 @@ let _borderGeoCache = null;
 
 // ─── Main component ───────────────────────────────────────────────────────────
 const InteractiveNERMap = memo(function InteractiveNERMap({
-  stateStats = {},
-  windowStateStats = {},   // per-state stats for items in the ACTIVE slider window
+  windowStateStats = {},   // per-state stats for items in the ACTIVE slider window: the ONE source for outline colours, labels and popups
   items = [],
   onStateClick,
   navigate,          // pass useNavigate() from parent for "View in Feed" clicks
@@ -365,6 +364,7 @@ const InteractiveNERMap = memo(function InteractiveNERMap({
   const _initState = _loadRelState();
   const [showRel, setShowRel]   = useState(_initState.showRel);
   const [relCount, setRelCount] = useState(0);
+  const [relError, setRelError] = useState(false);
   const [relTypes, setRelTypes] = useState(_initState.relTypes);
 
   // Persist LINKS state whenever it changes
@@ -556,19 +556,42 @@ const InteractiveNERMap = memo(function InteractiveNERMap({
     };
   }, []);
 
-  // ── Re-draw GeoJSON state layers when stateStats changes ───────────────────
+  // ── State / border outlines: built once, afterwards only recoloured ─────────
+  // Colours, the "N items" labels and the popups all read the same per-region
+  // counts (the items in the selected time window), so they can never disagree.
+  const featureLayersRef = useRef({});   // region name -> outline layer
+  const labelMarkersRef  = useRef({});   // region name -> label marker
+  const shownStatsRef    = useRef(windowStateStats || {});
+  const onStateClickRef  = useRef(onStateClick);
+  useEffect(() => { onStateClickRef.current = onStateClick; }, [onStateClick]);
+
+  const applyRegionStats = useCallback((stats) => {
+    Object.entries(featureLayersRef.current).forEach(([name, layer]) => {
+      const sv = SEV[stateSeverity(stats[name])];
+      layer.setStyle({ fillColor: sv.fill, color: sv.stroke, weight: sv.strokeW });
+    });
+    Object.entries(labelMarkersRef.current).forEach(([name, marker]) => {
+      marker.setIcon(stateLabelIcon(name, stats[name]?.count || 0));
+    });
+  }, []);
+
+  // Only re-applies when the numbers really change, not on every slider tick.
+  const statsKey = JSON.stringify(windowStateStats || {});
+  useEffect(() => {
+    shownStatsRef.current = windowStateStats || {};
+    applyRegionStats(shownStatsRef.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [statsKey, applyRegionStats]);
+
   useEffect(() => {
     const map = leafletRef.current;
-    if (!map) return;
-
-    if (geoLayerRef.current) {
-      geoLayerRef.current.remove();
-      geoLayerRef.current = null;
-    }
+    if (!map) return undefined;
+    let cancelled = false;
+    let group = null;
 
     async function loadLayers() {
       try {
-        // Use module-level cache — avoids re-fetching on every slider scrub
+        // Use module-level cache — avoids re-fetching on every mount
         if (!_nerGeoCache || !_borderGeoCache) {
           const [nerRes, borderRes] = await Promise.all([
             fetch("/ner-states.geojson"),
@@ -577,6 +600,7 @@ const InteractiveNERMap = memo(function InteractiveNERMap({
           _nerGeoCache    = await nerRes.json();
           _borderGeoCache = await borderRes.json();
         }
+        if (cancelled || !leafletRef.current) return;
         const nerGeo    = _nerGeoCache;
         const borderGeo = _borderGeoCache;
 
@@ -584,42 +608,26 @@ const InteractiveNERMap = memo(function InteractiveNERMap({
         const NEIGHBOR      = ["West Bengal"];
         const BORDER_NAMES  = ["Bangladesh","Myanmar"];
 
-        // Border color priority: windowStateStats (active slider window) > stateStats (all-time)
-        // This makes borders update live as the user scrubs through the timeline.
-        function resolvedSev(name) {
-          const ws = windowStateStats[name];
-          // If the window has any items for this region, use window severity
-          if (ws && ws.count > 0) return stateSeverity(ws);
-          // Otherwise fall back to overall stats (keeps historical context)
-          return stateSeverity(stateStats[name]);
-        }
+        const styleFor = (name) => {
+          const sv = SEV[stateSeverity(shownStatsRef.current[name])];
+          return { fillColor: sv.fill, color: sv.stroke, weight: sv.strokeW, fillOpacity: 1, opacity: 1 };
+        };
+        const popupFor = (name) => () => _popup(name, shownStatsRef.current[name]);
 
-        function styleFor(name) {
-          const s = SEV[resolvedSev(name)];
-          return {
-            fillColor:   s.fill,
-            color:       s.stroke,
-            weight:      s.strokeW,
-            fillOpacity: 1,
-            opacity:     1,
-          };
-        }
-
-        const group = L.layerGroup().addTo(map);
+        group = L.layerGroup().addTo(map);
+        const layers = {};
 
         // Border countries with dashed stroke
         L.geoJSON(borderGeo, {
-          style: (feat) => {
-            const name = feat.properties.name;
-            return { ...styleFor(name), dashArray: "6 3" };
-          },
+          style: (feat) => ({ ...styleFor(feat.properties.name), dashArray: "6 3" }),
           onEachFeature: (feat, layer) => {
             const name = feat.properties.name;
             if (!BORDER_NAMES.includes(name)) return;
-            layer.bindPopup(_popup(name, stateStats[name]));
-            layer.on("click", () => onStateClick && onStateClick(name));
-            layer.on("mouseover", () => layer.setStyle({ weight: layer.options.weight + 1, filter: "brightness(1.5)" }));
-            layer.on("mouseout",  () => layer.setStyle({ weight: layer.options.weight - 1, filter: "" }));
+            layers[name] = layer;
+            layer.bindPopup(popupFor(name), { className: "ner-popup", maxWidth: 200 });
+            layer.on("click", () => onStateClickRef.current && onStateClickRef.current(name));
+            layer.on("mouseover", () => layer.setStyle({ weight: styleFor(name).weight + 1 }));
+            layer.on("mouseout",  () => layer.setStyle({ weight: styleFor(name).weight }));
           },
         }).addTo(group);
 
@@ -639,34 +647,25 @@ const InteractiveNERMap = memo(function InteractiveNERMap({
           onEachFeature: (feat, layer) => {
             const name = feat.properties.ST_NM;
             if (!NER_STATES.includes(name)) return;
-            layer.bindPopup(_popup(name, stateStats[name]));
-            layer.on("click", () => onStateClick && onStateClick(name));
-            layer.on("mouseover", () => layer.setStyle({ weight: (layer.options.weight || 1) + 0.8 }));
-            layer.on("mouseout",  () => layer.setStyle({ weight: (layer.options.weight || 1) - 0.8 }));
+            layers[name] = layer;
+            layer.bindPopup(popupFor(name), { className: "ner-popup", maxWidth: 200 });
+            layer.on("click", () => onStateClickRef.current && onStateClickRef.current(name));
+            layer.on("mouseover", () => layer.setStyle({ weight: styleFor(name).weight + 0.8 }));
+            layer.on("mouseout",  () => layer.setStyle({ weight: styleFor(name).weight }));
           },
         }).addTo(group);
 
         // State name labels (DivIcon)
+        const labels = {};
         Object.entries(STATE_CENTERS).forEach(([name, [lat, lon]]) => {
-          const stats = stateStats[name];
-          const count = stats?.count || 0;
-          L.marker([lat, lon], {
-            icon: L.divIcon({
-              className: "",
-              html: `<div style="
-                font-family:'Barlow Condensed',sans-serif;
-                font-size:10px; font-weight:700;
-                color:rgba(255,255,255,0.75);
-                text-transform:uppercase; letter-spacing:0.12em;
-                text-shadow: 0 1px 3px rgba(0,0,0,0.9), 0 0 6px rgba(0,0,0,0.6);
-                white-space:nowrap; pointer-events:none;
-              ">${escapeHtml(name)}${count ? `<br/><span style="font-size:8px;opacity:0.55;letter-spacing:0.05em">${count} items</span>` : ""}</div>`,
-              iconAnchor: [0, 0],
-            }),
+          labels[name] = L.marker([lat, lon], {
+            icon: stateLabelIcon(name, shownStatsRef.current[name]?.count || 0),
             interactive: false,
           }).addTo(group);
         });
 
+        featureLayersRef.current = layers;
+        labelMarkersRef.current  = labels;
         geoLayerRef.current = group;
       } catch (e) {
         console.error("NERMap GeoJSON load error:", e);
@@ -674,9 +673,27 @@ const InteractiveNERMap = memo(function InteractiveNERMap({
     }
 
     loadLayers();
-  }, [stateStats, windowStateStats, onStateClick]);
+    return () => {
+      cancelled = true;
+      if (group) group.remove();
+      geoLayerRef.current = null;
+      featureLayersRef.current = {};
+      labelMarkersRef.current = {};
+    };
+  }, []);
 
-  // ── Re-draw intelligence item markers when items change ────────────────────
+  // What the markers actually depend on. The parent hands over a fresh list on
+  // every slider tick / timer; unchanged content must not redraw anything.
+  const markerKey = useMemo(
+    () => items.map((it) => `${it.id || it.item_id}:${it.severity}:${(typeof it._opacity === "number" ? it._opacity : 1).toFixed(2)}`).join("|"),
+    [items]
+  );
+  const itemIdKey = useMemo(
+    () => items.map((it) => it.id || it.item_id).filter(Boolean).sort().join(","),
+    [items]
+  );
+
+  // ── Re-draw intelligence item markers when their content changes ───────────
   useEffect(() => {
     const mg = markersRef.current;
     if (!mg) return;
@@ -749,14 +766,17 @@ const InteractiveNERMap = memo(function InteractiveNERMap({
         .bindPopup(popupHtml, { maxWidth: 260, className: "ner-popup" })
         .addTo(mg);
     });
-  }, [items]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [markerKey]);
 
   // ── Draw relationship lines ────────────────────────────────────────────────
   useEffect(() => {
     const rl = relLinesRef.current;
-    if (!rl) return;
+    if (!rl) return undefined;
+    let cancelled = false; // a newer run replaced this one
     rl.clearLayers();
-    if (!showRel || !items.length) { setRelCount(0); return; }
+    setRelError(false);
+    if (!showRel || !items.length) { setRelCount(0); return undefined; }
 
     // Build item id → coords + title + timestamp
     // Merge in actor-specific coords (wider 1yr window) so actor lines always draw
@@ -781,10 +801,10 @@ const InteractiveNERMap = memo(function InteractiveNERMap({
     });
 
     const ids = Object.keys(itemCoords);
-    if (ids.length < 2) return;
+    if (ids.length < 2) return undefined;
 
     const enabledTypes = Object.entries(relTypes).filter(([, v]) => v).map(([k]) => k);
-    if (!enabledTypes.length) return;
+    if (!enabledTypes.length) return undefined;
 
     const base = api || "";
     const chunks = [];
@@ -807,24 +827,39 @@ const InteractiveNERMap = memo(function InteractiveNERMap({
     window.__nerExplainEdge = (fromId, toId, type, containerId) => {
       const token = localStorage.getItem("rd_token") || "";
       const box = document.getElementById(containerId);
-      if (box) box.textContent = "Loading…";
+      if (!box || box.dataset.busy) return; // one AI call per click
+      box.dataset.busy = "1";
+      box.textContent = "Asking the AI…";
       fetch(`${base}/relationships/explain-by-pair?from_id=${fromId}&to_id=${toId}&type=${type}`, {
         headers: { Authorization: `Bearer ${token}` },
-      }).then(r => r.json()).then(d => {
-        if (box) box.textContent = d.explanation || "No explanation available.";
-      }).catch(() => { if (box) box.textContent = "Explanation unavailable."; });
+      }).then(async (r) => {
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) {
+          const err = new Error(typeof d.detail === "string" && d.detail ? d.detail : "The explanation is not available right now.");
+          err.shown = true;
+          throw err;
+        }
+        return d;
+      }).then(d => {
+        box.textContent = d.explanation || "The AI did not return an explanation. Please try again.";
+      }).catch((e) => {
+        box.textContent = e.shown ? e.message : "Could not reach the server. Please try again.";
+      }).finally(() => { delete box.dataset.busy; });
     };
 
+    let anyFailed = false;
     Promise.all(
       chunks.map((chunk) =>
         fetch(`${base}/relationships?item_ids=${chunk.join(",")}&types=${enabledTypes.join(",")}`, {
-      headers: { Authorization: `Bearer ${localStorage.getItem("rd_token") || ""}` },
-    })
-          .then((r) => r.json())
+          headers: { Authorization: `Bearer ${localStorage.getItem("rd_token") || ""}` },
+        })
+          .then((r) => { if (!r.ok) throw new Error("links failed"); return r.json(); })
           .then((d) => d.edges || [])
-          .catch(() => [])
+          .catch(() => { anyFailed = true; return []; })
       )
     ).then((results) => {
+      if (cancelled) return;
+      setRelError(anyFailed);
       let edges = results.flat();
 
       // For same_actor with selected actor: generate edges from matched items
@@ -936,7 +971,7 @@ const InteractiveNERMap = memo(function InteractiveNERMap({
             ${cascadeMeta}
             ${aiBlock}
             <div style="margin-top:6px;display:flex;gap:4px;flex-wrap:wrap">
-              ${!edge.ai_explanation ? `<button class="ner-rel-exp-btn" onclick="document.getElementById('${expBoxId}').style.display='block';window.__nerExplainEdge('${safeFrom}','${safeTo}','${safeType}','${expBoxId}')">AI Explain</button>` : ""}
+              ${!edge.ai_explanation ? `<button class="ner-rel-exp-btn" title="Uses one AI call" onclick="document.getElementById('${expBoxId}').style.display='block';window.__nerExplainEdge('${safeFrom}','${safeTo}','${safeType}','${expBoxId}')">Explain this link</button><span style="align-self:center;color:#9ca3af;font-size:8px">uses one AI call</span>` : ""}
               <button class="ner-rel-del-btn" onclick="window.__nerDelEdge('${safeFrom}','${safeTo}','${safeType}','${safeId}')">✕ Inaccurate</button>
             </div>
           </div>`,
@@ -964,7 +999,9 @@ const InteractiveNERMap = memo(function InteractiveNERMap({
         lineCount++;
       });
     });
-  }, [items, showRel, relTypes, api, selectedActorFilter, actorItemData]);
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [itemIdKey, showRel, relTypes, api, selectedActorFilter, actorItemData]);
 
   // ── focusActor: zoom map + auto-enable LINKS filtered to same_actor ──────────
   useEffect(() => {
@@ -1018,11 +1055,14 @@ const InteractiveNERMap = memo(function InteractiveNERMap({
         </p>
       </div>
 
-      {/* Relationship toggle + filter panel — HIDDEN until pattern-lines work resumes */}
-      {false && <div style={{ position: "absolute", top: 90, right: 8, zIndex: 1000, minWidth: 90 }}>
+      {/* Links between related reports: on/off, with the kinds of link to show */}
+      <div style={{ position: "absolute", top: 90, right: 8, zIndex: 1000, minWidth: 90 }}>
         {/* Toggle button */}
         <button
           onClick={() => setShowRel((v) => !v)}
+          aria-pressed={showRel}
+          title="Draw lines between reports that are related to each other"
+          data-testid="map-links-toggle"
           style={{
             display: "block", width: "100%",
             background: showRel ? "rgba(163,230,53,0.18)" : "rgba(0,0,0,0.65)",
@@ -1035,8 +1075,18 @@ const InteractiveNERMap = memo(function InteractiveNERMap({
             marginBottom: 2,
           }}
         >
-          ⬡ LINKS{showRel && relCount > 0 ? ` (${relCount})` : ""}
+          ⬡ Links between reports: {showRel ? "ON" : "OFF"}{showRel && relCount > 0 ? ` (${relCount})` : ""}
         </button>
+        {showRel && relError && (
+          <div style={{ color: "#fbbf24", fontFamily: "ui-monospace,monospace", fontSize: 8, background: "rgba(0,0,0,0.78)", padding: "3px 6px" }}>
+            Could not load some links. Try again shortly.
+          </div>
+        )}
+        {showRel && !relError && relCount === 0 && (
+          <div style={{ color: "rgba(255,255,255,0.55)", fontFamily: "ui-monospace,monospace", fontSize: 8, background: "rgba(0,0,0,0.78)", padding: "3px 6px" }}>
+            No links among the reports shown.
+          </div>
+        )}
 
         {/* Filter panel — visible when showRel */}
         {showRel && (
@@ -1097,7 +1147,7 @@ const InteractiveNERMap = memo(function InteractiveNERMap({
             ))}
           </div>
         )}
-      </div>}
+      </div>
 
       {/* Legend */}
       <div style={{
@@ -1155,19 +1205,35 @@ const InteractiveNERMap = memo(function InteractiveNERMap({
   );
 });
 
-// ── Popup helper ─────────────────────────────────────────────────────────────
+// ── Popup helper (HTML text; Leaflet asks for it each time a popup opens) ────
 function _popup(name, stats) {
   const s = stats || { count: 0, critical: 0, high: 0 };
-  return L.popup({ className: "ner-popup", maxWidth: 200 }).setContent(`
+  const n = s.count || 0;
+  return `
     <div class="map-pop">
       <b>${escapeHtml(name)}</b>
       <div style="margin-top:4px; font-size:9px; color:#6b7280; text-transform:uppercase; letter-spacing:.08em">
-        ${s.count || 0} intelligence item${s.count !== 1 ? "s" : ""}
+        ${n} intelligence item${n !== 1 ? "s" : ""} in the selected time window
       </div>
       ${s.critical > 0 ? `<div style="color:#ef4444;font-size:10px;margin-top:2px">● ${s.critical} critical</div>` : ""}
       ${s.high > 0     ? `<div style="color:#f59e0b;font-size:10px;margin-top:2px">● ${s.high} high</div>` : ""}
     </div>
-  `);
+  `;
+}
+
+function stateLabelIcon(name, count) {
+  return L.divIcon({
+    className: "",
+    html: `<div style="
+      font-family:'Barlow Condensed',sans-serif;
+      font-size:10px; font-weight:700;
+      color:rgba(255,255,255,0.75);
+      text-transform:uppercase; letter-spacing:0.12em;
+      text-shadow: 0 1px 3px rgba(0,0,0,0.9), 0 0 6px rgba(0,0,0,0.6);
+      white-space:nowrap; pointer-events:none;
+    ">${escapeHtml(name)}${count ? `<br/><span style="font-size:8px;opacity:0.55;letter-spacing:0.05em">${count} items</span>` : ""}</div>`,
+    iconAnchor: [0, 0],
+  });
 }
 
 export default InteractiveNERMap;

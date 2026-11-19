@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { useTheme } from "./ThemeProvider";
 import { useAuth } from "../contexts/AuthContext";
+import { formatIST } from "../lib/time";
 import { useAdminIod } from "../contexts/AdminIodContext";
 import {
   Shield, LayoutDashboard, Newspaper, FileText, TrendingUp,
@@ -120,7 +121,7 @@ export default function Layout({ children, alertCount = 0, onSearch, notifUnread
   const [searchVal, setSearchVal] = useState("");
   const { theme, toggleTheme } = useTheme();
   const location = useLocation();
-  const { user, logout } = useAuth();
+  const { user, logout, session } = useAuth();
   const { viewIod, setViewIod } = useAdminIod();
   const { startTour, resetTour } = useTour();
   const [serverDown, setServerDown] = useState(false);
@@ -378,6 +379,24 @@ export default function Layout({ children, alertCount = 0, onSearch, notifUnread
               <div className="mb-4 flex items-center gap-2 p-3 border border-amber-500/40 bg-amber-500/5 text-amber-400 text-xs" role="status" data-testid="server-waking-banner">
                 <RotateCcw size={13} className="animate-spin shrink-0" />
                 Server waking up. You are still logged in; panels will fill in as soon as it answers (usually under a minute).
+              </div>
+            )}
+            {session?.state !== "ok" && session?.expiresAt && (
+              <div
+                className={`mb-4 flex items-center gap-2 p-3 border text-xs ${
+                  session.state === "expired"
+                    ? "border-red-500/40 bg-red-500/5 text-red-400"
+                    : "border-amber-500/40 bg-amber-500/5 text-amber-400"
+                }`}
+                role="alert"
+                data-testid="session-expiry-banner"
+              >
+                <span>
+                  {session.state === "expired"
+                    ? "Your login has expired. Anything you try may be refused until you sign in again."
+                    : `Your login ends at ${formatIST(new Date(session.expiresAt))}. Save your work, then sign in again.`}
+                </span>
+                <button onClick={logout} className="ml-auto underline underline-offset-2 shrink-0">Sign in again</button>
               </div>
             )}
             {children}

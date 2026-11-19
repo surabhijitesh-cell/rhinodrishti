@@ -5,6 +5,8 @@ import {
   Activity, RefreshCw, ChevronRight, Filter, MapPin, Network,
   Star, Plus, Download,
 } from "lucide-react";
+import LoadError from "../components/LoadError";
+import { formatIST } from "../lib/time";
 import CustomFaultlineModal from "../components/CustomFaultlineModal";
 import PAOIManager from "../components/PAOIManager";
 import axios from "axios";
@@ -35,14 +37,7 @@ const tooltipStyle = {
 // "Last scored" in Indian time, from the score's own timestamp (falls back to its date).
 export function formatLastScored(score) {
   if (!score) return null;
-  const stamp = score.computed_at ? new Date(score.computed_at) : null;
-  if (stamp && !Number.isNaN(stamp.getTime())) {
-    return `${stamp.toLocaleString("en-IN", {
-      timeZone: "Asia/Kolkata", day: "numeric", month: "short",
-      hour: "2-digit", minute: "2-digit", hour12: false,
-    })} IST`;
-  }
-  return score.date || null;
+  return formatIST(score.computed_at) || formatIST(score.date, { dateOnly: true }) || null;
 }
 
 // Plain-language warning when a score cannot be fully trusted.
@@ -156,7 +151,7 @@ function FaultlineCard({ fl, sparkData, delta7d, onClick, watchlistRank, onToggl
               <Tooltip
                 contentStyle={tooltipStyle}
                 formatter={(v) => [v?.toFixed?.(1) ?? v, "score"]}
-                labelFormatter={(d) => d}
+                labelFormatter={(d) => formatIST(d, { dateOnly: true })}
               />
               <Line
                 type="monotone"
@@ -200,12 +195,20 @@ export default function FaultlineIntelligence({ api }) {
   const [faultlines, setFaultlines] = useState([]);
   const [historyByFl, setHistoryByFl] = useState({});
   const [loading, setLoading] = useState(true);
+  const [listError, setListError] = useState(false);
+  const [historyError, setHistoryError] = useState(false);
+  const [historyTick, setHistoryTick] = useState(0);
   const [seeding, setSeeding] = useState(false);
   const [running, setRunning] = useState(false);
   const [runMessage, setRunMessage] = useState("");
   const [runTimedOut, setRunTimedOut] = useState(false);
   const unmounted = useRef(false);
   useEffect(() => () => { unmounted.current = true; }, []);
+  // Marks the page so print styles (index.css) show only the faultline content.
+  useEffect(() => {
+    document.body.classList.add("print-faultlines");
+    return () => document.body.classList.remove("print-faultlines");
+  }, []);
   const [stateFilter, setStateFilter] = useState("all");
   const [levelFilter, setLevelFilter] = useState("all");
   const [sortBy, setSortBy] = useState("score_desc");
@@ -217,6 +220,7 @@ export default function FaultlineIntelligence({ api }) {
 
   const fetchFaultlines = useCallback(async () => {
     setLoading(true);
+    setListError(false);
     try {
       const iodParam = effectiveIod ? `&iod=${effectiveIod}` : "";
       const res = await axios.get(`${api}/faultlines?include_score=true${iodParam}`);
@@ -224,6 +228,7 @@ export default function FaultlineIntelligence({ api }) {
     } catch (e) {
       console.error("Failed to load faultlines", e);
       setFaultlines([]);
+      setListError(true);
     }
     setLoading(false);
   }, [api, effectiveIod]);
@@ -288,23 +293,30 @@ export default function FaultlineIntelligence({ api }) {
     [faultlines]
   );
 
-  // Lazily fetch 7-day history per faultline for sparkline (one call per fl, batched)
+  // One request for every sparkline. Older servers without the batch route
+  // (404/405) fall back to the slow per-faultline calls. Re-runs only when the
+  // set of faultlines changes or a scoring run finishes - never per status poll.
   useEffect(() => {
     if (!faultlineIdsSig) return;
     const ids = faultlineIdsSig.split(",").filter(Boolean);
-    if (!ids.length) return;
     let cancelled = false;
     const load = async () => {
-      const out = {};
-      // Throttle: 6 at a time
-      const chunks = [];
-      for (let i = 0; i < ids.length; i += 6) {
-        chunks.push(ids.slice(i, i + 6));
+      setHistoryError(false);
+      try {
+        const res = await axios.get(`${api}/faultlines/history-batch`, { params: { ids: ids.join(","), days: 7 } });
+        if (!cancelled) setHistoryByFl(res.data.series || {});
+        return;
+      } catch (e) {
+        if (![404, 405].includes(e.response?.status)) {
+          if (!cancelled) setHistoryError(true);
+          return;
+        }
       }
-      for (const chunk of chunks) {
+      const out = {};
+      for (let i = 0; i < ids.length; i += 6) {
         if (cancelled) return;
         const results = await Promise.all(
-          chunk.map((flId) =>
+          ids.slice(i, i + 6).map((flId) =>
             axios.get(`${api}/faultlines/${flId}/history?days=7`)
               .then((r) => [flId, r.data.series || []])
               .catch(() => [flId, []])
@@ -316,7 +328,7 @@ export default function FaultlineIntelligence({ api }) {
     };
     load();
     return () => { cancelled = true; };
-  }, [api, faultlineIdsSig]);
+  }, [api, faultlineIdsSig, historyTick]);
 
   const states = useMemo(() => {
     const set = new Set(faultlines.map((f) => f.state).filter(Boolean));
@@ -385,6 +397,7 @@ export default function FaultlineIntelligence({ api }) {
     } else {
       setRunMessage("");
       await fetchFaultlines();
+      setHistoryTick((n) => n + 1);
     }
     setRunning(false);
   };
@@ -423,7 +436,7 @@ export default function FaultlineIntelligence({ api }) {
             Continuous stress monitoring across regional fault lines
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 no-print">
           <Button
             variant="outline" size="sm"
             className="rounded-none text-xs"
@@ -489,7 +502,7 @@ export default function FaultlineIntelligence({ api }) {
       </div>
 
       {runMessage && (
-        <div className="border border-amber-500/40 bg-amber-950/20 p-2 text-xs font-mono flex items-center gap-2">
+        <div className="no-print border border-amber-500/40 bg-amber-950/20 p-2 text-xs font-mono flex items-center gap-2">
           <AlertTriangle size={12} className="text-amber-400 shrink-0" />
           <span className="flex-1">{runMessage}</span>
           {runTimedOut && (
@@ -520,7 +533,7 @@ export default function FaultlineIntelligence({ api }) {
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-1 border-b border-border">
+      <div className="flex gap-1 border-b border-border no-print">
         {["list", "cross-impact"].map((t) => (
           <button
             key={t}
@@ -537,7 +550,7 @@ export default function FaultlineIntelligence({ api }) {
 
       {/* Filters */}
       {tab === "list" && (
-        <div className="flex gap-2 flex-wrap items-center">
+        <div className="flex gap-2 flex-wrap items-center no-print">
           <Filter size={12} className="text-muted-foreground" />
           <Select value={stateFilter} onValueChange={setStateFilter}>
             <SelectTrigger className="w-40 h-8 rounded-none text-xs" data-testid="state-filter">
@@ -570,8 +583,13 @@ export default function FaultlineIntelligence({ api }) {
       {/* List tab */}
       {tab === "list" && (
         <>
+          {historyError && !loading && (
+            <LoadError what="the 7-day trend lines" onRetry={() => setHistoryTick((n) => n + 1)} className="no-print" />
+          )}
           {loading ? (
             <p className="text-sm text-muted-foreground font-mono">Loading faultlines…</p>
+          ) : listError ? (
+            <LoadError what="faultlines" onRetry={fetchFaultlines} />
           ) : filtered.length === 0 ? (
             <Card className="border border-border rounded-none p-8 text-center">
               <p className="text-sm text-muted-foreground">
@@ -659,6 +677,8 @@ export default function FaultlineIntelligence({ api }) {
       {showCustomModal && (
         <CustomFaultlineModal
           api={api}
+          targetIod={effectiveIod || user?.iod}
+          viewIod={effectiveIod}
           onClose={() => setShowCustomModal(false)}
           onCreated={(fl) => {
             setShowCustomModal(false);

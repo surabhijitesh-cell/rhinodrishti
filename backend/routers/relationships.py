@@ -11,6 +11,8 @@ GET  /api/relationships/{edge_id}/explain — lazy AI explanation for an edge (b
 POST /api/admin/relationships/compute     — manual trigger of batch job (admin)
 """
 
+import logging
+
 from fastapi import APIRouter, HTTPException, Query, Depends
 from utils.auth import require_admin_role
 from pydantic import BaseModel
@@ -25,6 +27,23 @@ from relationship_engine import (
 )
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
+
+
+def _day(value) -> str:
+    """First 10 characters of a date, or '' when it is missing or not text."""
+    return value[:10] if isinstance(value, str) else ""
+
+
+def build_pair_prompt(link_type: str, a: dict, b: dict) -> str:
+    def line(label, item):
+        return f"{label}: {item.get('title') or 'Unknown'} [{item.get('state') or 'unknown state'}, {_day(item.get('published_at')) or 'date unknown'}]\n"
+    return (
+        f"Two intelligence items are linked as '{link_type}':\n"
+        + line("A", a) + line("B", b)
+        + "In 1-2 sentences, explain the strategic significance of this link for NER security analysts. "
+        "Be specific about what the connection reveals."
+    )
 
 
 # ── Request / response models ─────────────────────────────────────────────────
@@ -88,42 +107,41 @@ async def explain_edge_by_pair(
     f, t = _pair_key(from_id, to_id)
     edge = await relationships_col.find_one({"from_id": f, "to_id": t, "type": type})
     if not edge:
-        raise HTTPException(404, "Edge not found")
+        raise HTTPException(404, "This link no longer exists. Refresh the map and try again.")
 
     if edge.get("ai_explanation"):
         return {"explanation": edge["ai_explanation"], "cached": True}
 
-    # Build context and call AI (reuse logic from explain_edge)
-    from_item = await db.intelligence_items.find_one(
-        {"id": from_id}, {"title": 1, "state": 1, "threat_category": 1, "published_at": 1, "_id": 0}
-    )
-    to_item = await db.intelligence_items.find_one(
-        {"id": to_id}, {"title": 1, "state": 1, "threat_category": 1, "published_at": 1, "_id": 0}
-    )
+    fields = {"title": 1, "state": 1, "threat_category": 1, "published_at": 1, "_id": 0}
+    from_item = await db.intelligence_items.find_one({"id": from_id}, fields)
+    to_item = await db.intelligence_items.find_one({"id": to_id}, fields)
     if not from_item or not to_item:
-        raise HTTPException(404, "One or both items not found")
+        raise HTTPException(404, "One of the two linked reports is no longer available.")
 
-    prompt = (
-        f"Two intelligence items are linked as '{type}':\n"
-        f"A: {from_item.get('title', 'Unknown')} [{from_item.get('state')}, {from_item.get('published_at', '')[:10]}]\n"
-        f"B: {to_item.get('title',   'Unknown')} [{to_item.get('state'),   to_item.get('published_at',   '')[:10]}]\n"
-        f"In 1-2 sentences, explain the strategic significance of this link for NER security analysts. "
-        f"Be specific about what the connection reveals."
-    )
+    prompt = build_pair_prompt(type, from_item, to_item)
     try:
-        import google.generativeai as genai
-        import os
-        genai.configure(api_key=os.environ.get("GEMINI_API_KEY", ""))
-        model = genai.GenerativeModel("gemini-1.5-flash-latest")
-        resp = model.generate_content(prompt)
-        explanation = resp.text.strip()
-        await relationships_col.update_one(
-            {"from_id": f, "to_id": t, "type": type},
-            {"$set": {"ai_explanation": explanation}}
+        from llm_client import get_client, MODEL
+        client = get_client()
+        resp = await client.chat.completions.create(
+            model=MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=120,
+            temperature=0.3,
+            extra_body={"include_reasoning": False},
         )
-        return {"explanation": explanation, "cached": False}
-    except Exception as e:
-        raise HTTPException(503, f"AI explanation failed: {e}")
+        explanation = (resp.choices[0].message.content or "").strip()
+        if not explanation:
+            raise ValueError("empty answer")
+    except Exception:
+        logger.exception("Link explanation failed")
+        raise HTTPException(503, "The AI explanation is not available right now. Please try again later.")
+
+    await relationships_col.update_one(
+        {"from_id": f, "to_id": t, "type": type},
+        {"$set": {"ai_explanation": explanation,
+                  "explanation_at": datetime.now(timezone.utc).isoformat()}},
+    )
+    return {"explanation": explanation, "cached": False}
 
 
 @router.patch("/relationships/soft-delete")

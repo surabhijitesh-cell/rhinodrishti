@@ -28,7 +28,9 @@ const SOURCE_LABELS = {
 };
 
 export default function KeywordEngine({ api }) {
-  const isViewer = useAuth().user?.role === "viewer";
+  const role = useAuth().user?.role;
+  const isViewer = role === "viewer";
+  const canAdd = role === "admin" || role === "analyst";
   const [keywords, setKeywords] = useState([]);
   const [typeBreakdown, setTypeBreakdown] = useState({});
   const [refreshing, setRefreshing] = useState(false);
@@ -38,6 +40,7 @@ export default function KeywordEngine({ api }) {
   const [addType, setAddType] = useState("primary");
   const [addScore, setAddScore] = useState("60");
   const [adding, setAdding] = useState(false);
+  const [newKeyword, setNewKeyword] = useState("");
 
   const fetchKeywords = useCallback(async () => {
     try {
@@ -64,7 +67,7 @@ export default function KeywordEngine({ api }) {
   };
 
   const handleAddKeyword = async () => {
-    const trimmed = search.trim();
+    const trimmed = newKeyword.trim();
     if (!trimmed || trimmed.length < 2) return;
     setAdding(true);
     try {
@@ -74,7 +77,7 @@ export default function KeywordEngine({ api }) {
         score: parseInt(addScore, 10),
       });
       toast.success(res.data.message || `Keyword "${trimmed}" added`);
-      setSearch("");
+      setNewKeyword("");
       await fetchKeywords();
     } catch (e) {
       const msg = e.response?.data?.detail || "Failed to add keyword";
@@ -221,12 +224,20 @@ export default function KeywordEngine({ api }) {
             );
           })}
         </div>
-        {!isViewer && filtered.length === 0 && search.trim().length >= 2 && (
+        {canAdd && (
           <div className="border border-dashed border-primary/30 bg-primary/5 p-4 mt-2" data-testid="add-keyword-prompt">
-            <p className="text-xs text-muted-foreground font-mono mb-3">
-              No keyword found for "<span className="text-primary font-semibold">{search.trim()}</span>". Add it manually?
-            </p>
+            <p className="text-xs text-muted-foreground font-mono mb-3">Add a keyword manually</p>
             <div className="flex flex-wrap items-end gap-3">
+              <div>
+                <p className="text-[9px] uppercase tracking-wider text-muted-foreground font-mono mb-1">Keyword</p>
+                <Input
+                  value={newKeyword}
+                  onChange={e => setNewKeyword(e.target.value)}
+                  placeholder="New keyword..."
+                  className="w-[200px] h-8 rounded-none text-xs font-mono"
+                  data-testid="add-keyword-input"
+                />
+              </div>
               <div>
                 <p className="text-[9px] uppercase tracking-wider text-muted-foreground font-mono mb-1">Type</p>
                 <Select value={addType} onValueChange={setAddType}>
@@ -258,7 +269,7 @@ export default function KeywordEngine({ api }) {
               </div>
               <Button
                 onClick={handleAddKeyword}
-                disabled={adding}
+                disabled={adding || newKeyword.trim().length < 2}
                 className="h-8 rounded-none text-xs font-mono uppercase tracking-wider"
                 data-testid="add-keyword-btn"
               >
@@ -268,7 +279,7 @@ export default function KeywordEngine({ api }) {
             </div>
           </div>
         )}
-        {filtered.length === 0 && search.trim().length < 2 && (
+        {filtered.length === 0 && (
           <p className="text-xs text-muted-foreground font-mono text-center py-6">No keywords match your filters.</p>
         )}
       </div>
