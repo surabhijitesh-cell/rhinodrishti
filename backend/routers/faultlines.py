@@ -12,6 +12,8 @@ are declared BEFORE the `/{fl_id}` catch-all):
   POST   /api/faultlines/run-daily                         — trigger daily pass (manual / debug)
   POST   /api/faultlines/backfill                          — kick off historical backfill
   GET    /api/faultlines/backfill/status                   — backfill progress
+  GET    /api/faultlines/backfill/estimate?days=           — dates + likely AI calls + approx cost (no AI used)
+  GET    /api/faultlines/scoring-status                    — is a scoring job running right now
   GET    /api/faultlines/report?year=&month=               — standalone faultline-only PDF report
   GET    /api/faultlines/{fl_id}                           — single faultline + latest score
   PATCH  /api/faultlines/{fl_id}                           — update notes / active flag
@@ -45,6 +47,11 @@ from faultline_engine import (
     run_daily_faultline_pass,
     run_incremental_faultline_pass,
     run_backfill,
+    estimate_backfill,
+    try_acquire_scoring,
+    release_scoring,
+    scoring_status,
+    busy_message,
     _score_level,
     ALERT_EXPIRY_HOURS,
 )
@@ -516,11 +523,16 @@ async def trigger_daily_pass(
             "A backfill job is currently running. Wait for it to finish before triggering a manual pass.",
         )
 
+    if not try_acquire_scoring("daily scoring"):
+        raise HTTPException(409, busy_message())
+
     async def _bg():
         try:
-            await run_daily_faultline_pass(db, target_date=target_date)
+            await run_daily_faultline_pass(db, target_date=target_date, lock_held=True)
         except Exception as e:
             logger.exception(f"Manual faultline pass failed: {e}")
+        finally:
+            release_scoring()
     background_tasks.add_task(_bg)
     return {"status": "started", "target_date": target_date or "today"}
 
@@ -537,12 +549,18 @@ async def trigger_incremental_pass(
     full daily pass without waiting for the next scheduled run at 06:00/18:00 IST.
     Existing LLM-scored mappings are preserved; only new articles are inserted.
     """
+    if not try_acquire_scoring("incremental refresh"):
+        raise HTTPException(409, busy_message())
+
     async def _bg():
         try:
-            result = await run_incremental_faultline_pass(db, lookback_hours=lookback_hours)
+            result = await run_incremental_faultline_pass(
+                db, lookback_hours=lookback_hours, lock_held=True)
             logger.info(f"Manual incremental faultline pass (all): {result}")
         except Exception as e:
             logger.exception(f"Manual incremental faultline pass failed: {e}")
+        finally:
+            release_scoring()
     background_tasks.add_task(_bg)
     return {"status": "started", "lookback_hours": lookback_hours}
 
@@ -564,14 +582,19 @@ async def trigger_faultline_refresh(
     if not fl or not can_access_faultline(current_user, fl):
         raise HTTPException(404, "Faultline not found")
 
+    if not try_acquire_scoring(f"refresh of {fl.get('name') or fl_id}"):
+        raise HTTPException(409, busy_message())
+
     async def _bg():
         try:
             result = await run_incremental_faultline_pass(
-                db, lookback_hours=lookback_hours, faultline_id=fl_id
+                db, lookback_hours=lookback_hours, faultline_id=fl_id, lock_held=True
             )
             logger.info(f"Per-faultline refresh [{fl_id}]: {result}")
         except Exception as e:
             logger.exception(f"Per-faultline refresh [{fl_id}] failed: {e}")
+        finally:
+            release_scoring()
     background_tasks.add_task(_bg)
     return {"status": "started", "faultline_id": fl_id, "lookback_hours": lookback_hours}
 
@@ -582,6 +605,7 @@ async def trigger_backfill(
     start_date: Optional[str] = Query(None, description="YYYY-MM-DD; default = earliest article"),
     end_date: Optional[str] = Query(None, description="YYYY-MM-DD; default = today"),
     force: bool = Query(False, description="True = re-score every date (overwrite). False = resume (skip already-scored dates)."),
+    confirmed: bool = Query(False, description="Must be true: a backfill spends AI credits. See /faultlines/backfill/estimate."),
     current_user: dict = Depends(get_current_user),
 ):
     """
@@ -596,11 +620,20 @@ async def trigger_backfill(
     """
     _require_analyst_or_admin(current_user)
 
+    if not confirmed:
+        raise HTTPException(
+            400,
+            "A backfill spends AI credits. Check /api/faultlines/backfill/estimate, "
+            "then confirm to start it.",
+        )
+
     if await _backfill_already_running():
         raise HTTPException(
             409,
             "A backfill job is already running. Check /api/faultlines/backfill/status.",
         )
+    if not try_acquire_scoring("backfill"):
+        raise HTTPException(409, busy_message())
 
     job_id = f"backfill_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
     await backfill_status_col.insert_one({
@@ -616,7 +649,8 @@ async def trigger_backfill(
     async def _bg():
         try:
             result = await run_backfill(
-                db, start_date=start_date, end_date=end_date, resume=not force
+                db, start_date=start_date, end_date=end_date, resume=not force,
+                lock_held=True,
             )
             await backfill_status_col.update_one(
                 {"job_id": job_id},
@@ -636,9 +670,32 @@ async def trigger_backfill(
                     "finished_at": datetime.now(timezone.utc).isoformat(),
                 }},
             )
+        finally:
+            release_scoring()
 
     background_tasks.add_task(_bg)
     return {"status": "started", "job_id": job_id}
+
+
+@router.get("/faultlines/scoring-status")
+async def get_scoring_status(current_user: dict = Depends(get_current_user)):
+    """Is a scoring job running right now? Screens poll this after starting a run."""
+    return scoring_status()
+
+
+@router.get("/faultlines/backfill/estimate")
+async def backfill_estimate(
+    days: int = Query(90, ge=1, le=365, description="How many days back from today"),
+    force: bool = Query(False, description="True = count already-scored dates too"),
+    current_user: dict = Depends(get_current_user),
+):
+    """Dates a backfill would score, likely AI calls and approximate cost.
+    Reads only - uses no AI. An upper estimate (cached scores are subtracted)."""
+    _require_analyst_or_admin(current_user)
+    end = datetime.now(timezone.utc).date()
+    start = end - timedelta(days=days - 1)
+    return await estimate_backfill(
+        db, start_date=start.isoformat(), end_date=end.isoformat(), force=force)
 
 
 @router.get("/faultlines/backfill/status")
@@ -688,7 +745,7 @@ async def faultline_pdf_report(
     pass ?iod=. Faultlines are limited to that IOD's watch-list.
     """
     from faultline_pdf import (
-        aggregate_faultline_report, run_pdf_synthesis, render_faultline_pdf,
+        aggregate_faultline_report, get_or_run_pdf_synthesis, render_faultline_pdf,
     )
     from routers.brief_monthly import _call_llm_json
 
@@ -704,7 +761,7 @@ async def faultline_pdf_report(
         raise HTTPException(404, f"No faultline data for {agg['month_name']}")
 
     # Run B1+B2+B3+B4 LLM synthesis in parallel
-    synthesis = await run_pdf_synthesis(agg, _call_llm_json)
+    synthesis = await get_or_run_pdf_synthesis(db, agg, _call_llm_json)
 
     # Load requesting user's watchlist priority map
     from shared import db as _db
@@ -1185,7 +1242,8 @@ async def get_faultline_history(
         {"faultline_id": fl_id, "date": {"$gte": cutoff}},
         {"_id": 0, "date": 1, "score": 1, "level": 1, "n_articles": 1,
          "n_significant": 1, "avg_impact": 1, "avg_confidence": 1,
-         "severity_load": 1, "velocity": 1, "actor_spread": 1, "cross_border": 1},
+         "severity_load": 1, "velocity": 1, "actor_spread": 1, "cross_border": 1,
+         "llm_ok": 1, "provisional": 1, "stale": 1, "computed_at": 1},
     ).sort("date", 1)
     series = [s async for s in cursor]
 

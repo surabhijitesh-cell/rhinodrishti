@@ -39,22 +39,41 @@ KNOWN_EVENTS = {'gunfire', 'gunfight', 'bomb', 'blast', 'attack', 'ambush', 'sho
                 'yaba', 'smuggling', 'contraband', 'explosive'}
 
 
+def _whole_word_hits(text_lower: str, keywords) -> set:
+    # Whole words only: 'pla' must not match 'replace', 'nia' must not match 'India'.
+    from intelligence_filter import keyword_hits
+    return set(keyword_hits(text_lower, keywords))
+
+
 def extract_key_entities(title: str) -> set:
     t = (title or "").lower()
-    entities = set()
-    for org in KNOWN_ORGS:
-        if org in t:
-            entities.add(org)
-    for place in KNOWN_PLACES:
-        if place in t:
-            entities.add(place)
-    for event in KNOWN_EVENTS:
-        if event in t:
-            entities.add(event)
+    entities = _whole_word_hits(t, KNOWN_ORGS)
+    entities |= _whole_word_hits(t, KNOWN_PLACES)
+    entities |= _whole_word_hits(t, KNOWN_EVENTS)
     numbers = re.findall(r'\b(\d+)\s*(?:killed|injured|arrested|seized|dead)\b', t)
     for n in numbers:
         entities.add(f"count_{n}")
     return entities
+
+
+_NUMBER_WORDS = {w: i for i, w in enumerate(
+    "zero one two three four five six seven eight nine ten eleven twelve thirteen "
+    "fourteen fifteen sixteen seventeen eighteen nineteen twenty".split())}
+_COUNT_NOUNS = (r"killed|dead|injured|wounded|arrested|seized|detained|held|abducted|kidnapped|"
+                r"militants?|cadres?|terrorists?|insurgents?|soldiers?|jawans?|civilians?|"
+                r"people|persons?|bodies|villagers|bunkers?|camps?|houses|tablets|weapons")
+
+
+def extract_event_counts(title: str) -> set:
+    """Counts attached to people/outcomes ('Two militants killed' -> {2}); words and digits
+    are normalised so '2' and 'two' agree. Dates/years are ignored (no count noun nearby)."""
+    t = (title or "").lower()
+    rx = r"\b(\d{1,4}|" + "|".join(_NUMBER_WORDS) + r")\s+(?:[a-z-]+\s+){0,2}?(?:" + _COUNT_NOUNS + r")\b"
+    out = set()
+    for m in re.finditer(rx, t):
+        tok = m.group(1)
+        out.add(int(tok) if tok.isdigit() else _NUMBER_WORDS[tok])
+    return out
 
 
 def title_similarity(title_a: str, title_b: str) -> float:
@@ -93,14 +112,22 @@ def are_similar(item_a: dict, item_b: dict, title_threshold: float = 0.40) -> bo
     if url_a and url_b and url_a == url_b:
         return True
 
+    # Different counts in otherwise similar event headlines are different events.
+    counts_a, counts_b = extract_event_counts(title_a), extract_event_counts(title_b)
+    if counts_a and counts_b and not (counts_a & counts_b):
+        return False
+
     # 3. Title word overlap
     t_sim = title_similarity(title_a, title_b)
     if t_sim >= title_threshold:
         return True
 
-    # 4. Entity overlap — 2+ shared entities + any title overlap
-    ent_overlap = entity_similarity(title_a, title_b)
-    if ent_overlap >= 2 and t_sim >= 0.20:
+    # 4. Entity overlap — 2+ shared entities, at least one NOT just a place
+    #    (two unrelated stories in the same state must not merge) + some title overlap
+    shared = extract_key_entities(title_a) & extract_key_entities(title_b)
+    ent_overlap = len(shared)
+    specific = len(shared - KNOWN_PLACES)
+    if ent_overlap >= 2 and specific >= 1 and t_sim >= 0.25:
         return True
 
     # 5. Key phrase matching — shared multi-word phrases (e.g., "ULFA-I chief", "bunkers destroyed")
@@ -113,7 +140,7 @@ def are_similar(item_a: dict, item_b: dict, title_threshold: float = 0.40) -> bo
     # 6. Same source + same state + high entity overlap
     if (item_a.get("source") == item_b.get("source") and
         item_a.get("state") == item_b.get("state") and
-        ent_overlap >= 2):
+        ent_overlap >= 2 and specific >= 1 and t_sim >= 0.15):
         return True
 
     return False

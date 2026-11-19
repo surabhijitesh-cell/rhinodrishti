@@ -8,6 +8,7 @@ import { Button } from "../components/ui/button";
 import Tip from "../components/Tip";
 import axios from "axios";
 import { useAuth } from "../contexts/AuthContext";
+import LoadError from "../components/LoadError";
 
 const RISK_STYLES = {
   CRITICAL: { badge: "bg-red-500/20 text-red-400 border-red-500/30", border: "border-l-4 border-l-red-500" },
@@ -24,19 +25,36 @@ function formatTime(isoStr) {
   } catch { return ""; }
 }
 
+function formatDateTime(isoStr) {
+  if (!isoStr) return "";
+  try {
+    return new Date(isoStr).toLocaleString("en-IN", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
+  } catch { return ""; }
+}
+
 export default function Patterns({ api }) {
   const [patterns, setPatterns] = useState([]);
   const [loading, setLoading] = useState(false);
   const [detecting, setDetecting] = useState(false);
+  const [loadError, setLoadError] = useState(false);
+  const [lastRun, setLastRun] = useState(null);
   const isViewer = useAuth().user?.role === "viewer";
 
   const fetchPatterns = async () => {
     setLoading(true);
+    setLoadError(false);
     try {
       const res = await axios.get(`${api}/patterns`);
       setPatterns(res.data.patterns || []);
     } catch (e) {
       console.error("Failed to fetch patterns:", e);
+      setLoadError(true);
+    }
+    try {
+      const st = await axios.get(`${api}/patterns/status`);
+      setLastRun(st.data || null);
+    } catch (e) {
+      setLastRun(null);
     }
     setLoading(false);
   };
@@ -54,6 +72,7 @@ export default function Patterns({ api }) {
 
   useEffect(() => { fetchPatterns(); }, [api]);
 
+  const latestDetected = patterns.map(p => p.detected_at).filter(Boolean).sort().pop();
   const criticalPatterns = patterns.filter(p => p.escalation_risk === "CRITICAL" || p.escalation_risk === "HIGH");
   const otherPatterns = patterns.filter(p => p.escalation_risk !== "CRITICAL" && p.escalation_risk !== "HIGH");
 
@@ -67,6 +86,12 @@ export default function Patterns({ api }) {
           <p className="text-xs font-mono uppercase tracking-[0.15em] text-muted-foreground mt-1">
             Recurring threat patterns across intelligence items
           </p>
+          {(lastRun?.last_run_at || latestDetected) && (
+            <p className="text-[10px] font-mono text-muted-foreground mt-1" data-testid="patterns-last-detected">
+              Last detected: {formatDateTime(lastRun?.last_run_at || latestDetected)}
+              {lastRun?.capped ? " (very large window: oldest items skipped)" : ""}
+            </p>
+          )}
         </div>
         {!isViewer && (
         <Tip text="Run pattern detection on all intelligence items in the current retention window. Looks for clusters of 3+ items sharing the same region, threat type or actor within a 7-day window." side="left">
@@ -83,8 +108,10 @@ export default function Patterns({ api }) {
         )}
       </div>
 
+      {loadError && <LoadError what="the detected patterns" onRetry={fetchPatterns} />}
+
       {/* Summary Stats */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className={`${loadError ? "hidden" : ""} grid grid-cols-2 md:grid-cols-4 gap-4`}>
         <Tip text="Total distinct threat patterns detected across the intelligence corpus within your retention window." side="bottom">
           <div className="stat-card flex items-center gap-3">
             <GitBranch size={18} className="text-primary" />
@@ -161,11 +188,15 @@ export default function Patterns({ api }) {
         </div>
       )}
 
-      {patterns.length === 0 && !loading && (
+      {patterns.length === 0 && !loading && !loadError && (
         <Card className="border border-border rounded-none bg-card">
           <CardContent className="p-8 text-center text-muted-foreground">
             <GitBranch size={32} className="mx-auto mb-3 opacity-50" />
-            <p className="text-sm">No patterns detected yet. Click "Run Detection" to analyze recent intelligence.</p>
+            <p className="text-sm">
+              {lastRun?.last_run_at
+                ? "The last detection run found no recurring patterns."
+                : isViewer ? "No patterns detected yet." : 'No patterns detected yet. Click "Run Detection" to analyze recent intelligence.'}
+            </p>
           </CardContent>
         </Card>
       )}

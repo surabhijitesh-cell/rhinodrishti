@@ -6,6 +6,7 @@ import {
 } from "lucide-react";
 import axios from "axios";
 import { useAuth } from "../contexts/AuthContext";
+import { formatLastScored, scoreWarning, waitForScoring } from "./FaultlineIntelligence";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
@@ -73,6 +74,10 @@ export default function FaultlineDetail({ api }) {
   const [savingNotes, setSavingNotes] = useState(false);
   const [notesSaved, setNotesSaved] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [refreshMessage, setRefreshMessage] = useState("");
+  const [refreshTimedOut, setRefreshTimedOut] = useState(false);
+  const unmounted = useRef(false);
+  useEffect(() => () => { unmounted.current = true; }, []);
   const isViewer = useAuth().user?.role === "viewer";
   // Only initialize notesDraft from the server response on the first load.
   // Subsequent fetchAll calls (e.g. days-selector change, refresh, polling)
@@ -119,18 +124,37 @@ export default function FaultlineDetail({ api }) {
     setSavingNotes(false);
   };
 
-  const handleRefresh = async () => {
+  // Poll the scoring status until the refresh finishes (stop after 90 s, offer Retry).
+  const waitForRefresh = async () => {
     setRefreshing(true);
-    try {
-      await axios.post(`${api}/faultlines/${id}/refresh?lookback_hours=24`);
-      // Give the background task ~2 s to insert new mappings, then re-fetch
-      await new Promise((r) => setTimeout(r, 2000));
-      await fetchAll();
-    } catch (e) {
-      console.error("Faultline refresh failed", e);
+    setRefreshTimedOut(false);
+    const outcome = await waitForScoring(api, {
+      intervalMs: 1500, maxMs: 90000, isCancelled: () => unmounted.current,
+    });
+    if (unmounted.current) return;
+    if (outcome === "timeout") {
+      setRefreshTimedOut(true);
+      setRefreshMessage("The refresh is taking longer than expected and is still running.");
+    } else {
+      setRefreshMessage("");
       await fetchAll();
     }
     setRefreshing(false);
+  };
+
+  const handleRefresh = async () => {
+    setRefreshMessage("");
+    setRefreshing(true);
+    try {
+      await axios.post(`${api}/faultlines/${id}/refresh?lookback_hours=24`);
+    } catch (e) {
+      setRefreshMessage(e.response?.status === 409
+        ? (e.response.data?.detail || "Scoring is already running. Try again in a few minutes.")
+        : "Could not start the refresh. Please try again.");
+      setRefreshing(false);
+      return;
+    }
+    await waitForRefresh();
   };
 
   const ackAlert = async (alertId) => {
@@ -158,6 +182,8 @@ export default function FaultlineDetail({ api }) {
   const style = LEVEL_STYLE[level] || LEVEL_STYLE.STABLE;
   const score = faultline.latest_score?.score ?? 0;
   const alert = faultline.active_alert;
+  const lastScored = formatLastScored(faultline.latest_score);
+  const warning = scoreWarning(faultline.latest_score);
 
   return (
     <div className="space-y-4 p-4 max-w-7xl mx-auto">
@@ -194,9 +220,24 @@ export default function FaultlineDetail({ api }) {
               {Math.round(score)}
             </p>
             <p className="text-[10px] text-muted-foreground font-mono">/ 100</p>
+            {lastScored && (
+              <p className="text-[10px] text-muted-foreground font-mono mt-1">Last scored {lastScored}</p>
+            )}
           </div>
         </div>
       </div>
+
+      {(warning || refreshMessage) && (
+        <div className="border border-amber-500/40 bg-amber-950/20 p-2 text-xs font-mono flex items-center gap-2">
+          <AlertTriangle size={12} className="text-amber-400 shrink-0" />
+          <span className="flex-1">{refreshMessage || warning}</span>
+          {refreshTimedOut && (
+            <Button variant="outline" size="sm" className="rounded-none text-xs" onClick={waitForRefresh} disabled={refreshing}>
+              Retry
+            </Button>
+          )}
+        </div>
+      )}
 
       {/* Active alert banner */}
       {alert && (

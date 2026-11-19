@@ -8,12 +8,16 @@ GET /trends?range=7d|30d|90d|365d           — top-level dashboard data
 GET /trends/state/{state}?range=...         — drill-down for a single state
 GET /trends/stability?range=30d             — per-state composite stability index
 GET /trends/cross-border?range=30d          — Bangladesh/Myanmar ↔ NER correlation
+
+Only processed, relevant items with a real severity (critical/high/medium/low)
+are counted, and only the primary copy of a duplicate cluster.
 """
-from fastapi import APIRouter, Query, HTTPException
+from fastapi import APIRouter, Query
 from datetime import datetime, timezone, timedelta
-from typing import Optional, List, Dict
+from typing import Dict, List, Optional
 from collections import defaultdict
 from shared import db, intelligence_col, NER_STATES, logger
+from intel_rules import is_cross_border_item, cross_border_query, CROSS_BORDER_COUNTRIES
 
 router = APIRouter()
 
@@ -42,20 +46,93 @@ def _bucket_size_days(range_str: str) -> int:
     return 7                       # weekly buckets for 365d
 
 
-# ── Cross-border country detection ────────────────────────────────────────────
-_BORDER_COUNTRIES = {"Bangladesh", "Myanmar", "Bhutan", "China", "Nepal"}
+# ── What counts as an item ────────────────────────────────────────────────────
+REAL_SEVERITIES = ["critical", "high", "medium", "low"]
+HIDDEN_TAGS = ["not_relevant", "unprocessed", "stage0_filtered", "stage05_filtered", "stage1_filtered"]
 
-def _has_cross_border(item: dict) -> bool:
-    """Item touches a border country (mentioned in entities.locations or state)."""
-    locs = (item.get("entities") or {}).get("locations") or []
-    if any(c in (locs or []) for c in _BORDER_COUNTRIES):
-        return True
-    state = item.get("state") or ""
-    return state in _BORDER_COUNTRIES
+def countable_query(cutoff: str, extra: Optional[dict] = None) -> dict:
+    """Database filter for items Trends may count."""
+    query = {
+        "published_at": {"$gte": cutoff},
+        "processed": True,
+        "severity": {"$in": REAL_SEVERITIES},
+        "is_cluster_primary": {"$ne": False},
+        "tags": {"$nin": HIDDEN_TAGS},
+    }
+    if extra:
+        query.update(extra)
+    return query
+
+def is_countable_item(item: dict) -> bool:
+    """Same rule as countable_query, applied to one item (belt and braces)."""
+    if not isinstance(item, dict) or item.get("processed") is not True:
+        return False
+    if item.get("severity") not in REAL_SEVERITIES or item.get("is_cluster_primary") is False:
+        return False
+    tags = item.get("tags")
+    return not (isinstance(tags, list) and set(tags) & set(HIDDEN_TAGS))
+
+def _text_list(item: dict, key: str) -> List[str]:
+    """Null-safe list of strings from item['entities'][key]."""
+    entities = item.get("entities")
+    values = entities.get(key) if isinstance(entities, dict) else None
+    return [v for v in (values if isinstance(values, list) else []) if isinstance(v, str) and v]
+
+def _known_state(item: dict) -> Optional[str]:
+    """The NER state of an item, or None (Unclassified, Bangladesh, Myanmar, junk)."""
+    state = item.get("state")
+    return state if isinstance(state, str) and state in NER_STATES_FULL else None
 
 
 # ── Severity weight ───────────────────────────────────────────────────────────
 _SEV_WEIGHT = {"critical": 4, "high": 3, "medium": 2, "low": 1}
+
+# Stability reference levels, per day of the selected range. A state at or above
+# the reference scores full concern on that part; scaling is absolute, so the
+# busiest state is NOT automatically the maximum. PROVISIONAL: to be calibrated
+# from live data.
+STABILITY_SEVERITY_LOAD_REF_PER_DAY = 70.0  # just above the busiest state seen in Nov 2026 (56-66 a day)
+STABILITY_ACTOR_SPREAD_REF_PER_DAY = 20.0  # just above the busiest state seen in Nov 2026 (about 14 a day)
+STABILITY_FULL_CONFIDENCE_ITEMS = 10       # below this, surge and cross-border shares are scaled down
+
+
+def _clamp01(x: float) -> float:
+    return max(0.0, min(1.0, x))
+
+
+def compute_stability(m: dict, days: float) -> dict:
+    """Stability result for one state's metrics (pure).
+
+    No items -> status "No data", score None (never a fake STABLE 100).
+    """
+    total = m["total"]
+    actor_count = len(m["actors"])
+    if total == 0:
+        return {"stability_score": None, "concern_level": "No data",
+                "velocity": 0.0, "cross_border_share": 0.0}
+
+    days = max(days, 1.0)
+    severity_load = _clamp01(m["sev_weight"] / (STABILITY_SEVERITY_LOAD_REF_PER_DAY * days))
+    velocity = 0.0
+    if m["early_count"] > 0:
+        velocity = _clamp01((m["late_count"] / m["early_count"]) / 3)  # 3x = full
+    elif m["late_count"] > 0:
+        velocity = 0.8  # late activity with no early baseline
+    actor_spread = _clamp01(actor_count / (STABILITY_ACTOR_SPREAD_REF_PER_DAY * days))
+    cross_border = _clamp01(m["cross_border_count"] / total)
+
+    # One or two items must not read as a surge or as a mostly cross-border state.
+    confidence = _clamp01(total / STABILITY_FULL_CONFIDENCE_ITEMS)
+    concern = (severity_load * 0.40 + velocity * confidence * 0.25 +
+               actor_spread * 0.20 + cross_border * confidence * 0.15)
+    stability = int(max(0, min(100, round(100 - concern * 100))))
+
+    if   stability >= 75: level = "STABLE"
+    elif stability >= 50: level = "MONITOR"
+    elif stability >= 25: level = "ELEVATED"
+    else:                 level = "CRITICAL"
+    return {"stability_score": stability, "concern_level": level,
+            "velocity": round(velocity, 2), "cross_border_share": round(cross_border, 2)}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -71,62 +148,66 @@ async def get_trends(range: str = Query("7d", regex="^(24h|7d|30d|90d|365d)$")):
     state_stats: Dict[str, Dict] = {}
     state_daily: Dict[str, Dict[str, int]] = defaultdict(lambda: defaultdict(int))
     actor_freq: Dict[str, int] = defaultdict(int)
+    total_items = 0
+    unclassified_count = 0   # counted above, but not in a known NER state
 
     async for item in intelligence_col.find(
-        {"published_at": {"$gte": cutoff}},
+        countable_query(cutoff),
         {"published_at": 1, "severity": 1, "threat_category": 1, "state": 1,
-         "entities": 1, "_id": 0},
+         "entities": 1, "processed": 1, "tags": 1, "is_cluster_primary": 1, "_id": 0},
     ):
-        pub = item.get("published_at", "")
-        if not pub or len(pub) < 10:
-            continue
-        date_key = pub[:10]
-        sev = item.get("severity") or "low"
-        state = item.get("state") or "Unclassified"
-        category = item.get("threat_category") or "Other"
-
-        # Bucket date for chart
         try:
-            d = datetime.fromisoformat(date_key)
-            bucket_idx = (d.toordinal() // bucket_days) * bucket_days
-            bucket_key = datetime.fromordinal(bucket_idx).strftime("%Y-%m-%d")
-        except Exception:
-            bucket_key = date_key
+            if not is_countable_item(item):
+                continue
+            pub = item.get("published_at")
+            if not isinstance(pub, str) or len(pub) < 10:
+                continue
+            date_key = pub[:10]
+            sev = item["severity"]
+            state = _known_state(item)
+            category = item.get("threat_category")
+            category = category if isinstance(category, str) and category else "Other"
 
-        # Daily severity totals
-        if bucket_key not in daily_severity:
-            daily_severity[bucket_key] = {"date": bucket_key, "critical": 0, "high": 0,
-                                          "medium": 0, "low": 0, "total": 0}
-        if sev in daily_severity[bucket_key]:
+            # Bucket date for chart
+            try:
+                d = datetime.fromisoformat(date_key)
+                bucket_idx = (d.toordinal() // bucket_days) * bucket_days
+                bucket_key = datetime.fromordinal(bucket_idx).strftime("%Y-%m-%d")
+            except Exception:
+                bucket_key = date_key
+
+            # Daily severity totals
+            if bucket_key not in daily_severity:
+                daily_severity[bucket_key] = {"date": bucket_key, "critical": 0, "high": 0,
+                                              "medium": 0, "low": 0, "total": 0}
             daily_severity[bucket_key][sev] += 1
-        daily_severity[bucket_key]["total"] += 1
+            daily_severity[bucket_key]["total"] += 1
 
-        # Category stats
-        if category not in category_stats:
-            category_stats[category] = {"category": category, "count": 0,
-                                        "critical": 0, "high": 0}
-        category_stats[category]["count"] += 1
-        if sev in ("critical", "high"):
-            category_stats[category][sev] += 1
+            # Category stats
+            if category not in category_stats:
+                category_stats[category] = {"category": category, "count": 0,
+                                            "critical": 0, "high": 0}
+            category_stats[category]["count"] += 1
+            if sev in ("critical", "high"):
+                category_stats[category][sev] += 1
 
-        # State stats
-        if state not in state_stats:
-            state_stats[state] = {"state": state, "count": 0, "critical": 0, "high": 0,
-                                  "medium": 0, "low": 0}
-        state_stats[state]["count"] += 1
-        if sev in state_stats[state]:
-            state_stats[state][sev] += 1
+            # State stats / per-state daily: known NER states only
+            if state:
+                if state not in state_stats:
+                    state_stats[state] = {"state": state, "count": 0, "critical": 0, "high": 0,
+                                          "medium": 0, "low": 0}
+                state_stats[state]["count"] += 1
+                state_stats[state][sev] += 1
+                state_daily[state][bucket_key] += 1
+            else:
+                unclassified_count += 1
 
-        # Per-state daily for evolution chart
-        state_daily[state][bucket_key] += 1
-
-        # Actor frequency
-        actors = (item.get("entities") or {}).get("organizations") or []
-        for actor in actors[:5]:
-            if actor:
+            for actor in _text_list(item, "organizations")[:5]:
                 actor_freq[actor] += 1
+            total_items += 1
+        except Exception as e:  # one bad record must not fail the page
+            logger.warning("trends: skipped bad item: %s", e)
 
-    # Build per-state daily series for multi-line chart.
     # Always include all NER states (zero-fill when no items) so the chart legend
     # and stability ranking show every state.
     state_evolution = []
@@ -136,7 +217,6 @@ async def get_trends(range: str = Query("7d", regex="^(24h|7d|30d|90d|365d)$")):
         series = [{"date": b, "count": daily.get(b, 0)} for b in all_buckets]
         state_evolution.append({"state": state, "series": series})
 
-    # Top actors (sorted)
     top_actors = sorted(
         [{"name": k, "count": v} for k, v in actor_freq.items()],
         key=lambda x: -x["count"]
@@ -144,6 +224,8 @@ async def get_trends(range: str = Query("7d", regex="^(24h|7d|30d|90d|365d)$")):
 
     return {
         "range": range,
+        "total_items": total_items,
+        "unclassified_count": unclassified_count,
         "daily_severity": sorted(daily_severity.values(), key=lambda x: x["date"]),
         "category_stats": sorted(category_stats.values(), key=lambda x: -x["count"]),
         "state_stats": sorted(state_stats.values(), key=lambda x: -x["count"]),
@@ -166,47 +248,45 @@ async def get_state_drilldown(
     daily: Dict[str, Dict] = {}
 
     async for item in intelligence_col.find(
-        {"state": state, "published_at": {"$gte": cutoff}},
+        countable_query(cutoff, {"state": state}),
         {"published_at": 1, "severity": 1, "threat_category": 1,
-         "entities": 1, "title": 1, "id": 1, "_id": 0},
+         "entities": 1, "title": 1, "id": 1, "processed": 1, "tags": 1,
+         "is_cluster_primary": 1, "_id": 0},
     ):
-        sev = item.get("severity") or "low"
-        pub = (item.get("published_at") or "")[:10]
-        cat = item.get("threat_category") or "Other"
-        category_stats[cat] += 1
+        try:
+            if not is_countable_item(item):
+                continue
+            sev = item["severity"]
+            pub = (item.get("published_at") or "")[:10] if isinstance(item.get("published_at"), str) else ""
+            cat = item.get("threat_category")
+            cat = cat if isinstance(cat, str) and cat else "Other"
+            category_stats[cat] += 1
 
-        # Daily
-        if pub:
-            if pub not in daily:
-                daily[pub] = {"date": pub, "critical": 0, "high": 0, "medium": 0,
-                              "low": 0, "total": 0}
-            if sev in daily[pub]:
+            if pub:
+                if pub not in daily:
+                    daily[pub] = {"date": pub, "critical": 0, "high": 0, "medium": 0,
+                                  "low": 0, "total": 0}
                 daily[pub][sev] += 1
-            daily[pub]["total"] += 1
+                daily[pub]["total"] += 1
 
-        # Locations (skip state names themselves)
-        locs = (item.get("entities") or {}).get("locations") or []
-        for loc in locs:
-            if not loc or loc == state:
-                continue
-            if loc not in location_stats:
-                location_stats[loc] = {"name": loc, "count": 0, "critical": 0, "high": 0}
-            location_stats[loc]["count"] += 1
-            if sev in ("critical", "high"):
-                location_stats[loc][sev] += 1
+            for loc in _text_list(item, "locations"):
+                if loc == state:
+                    continue
+                if loc not in location_stats:
+                    location_stats[loc] = {"name": loc, "count": 0, "critical": 0, "high": 0}
+                location_stats[loc]["count"] += 1
+                if sev in ("critical", "high"):
+                    location_stats[loc][sev] += 1
 
-        # Actors
-        actors = (item.get("entities") or {}).get("organizations") or []
-        for actor in actors:
-            if not actor:
-                continue
-            if actor not in actor_stats:
-                actor_stats[actor] = {"name": actor, "count": 0, "critical": 0, "high": 0}
-            actor_stats[actor]["count"] += 1
-            if sev in ("critical", "high"):
-                actor_stats[actor][sev] += 1
+            for actor in _text_list(item, "organizations"):
+                if actor not in actor_stats:
+                    actor_stats[actor] = {"name": actor, "count": 0, "critical": 0, "high": 0}
+                actor_stats[actor]["count"] += 1
+                if sev in ("critical", "high"):
+                    actor_stats[actor][sev] += 1
+        except Exception as e:
+            logger.warning("trends drilldown: skipped bad item: %s", e)
 
-    # Score locations by severity weight + raw count
     def loc_score(l):
         return l["critical"] * 10 + l["high"] * 5 + l["count"]
 
@@ -218,6 +298,7 @@ async def get_state_drilldown(
     return {
         "state": state,
         "range": range,
+        "total_items": sum(category_stats.values()),
         "daily_severity": sorted(daily.values(), key=lambda x: x["date"]),
         "top_locations": top_locations,
         "top_actors":    top_actors,
@@ -233,11 +314,12 @@ async def get_stability_index(
     """
     Strategic Stability Index per state — composite 0-100 score.
     Lower score = more unstable / higher operational concern.
+    A state with no items reports "No data" (score null), never a fake 100.
 
     Composition:
-      Severity load   40%  — weighted severity intensity vs. peer states
+      Severity load   40%  — weighted severity intensity vs. a per-day reference level
       Velocity        25%  — acceleration (recent third vs. earliest third)
-      Actor spread    20%  — unique militant orgs operating in state
+      Actor spread    20%  — unique militant orgs vs. a per-day reference level
       Cross-border    15%  — share of items mentioning border countries
     """
     cutoff = _cutoff_iso(range)
@@ -247,89 +329,60 @@ async def get_stability_index(
     early_end = (cutoff_dt + timedelta(hours=third)).isoformat()
     late_start = (datetime.now(timezone.utc) - timedelta(hours=third)).isoformat()
 
-    state_metrics: Dict[str, Dict] = {}
-
     # Pre-seed all NER states so every state shows a card even with zero items
-    for st in NER_STATES_FULL:
-        state_metrics[st] = {
-            "state": st, "total": 0, "sev_weight": 0,
-            "early_count": 0, "late_count": 0,
-            "actors": set(), "cross_border_count": 0,
-        }
+    state_metrics: Dict[str, Dict] = {
+        st: {"state": st, "total": 0, "sev_weight": 0, "early_count": 0,
+             "late_count": 0, "actors": set(), "cross_border_count": 0}
+        for st in NER_STATES_FULL
+    }
 
     async for item in intelligence_col.find(
-        {"published_at": {"$gte": cutoff}},
-        {"published_at": 1, "severity": 1, "state": 1, "entities": 1, "_id": 0},
+        countable_query(cutoff, {"state": {"$in": NER_STATES_FULL}}),
+        {"published_at": 1, "severity": 1, "state": 1, "entities": 1,
+         "is_cross_border": 1, "countries_involved": 1, "processed": 1,
+         "tags": 1, "is_cluster_primary": 1, "_id": 0},
     ):
-        state = item.get("state") or "Unknown"
-        if state not in NER_STATES_FULL:
-            continue
-        m = state_metrics[state]
-        m["total"] += 1
-        m["sev_weight"] += _SEV_WEIGHT.get(item.get("severity") or "low", 1)
+        try:
+            state = _known_state(item)
+            if not state or not is_countable_item(item):
+                continue
+            m = state_metrics[state]
+            m["total"] += 1
+            m["sev_weight"] += _SEV_WEIGHT[item["severity"]]
 
-        pub = item.get("published_at") or ""
-        if pub < early_end:
-            m["early_count"] += 1
-        if pub >= late_start:
-            m["late_count"] += 1
+            pub = item.get("published_at") if isinstance(item.get("published_at"), str) else ""
+            if pub and pub < early_end:
+                m["early_count"] += 1
+            if pub and pub >= late_start:
+                m["late_count"] += 1
 
-        for actor in ((item.get("entities") or {}).get("organizations") or []):
-            if actor:
-                m["actors"].add(actor)
+            m["actors"].update(_text_list(item, "organizations"))
+            if is_cross_border_item(item):
+                m["cross_border_count"] += 1
+        except Exception as e:
+            logger.warning("stability: skipped bad item: %s", e)
 
-        if _has_cross_border(item):
-            m["cross_border_count"] += 1
-
-    # Normalize & score
-    if not state_metrics:
-        return {"range": range, "states": []}
-
-    max_sev    = max((m["sev_weight"] for m in state_metrics.values()), default=1) or 1
-    max_actors = max((len(m["actors"]) for m in state_metrics.values()), default=1) or 1
-
+    days = hours / 24
     results = []
     for m in state_metrics.values():
-        # severity load (0-1)
-        severity_load = m["sev_weight"] / max_sev
-        # velocity (0-1) — accelerating = late/early ratio > 1, capped
-        velocity = 0.0
-        if m["early_count"] > 0:
-            ratio = m["late_count"] / max(m["early_count"], 1)
-            velocity = min(ratio / 3, 1.0)  # 3x = full
-        elif m["late_count"] > 0:
-            velocity = 0.8  # late activity with no early baseline
-        # actor spread (0-1)
-        actor_spread = len(m["actors"]) / max_actors
-        # cross-border share (0-1)
-        cross_border = (m["cross_border_count"] / m["total"]) if m["total"] else 0
-
-        concern = (severity_load * 0.40 + velocity * 0.25 +
-                   actor_spread * 0.20 + cross_border * 0.15)
-        stability = max(0, round(100 - concern * 100))
-
-        # Concern level label
-        if   stability >= 75: level = "STABLE"
-        elif stability >= 50: level = "MONITOR"
-        elif stability >= 25: level = "ELEVATED"
-        else:                 level = "CRITICAL"
-
+        r = compute_stability(m, days)
         results.append({
             "state": m["state"],
-            "stability_score": stability,
-            "concern_level": level,
+            "stability_score": r["stability_score"],
+            "concern_level": r["concern_level"],
             "metrics": {
                 "total_items":   m["total"],
                 "sev_weight":    m["sev_weight"],
                 "early_count":   m["early_count"],
                 "late_count":    m["late_count"],
-                "velocity":      round(velocity, 2),
+                "velocity":      r["velocity"],
                 "actor_count":   len(m["actors"]),
-                "cross_border_share": round(cross_border, 2),
+                "cross_border_share": r["cross_border_share"],
             },
         })
 
-    results.sort(key=lambda x: x["stability_score"])  # most concerning first
+    # most concerning first; "No data" states last
+    results.sort(key=lambda x: (x["stability_score"] is None, x["stability_score"] or 0))
     return {"range": range, "states": results}
 
 
@@ -344,6 +397,7 @@ async def get_cross_border_trends(
       Myanmar    ↔ Manipur + Nagaland
       Bangladesh ↔ Assam + Tripura + Meghalaya
       China      ↔ Arunachal Pradesh + Sikkim
+    Border events count only items that pass the shared cross-border rule.
     """
     cutoff = _cutoff_iso(range)
     pairs = {
@@ -354,23 +408,36 @@ async def get_cross_border_trends(
     border_daily: Dict[str, Dict[str, int]] = {b: defaultdict(int) for b in pairs}
     ner_daily:    Dict[str, Dict[str, int]] = {b: defaultdict(int) for b in pairs}
 
+    # NER activity needs every relevant item in the pair's states; border events
+    # need the cross-border rule. Fetch the union.
+    ner_states_all = [s for v in pairs.values() for s in v]
     async for item in intelligence_col.find(
-        {"published_at": {"$gte": cutoff}},
-        {"published_at": 1, "state": 1, "entities": 1, "_id": 0},
+        countable_query(cutoff, {"$or": cross_border_query()["$or"] + [{"state": {"$in": ner_states_all}}]}),
+        {"published_at": 1, "state": 1, "entities": 1, "is_cross_border": 1,
+         "countries_involved": 1, "severity": 1, "processed": 1, "tags": 1,
+         "is_cluster_primary": 1, "_id": 0},
     ):
-        pub = (item.get("published_at") or "")[:10]
-        if not pub:
-            continue
-        state = item.get("state") or ""
-        locs  = set((item.get("entities") or {}).get("locations") or [])
+        try:
+            if not is_countable_item(item):
+                continue
+            pub = item.get("published_at")
+            pub = pub[:10] if isinstance(pub, str) else ""
+            if not pub:
+                continue
+            state = item.get("state") if isinstance(item.get("state"), str) else ""
+            mentioned = set(_text_list(item, "locations")) | {state} | {
+                c for c in (item.get("countries_involved") or []) if isinstance(c, str)}
+            mentioned &= set(CROSS_BORDER_COUNTRIES)
+            crosses = is_cross_border_item(item)
 
-        for border, ner_states in pairs.items():
-            if state == border or border in locs:
-                border_daily[border][pub] += 1
-            if state in ner_states:
-                ner_daily[border][pub] += 1
+            for border, ner_states in pairs.items():
+                if crosses and border in mentioned:
+                    border_daily[border][pub] += 1
+                if state in ner_states:
+                    ner_daily[border][pub] += 1
+        except Exception as e:
+            logger.warning("trends cross-border: skipped bad item: %s", e)
 
-    # Merge into series per border
     series = []
     for border in pairs:
         all_dates = sorted(set(border_daily[border].keys()) | set(ner_daily[border].keys()))
@@ -382,6 +449,7 @@ async def get_cross_border_trends(
         series.append({
             "border": border,
             "ner_states": pairs[border],
+            "total_border_events": sum(border_daily[border].values()),
             "data": merged,
         })
 

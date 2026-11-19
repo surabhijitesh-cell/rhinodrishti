@@ -293,6 +293,23 @@ PRIORITY_AREAS = [
 ]
 
 
+def paoi_seed_update(existing: dict | None, pa: dict, now: str) -> tuple[str, dict]:
+    """What the startup seed may write for one built-in PAOI.
+
+    ("insert", full doc) when it is missing. For an existing PAOI only fields it
+    does not have yet are filled ("update", fields; empty = nothing to do), so
+    edits made in the app - name, rank, description, geography, keywords,
+    enabled - survive every deploy.
+    """
+    wanted = {**pa, "iod": pa.get("iod", "IOD-1"), "enabled": True}
+    if existing is None:
+        return "insert", {**wanted, "updated_at": now, "created_at": now}
+    missing = {k: v for k, v in wanted.items() if k not in existing}
+    if missing:
+        missing["updated_at"] = now
+    return "update", missing
+
+
 async def seed_priority_areas(db) -> dict:
     """
     Idempotent seed of PAOIs + tag faultlines with priority_area_ids[].
@@ -308,16 +325,16 @@ async def seed_priority_areas(db) -> dict:
     """
     now = datetime.now(timezone.utc).isoformat()
 
-    # 1. Upsert this IOD's priority areas
+    # 1. Add missing built-in priority areas; never overwrite edited ones.
     pa_upserted = 0
     for pa in PRIORITY_AREAS:
-        doc = {**pa, "iod": pa.get("iod", "IOD-1"), "enabled": True, "updated_at": now}
-        result = await db.priority_areas.update_one(
-            {"id": pa["id"]},
-            {"$set": doc, "$setOnInsert": {"created_at": now}},
-            upsert=True,
-        )
-        if result.upserted_id or result.modified_count:
+        existing = await db.priority_areas.find_one({"id": pa["id"]}, {"_id": 0})
+        action, fields = paoi_seed_update(existing, pa, now)
+        if action == "insert":
+            await db.priority_areas.insert_one(fields)
+            pa_upserted += 1
+        elif fields:
+            await db.priority_areas.update_one({"id": pa["id"]}, {"$set": fields})
             pa_upserted += 1
 
     # 2. Tag every faultline with the ids of ALL enabled PAOIs (any IOD) that

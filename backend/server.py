@@ -59,7 +59,7 @@ from youtube_fetcher import fetch_youtube_channels, fetch_youtube_searches, seed
 from telegram_fetcher import fetch_telegram_channels, seed_telegram_defaults
 from apify_social_fetcher import run_social_fetch as run_apify_social_fetch
 from fading_engine import run_fading_pass, delete_expired_low_severity
-from faultline_engine import run_daily_faultline_pass, run_incremental_faultline_pass
+from faultline_engine import run_daily_faultline_pass, run_incremental_faultline_pass, faultline_done_query
 
 
 # The interactive action list (/docs, /redoc, /openapi.json) is switched off:
@@ -192,7 +192,8 @@ async def _catchup_after_boot(run_brief, run_faultline, delay: int = 120):
             await run_brief()
         else:
             logger.info(f"Catch-up: daily brief for {today} not needed")
-        scored = await db.faultline_scores.find_one({"date": today}, {"_id": 1})
+        # Done only when a finished (non-provisional) score with working AI exists.
+        scored = await db.faultline_scores.find_one(faultline_done_query(today), {"_id": 1})
         if catchup_due(now, today if scored else None):
             logger.info(f"Catch-up: no faultline pass for {today} (IST) - running now")
             await run_faultline()

@@ -3,6 +3,7 @@ import { TrendingUp, BarChart3, Activity, Shield, MapPin, Users, AlertTriangle }
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import Tip from "../components/Tip";
 import axios from "axios";
+import LoadError from "../components/LoadError";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell,
   AreaChart, Area, LineChart, Line, Legend, ComposedChart,
@@ -23,6 +24,7 @@ const CONCERN_COLOR = {
   ELEVATED: "#f59e0b",
   MONITOR:  "#eab308",
   STABLE:   "#a3e635",
+  "No data": "#6b7280",
 };
 const RANGE_OPTIONS = [
   { value: "7d",   label: "7 DAYS" },
@@ -86,6 +88,8 @@ export default function Trends({ api }) {
   const [stability, setStability]       = useState(null);
   const [crossBorder, setCrossBorder]   = useState(null);
   const [loading, setLoading]           = useState(true);
+  const [loadFailed, setLoadFailed]     = useState(false);
+  const [reloadKey, setReloadKey]       = useState(0);
   const [selectedState, setSelectedState] = useState(null);
   const [drilldown, setDrilldown]       = useState(null);
   const [drilldownLoading, setDrilldownLoading] = useState(false);
@@ -106,6 +110,7 @@ export default function Trends({ api }) {
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
+    setLoadFailed(false);
     Promise.all([
       axios.get(`${api}/trends?range=${range}`),
       axios.get(`${api}/trends/stability?range=${range === "24h" ? "7d" : range}`),
@@ -121,10 +126,11 @@ export default function Trends({ api }) {
       .catch((e) => {
         if (cancelled) return;
         console.error("Trends fetch failed:", e);
+        setLoadFailed(true);
         setLoading(false);
       });
     return () => { cancelled = true; };
-  }, [api, range]);
+  }, [api, range, reloadKey]);
 
   // Fetch drill-down when state selected
   useEffect(() => {
@@ -145,6 +151,10 @@ export default function Trends({ api }) {
         ))}
       </div>
     );
+  }
+
+  if (loadFailed && !data) {
+    return <LoadError what="the trends" onRetry={() => setReloadKey(k => k + 1)} />;
   }
 
   const dailyData      = data?.daily_severity || [];
@@ -238,9 +248,11 @@ export default function Trends({ api }) {
                   <div className="flex items-baseline gap-2">
                     <span className="text-3xl font-bold font-['Barlow_Condensed']"
                           style={{ color: CONCERN_COLOR[s.concern_level] }}>
-                      {s.stability_score}
+                      {s.stability_score === null || s.stability_score === undefined ? "No data" : s.stability_score}
                     </span>
-                    <span className="text-[10px] font-mono text-muted-foreground">/100</span>
+                    {s.stability_score !== null && s.stability_score !== undefined && (
+                      <span className="text-[10px] font-mono text-muted-foreground">/100</span>
+                    )}
                   </div>
                   <div className="mt-2 grid grid-cols-2 gap-1 text-[9px] font-mono text-muted-foreground">
                     <div>Items: <span className="text-foreground">{s.metrics.total_items}</span></div>
@@ -462,7 +474,7 @@ export default function Trends({ api }) {
                   ) : (
                     <div className="space-y-2">
                       {drilldown.top_locations.map((loc, i) => {
-                        const max = drilldown.top_locations[0].count || 1;
+                        const max = Math.max(1, ...drilldown.top_locations.map(l => l.count));
                         const pct = (loc.count / max) * 100;
                         return (
                           <div key={loc.name} data-testid={`drilldown-loc-${loc.name}`}>
@@ -564,6 +576,12 @@ export default function Trends({ api }) {
           <CardTitle className="text-sm uppercase tracking-wider font-['Barlow_Condensed'] font-semibold">
             State-wise Activity (Range)
           </CardTitle>
+          {data?.total_items !== undefined && (
+            <p className="text-[10px] font-mono text-muted-foreground mt-1" data-testid="state-activity-totals">
+              {data.total_items} relevant items in range
+              {data.unclassified_count > 0 && ` · ${data.unclassified_count} not tied to a single NER state (not shown in bars)`}
+            </p>
+          )}
         </CardHeader>
         <CardContent className="p-4">
           {stateData.length > 0 ? (

@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Target, AlertTriangle, TrendingUp, TrendingDown, Minus,
@@ -32,6 +32,44 @@ const tooltipStyle = {
   borderRadius: 0, fontSize: 11,
 };
 
+// "Last scored" in Indian time, from the score's own timestamp (falls back to its date).
+export function formatLastScored(score) {
+  if (!score) return null;
+  const stamp = score.computed_at ? new Date(score.computed_at) : null;
+  if (stamp && !Number.isNaN(stamp.getTime())) {
+    return `${stamp.toLocaleString("en-IN", {
+      timeZone: "Asia/Kolkata", day: "numeric", month: "short",
+      hour: "2-digit", minute: "2-digit", hour12: false,
+    })} IST`;
+  }
+  return score.date || null;
+}
+
+// Plain-language warning when a score cannot be fully trusted.
+export function scoreWarning(score) {
+  if (!score) return null;
+  if (score.provisional) return "Scoring is still in progress - this score is provisional.";
+  if (score.carried_forward || score.stale) {
+    return `AI scoring failed - showing the last good score${score.stale_since_date ? ` (from ${score.stale_since_date})` : ""}.`;
+  }
+  if (score.llm_ok === false) return "AI scoring failed for this faultline - the score may be too low.";
+  return null;
+}
+
+// Poll the scoring status until no job is running. Returns "done", "timeout" or "cancelled".
+export async function waitForScoring(api, { intervalMs = 3000, maxMs = 600000, isCancelled = () => false } = {}) {
+  const started = Date.now();
+  while (Date.now() - started < maxMs) {
+    if (isCancelled()) return "cancelled";
+    await new Promise((r) => setTimeout(r, intervalMs));
+    try {
+      const res = await axios.get(`${api}/faultlines/scoring-status`);
+      if (!res.data?.busy) return "done";
+    } catch { /* keep trying until the limit */ }
+  }
+  return "timeout";
+}
+
 function TrendArrow({ delta }) {
   if (delta == null) return <Minus size={12} className="text-muted-foreground" />;
   if (delta > 2)  return <TrendingUp size={12} className="text-red-400" />;
@@ -44,6 +82,8 @@ function FaultlineCard({ fl, sparkData, delta7d, onClick, watchlistRank, onToggl
   const style = LEVEL_STYLE[level] || LEVEL_STYLE.STABLE;
   const score = fl.latest_score?.score ?? 0;
   const n = fl.latest_score?.n_articles ?? 0;
+  const lastScored = formatLastScored(fl.latest_score);
+  const warning = scoreWarning(fl.latest_score);
 
   return (
     <div
@@ -136,13 +176,18 @@ function FaultlineCard({ fl, sparkData, delta7d, onClick, watchlistRank, onToggl
       </div>
 
       <div className="flex items-center justify-between mt-2 text-[10px] text-muted-foreground font-mono">
-        <span>{n} articles</span>
+        <span>{n} articles{lastScored ? ` · Last scored ${lastScored}` : ""}</span>
         {fl.active_alert && (
           <span className="flex items-center gap-1 text-orange-400">
             <AlertTriangle size={10} /> alert
           </span>
         )}
       </div>
+      {warning && (
+        <p className="mt-1 text-[10px] text-amber-400 font-mono flex items-start gap-1">
+          <AlertTriangle size={10} className="mt-0.5 shrink-0" /> {warning}
+        </p>
+      )}
     </div>
   );
 }
@@ -157,6 +202,10 @@ export default function FaultlineIntelligence({ api }) {
   const [loading, setLoading] = useState(true);
   const [seeding, setSeeding] = useState(false);
   const [running, setRunning] = useState(false);
+  const [runMessage, setRunMessage] = useState("");
+  const [runTimedOut, setRunTimedOut] = useState(false);
+  const unmounted = useRef(false);
+  useEffect(() => () => { unmounted.current = true; }, []);
   const [stateFilter, setStateFilter] = useState("all");
   const [levelFilter, setLevelFilter] = useState("all");
   const [sortBy, setSortBy] = useState("score_desc");
@@ -324,13 +373,35 @@ export default function FaultlineIntelligence({ api }) {
     setSeeding(false);
   };
 
+  // Wait for the running scoring job (polling its status), then reload the list once.
+  const waitAndReload = async () => {
+    setRunning(true);
+    setRunTimedOut(false);
+    const outcome = await waitForScoring(api, { isCancelled: () => unmounted.current });
+    if (unmounted.current) return;
+    if (outcome === "timeout") {
+      setRunTimedOut(true);
+      setRunMessage("Scoring is taking longer than expected and is still running.");
+    } else {
+      setRunMessage("");
+      await fetchFaultlines();
+    }
+    setRunning(false);
+  };
+
   const handleRunDaily = async () => {
+    setRunMessage("");
     setRunning(true);
     try {
       await axios.post(`${api}/faultlines/run-daily`);
-      // Poll-refresh after 5s grace
-      setTimeout(() => { fetchFaultlines(); setRunning(false); }, 5000);
-    } catch (e) { console.error(e); setRunning(false); }
+    } catch (e) {
+      setRunMessage(e.response?.status === 409
+        ? (e.response.data?.detail || "Scoring is already running. Try again in a few minutes.")
+        : "Could not start scoring. Please try again.");
+      setRunning(false);
+      return;
+    }
+    await waitAndReload();
   };
 
 
@@ -416,6 +487,18 @@ export default function FaultlineIntelligence({ api }) {
           </Button>
         </div>
       </div>
+
+      {runMessage && (
+        <div className="border border-amber-500/40 bg-amber-950/20 p-2 text-xs font-mono flex items-center gap-2">
+          <AlertTriangle size={12} className="text-amber-400 shrink-0" />
+          <span className="flex-1">{runMessage}</span>
+          {runTimedOut && (
+            <Button variant="outline" size="sm" className="rounded-none text-xs" onClick={waitAndReload} disabled={running}>
+              Retry
+            </Button>
+          )}
+        </div>
+      )}
 
       {/* Level summary strip */}
       <div className="grid grid-cols-4 gap-2">

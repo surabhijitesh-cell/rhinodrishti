@@ -171,8 +171,13 @@ function CountrySection({ title, flag, data, isLoading, onDelete, api }) {
           <span className="text-lg">{flag}</span>
           {title}
           <Badge variant="outline" className="rounded-none text-[10px] px-1.5 py-0 ml-1">
-            {items.length}
+            {data?.count ?? items.length}
           </Badge>
+          {data?.count > items.length && (
+            <span className="text-[9px] font-mono text-muted-foreground normal-case" data-testid={`shown-${title.toLowerCase()}`}>
+              showing top {items.length} of {data.count}
+            </span>
+          )}
         </CardTitle>
         <Tip text={`Overall threat posture for this border — DETERIORATING: active escalation, ELEVATED: heightened alert, WATCHFUL: monitoring required, STABLE: no immediate concern.`} side="left">
           <Badge variant="outline" className={`rounded-none text-[10px] px-2.5 py-0.5 uppercase tracking-wider flex items-center gap-1.5 ${postureConf.color} cursor-help`}>
@@ -248,7 +253,9 @@ export default function CrossBorderWatch({ api }) {
             ...g,
             items: g.items.filter((i) => i.id !== itemId),
           })).filter((g) => g.items.length > 0);
-          return { ...section, items: filteredItems, grouped: filteredGrouped };
+          const removed = (section.items || []).length - filteredItems.length;
+          const count = typeof section.count === "number" ? Math.max(0, section.count - removed) : filteredItems.length;
+          return { ...section, items: filteredItems, grouped: filteredGrouped, count };
         };
         return {
           ...prev,

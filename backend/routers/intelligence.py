@@ -1,6 +1,6 @@
 """Intelligence feed, alerts, acknowledgement, semantic search, embeddings, patterns."""
 import re
-from fastapi import APIRouter, Query, HTTPException, BackgroundTasks, Depends
+from fastapi import APIRouter, Query, HTTPException, BackgroundTasks, Depends
 from utils.roles import require_analyst_or_admin
 from utils.auth import require_admin_role
 from typing import Optional
@@ -303,6 +303,70 @@ async def get_source_stats():
     return {"sources": sources, "recent_catches": recent, "retention_days": retention_days}
 
 
+SEVERITY_ORDER = ("critical", "high", "medium", "low")  # most to least severe; anything else last
+
+
+def severity_rank(value, descending: bool = True) -> int:
+    """Sort rank for a severity label (case-insensitive). Higher = more severe when
+    descending; unknown labels always land after Low."""
+    v = value.strip().lower() if isinstance(value, str) else ""
+    if v in SEVERITY_ORDER:
+        n = len(SEVERITY_ORDER) - SEVERITY_ORDER.index(v)
+        return n if descending else 5 - n
+    return 0 if descending else 99
+
+
+def build_feed_pipeline(query: dict, sort_field: str, sort_dir: int, skip: int, limit: int,
+                        boost_faultline_ids=None) -> list:
+    """Aggregate pipeline for the feed when find().sort() is not enough: severity
+    ordering (Critical, High, Medium, Low, others; newest first inside a level) and/or
+    the IOD faultline boost. Paging is applied after the full sort."""
+    descending = sort_dir == -1
+    pipeline: list = [{"$match": query}]
+    sort_spec: dict = {}
+    drop = {"_id": 0}
+    if boost_faultline_ids:
+        pipeline += [
+            {"$lookup": {
+                "from": "faultline_mappings",
+                "let": {"aid": "$id"},
+                "pipeline": [
+                    {"$match": {"$expr": {"$and": [
+                        {"$eq": ["$article_id", "$$aid"]},
+                        {"$in": ["$faultline_id", boost_faultline_ids]},
+                    ]}}},
+                    {"$limit": 1},
+                ],
+                "as": "_iod_match",
+            }},
+            {"$addFields": {"_iod_boost": {"$cond": [{"$gt": [{"$size": "$_iod_match"}, 0]}, 1, 0]}}},
+        ]
+        sort_spec["_iod_boost"] = -1
+        drop.update({"_iod_match": 0, "_iod_boost": 0})
+    if sort_field == "severity":
+        n = len(SEVERITY_ORDER)
+        branches = [
+            {"case": {"$eq": ["$_sev_lc", name]},
+             "then": (n - i) if descending else (i + 1)}
+            for i, name in enumerate(SEVERITY_ORDER)
+        ]
+        pipeline.append({"$addFields": {"_sev_lc": {"$toLower": {"$ifNull": [{"$toString": "$severity"}, ""]}}}})
+        pipeline.append({"$addFields": {"_sev_rank": {"$switch": {
+            "branches": branches, "default": 0 if descending else 99}}}})
+        sort_spec["_sev_rank"] = -1 if descending else 1
+        sort_spec["published_at"] = -1  # newest first as tie-break in both directions
+        drop.update({"_sev_lc": 0, "_sev_rank": 0})
+    else:
+        sort_spec[sort_field] = sort_dir
+    pipeline += [
+        {"$sort": sort_spec},
+        {"$skip": skip},
+        {"$limit": limit},
+        {"$project": drop},
+    ]
+    return pipeline
+
+
 @router.get("/intelligence")
 async def get_intelligence(
     state: Optional[str] = None,
@@ -395,27 +459,8 @@ async def get_intelligence(
         from iod_registry import get_iod_faultline_ids
         boost_faultline_ids = get_iod_faultline_ids(user["iod"])
 
-    if boost_faultline_ids:
-        pipeline = [
-            {"$match": query},
-            {"$lookup": {
-                "from": "faultline_mappings",
-                "let": {"aid": "$id"},
-                "pipeline": [
-                    {"$match": {"$expr": {"$and": [
-                        {"$eq": ["$article_id", "$$aid"]},
-                        {"$in": ["$faultline_id", boost_faultline_ids]},
-                    ]}}},
-                    {"$limit": 1},
-                ],
-                "as": "_iod_match",
-            }},
-            {"$addFields": {"_iod_boost": {"$cond": [{"$gt": [{"$size": "$_iod_match"}, 0]}, 1, 0]}}},
-            {"$sort": {"_iod_boost": -1, sort_field: sort_dir}},
-            {"$skip": skip},
-            {"$limit": limit},
-            {"$project": {"_id": 0, "_iod_match": 0, "_iod_boost": 0}},
-        ]
+    if boost_faultline_ids or sort_field == "severity":
+        pipeline = build_feed_pipeline(query, sort_field, sort_dir, skip, limit, boost_faultline_ids)
         items = await intelligence_col.aggregate(pipeline).to_list(limit)
     else:
         items = await intelligence_col.find(query, {"_id": 0}).sort(sort_field, sort_dir).skip(skip).limit(limit).to_list(limit)

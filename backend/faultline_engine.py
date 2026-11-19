@@ -32,7 +32,61 @@ from collections import defaultdict
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
+from intel_rules import faultline_regions
+import functools
+
+from intelligence_filter import keyword_hits, word_in
+
 logger = logging.getLogger("faultline_engine")
+
+@functools.lru_cache(maxsize=2048)
+def _stable(kws: tuple) -> tuple:
+    """Same tuple object for equal keyword lists, so keyword_hits compiles each list once."""
+    return kws
+
+
+def _hits(text: str, kws) -> list:
+    return keyword_hits(text, _stable(tuple(kws))) if kws else []
+
+
+# Classifier label -> label used in the faultline definitions.
+_TAG_ALIASES = {"Infrastructure / Logistics": "Infrastructure / Logistics Disruption"}
+NEWEST_RESERVE = 4          # of the per-faultline cap, slots kept for the newest items
+COST_PER_AI_CALL = 0.0012   # USD, for backfill estimates
+
+# ── One scoring job at a time ─────────────────────────────────────────────────
+# Daily, incremental, refresh, per-faultline refresh and backfill all write the
+# same scores/mappings, so they must not overlap. Single event loop: the
+# check-and-set below has no await in it, so it cannot interleave.
+_scoring_job: Optional[dict] = None
+_last_scoring: Optional[dict] = None
+
+
+def try_acquire_scoring(job: str) -> bool:
+    global _scoring_job
+    if _scoring_job is not None:
+        return False
+    _scoring_job = {"job": job, "started_at": datetime.now(timezone.utc).isoformat()}
+    return True
+
+
+def release_scoring() -> None:
+    global _scoring_job, _last_scoring
+    if _scoring_job is not None:
+        _last_scoring = {**_scoring_job, "finished_at": datetime.now(timezone.utc).isoformat()}
+    _scoring_job = None
+
+
+def scoring_status() -> dict:
+    return {"busy": _scoring_job is not None, "current": _scoring_job, "last": _last_scoring}
+
+
+BUSY_MESSAGE = ("Faultline scoring is already running ({job}). "
+                "Wait for it to finish, then try again.")
+
+
+def busy_message() -> str:
+    return BUSY_MESSAGE.format(job=(_scoring_job or {}).get("job", "another job"))
 
 # ── Severity weighting (matches trends.py / brief_monthly.py) ─────────────────
 _SEV_WEIGHT = {"critical": 4, "high": 3, "medium": 2, "low": 1}
@@ -129,51 +183,76 @@ def pre_filter_articles(faultline: dict, articles: list[dict]) -> list[dict]:
     for region in list(fl_state_regions):
         if region in STATE_TO_REGIONS:
             fl_state_regions.update(STATE_TO_REGIONS[region])
-    fl_keywords = [k.lower() for k in faultline.get("keywords", [])]
-    fl_tags = set(faultline.get("tags", []))
+    # Whole-word matching (keyword_hits), lists reused so the matcher is compiled once.
+    fl_keywords = faultline.get("keywords") or ()
+    loc_kw = faultline.get("loc_focus") or ()
+    fl_tags = {canonical_tag(t) for t in (faultline.get("tags") or [])}
     fl_buckets = set(faultline.get("signal_buckets", []))
 
-    candidates: list[dict] = []
+    candidates: list[tuple] = []
     for art in articles:
-        # State match
-        art_regions = set(art.get("regions") or [])
-        if art.get("state"):
-            art_regions.add(art["state"])
-        state_match = bool(art_regions & fl_state_regions)
+        # State match (West Bengal items count for North Bengal only when they name it)
+        state_match = bool(faultline_regions(art) & fl_state_regions)
 
-        # Tag match
-        art_tags = set(art.get("tags") or [])
+        # Tag match (old and current classifier labels both accepted)
+        art_tags = {canonical_tag(t) for t in (art.get("tags") or [])}
         tag_match = bool(art_tags & fl_tags)
 
         # Signal bucket match
         bucket_match = (art.get("signal_bucket") or "") in fl_buckets
 
-        # Keyword match (title + summary, case-insensitive substring)
         haystack = " ".join([
             (art.get("title") or "").lower(),
             (art.get("ai_summary") or "").lower(),
         ])
-        kw_match = any(kw in haystack for kw in fl_keywords)
-
-        # LOC focus match (extra keywords from faultline.loc_focus, if present)
-        loc_kw = [l.lower() for l in faultline.get("loc_focus", [])]
-        loc_match = any(lk in haystack for lk in loc_kw) if loc_kw else False
+        kw_n = len(_hits(haystack, fl_keywords))
+        loc_n = len(_hits(haystack, loc_kw))
 
         # Require state match + at least one of {tag, bucket, keyword, loc_focus}
-        if state_match and (tag_match or bucket_match or kw_match or loc_match):
-            # Compute a relevance rank so the most signal-rich articles surface first
-            # when the list is capped by max_articles_per_faultline.
-            # Higher = more specific to this faultline.
-            rank = (
-                sum(1 for kw in fl_keywords if kw in haystack) * 3
-                + sum(1 for lk in loc_kw if lk in haystack) * 5
-                + (2 if bucket_match else 0)
-                + (1 if tag_match else 0)
-            )
+        if state_match and (tag_match or bucket_match or kw_n or loc_n):
+            # Relevance rank: higher = more specific to this faultline.
+            rank = kw_n * 3 + loc_n * 5 + (2 if bucket_match else 0) + (1 if tag_match else 0)
             candidates.append((rank, art))
 
-    candidates.sort(key=lambda x: x[0], reverse=True)
-    return [art for _, art in candidates]
+    # Strongest first, newest first on ties.
+    candidates.sort(key=lambda x: (x[0], str(x[1].get("published_at") or "")), reverse=True)
+    return dedupe_by_title([art for _, art in candidates])
+
+
+def canonical_tag(tag: str) -> str:
+    """The classifier says 'Infrastructure / Logistics'; the faultline lists say '... Disruption'."""
+    return _TAG_ALIASES.get(tag, tag)
+
+
+def canonical_direction(value) -> str:
+    """'DE-ESCALATING' (classifier) and 'DE_ESCALATING' (older code) are the same thing."""
+    return str(value or "").strip().upper().replace("-", "_").replace(" ", "_")
+
+
+def dedupe_by_title(ranked: list[dict]) -> list[dict]:
+    """One item per normalized title, keeping the first (= strongest/newest) copy."""
+    from fusion_engine import normalize_title
+    seen: set = set()
+    out: list[dict] = []
+    for art in ranked:
+        key = normalize_title(art.get("title") or "") or art.get("id")
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(art)
+    return out
+
+
+def choose_candidates(ranked: list[dict], cap: int, reserve: int = NEWEST_RESERVE) -> list[dict]:
+    """Take the best-ranked items, but keep `reserve` of the `cap` slots for the
+    newest of the rest so fresh news cannot be crowded out by older, richer items."""
+    if len(ranked) <= cap:
+        return list(ranked)
+    reserve = min(reserve, cap)
+    head = ranked[:cap - reserve]
+    rest = ranked[cap - reserve:]
+    newest = sorted(rest, key=lambda a: str(a.get("published_at") or ""), reverse=True)[:reserve]
+    return head + newest
 
 
 # ── Stage 2: sub-issue structured matching ───────────────────────────────────
@@ -236,12 +315,12 @@ def match_subissues_to_article(
     ])
 
     # Infer article actor_types from tags
-    art_tags = set(article.get("tags") or [])
+    art_tags = {canonical_tag(t) for t in (article.get("tags") or [])}
     art_actor_types = {_TAG_TO_ACTOR_TYPE[t] for t in art_tags if t in _TAG_TO_ACTOR_TYPE}
 
     # Infer article event_types from tags + threat_trajectory
     art_event_types = {_TAG_TO_EVENT_TYPE[t] for t in art_tags if t in _TAG_TO_EVENT_TYPE}
-    traj = article.get("threat_trajectory") or ""
+    traj = canonical_direction(article.get("threat_trajectory"))
     if traj in _TRAJ_TO_EVENT_TYPE:
         art_event_types.add(_TRAJ_TO_EVENT_TYPE[traj])
 
@@ -261,13 +340,12 @@ def match_subissues_to_article(
             continue
 
         # Keyword hits
-        si_kw = [k.lower() for k in si.get("keywords", [])]
-        kw_hit = [k for k in si_kw if k in haystack]
+        kw_hit = _hits(haystack, si.get("keywords") or ())
 
-        # LOC hits (haystack + entity locations)
+        # LOC hits (haystack whole-word + entity locations)
         loc_hit = [
-            loc for loc in si.get("loc_focus", [])
-            if loc.lower() in haystack or loc.lower() in loc_corpus
+            loc for loc in (si.get("loc_focus") or ())
+            if word_in(haystack, loc) or loc.lower() in loc_corpus
         ]
 
         # Actor type hits
@@ -279,7 +357,7 @@ def match_subissues_to_article(
         # Narrative marker hits
         marker_hit = [
             m for m in si.get("narrative_markers", [])
-            if m.lower() in haystack
+            if word_in(haystack, m)
         ]
 
         # Weighted score (weights sum to 100)
@@ -498,7 +576,7 @@ async def score_article_faultline_impact(
         data = json.loads(text)
 
         # Constrain `direction` to known vocabulary — prevent arbitrary LLM strings
-        direction = data.get("direction") or "STABLE"
+        direction = canonical_direction(data.get("direction")) or "STABLE"
         if direction not in ("ESCALATING", "STABLE", "DE_ESCALATING"):
             direction = "STABLE"
 
@@ -897,7 +975,7 @@ async def evaluate_alerts(
     # Compute 7-day delta from history
     week_ago = (now - timedelta(days=7)).date().isoformat()
     cursor = db.faultline_scores.find(
-        {"faultline_id": fl_id, "date": {"$lte": week_ago}},
+        {"faultline_id": fl_id, "date": {"$lte": week_ago}, **GOOD_SCORE_FILTER},
         {"score": 1, "date": 1},
     ).sort("date", -1).limit(1)
     prev = await cursor.to_list(length=1)
@@ -985,8 +1063,111 @@ async def evaluate_alerts(
     return alert
 
 
+# ── Score health: provisional / AI-failed / carried-forward ───────────────────
+# A score is "good" when AI scoring worked and the run finished. Only good
+# scores are used as 7-day baselines or carried forward over a failed day.
+GOOD_SCORE_FILTER = {
+    "llm_ok": {"$ne": False},
+    "provisional": {"$ne": True},
+    "carried_forward": {"$ne": True},
+}
+
+
+def faultline_done_query(date: str) -> dict:
+    """What counts as 'today's faultline pass is done' (used by the boot catch-up)."""
+    return {"date": date, "llm_ok": True, "provisional": {"$ne": True},
+            "carried_forward": {"$ne": True}}
+
+
+def ai_failed_for_faultline(n_pairs: int, n_usable: int, llm_available: bool) -> bool:
+    """True when there was work for the AI but no usable AI answer came back."""
+    return n_pairs > 0 and (not llm_available or n_usable == 0)
+
+
+def snapshot_action(ai_failed: bool, prev_good: Optional[dict], target_date: str) -> str:
+    """fresh | fresh_failed | keep | carry.
+    keep  = a good score for this very date already exists: leave it untouched.
+    carry = copy the latest good score forward (marked stale) instead of writing zero."""
+    if not ai_failed:
+        return "fresh"
+    if prev_good is None:
+        return "fresh_failed"
+    return "keep" if prev_good.get("date") == target_date else "carry"
+
+
+def carry_forward_snapshot(prev_good: dict, target_date: str, now_iso: str) -> dict:
+    doc = {k: v for k, v in prev_good.items() if k != "_id"}
+    doc.update({
+        "date": target_date, "llm_ok": False, "provisional": False,
+        "stale": True, "carried_forward": True,
+        "stale_since_date": prev_good.get("stale_since_date") or prev_good.get("date"),
+        "computed_at": now_iso,
+    })
+    return doc
+
+
+def alert_allowed(snapshot: dict) -> bool:
+    """No CRITICAL / SHARP_RISE alerts from failed, stale, carried or provisional data."""
+    return bool(snapshot.get("llm_ok")) and not (
+        snapshot.get("provisional") or snapshot.get("stale") or snapshot.get("carried_forward"))
+
+
+async def _latest_good_score(db, fl_id: str, target_date: str) -> Optional[dict]:
+    return await db.faultline_scores.find_one(
+        {"faultline_id": fl_id, "date": {"$lte": target_date}, **GOOD_SCORE_FILTER},
+        {"_id": 0}, sort=[("date", -1)],
+    )
+
+
+def _snapshot_doc(fl: dict, target_date: str, final: float, breakdown: dict, **flags) -> dict:
+    return {
+        "faultline_id": fl["id"],
+        "faultline_name": fl["name"],
+        "state": fl["state"],
+        "date": target_date,
+        "score": final,
+        "raw_score_pre_propagation": breakdown["raw_score"],
+        "level": _score_level(final),
+        "severity_load": breakdown["severity_load"],
+        "velocity": breakdown["velocity"],
+        "actor_spread": breakdown["actor_spread"],
+        "cross_border": breakdown["cross_border"],
+        "n_articles": breakdown["n_articles"],
+        "n_significant": breakdown.get("n_significant", 0),
+        "avg_impact": breakdown["avg_impact"],
+        "avg_confidence": breakdown.get("avg_confidence", 0.0),
+        "dominant_subissues": breakdown.get("dominant_subissues", []),
+        "loc_risk": breakdown.get("loc_risk", False),
+        "computed_at": datetime.now(timezone.utc).isoformat(),
+        **flags,
+    }
+
+
+async def _save_provisional(db, fl: dict, target_date: str, breakdown: dict) -> None:
+    """Save progress as the pass runs. Never overwrites a finished score for the date."""
+    key = {"faultline_id": fl["id"], "date": target_date}
+    existing = await db.faultline_scores.find_one(key, {"provisional": 1})
+    if existing and not existing.get("provisional"):
+        return
+    doc = _snapshot_doc(fl, target_date, breakdown["raw_score"], breakdown,
+                        llm_ok=True, provisional=True, stale=False, carried_forward=False)
+    await db.faultline_scores.replace_one(key, doc, upsert=True)
+
+
 # ── Daily orchestrator ────────────────────────────────────────────────────────
-async def run_daily_faultline_pass(
+async def run_daily_faultline_pass(db, *args, lock_held: bool = False, **kwargs) -> dict:
+    """Daily pass under the one-job-at-a-time lock (see _daily_impl)."""
+    if not lock_held and not try_acquire_scoring("daily scoring"):
+        logger.warning("Faultline daily pass skipped: %s", busy_message())
+        return {"skipped": "busy", "busy_with": (scoring_status()["current"] or {}).get("job")}
+    try:
+        return await _daily_impl(db, *args, **kwargs)
+    finally:
+        if not lock_held:
+            release_scoring()
+
+
+async def _daily_impl(
     db,
     target_date: Optional[str] = None,
     max_articles_per_faultline: int = 12,
@@ -1023,6 +1204,7 @@ async def run_daily_faultline_pass(
             "processed": True,
             "is_relevant": {"$ne": False},
             "is_archived": {"$ne": True},
+            "is_cluster_primary": {"$ne": False},
         },
         {
             "id": 1, "title": 1, "ai_summary": 1, "source": 1, "source_url": 1,
@@ -1062,11 +1244,12 @@ async def run_daily_faultline_pass(
     # logic must NOT treat such a day as "done".
     llm_attempts = 0
     llm_successes = 0
+    ai_failed_by_fl: dict[str, bool] = {}
 
     for fl in faultlines:
         fl_id = fl["id"]
-        candidates = pre_filter_articles(fl, articles)
-        candidates = candidates[:max_articles_per_faultline]
+        candidates = choose_candidates(
+            pre_filter_articles(fl, articles), max_articles_per_faultline)
 
         if not candidates:
             raw_scores[fl_id] = 0.0
@@ -1128,6 +1311,9 @@ async def run_daily_faultline_pass(
             llm_successes += sum(1 for a, _, r in scored_triples if r is not None and a["id"] not in reused_ids)
         else:
             scored_triples = [(art, msi, None) for art, msi in pairs]
+        n_usable = sum(1 for _, _, r in scored_triples if r is not None)
+        ai_failed_by_fl[fl_id] = ai_failed_for_faultline(
+            len(pairs), n_usable, llm_client is not None)
 
         # ── Persist mappings + sub-issue matches ──────────────────────────────
         mapping_docs: list[dict] = []
@@ -1247,58 +1433,55 @@ async def run_daily_faultline_pass(
 
         raw_scores[fl_id] = breakdown["raw_score"]
         breakdowns[fl_id] = breakdown
+        if not ai_failed_by_fl.get(fl_id):
+            await _save_provisional(db, fl, target_date, breakdown)
+
+    # A faultline whose AI scoring failed keeps its latest good score; the
+    # carried value (not zero) also feeds propagation to its neighbours.
+    prev_good: dict[str, Optional[dict]] = {}
+    for fl in faultlines:
+        if ai_failed_by_fl.get(fl["id"]):
+            prev = await _latest_good_score(db, fl["id"], target_date)
+            prev_good[fl["id"]] = prev
+            if prev:
+                raw_scores[fl["id"]] = prev.get("raw_score_pre_propagation", prev.get("score", 0.0))
 
     # Apply cross-faultline propagation
     final_scores = apply_propagation(raw_scores, faultlines)
 
     # Persist daily snapshots + evaluate alerts
     alerts_emitted = 0
-    # Pass-level LLM health. llm_ok=True means at least one LLM call succeeded
-    # this pass. If we made attempts but ALL failed (e.g. 402 insufficient
-    # credits), llm_ok=False → resume will re-process this date later.
-    # No attempts (no candidate articles anywhere) counts as ok=True — there
-    # was genuinely nothing to score, re-running won't help.
-    llm_ok = (llm_attempts == 0) or (llm_successes > 0)
+    # llm_ok is per faultline (stored on each score). The pass is "ok" only when
+    # no faultline had work but got no usable AI answer (e.g. 402 / credits).
+    n_failed = sum(1 for v in ai_failed_by_fl.values() if v)
+    llm_ok = n_failed == 0
 
     for fl in faultlines:
         fl_id = fl["id"]
-        final = final_scores.get(fl_id, 0.0)
-        breakdown = breakdowns[fl_id]
-        snapshot = {
-            "faultline_id": fl_id,
-            "faultline_name": fl["name"],
-            "state": fl["state"],
-            "date": target_date,
-            "score": final,
-            "raw_score_pre_propagation": breakdown["raw_score"],
-            "level": _score_level(final),
-            "severity_load": breakdown["severity_load"],
-            "velocity": breakdown["velocity"],
-            "actor_spread": breakdown["actor_spread"],
-            "cross_border": breakdown["cross_border"],
-            "n_articles": breakdown["n_articles"],
-            "n_significant": breakdown.get("n_significant", 0),
-            "avg_impact": breakdown["avg_impact"],
-            "avg_confidence": breakdown.get("avg_confidence", 0.0),
-            "dominant_subissues": breakdown.get("dominant_subissues", []),
-            "loc_risk": breakdown.get("loc_risk", False),
-            "llm_ok": llm_ok,
-            "computed_at": datetime.now(timezone.utc).isoformat(),
-        }
+        failed = bool(ai_failed_by_fl.get(fl_id))
+        action = snapshot_action(failed, prev_good.get(fl_id), target_date)
+        if action == "keep":
+            continue  # a good score for this date already exists - leave it alone
+        now_iso = datetime.now(timezone.utc).isoformat()
+        if action == "carry":
+            snapshot = carry_forward_snapshot(prev_good[fl_id], target_date, now_iso)
+        else:
+            snapshot = _snapshot_doc(
+                fl, target_date, final_scores.get(fl_id, 0.0), breakdowns[fl_id],
+                llm_ok=not failed, provisional=False, stale=failed, carried_forward=False)
         await db.faultline_scores.replace_one(
-            {"faultline_id": fl_id, "date": target_date},
-            snapshot,
-            upsert=True,
-        )
+            {"faultline_id": fl_id, "date": target_date}, snapshot, upsert=True)
 
-        alert = await evaluate_alerts(db, fl, final, breakdown)
-        if alert:
-            alerts_emitted += 1
+        if alert_allowed(snapshot):
+            alert = await evaluate_alerts(db, fl, snapshot["score"], breakdowns[fl_id])
+            if alert:
+                alerts_emitted += 1
 
     if not llm_ok:
         logger.warning(
-            f"Faultline pass {target_date}: LLM DEAD — {llm_attempts} attempts, "
-            f"0 successes (likely 402/credits). Scores stored as 0; resume will redo this date."
+            f"Faultline pass {target_date}: AI scoring failed for {n_failed} faultline(s) "
+            f"({llm_attempts} calls, {llm_successes} ok). Their latest good scores were kept "
+            f"and marked stale; resume will redo this date."
         )
 
     return {
@@ -1310,11 +1493,44 @@ async def run_daily_faultline_pass(
         "llm_attempts": llm_attempts,
         "llm_successes": llm_successes,
         "llm_ok": llm_ok,
+        "faultlines_ai_failed": n_failed,
     }
 
 
 # ── Incremental pass (no LLM) ─────────────────────────────────────────────────
+def fresh_for_faultline(candidates: list[dict], mapped_ids: set, mapped_titles: set) -> list[dict]:
+    """Candidates not yet mapped to THIS faultline today (by article id or by title).
+    An article mapped to another faultline does not count - it can map here too."""
+    from fusion_engine import normalize_title
+    out = []
+    for art in candidates:
+        if art["id"] in mapped_ids:
+            continue
+        title_key = normalize_title(art.get("title") or "")
+        if title_key and title_key in mapped_titles:
+            continue
+        out.append(art)
+    return out
+
+
 async def run_incremental_faultline_pass(
+    db,
+    lookback_hours: int = 6,
+    faultline_id: Optional[str] = None,
+    lock_held: bool = False,
+) -> dict:
+    """Incremental pass under the one-job-at-a-time lock (see _incremental_impl)."""
+    if not lock_held and not try_acquire_scoring("incremental refresh"):
+        logger.warning("Faultline incremental pass skipped: %s", busy_message())
+        return {"skipped": "busy", "busy_with": (scoring_status()["current"] or {}).get("job")}
+    try:
+        return await _incremental_impl(db, lookback_hours, faultline_id)
+    finally:
+        if not lock_held:
+            release_scoring()
+
+
+async def _incremental_impl(
     db,
     lookback_hours: int = 6,
     faultline_id: Optional[str] = None,
@@ -1344,10 +1560,12 @@ async def run_incremental_faultline_pass(
     # New articles processed since cutoff
     articles = await db.intelligence_items.find(
         {
-            "published_at": {"$gte": cutoff},
+            # fetched OR published: a late arrival with an old date is still new work
+            "$or": [{"fetched_at": {"$gte": cutoff}}, {"published_at": {"$gte": cutoff}}],
             "processed": True,
             "is_relevant": {"$ne": False},
             "is_archived": {"$ne": True},
+            "is_cluster_primary": {"$ne": False},
         },
         {
             "id": 1, "title": 1, "ai_summary": 1, "source": 1, "source_url": 1,
@@ -1363,16 +1581,22 @@ async def run_incremental_faultline_pass(
 
     logger.info(f"[incr-faultline] {len(articles)} new articles to map across {len(faultlines)} faultlines")
 
-    # Pre-fetch article IDs already mapped today to skip them
-    existing_today = set()
-    async for m in db.faultline_mappings.find({"date": today}, {"article_id": 1, "_id": 0}):
-        existing_today.add(m["article_id"])
+    # Pre-fetch what is already mapped today, per faultline
+    from fusion_engine import normalize_title
+    ids_today: dict[str, set] = defaultdict(set)
+    titles_today: dict[str, set] = defaultdict(set)
+    async for m in db.faultline_mappings.find(
+            {"date": today}, {"faultline_id": 1, "article_id": 1, "article_title": 1, "_id": 0}):
+        ids_today[m["faultline_id"]].add(m["article_id"])
+        t = normalize_title(m.get("article_title") or "")
+        if t:
+            titles_today[m["faultline_id"]].add(t)
 
     new_mappings = 0
     for fl in faultlines:
         fl_id = fl["id"]
         candidates = pre_filter_articles(fl, articles)
-        fresh = [a for a in candidates if a["id"] not in existing_today]
+        fresh = fresh_for_faultline(candidates, ids_today[fl_id], titles_today[fl_id])
         if not fresh:
             continue
 
@@ -1410,6 +1634,113 @@ BACKFILL_MAX_LOOKBACK_DAYS = 365
 
 
 async def run_backfill(
+    db,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    inter_day_sleep_seconds: float = 5.0,
+    resume: bool = True,
+    lock_held: bool = False,
+) -> dict:
+    """Backfill under the one-job-at-a-time lock (see _backfill_impl)."""
+    if not lock_held and not try_acquire_scoring("backfill"):
+        logger.warning("Faultline backfill skipped: %s", busy_message())
+        return {"skipped": "busy", "busy_with": (scoring_status()["current"] or {}).get("job")}
+    try:
+        return await _backfill_impl(db, start_date, end_date, inter_day_sleep_seconds, resume)
+    finally:
+        if not lock_held:
+            release_scoring()
+
+
+async def resolve_backfill_range(db, start_date: Optional[str], end_date: Optional[str]):
+    """(start, end) dates after the default / hard-floor rules. (None, None) if no articles."""
+    if end_date is None:
+        end_date = datetime.now(timezone.utc).date().isoformat()
+    end = datetime.fromisoformat(end_date).date()
+    default_start = end - timedelta(days=BACKFILL_DEFAULT_LOOKBACK_DAYS)
+    hard_floor = end - timedelta(days=BACKFILL_MAX_LOOKBACK_DAYS)
+    if start_date is None:
+        earliest = await db.intelligence_items.find(
+            {}, {"published_at": 1}
+        ).sort("published_at", 1).limit(1).to_list(length=1)
+        if not earliest:
+            return None, None
+        start = max(default_start, datetime.fromisoformat(earliest[0]["published_at"][:10]).date())
+    else:
+        start = max(datetime.fromisoformat(start_date).date(), hard_floor)
+    return start, end
+
+
+HEALTHY_DATE_FILTER = {
+    "$or": [{"llm_ok": True}, {"llm_ok": {"$exists": False}}],
+    "provisional": {"$ne": True},
+    "carried_forward": {"$ne": True},
+}
+
+
+def count_new_ai_calls(per_date_candidates: list[list[tuple]], cached: set) -> int:
+    """Unique (faultline, article) pairs not already cached. A score is reused on
+    later days, so each pair costs at most one AI call across the whole backfill."""
+    pairs = {pair for day in per_date_candidates for pair in day}
+    return len(pairs - cached)
+
+
+def _estimate_pairs(faultlines: list[dict], articles: list[dict], dates: list[str], cap: int):
+    """CPU-only: the (faultline, article) pairs each date would send to the AI."""
+    out = []
+    for d in dates:
+        end = datetime.fromisoformat(d).replace(tzinfo=timezone.utc) + timedelta(days=1)
+        start = (end - timedelta(days=7)).isoformat()
+        end_iso = end.isoformat()
+        window = [a for a in articles if start <= (a.get("published_at") or "") < end_iso]
+        day_pairs = []
+        for fl in faultlines:
+            for art in choose_candidates(pre_filter_articles(fl, window), cap):
+                day_pairs.append((fl["id"], art["id"]))
+        out.append(day_pairs)
+    return out
+
+
+async def estimate_backfill(db, start_date=None, end_date=None, force: bool = False,
+                            cap: int = 12) -> dict:
+    """Dates and likely AI calls for a backfill. Reads only - no AI, no writes.
+    Upper estimate: sub-issue gating can only remove calls."""
+    start, end = await resolve_backfill_range(db, start_date, end_date)
+    if start is None:
+        return {"dates": [], "dates_total": 0, "likely_ai_calls": 0, "approx_cost_usd": 0.0}
+    all_dates = [(start + timedelta(days=i)).isoformat() for i in range((end - start).days + 1)]
+    done: set = set()
+    if not force:
+        done = set(await db.faultline_scores.distinct(
+            "date", {"date": {"$gte": all_dates[0], "$lte": all_dates[-1]}, **HEALTHY_DATE_FILTER}))
+    dates = [d for d in all_dates if d not in done]
+    calls = 0
+    if dates:
+        faultlines = await db.faultlines.find({"active": True}).to_list(length=500)
+        lo = (datetime.fromisoformat(dates[0]).replace(tzinfo=timezone.utc) - timedelta(days=6)).isoformat()
+        hi = (datetime.fromisoformat(dates[-1]).replace(tzinfo=timezone.utc) + timedelta(days=1)).isoformat()
+        articles = await db.intelligence_items.find(
+            {"published_at": {"$gte": lo, "$lt": hi}, "processed": True,
+             "is_relevant": {"$ne": False}, "is_archived": {"$ne": True},
+             "is_cluster_primary": {"$ne": False}},
+            {"id": 1, "title": 1, "ai_summary": 1, "published_at": 1, "tags": 1,
+             "signal_bucket": 1, "regions": 1, "state": 1, "entities": 1},
+        ).to_list(length=20000)
+        cached = {(c["faultline_id"], c["article_id"]) async for c in
+                  db.faultline_score_cache.find({}, {"faultline_id": 1, "article_id": 1, "_id": 0})}
+        per_date = await asyncio.to_thread(_estimate_pairs, faultlines, articles, dates, cap)
+        calls = count_new_ai_calls(per_date, cached)
+    return {
+        "start_date": all_dates[0], "end_date": all_dates[-1],
+        "dates_total": len(all_dates), "dates_to_score": len(dates),
+        "dates_skipped": len(all_dates) - len(dates), "dates": dates,
+        "likely_ai_calls": calls,
+        "approx_cost_usd": round(calls * COST_PER_AI_CALL, 2),
+        "cost_per_call_usd": COST_PER_AI_CALL,
+    }
+
+
+async def _backfill_impl(
     db,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
@@ -1484,15 +1815,14 @@ async def run_backfill(
                 # the zero-score days. Legacy docs without the llm_ok field are
                 # treated as healthy (don't redo old good data).
                 healthy = await db.faultline_scores.count_documents({
-                    "date": cur_iso,
-                    "$or": [{"llm_ok": True}, {"llm_ok": {"$exists": False}}],
+                    "date": cur_iso, **HEALTHY_DATE_FILTER,
                 })
                 if healthy > 0:
                     days_skipped += 1
                     logger.info(f"Backfill {cur_iso}: SKIP (already scored, llm healthy)")
                     cur = cur + timedelta(days=1)
                     continue
-            result = await run_daily_faultline_pass(db, target_date=cur_iso)
+            result = await _daily_impl(db, target_date=cur_iso)
             days_processed += 1
             total_alerts += result.get("alerts_emitted", 0)
             logger.info(f"Backfill {cur_iso}: {result}")

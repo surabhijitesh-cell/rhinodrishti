@@ -418,6 +418,7 @@ export default function IntelligenceFeed({ api, crossBorderOnly = false, alertsO
             <SelectContent className="rounded-none">
               <SelectItem value="published_at" className="text-xs">Date (Newest)</SelectItem>
               <SelectItem value="priority_score" className="text-xs">Priority Score</SelectItem>
+              <SelectItem value="severity" className="text-xs">Severity (Critical first)</SelectItem>
             </SelectContent>
           </Select>
 

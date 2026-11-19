@@ -9,6 +9,8 @@ Collections:
   - kg_edges: Actor-Location edges with frequency, dates, contexts
 """
 import logging
+import re
+import uuid
 from datetime import datetime, timezone
 from collections import defaultdict
 
@@ -45,10 +47,14 @@ MILITANT_ALIASES: dict[str, str] = {
     "nscn-kk":                                  "NSCN-KK",
     "nscn-r":                                   "NSCN-R",
     # ── PLA / Manipur groups ──
-    "pla":                                      "PLA Manipur",
+    # Bare "pla" / "people's liberation army" are resolved by context in
+    # normalize_actor (China's PLA is not PLA Manipur).
     "pla manipur":                              "PLA Manipur",
-    "people's liberation army":                 "PLA Manipur",
+    "pla (manipur)":                            "PLA Manipur",
     "people's liberation army manipur":         "PLA Manipur",
+    "pla (china)":                              "PLA (China)",
+    "chinese pla":                              "PLA (China)",
+    "pla (unspecified)":                        "PLA (unspecified)",
     "arambai tenggol":                          "Arambai Tenggol",
     "arambai":                                  "Arambai Tenggol",
     "meitei leepun":                            "Meitei Leepun",
@@ -124,13 +130,39 @@ MILITANT_ALIASES: dict[str, str] = {
 }
 
 
-def normalize_actor(name: str) -> str:
-    """Normalize actor names to merge duplicates. Checks comprehensive alias table first."""
+_PLA_BARE = {"pla", "people's liberation army", "peoples liberation army"}
+_PLA_CHINA_RE = re.compile(
+    r"\b(china|chinese|tibet|tibetan|lac|line of actual control|arunachal|beijing)\b")
+_PLA_MANIPUR_RE = re.compile(
+    r"\b(manipur|rpf|meitei|imphal|revolutionary people's front)\b")
+
+
+def resolve_pla(context: str = "") -> str:
+    """Pick which 'PLA' is meant from surrounding text/state/locations."""
+    ctx = (context or "").lower()
+    china = bool(_PLA_CHINA_RE.search(ctx))
+    manipur = bool(_PLA_MANIPUR_RE.search(ctx))
+    if china and not manipur:
+        return "PLA (China)"
+    if manipur and not china:
+        return "PLA Manipur"
+    return "PLA (unspecified)"
+
+
+def normalize_actor(name: str, context: str = "") -> str:
+    """Normalize actor names to merge duplicates. Checks comprehensive alias table first.
+
+    `context` (item text, state, locations) only matters for the ambiguous bare "PLA".
+    """
     if not name:
         return ""
     name = name.strip()
+    if name.lower() in MILITANT_ALIASES:
+        return MILITANT_ALIASES[name.lower()]
     # Strip parenthetical suffix for lookup
     base = name.split("(")[0].strip()
+    if base.lower() in _PLA_BARE:
+        return resolve_pla(context)
     # Check full name and base against alias table (case-insensitive)
     for candidate in (name.lower(), base.lower()):
         if candidate in MILITANT_ALIASES:
@@ -149,6 +181,49 @@ def normalize_location(name: str) -> str:
         if name.lower().endswith(suffix):
             name = name[:len(name) - len(suffix)].strip()
     return name
+
+
+ACTIVE_BUILD_KEY = "kg_active_build"
+_KG_COLLECTIONS = ("kg_actors", "kg_locations", "kg_edges")
+
+
+async def get_active_build_filter(db) -> dict:
+    """Query fragment limiting reads to the active build ({} for a pre-build_id graph)."""
+    doc = await db.app_settings.find_one({"key": ACTIVE_BUILD_KEY}, {"_id": 0})
+    build_id = (doc or {}).get("build_id")
+    return {"build_id": build_id} if build_id else {}
+
+
+async def _swap_in_graph(db, build_id, now, actor_docs, location_docs, edge_docs):
+    """Insert the new build, switch the active build id, then drop older builds.
+
+    Any failure while inserting removes the partial new rows and leaves the old
+    graph (and the active build id) untouched. Cleanup of old rows afterwards is
+    best effort: readers only look at the active build, so leftovers are harmless.
+    """
+    batches = (("kg_actors", actor_docs), ("kg_locations", location_docs), ("kg_edges", edge_docs))
+    try:
+        for name, docs in batches:
+            if docs:
+                await db[name].insert_many(docs)
+        await db.app_settings.update_one(
+            {"key": ACTIVE_BUILD_KEY},
+            {"$set": {"build_id": build_id, "built_at": now}},
+            upsert=True,
+        )
+    except Exception:
+        logger.exception("Knowledge graph build failed while saving; keeping the previous graph")
+        for name in _KG_COLLECTIONS:
+            try:
+                await db[name].delete_many({"build_id": build_id})
+            except Exception:
+                logger.exception(f"Could not remove partial rows from {name}")
+        raise
+    for name in _KG_COLLECTIONS:
+        try:
+            await db[name].delete_many({"build_id": {"$ne": build_id}})
+        except Exception:
+            logger.warning(f"Old rows left in {name}; they are hidden by the active build id")
 
 
 async def build_knowledge_graph(db):
@@ -214,7 +289,9 @@ async def build_knowledge_graph(db):
         state = item.get("state", "")
         is_cross_border = item.get("is_cross_border", False)
         countries = item.get("countries_involved", [])
-        
+        # Text used only to tell apart ambiguous actor names such as bare "PLA".
+        item_ctx = f"{title} {state} {' '.join(str(c) for c in (countries or []))}"
+
         # Extract from pre-built relationships
         rels = item.get("relationships", [])
         if rels:
@@ -227,7 +304,7 @@ async def build_knowledge_graph(db):
                 if not actor_raw or not location_raw:
                     continue
                 
-                actor_key = normalize_actor(actor_raw)
+                actor_key = normalize_actor(actor_raw, f"{item_ctx} {location_raw}")
                 loc_key = normalize_location(location_raw)
                 
                 if not actor_key or not loc_key:
@@ -296,8 +373,9 @@ async def build_knowledge_graph(db):
             if not item_locations and state:
                 item_locations = [state]
             
+            item_ctx = f"{item_ctx} {' '.join(str(l) for l in item_locations)}"
             for actor_raw in item_actors:
-                actor_key = normalize_actor(actor_raw)
+                actor_key = normalize_actor(actor_raw, item_ctx)
                 if not actor_key:
                     continue
                 
@@ -352,22 +430,16 @@ async def build_knowledge_graph(db):
             
             # Track co-occurring actors
             if len(item_actors) > 1:
-                normalized_list = [normalize_actor(a) for a in item_actors if normalize_actor(a)]
+                normalized_list = [normalize_actor(a, item_ctx) for a in item_actors if normalize_actor(a, item_ctx)]
                 for i, a1 in enumerate(normalized_list):
                     for a2 in normalized_list[i+1:]:
                         if a1 != a2:
                             actors[a1]["related_actors"][a2] += 1
                             actors[a2]["related_actors"][a1] += 1
     
-    # Store to MongoDB
-    kg_actors_col = db.kg_actors
-    kg_locations_col = db.kg_locations
-    kg_edges_col = db.kg_edges
-    
-    await kg_actors_col.drop()
-    await kg_locations_col.drop()
-    await kg_edges_col.drop()
-    
+    # Everything is built in memory above; nothing in the database has been
+    # touched yet. New rows are tagged with build_id and swapped in at the end.
+    build_id = uuid.uuid4().hex
     now = datetime.now(timezone.utc).isoformat()
     
     # Store actors
@@ -391,11 +463,9 @@ async def build_knowledge_graph(db):
             "sample_titles": a["sample_titles"],
             "article_ids": a["article_ids"][:20],
             "built_at": now,
+            "build_id": build_id,
         })
-    
-    if actor_docs:
-        await kg_actors_col.insert_many(actor_docs)
-    
+
     # Store locations
     location_docs = []
     for key, loc in locations.items():
@@ -410,11 +480,9 @@ async def build_knowledge_graph(db):
             "is_border": loc["is_border"],
             "severity_counts": dict(loc["severity_counts"]),
             "built_at": now,
+            "build_id": build_id,
         })
-    
-    if location_docs:
-        await kg_locations_col.insert_many(location_docs)
-    
+
     # Store edges
     edge_docs = []
     for key, e in edges.items():
@@ -428,11 +496,19 @@ async def build_knowledge_graph(db):
             "dates": sorted(e["dates"])[-10:],
             "article_ids": e["article_ids"][:20],
             "built_at": now,
+            "build_id": build_id,
         })
-    
-    if edge_docs:
-        await kg_edges_col.insert_many(edge_docs)
-    
+
+    if not actor_docs and not location_docs and not edge_docs:
+        # Never wipe a usable graph because this run found nothing.
+        logger.warning(f"Knowledge graph build found nothing ({item_count} items); keeping existing graph")
+        return {
+            "actors": 0, "locations": 0, "edges": 0, "items_processed": item_count,
+            "built_at": now, "skipped": True, "reason": "empty result; existing graph kept",
+        }
+
+    await _swap_in_graph(db, build_id, now, actor_docs, location_docs, edge_docs)
+
     logger.info(f"Knowledge graph built: {len(actor_docs)} actors, {len(location_docs)} locations, {len(edge_docs)} edges from {item_count} items")
     
     return {
@@ -441,4 +517,5 @@ async def build_knowledge_graph(db):
         "edges": len(edge_docs),
         "items_processed": item_count,
         "built_at": now,
+        "build_id": build_id,
     }

@@ -25,7 +25,9 @@ LLM calls (Path B, 4 total, run in parallel):
   B4 — Actor posture profiles, top 10 (~600 tokens)
 """
 import asyncio
+import hashlib
 import io
+import re
 import logging
 from collections import defaultdict, Counter
 from datetime import date, datetime, timezone, timedelta
@@ -93,7 +95,7 @@ async def _load_scores(db, window: tuple, fl_ids: list | None = None) -> dict:
         scores = [s["score"] for s in series]
         out[fl_id] = {
             "id": fl_id,
-            "name": series[-1].get("faultline_name", fl_id),
+            "name": series[-1].get("faultline_name") or str(fl_id).replace("_", " ").replace("-", " ").title(),
             "state": series[-1].get("state", ""),
             "first": round(scores[0], 1),
             "last": round(scores[-1], 1),
@@ -175,6 +177,28 @@ async def _top_actors(db, window: tuple, fl_ids: list | None = None) -> list:
     return result
 
 
+def level_distribution(scores: dict) -> dict:
+    """Count faultlines per concern level using the period-average score, so the
+    current and previous periods are always measured the same way."""
+    d = {"CRITICAL": 0, "ELEVATED": 0, "MONITOR": 0, "STABLE": 0}
+    for s in scores.values():
+        lvl = concern_level(s["avg"])
+        d[lvl] = d.get(lvl, 0) + 1
+    return d
+
+
+_ID_LIKE = re.compile(r"^[A-Za-z0-9]+(?:[_\-][A-Za-z0-9]+)+$")
+
+
+def reader_faultline_name(label, names: dict | None = None) -> str:
+    """A faultline label fit for readers: known id -> its display name; anything that
+    still looks like an internal id (snake_case/kebab, no spaces) -> '' (dropped)."""
+    s = (label or "").strip() if isinstance(label, str) else ""
+    if names and s in names:
+        s = names[s]
+    return "" if (not s or _ID_LIKE.match(s)) else s
+
+
 async def aggregate_faultline_report(
     db, year: int, month: int, iod: str = "IOD-1",
     period: int | None = None, fl_ids: list | None = None,
@@ -205,17 +229,11 @@ async def aggregate_faultline_report(
         c["mom_delta"] = round(c["avg"] - p["avg"], 1) if (p and p["avg"] > 0) else None
         c["prev_avg"] = p["avg"] if (p and p["avg"] > 0) else None
 
-    # Level distribution this month vs last
-    def _dist(scores_dict: dict) -> dict:
-        d = {"CRITICAL": 0, "ELEVATED": 0, "MONITOR": 0, "STABLE": 0}
-        for s in scores_dict.values():
-            lvl = concern_level(s["last"]) if scores_dict is curr else concern_level(s["avg"])
-            d[lvl] = d.get(lvl, 0) + 1
-        return d
-
+    # Level distribution this period vs previous: BOTH use the period-average score
     mom_levels = {
-        "current": _dist(curr),
-        "previous": _dist(prev),
+        "current": level_distribution(curr),
+        "previous": level_distribution(prev),
+        "measure": "avg",
     }
     mom_levels["delta"] = {
         k: mom_levels["current"].get(k, 0) - mom_levels["previous"].get(k, 0)
@@ -348,6 +366,11 @@ async def aggregate_faultline_report(
     except Exception as e:
         logger.warning(f"Actor aggregation failed: {e}")
         top_actors = []
+    # Faultline labels on the actors page must be readable names, never internal ids.
+    id_names = {i: f["name"] for i, f in {**prev, **curr}.items()}
+    for a in top_actors:
+        a["faultlines"] = [n for n in (reader_faultline_name(x, id_names)
+                                       for x in a.get("faultlines") or []) if n]
 
     return {
         "year": year, "month": month, "period": period, "iod": iod,
@@ -397,7 +420,7 @@ def _b1_bottom_line_prompt(agg: dict) -> str:
         f"Rising this period (Δ>=+10): {km['rising_period']}.",
         f"Declining (Δ<=-10): {km['declining_period']}.",
         "",
-        f"Level distribution {_cmp_tag(agg)}:",
+        f"Level distribution {_cmp_tag(agg)} (by period-average score, both periods):",
     ]
     for lvl in ("CRITICAL", "ELEVATED", "MONITOR", "STABLE"):
         c = lv["current"].get(lvl, 0)
@@ -499,6 +522,65 @@ def _b4_actors_prompt(actors: list) -> str:
     )
 
 
+def _synthesis_prompts(agg: dict) -> list:
+    prompts = [_b1_bottom_line_prompt(agg), _b3_advisory_prompt(agg)]
+    if agg.get("top_movers"):
+        prompts.append(_b2_movers_prompt(agg))
+    if agg.get("top_actors"):
+        prompts.append(_b4_actors_prompt(agg["top_actors"]))
+    return prompts
+
+
+def synthesis_input_hash(agg: dict) -> str:
+    """Stable hash of everything that reaches the AI prompts (the prompts themselves)."""
+    return hashlib.sha256("\n\x00\n".join(_synthesis_prompts(agg)).encode("utf-8")).hexdigest()
+
+
+def _valid_synthesis(syn, agg: dict) -> bool:
+    """A usable synthesis has every part the prompts asked for; odd stored values are misses."""
+    if not isinstance(syn, dict):
+        return False
+    if not (isinstance(syn.get("bottom_line"), str) and syn["bottom_line"].strip()):
+        return False
+    if not (isinstance(syn.get("advisory"), str) and syn["advisory"].strip()):
+        return False
+    if agg.get("top_movers") and not (isinstance(syn.get("mover_outlooks"), dict) and syn["mover_outlooks"]):
+        return False
+    if agg.get("top_actors") and not (isinstance(syn.get("actor_profiles"), dict) and syn["actor_profiles"]):
+        return False
+    return True
+
+
+async def get_or_run_pdf_synthesis(db, agg: dict, call_llm_json) -> dict:
+    """Reuse stored AI report text when the inputs are unchanged; otherwise generate and
+    store it. Failed/partial AI text is returned but never stored. The result carries
+    generated_at (when the text was written)."""
+    key = {
+        "year": agg.get("year"), "month": agg.get("month"), "period": agg.get("period"),
+        "iod": agg.get("iod") or "IOD-1", "input_hash": synthesis_input_hash(agg),
+    }
+    col = db.faultline_report_synthesis
+    try:
+        stored = await col.find_one(key, {"_id": 0})
+    except Exception as e:
+        logger.warning(f"Faultline synthesis cache read failed: {e}")
+        stored = None
+    syn = stored.get("synthesis") if isinstance(stored, dict) else None
+    if _valid_synthesis(syn, agg):
+        gen = stored.get("generated_at")
+        return {**syn, "generated_at": gen if isinstance(gen, str) else ""}
+
+    fresh = await run_pdf_synthesis(agg, call_llm_json)
+    generated_at = datetime.now(timezone.utc).isoformat()
+    if _valid_synthesis(fresh, agg):
+        try:
+            await col.update_one(key, {"$set": {**key, "synthesis": fresh, "generated_at": generated_at}},
+                                 upsert=True)
+        except Exception as e:
+            logger.warning(f"Faultline synthesis cache write failed: {e}")
+    return {**fresh, "generated_at": generated_at}
+
+
 async def run_pdf_synthesis(agg: dict, call_llm_json) -> dict:
     """Run B1+B2+B3+B4 in parallel. Returns {bottom_line, mover_outlooks{}, advisory, actor_profiles{}}."""
     b1_task = call_llm_json(_b1_bottom_line_prompt(agg), max_tokens=700)
@@ -583,12 +665,12 @@ def render_faultline_pdf(agg: dict, synthesis: dict, priority_map: dict = None) 
 
     # MoM Level Distribution
     pdf.section_title("Concern Level Distribution",
-                      f"{agg['month_name']} vs {agg['prev_month_name']}")
+                      f"Period-average score | {agg['month_name']} vs {agg['prev_month_name']}")
     pdf.set_fill_color(*C_TBL_HDR); pdf.set_text_color(255, 255, 255)
     pdf.set_font("Helvetica", "B", 8)
     pdf.cell(45, 6, "  Level",       fill=True)
-    pdf.cell(45, 6, f"This {pw}",    fill=True, align="C")
-    pdf.cell(45, 6, f"Last {pw}",    fill=True, align="C")
+    pdf.cell(45, 6, f"This {pw} (avg)", fill=True, align="C")
+    pdf.cell(45, 6, f"Last {pw} (avg)", fill=True, align="C")
     pdf.cell(45, 6, "Delta",         fill=True, align="C", **NL)
     pdf.set_font("Helvetica", "", 9)
     pdf.set_text_color(40, 40, 40)
@@ -810,7 +892,8 @@ def render_faultline_pdf(agg: dict, synthesis: dict, priority_map: dict = None) 
             # Mention count + faultlines row
             pdf.set_font("Helvetica", "", 8)
             pdf.set_text_color(60, 60, 60)
-            fl_str = "  |  ".join(fls) if fls else "—"
+            fl_names = [n for n in (reader_faultline_name(x) for x in fls) if n]
+            fl_str = "  |  ".join(fl_names) if fl_names else "-"
             pdf.cell(0, 4, ascii_safe(
                 f"  Mentions: {count}   Faultlines: {fl_str[:100]}"
             ), **NL)

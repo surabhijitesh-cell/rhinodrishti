@@ -6,6 +6,7 @@ import { Search, RefreshCw, Globe, Users, MapPin, ArrowRight, AlertTriangle, Net
 import { Input } from "../components/ui/input";
 import { Button } from "../components/ui/button";
 import { Badge } from "../components/ui/badge";
+import LoadError from "../components/LoadError";
 
 const SEVERITY_COLORS = {
   critical: "bg-red-600 text-white",
@@ -220,6 +221,7 @@ export default function KnowledgeGraph({ api }) {
   const [activeTab, setActiveTab] = useState("actors");
   const [search, setSearch] = useState("");
   const [building, setBuilding] = useState(false);
+  const [loadError, setLoadError] = useState(false);
   const isViewer = useAuth().user?.role === "viewer";
   const [selectedActor, setSelectedActor] = useState(null);
   const [actorDetail, setActorDetail] = useState(null);
@@ -238,7 +240,8 @@ export default function KnowledgeGraph({ api }) {
     try {
       const res = await axios.get(`${api}/knowledge-graph/stats`);
       setStats(res.data);
-    } catch (e) { console.error(e); }
+      setLoadError(false);
+    } catch (e) { console.error(e); setLoadError(true); }
   }, [api]);
 
   const fetchActors = useCallback(async () => {
@@ -324,6 +327,11 @@ export default function KnowledgeGraph({ api }) {
           <p className="text-xs text-muted-foreground font-mono mt-1">
             Entity relationships across intelligence corpus
           </p>
+          {stats?.built && stats.built_at && (
+            <p className="text-[10px] text-muted-foreground font-mono mt-1" data-testid="kg-built-at">
+              Last built: {new Date(stats.built_at).toLocaleString("en-IN", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}
+            </p>
+          )}
         </div>
         {!isViewer && (
         <Button
@@ -359,7 +367,9 @@ export default function KnowledgeGraph({ api }) {
         </div>
       )}
 
-      {!stats?.built && (
+      {loadError && <LoadError what="the knowledge graph" onRetry={fetchStats} />}
+
+      {!stats?.built && !loadError && (
         <div className="bg-card/60 border border-border/50 p-8 text-center">
           <Network size={32} className="text-muted-foreground mx-auto mb-3" />
           <p className="text-sm text-muted-foreground font-mono">Knowledge graph not built yet.</p>
