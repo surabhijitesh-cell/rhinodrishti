@@ -301,7 +301,7 @@ async def upload_document(
             extracted_text = "\n".join([p.text for p in doc.paragraphs])
         elif file_type in ["xlsx", "xls"]:
             from openpyxl import load_workbook
-            wb = load_workbook(io.BytesIO(file_content))
+            wb = load_workbook(io.BytesIO(file_content), read_only=True, data_only=True)
             for sheet in wb:
                 for row in sheet.iter_rows(values_only=True):
                     extracted_text += " | ".join([str(c) for c in row if c]) + "\n"

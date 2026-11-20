@@ -68,7 +68,9 @@ G. SILIGURI CORRIDOR / WEST BENGAL (HIGH PRIORITY):
 - Chinese activities near Bhutan or Nepal that could affect corridor security
 
 D. SOCIETAL INSTABILITY / EARLY WARNING:
-- Tribal unrest or mobilization
+- Tribal unrest or mobilization; tribal vs non-tribal or indigenous vs migrant clashes
+- Communal or religious tension and clashes inside India, including Hindu-Muslim incidents
+- Civil unrest in or near the region: bandhs, blockades, strikes, protests and agitations (including ones announced or threatened)
 - Anti-minority incidents (especially anti-Hindu in Bangladesh)
 - Ex-servicemen protests or mobilization
 - Information campaigns, propaganda, narratives

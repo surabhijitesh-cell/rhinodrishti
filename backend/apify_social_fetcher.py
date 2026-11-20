@@ -34,6 +34,7 @@ Author/ mapping below reads several candidate key names defensively and
 skips a post rather than crashing if none match. Verified against real run
 output for all three platforms (see git history for the live test calls).
 """
+import hashlib
 import logging
 import os
 import uuid
@@ -172,6 +173,11 @@ def _first(item: dict, *keys, default=""):
     return default
 
 
+def _text_key(text: str) -> str:
+    """Stable per-post key when the scraper gives no post link."""
+    return hashlib.sha1((text or "").encode("utf-8")).hexdigest()[:12]
+
+
 def _twitter_to_intel_item(tweet: dict) -> Optional[dict]:
     text = _first(tweet, "text", "fullText")
     if not text:
@@ -183,7 +189,8 @@ def _twitter_to_intel_item(tweet: dict) -> Optional[dict]:
     return {
         "title": f"Tweet by @{handle}: {text[:80]}",
         "source": f"X/Twitter - @{handle}",
-        "source_url": url or f"https://x.com/{handle}",
+        "source_url": url or (f"https://x.com/{handle}/status/{tweet['id']}" if tweet.get("id")
+                               else f"https://x.com/{handle}#post-{_text_key(text)}"),
         "published_at": _parse_date(created),
         "raw_content": text,
         "source_type": "twitter_apify",
@@ -202,7 +209,8 @@ def _instagram_to_intel_item(post: dict) -> Optional[dict]:
     return {
         "title": f"Instagram post by @{owner}: {caption[:80]}",
         "source": f"Instagram - @{owner}",
-        "source_url": url or f"https://instagram.com/{owner}",
+        "source_url": url or (f"https://www.instagram.com/p/{post['shortCode']}/" if post.get("shortCode")
+                               else f"https://instagram.com/{owner}#post-{_text_key(caption)}"),
         "published_at": _parse_date(created),
         "raw_content": caption,
         "source_type": "instagram_apify",

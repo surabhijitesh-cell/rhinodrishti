@@ -11,7 +11,7 @@ Settings (configurable via /api/settings/bias):
 """
 import logging
 from datetime import datetime, timezone, timedelta
-from shared import feedback_col, intelligence_col, db
+from shared import feedback_col, intelligence_col, db, training_col
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +55,45 @@ async def _get_bias_settings() -> dict:
     }
 
 
+MAX_TRAINING_EXAMPLES = 8
+MAX_TRAINING_TITLE_CHARS = 70
+
+
+def build_training_examples(docs: list, cap: int = MAX_TRAINING_EXAMPLES) -> str:
+    """Short prompt block of recent analyst training uploads and their verdicts.
+
+    Effect on classification: the classifier prompt gains up to `cap` one-line
+    examples ("title -> analyst relevance 5/6" or "-> AI-read category X"), so
+    it sees what kind of material analysts deliberately taught the system as
+    relevant (or not). It is context only: no extra AI call, a few hundred
+    characters of prompt, and it never overrides the model's own judgment.
+    """
+    lines = []
+    for d in docs:
+        title = (d.get("title") or d.get("url") or "").strip().replace("\n", " ")[:MAX_TRAINING_TITLE_CHARS]
+        if not title:
+            continue
+        rel = d.get("relevance")
+        if isinstance(rel, int) and 1 <= rel <= 6:
+            verdict = f"analyst rated {rel}/6 ({'relevant' if rel >= 4 else 'not relevant'})"
+        else:
+            cat = (d.get("ai_analysis") or {}).get("threat_category") or "general"
+            verdict = f"analyst-trained as relevant, category: {str(cat)[:40]}"
+        lines.append(f"  - {title} -> {verdict}")
+        if len(lines) >= cap:
+            break
+    if not lines:
+        return ""
+    return "\n".join(["", "RECENT ANALYST TRAINING EXAMPLES (material analysts uploaded to teach relevance):"] + lines)
+
+
+async def _training_examples_context() -> str:
+    docs = await training_col.find(
+        {"status": "completed"}, {"_id": 0, "title": 1, "url": 1, "relevance": 1, "ai_analysis": 1}
+    ).sort("uploaded_at", -1).to_list(MAX_TRAINING_EXAMPLES * 2)
+    return build_training_examples(docs)
+
+
 async def get_feedback_bias_context() -> str:
     """Build a dynamic bias context string from analyst feedback patterns.
 
@@ -71,6 +110,7 @@ async def get_feedback_bias_context() -> str:
 
     try:
         context = await _compute_bias_context()
+        context += await _training_examples_context()
         _bias_cache["data"] = context
         _bias_cache["computed_at"] = now
         return context

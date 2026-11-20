@@ -7,7 +7,8 @@ import uuid
 import os
 from shared import db, feedback_col, intelligence_col, activity_log_col, logger
 from feedback_bias import get_feedback_bias_profile, invalidate_bias_cache
-from utils.auth import get_current_user
+from utils.auth import get_current_user_optional
+from utils.roles import require_analyst_or_admin
 from user_activity import log_action
 
 router = APIRouter()
@@ -35,89 +36,109 @@ def _derive_relevance(avg: float) -> str:
 # ============================================================
 # Submit / Update a Rating
 # ============================================================
+def _user_filter(user: dict, intelligence_id: str) -> dict:
+    return {"intelligence_id": intelligence_id, "user_id": user["id"]}
+
+
+def _legacy_device_filter(intelligence_id: str, device_id) -> dict | None:
+    """Old ratings were keyed by browser device id and carry no user_id."""
+    if not device_id:
+        return None
+    return {"intelligence_id": intelligence_id, "device_id": device_id, "user_id": {"$exists": False}}
+
+
 @router.post("/feedback")
 async def submit_feedback(
     body: dict, request: Request, background_tasks: BackgroundTasks,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_analyst_or_admin),
 ):
+    """One rating per logged-in analyst per item; re-rating updates it.
+    Rating costs no AI calls and creates no activity sessions."""
     intelligence_id = body.get("intelligence_id")
-    device_id = body.get("device_id")
+    device_id = body.get("device_id")  # optional, only used to find an old pre-login rating
     rating = body.get("rating")
 
-    if not intelligence_id or not device_id:
-        raise HTTPException(status_code=400, detail="intelligence_id and device_id are required")
-    if not isinstance(rating, int) or rating < 1 or rating > 6:
+    if not intelligence_id:
+        raise HTTPException(status_code=400, detail="intelligence_id is required")
+    if not isinstance(rating, int) or isinstance(rating, bool) or rating < 1 or rating > 6:
         raise HTTPException(status_code=400, detail="rating must be integer 1-6")
 
     item = await intelligence_col.find_one({"id": intelligence_id}, {"_id": 0, "id": 1, "state": 1, "threat_category": 1, "actors": 1, "tags": 1})
     if not item:
         raise HTTPException(status_code=404, detail="Intelligence item not found")
 
-    # Check max feedback limit
     settings = await db.app_settings.find_one({"key": "max_feedback_per_item"}, {"_id": 0})
     max_limit = settings.get("value", 20) if settings else 20
 
-    existing = await feedback_col.find_one(
-        {"intelligence_id": intelligence_id, "device_id": device_id},
-        {"_id": 0}
-    )
+    now = datetime.now(timezone.utc).isoformat()
+    who = {"user_id": current_user["id"], "username": current_user.get("username", "")}
+
+    existing = await feedback_col.find_one(_user_filter(current_user, intelligence_id), {"_id": 0})
+    if not existing:
+        # Old device-based rating from this browser: adopt it instead of counting twice.
+        # shortcut: a shared browser could adopt a colleague's old rating; acceptable for legacy rows.
+        legacy_filter = _legacy_device_filter(intelligence_id, device_id)
+        if legacy_filter and await feedback_col.find_one(legacy_filter, {"_id": 0, "id": 1}):
+            await feedback_col.update_one(legacy_filter, {"$set": {**who, "rating": rating, "updated_at": now}})
+            existing = True
 
     if existing:
-        # Update existing rating
-        await feedback_col.update_one(
-            {"intelligence_id": intelligence_id, "device_id": device_id},
-            {"$set": {
-                "rating": rating,
-                "updated_at": datetime.now(timezone.utc).isoformat(),
-            }}
-        )
+        if existing is not True:
+            await feedback_col.update_one(
+                _user_filter(current_user, intelligence_id),
+                {"$set": {"rating": rating, "updated_at": now}},
+            )
         await _update_aggregation(intelligence_id)
         invalidate_bias_cache()
-        background_tasks.add_task(_check_feedback_session, device_id)
         background_tasks.add_task(
             log_action, current_user, "relevance_rating",
             f"rating={rating} on item {intelligence_id} (updated)",
         )
         return {"message": "Rating updated", "action": "updated", "rating": rating}
 
-    # Check cap before inserting new
     current_count = await feedback_col.count_documents({"intelligence_id": intelligence_id})
     if current_count >= max_limit:
         raise HTTPException(status_code=429, detail=f"Maximum feedback limit ({max_limit}) reached for this item")
 
-    # Derive features from the intelligence item
     derived = {
         "region": item.get("state", ""),
         "threat_category": item.get("threat_category", ""),
         "actors": item.get("actors", []),
         "keywords": item.get("tags", []),
     }
-
     doc = {
         "id": str(uuid.uuid4()),
         "intelligence_id": intelligence_id,
         "device_id": device_id,
+        **who,
         "rating": rating,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "timestamp": now,
+        "updated_at": now,
         "ip_address": request.client.host if request.client else "",
         "derived_features": derived,
     }
-
     await feedback_col.insert_one(doc)
     await _update_aggregation(intelligence_id)
-
-    # Invalidate feedback bias cache so classifications reflect latest ratings
     invalidate_bias_cache()
-
-    # Check if device has enough ratings for a feedback session log
-    background_tasks.add_task(_check_feedback_session, device_id)
     background_tasks.add_task(
         log_action, current_user, "relevance_rating",
         f"rating={rating} on item {intelligence_id}",
     )
-
     return {"message": "Rating submitted", "action": "created", "rating": rating}
+
+
+async def _find_user_rating(user, intelligence_id: str, device_id=None):
+    """The caller's own rating: by user id first, then an old device-based row."""
+    if user:
+        row = await feedback_col.find_one(_user_filter(user, intelligence_id), {"_id": 0, "rating": 1})
+        if row:
+            return row["rating"]
+    legacy = _legacy_device_filter(intelligence_id, device_id)
+    if legacy:
+        row = await feedback_col.find_one(legacy, {"_id": 0, "rating": 1})
+        if row:
+            return row["rating"]
+    return None
 
 
 # ============================================================
@@ -125,7 +146,7 @@ async def submit_feedback(
 # NOTE: Static routes MUST come before {intelligence_id} path
 # ============================================================
 @router.post("/feedback/batch")
-async def get_batch_feedback(body: dict):
+async def get_batch_feedback(body: dict, current_user: Optional[dict] = Depends(get_current_user_optional)):
     item_ids = body.get("item_ids", [])
     device_id = body.get("device_id", "")
 
@@ -155,9 +176,15 @@ async def get_batch_feedback(body: dict):
 
     # Fetch user's own ratings for these items
     user_ratings = {}
-    if device_id:
+    if device_id:  # old device-based ratings (lowest priority)
         async for doc in feedback_col.find(
-            {"intelligence_id": {"$in": item_ids}, "device_id": device_id},
+            {"intelligence_id": {"$in": item_ids}, "device_id": device_id, "user_id": {"$exists": False}},
+            {"_id": 0, "intelligence_id": 1, "rating": 1}
+        ):
+            user_ratings[doc["intelligence_id"]] = doc["rating"]
+    if current_user:
+        async for doc in feedback_col.find(
+            {"intelligence_id": {"$in": item_ids}, "user_id": current_user["id"]},
             {"_id": 0, "intelligence_id": 1, "rating": 1}
         ):
             user_ratings[doc["intelligence_id"]] = doc["rating"]
@@ -528,7 +555,8 @@ async def get_feedback_stats():
 # Get Feedback Status for a Single Item (MUST come after static routes)
 # ============================================================
 @router.get("/feedback/{intelligence_id}")
-async def get_feedback_for_item(intelligence_id: str, device_id: Optional[str] = None):
+async def get_feedback_for_item(intelligence_id: str, device_id: Optional[str] = None,
+                                current_user: Optional[dict] = Depends(get_current_user_optional)):
     settings = await db.app_settings.find_one({"key": "max_feedback_per_item"}, {"_id": 0})
     max_limit = settings.get("value", 20) if settings else 20
 
@@ -547,14 +575,7 @@ async def get_feedback_for_item(intelligence_id: str, device_id: Optional[str] =
         total_sum = sum(r * c for r, c in distribution.items())
         avg_rating = round(total_sum / total, 2)
 
-    user_rating = None
-    if device_id:
-        existing = await feedback_col.find_one(
-            {"intelligence_id": intelligence_id, "device_id": device_id},
-            {"_id": 0, "rating": 1}
-        )
-        if existing:
-            user_rating = existing["rating"]
+    user_rating = await _find_user_rating(current_user, intelligence_id, device_id)
 
     limit_reached = total >= max_limit
 
@@ -602,83 +623,3 @@ async def _update_aggregation(intelligence_id: str):
                 "feedback_derived_relevance": derived,
             }}
         )
-
-
-FEEDBACK_SESSION_THRESHOLD = 5  # Minimum ratings to trigger a session log
-
-
-async def _check_feedback_session(device_id: str):
-    """Check if device has accumulated enough unlogged ratings to create a feedback session."""
-    try:
-        # Find the timestamp of the last feedback session for this device
-        last_session = await activity_log_col.find_one(
-            {"activity_type": "feedback_session", "device_id": device_id},
-            {"_id": 0, "timestamp": 1},
-            sort=[("timestamp", -1)]
-        )
-        since = last_session["timestamp"] if last_session else "2000-01-01T00:00:00"
-
-        # Count ratings from this device since last session
-        unlogged = await feedback_col.find(
-            {"device_id": device_id, "timestamp": {"$gt": since}},
-            {"_id": 0, "rating": 1, "intelligence_id": 1, "derived_features": 1}
-        ).to_list(200)
-
-        if len(unlogged) < FEEDBACK_SESSION_THRESHOLD:
-            return
-
-        # Build distribution
-        distribution = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0}
-        for fb in unlogged:
-            r = fb.get("rating", 0)
-            if r in distribution:
-                distribution[r] += 1
-
-        # Aggregate features from high-rated and low-rated items
-        high_regions, high_threats, high_actors = {}, {}, {}
-        low_regions, low_threats = {}, {}
-        for fb in unlogged:
-            feats = fb.get("derived_features") or {}
-            rating = fb.get("rating", 3)
-            region = feats.get("region", "")
-            threat = feats.get("threat_category", "")
-            if rating >= 4:
-                if region:
-                    high_regions[region] = high_regions.get(region, 0) + 1
-                if threat:
-                    high_threats[threat] = high_threats.get(threat, 0) + 1
-                for a in (feats.get("actors") or []):
-                    high_actors[a] = high_actors.get(a, 0) + 1
-            elif rating <= 2:
-                if region:
-                    low_regions[region] = low_regions.get(region, 0) + 1
-                if threat:
-                    low_threats[threat] = low_threats.get(threat, 0) + 1
-
-        high_features = {"regions": high_regions, "threat_categories": high_threats, "actors": high_actors}
-        low_features = {"regions": low_regions, "threat_categories": low_threats}
-
-        # Generate AI impact summary
-        from routers.training import _generate_feedback_impact_summary
-        impact_summary = await _generate_feedback_impact_summary(
-            "", len(unlogged), distribution, high_features, low_features
-        )
-
-        # Build volume string
-        dist_parts = [f"{v}x{k}" for k, v in sorted(distribution.items()) if v > 0]
-        volume = f"{len(unlogged)} ratings ({', '.join(dist_parts)})"
-
-        await activity_log_col.insert_one({
-            "id": str(uuid.uuid4()),
-            "activity_type": "feedback_session",
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "device_id": device_id[-6:],
-            "total_items": len(unlogged),
-            "volume": volume,
-            "rating_distribution": {str(k): v for k, v in distribution.items()},
-            "impact_summary": impact_summary,
-        })
-        logger.info(f"Feedback session logged for device {device_id[-6:]}: {len(unlogged)} ratings")
-
-    except Exception as e:
-        logger.error(f"Feedback session check failed: {e}")

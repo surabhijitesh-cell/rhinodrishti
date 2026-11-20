@@ -1040,11 +1040,16 @@ async def generate_brief_for_date(date: str):
             return False
         new_words = set(norm_new.split())
         new_entities = extract_key_entities(new_title)
+        from fusion_engine import extract_event_counts
+        new_counts = extract_event_counts(new_title)
 
         for i, seen in enumerate(seen_titles):
             seen_words = set(seen.split())
             if not seen_words:
                 continue
+            seen_counts = extract_event_counts(seen)
+            if new_counts and seen_counts and new_counts != seen_counts:
+                continue  # different casualty/arrest counts = different events
             overlap = len(new_words & seen_words)
             total = max(len(new_words), len(seen_words))
             word_sim = overlap / total if total > 0 else 0

@@ -21,6 +21,8 @@ const RATING_COLORS = {
   6: "text-primary",
 };
 
+// Ratings belong to the logged-in analyst. The device id is only sent so the server
+// can adopt an old pre-login rating from this browser; it is not the rater's identity.
 function getDeviceId() {
   const KEY = "rhino_drishti_device_id";
   let id = localStorage.getItem(KEY);

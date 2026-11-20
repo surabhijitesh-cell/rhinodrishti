@@ -15,7 +15,7 @@ Architecture:
   - LLM = Gemini 2.5 Flash via OpenRouter (existing llm_client)
   - Per-state synthesis runs in parallel via asyncio.gather
   - Statistics computed from intelligence_col aggregation (no hallucination)
-  - Contact directory = static ner_contacts (offices only, no incumbent names)
+  - Contact directory: none (the unverified ner_contacts list was archived, Nov 2026)
   - PDF via fpdf2 (already in deps)
 
 Claim labeling convention (passed to LLM, enforced in prompt):

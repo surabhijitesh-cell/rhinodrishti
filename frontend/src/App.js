@@ -101,7 +101,7 @@ function AppRoutes() {
             >
               <Routes>
                 <Route path="/" element={<Dashboard stats={stats} api={API} />} />
-                <Route path="/feed" element={<IntelligenceFeed api={API} />} />
+                <Route path="/feed" element={<IntelligenceFeed key="feed" api={API} />} />
                 <Route path="/cross-border" element={<CrossBorderWatch api={API} />} />
                 <Route path="/daily-brief" element={<DailyBrief api={API} />} />
                 <Route path="/trends" element={<Trends api={API} />} />
@@ -109,7 +109,7 @@ function AppRoutes() {
                 <Route path="/patterns" element={<Patterns api={API} />} />
                 <Route path="/knowledge-graph" element={<KnowledgeGraph api={API} />} />
                 <Route path="/settings" element={<ProtectedRoute roles={ADMIN_ONLY}><SettingsPage api={API} /></ProtectedRoute>} />
-                <Route path="/alerts" element={<IntelligenceFeed api={API} alertsOnly={true} />} />
+                <Route path="/alerts" element={<IntelligenceFeed key="alerts" api={API} alertsOnly={true} />} />
                 <Route path="/keywords" element={<KeywordEngine api={API} />} />
                 <Route path="/training" element={<TrainingSummary api={API} />} />
                 <Route path="/upload" element={<DocumentUpload api={API} />} />

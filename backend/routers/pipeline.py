@@ -390,11 +390,18 @@ async def _fetch_and_process_news_inner(source_filter: str = None):
             t = re.sub(r'\s+', ' ', t).strip()
             return t
 
+        from fusion_engine import extract_event_counts
+
         def title_is_similar(t1, existing_titles, threshold=0.65):
             words1 = set(t1.split())
+            counts1 = extract_event_counts(t1)
             for t2 in existing_titles:
                 words2 = set(t2.split())
                 if not words2:
+                    continue
+                # "Two militants killed" and "Three militants killed" are different events.
+                counts2 = extract_event_counts(t2)
+                if counts1 and counts2 and counts1 != counts2:
                     continue
                 overlap = len(words1 & words2)
                 total = max(len(words1), len(words2))
@@ -404,9 +411,13 @@ async def _fetch_and_process_news_inner(source_filter: str = None):
 
         # URL dedup: check ALL items (processed + unprocessed) so we don't
         # re-insert articles that failed classification and sit as processed=False.
-        # `distinct` is efficient (index scan) and returns every stored URL.
-        all_stored_urls = await intelligence_col.distinct("source_url")
-        existing_urls = set(u for u in all_stored_urls if u)
+        # Only this cycle's links are looked up: loading every stored link would
+        # eventually exceed the database's 16 MB answer limit and stop collection.
+        cycle_urls = list({a.get("source_url") for a in articles if a.get("source_url")})
+        existing_urls = set()
+        for i in range(0, len(cycle_urls), 1000):
+            existing_urls.update(await intelligence_col.distinct(
+                "source_url", {"source_url": {"$in": cycle_urls[i:i + 1000]}}))
 
         # Title fuzzy dedup: only compare against recent PROCESSED items
         # (unprocessed may lack clean titles; limit keeps memory sane).
@@ -785,7 +796,8 @@ async def _classify_with_retry_v2(article, max_retries=4):
     # NOTE: 'limit' removed — it's a substring of 'delimiter' (as in JSON parse
     # errors like "Expecting ',' delimiter") which caused JSON failures to be
     # treated as rate limits, triggering 15-second back-offs instead of fast retry.
-    RATE_LIMIT_INDICATORS = ['rate', '429', 'quota', 'too many', 'throttle', 'overloaded', 'ratelimit']
+    # Not bare 'rate': it matched 'generate', 'moderate' etc. and wrongly switched to the costlier fallback.
+    RATE_LIMIT_INDICATORS = ['rate limit', 'rate_limit', 'rate-limit', '429', 'quota', 'too many', 'throttle', 'overloaded', 'ratelimit']
     was_rate_limited = False
 
     for attempt in range(max_retries):
@@ -927,6 +939,13 @@ def _is_provider_failure(error: str) -> bool:
     return not low or any(sign in low for sign in _PROVIDER_FAILURE_SIGNS)
 
 
+def split_force_checked(items: list) -> tuple[list, list]:
+    """Items an analyst clicked Accept on carry force_full_check: they skip the
+    Stage 0 / 0.5 / 1 filters and go straight to the full AI check."""
+    forced = [i for i in items if i.get("force_full_check")]
+    return forced, [i for i in items if not i.get("force_full_check")]
+
+
 async def analyze_unprocessed_items():
     # Load thresholds from DB (admin-configurable, 5-min cache)
     settings = await _get_pipeline_settings()
@@ -961,7 +980,8 @@ async def analyze_unprocessed_items():
     # ============================================================
     survivors = []
     stage0_rejected = 0
-    for item in unprocessed:
+    forced_items, to_filter = split_force_checked(unprocessed)
+    for item in to_filter:
         passed, reason = hard_filter(item)
         if not passed:
             await intelligence_col.update_one(
@@ -1042,6 +1062,11 @@ async def analyze_unprocessed_items():
             logger.warning(f"Stage 1 batch failed, skipping to Haiku: {e}")
             stage1_failopen = len(survivors)  # entire stage failed open
 
+    # Analyst-accepted items bypass every filter and go first
+    for item in forced_items:
+        item["_stage1_tier"] = "critical"
+    survivors = forced_items + survivors
+
     # Prioritize high-tier guesses so Haiku quota goes to the best candidates first
     tier_rank = {"critical": 0, "high": 1, "medium": 2, "low": 3, "none": 4}
     survivors.sort(key=lambda it: tier_rank.get(it.get("_stage1_tier", "low"), 3))
@@ -1074,6 +1099,7 @@ async def analyze_unprocessed_items():
         if result and result.get("is_relevant", True):
             update_fields = {k: v for k, v in result.items() if k != "_id"}
             update_fields["processed"] = True
+            update_fields["force_full_check"] = False
             update_fields.pop("is_relevant", None)
 
             # Same sifter boost + band cap as the RSS path (news-type items only)
@@ -1113,7 +1139,7 @@ async def analyze_unprocessed_items():
         elif result and not result.get("is_relevant", True):
             await intelligence_col.update_one(
                 {"id": item["id"]},
-                {"$set": {"processed": True, "tags": ["not_relevant"]}}
+                {"$set": {"processed": True, "tags": ["not_relevant"], "force_full_check": False}}
             )
             not_relevant += 1
         elif result is None and not was_rate_limited:
@@ -1136,7 +1162,8 @@ async def analyze_unprocessed_items():
             # shortcut: "not_relevant" is the tag every screen already hides;
             # "classify_failed" tells them apart. Analysts can still Accept it.
             fields.update({"processed": True, "tags": ["not_relevant", "classify_failed"],
-                           "severity": "filtered_out"})
+                           "severity": "filtered_out",
+                           "force_full_check": False})
             gave_up += 1
         await intelligence_col.update_one({"id": item["id"]}, {"$set": fields})
 

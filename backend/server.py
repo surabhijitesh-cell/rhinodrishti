@@ -694,6 +694,10 @@ async def startup():
             misfire_grace_time=3600,
         )
 
+        # A local start must not run fetches, scoring or briefs against whatever database .env names.
+        if os.environ.get("DISABLE_SCHEDULER") == "1":
+            logger.warning("Scheduler NOT started (DISABLE_SCHEDULER=1, local development)")
+            return
         scheduler.start()
         asyncio.create_task(_catchup_after_boot(generate_scheduled_daily_brief, _run_faultline_pass))
         logger.info("Scheduler: news(all sources)/30min, grassroots+established jobs removed, retry/15min, brief/0600 IST, embeddings/6hr, fusion/30min, youtube/4hr, telegram/1hr, apify_social/6hr (insta/fb/twitter), fading/1hr, relationships/nightly, faultlines/0600+1800 IST + incremental/4hr, credit_monitor/30min, strip_raw/24hr [firecrawl DISABLED]")

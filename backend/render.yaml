@@ -6,7 +6,7 @@ services:
     name: rhino-drishti-api
     runtime: python
     region: singapore  # Closest to India
-    plan: free
+    plan: starter  # paid plan: the free plan sleeps and stops the schedules
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn server:app --host 0.0.0.0 --port $PORT
     envVars:
@@ -14,8 +14,28 @@ services:
         sync: false  # Set manually in Render dashboard
       - key: DB_NAME
         value: rhino_drishti
-      - key: EMERGENT_LLM_KEY
-        sync: false  # Set manually in Render dashboard
+      - key: JWT_SECRET_KEY
+        sync: false  # required: the server refuses to start without it
+      - key: OPENROUTER_API_KEY
+        sync: false  # all AI calls
+      - key: OPENAI_API_KEY
+        sync: false  # embeddings (similarity filter, AI search)
+      - key: APIFY_TOKEN
+        sync: false  # Facebook, Instagram, X
+      - key: YOUTUBE_API_KEY
+        sync: false
+      - key: TELEGRAM_API_ID
+        sync: false
+      - key: TELEGRAM_API_HASH
+        sync: false
+      - key: TELEGRAM_SESSION_STRING
+        sync: false
+      - key: VAPID_PUBLIC_KEY
+        sync: false  # push notifications
+      - key: VAPID_PRIVATE_KEY
+        sync: false
+      - key: VAPID_CLAIM_EMAIL
+        sync: false
       - key: CORS_ORIGINS
         sync: false  # Set to your Vercel frontend URL after deploying frontend
       - key: PYTHON_VERSION

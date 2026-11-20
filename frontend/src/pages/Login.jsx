@@ -28,7 +28,8 @@ export default function Login() {
         navigate("/", { replace: true });
       }
     } catch (err) {
-      const msg = err.response?.data?.detail || "Authentication failed";
+      const detail = err.response?.data?.detail;
+      const msg = typeof detail === "string" ? detail : (err.response ? "Authentication failed" : "Server not reachable. Please try again in a minute.");
       setError(msg);
     }
     setLoading(false);

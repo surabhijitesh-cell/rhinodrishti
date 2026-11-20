@@ -929,49 +929,36 @@ async def unpin_intelligence_item(item_id: str):
     return {"message": "Item unpinned — fading resumed", "id": item_id}
 
 
-@router.post("/intelligence/{item_id}/accept")
-async def force_accept_item(item_id: str):
-    """Manually promote a social-media / raw item into the intelligence feed.
-
-    Overrides AI rejection:
-    - Sets processed=True, is_relevant=True
-    - Removes not_relevant tag and is_archived flag
-    - Bumps severity to 'medium' if currently missing or 'low'
-    - Marks manually_accepted=True for audit trail
-    """
-    existing = await intelligence_col.find_one(
-        {"id": item_id},
-        {"_id": 0, "severity": 1, "tags": 1}
-    )
-    if not existing:
-        raise HTTPException(status_code=404, detail="Item not found in intelligence database")
-
-    now = datetime.now(timezone.utc).isoformat()
-    set_fields: dict = {
-        "processed": True,
-        "is_relevant": True,
-        "manually_accepted": True,
-        "manually_accepted_at": now,
-    }
-    # Bump severity if missing or low
-    cur_sev = (existing.get("severity") or "").lower()
-    if cur_sev in ("", "low"):
-        set_fields["severity"] = "medium"
-
-    result = await intelligence_col.update_one(
-        {"id": item_id},
-        {
-            "$set":   set_fields,
-            "$unset": {"is_archived": ""},
-            "$pull":  {"tags": "not_relevant"},
+def force_accept_fields(now: str) -> dict:
+    """Mongo update for Accept: put the item back in the queue for the full AI
+    check, with the filter verdict wiped so the filters cannot reject it again."""
+    return {
+        "$set": {
+            "processed": False,
+            "force_full_check": True,
+            "manually_accepted": True,
+            "manually_accepted_at": now,
+            "classify_attempts": 0,
         },
+        "$unset": {"filter_reason": "", "severity": "", "is_archived": "", "classify_error": ""},
+        "$pull": {"tags": {"$in": ["not_relevant", "stage0_filtered", "stage05_filtered",
+                                    "stage1_filtered", "classify_failed"]}},
+    }
+
+
+@router.post("/intelligence/{item_id}/accept", dependencies=[Depends(require_analyst_or_admin)])
+async def force_accept_item(item_id: str):
+    """Send a rejected/filtered item back for the full AI check, skipping the
+    keyword, similarity and cheap-relevance filters. The one AI call happens
+    later in the retry job, not here."""
+    result = await intelligence_col.update_one(
+        {"id": item_id}, force_accept_fields(datetime.now(timezone.utc).isoformat())
     )
     if result.matched_count == 0:
-        raise HTTPException(status_code=404, detail="Item not found")
+        raise HTTPException(status_code=404, detail="Item not found in intelligence database")
 
     invalidate_stats_cache()
-    final_sev = set_fields.get("severity", existing.get("severity", "medium"))
-    return {"message": "Item promoted to intelligence feed", "id": item_id, "severity": final_sev}
+    return {"message": "Item queued for a full AI check. It will appear in the feed if the check finds it relevant.", "id": item_id}
 
 
 @router.post("/intelligence/{item_id}/reprocess", dependencies=[Depends(require_analyst_or_admin)])
