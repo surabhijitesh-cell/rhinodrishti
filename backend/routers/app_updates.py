@@ -21,6 +21,17 @@ class CreateUpdateRequest(BaseModel):
     priority: str = "minor"  # "major" or "minor"
 
 
+GENERIC_MINOR_MESSAGE = "Performance improvements and bug fixes"
+
+
+def minor_update_text(update: dict) -> str:
+    """The text an admin actually entered for a minor update. Old or damaged
+    records with no text fall back to the generic line instead of failing."""
+    text = (update or {}).get("message")
+    text = text.strip() if isinstance(text, str) else ""
+    return text or GENERIC_MINOR_MESSAGE
+
+
 # ============================================================
 # User-facing endpoints
 # ============================================================
@@ -85,7 +96,7 @@ async def get_pending_updates(user: dict = Depends(get_current_user)):
         return {
             "notifications": [
                 {"version": minor_updates[-1]["version"],
-                 "message": "Performance improvements and bug fixes",
+                 "message": minor_update_text(minor_updates[-1]),
                  "priority": "minor"}
             ],
             "has_more": False,
@@ -175,10 +186,7 @@ async def preview_update(body: dict, user: dict = Depends(get_current_user)):
     if not update:
         raise HTTPException(status_code=404, detail=f"Version '{version}' not found")
 
-    if update["priority"] == "major":
-        preview_message = update["message"]
-    else:
-        preview_message = "Performance improvements and bug fixes"
+    preview_message = minor_update_text(update) if update.get("priority") != "major" else update.get("message", "")
 
     return {
         "version": update["version"],

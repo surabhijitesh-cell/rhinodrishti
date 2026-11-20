@@ -15,7 +15,13 @@
 import { Joyride, ACTIONS, STATUS } from "react-joyride";
 import { useLocation } from "react-router-dom";
 import { useTour } from "../contexts/TourContext";
+import { useAuth } from "../contexts/AuthContext";
 import { toast } from "sonner";
+
+// A step may carry `roles: [...]`; only people with one of those roles see it.
+// Steps without `roles` are shown to everyone.
+const ANALYST_UP = ["admin", "analyst"];
+const ADMIN_ONLY = ["admin"];
 
 // ─── Step definitions per route ──────────────────────────────────────────────
 
@@ -24,7 +30,7 @@ const PAGE_STEPS = {
     {
       target: "[data-tour='dashboard-title']",
       title: "Intelligence Overview",
-      content: "Your central command hub. This dashboard aggregates real-time intelligence from all 6 source types — RSS, YouTube, Facebook, Telegram, X/Twitter and Firecrawl — and presents the operational picture for the North East Region.",
+      content: "Your starting page. It brings together everything the platform collects for the North East Region: news sites, YouTube, Telegram, Facebook, Instagram and X (collected through Apify), and other web sources.",
       placement: "bottom",
     },
     {
@@ -48,13 +54,14 @@ const PAGE_STEPS = {
     {
       target: "[data-tour='fetch-intel-btn']",
       title: "Fetch Intel Button",
-      content: "Triggers a full sweep of ALL 6 intelligence sources simultaneously — RSS feeds and all social/web sources fire in parallel. Use this for an immediate refresh outside the automatic schedule.",
+      content: "Collects fresh items from all sources right now, instead of waiting for the automatic schedule. Only analysts and admins see this button.",
       placement: "left",
+      roles: ANALYST_UP,
     },
     {
       target: "[data-tour='source-scanners']",
-      title: "Source Scanner Panel",
-      content: "Live status for every intelligence source. Each card shows last-fetch time, item count, and a FETCH button for per-source manual triggers. Click a card to see the individual sites, channels or accounts being monitored. 'Scan Social Media' triggers all 5 non-RSS sources.",
+      title: "Source Panel",
+      content: "Shows each source: when it last ran and how many items it brought in. Click a card to see the sites, channels or accounts being watched. Analysts and admins also get a button to refresh a single source.",
       placement: "bottom",
     },
     {
@@ -71,8 +78,8 @@ const PAGE_STEPS = {
     },
     {
       target: "[data-tour='sidebar-nav']",
-      title: "Navigation Sidebar",
-      content: "Access all platform modules here. The sidebar collapses to icons to save screen space. The red badge on Alerts shows unacknowledged critical/high items.",
+      title: "Menu",
+      content: "The menu has four groups: Daily work, Analysis, Briefs and reports, and Tools and admin. Settings and API & Pipeline Monitor appear only for admins. The red badge on Alerts counts alerts nobody has handled yet.",
       placement: "right",
     },
     {
@@ -87,26 +94,8 @@ const PAGE_STEPS = {
     {
       target: "[data-tour='feed-title']",
       title: "Intelligence Feed",
-      content: "The complete, filterable list of all processed intelligence items. Use the filter controls to narrow by severity, threat category, region or date range.",
+      content: "Every item the platform has collected and sorted. Use the filters and the search box at the top to narrow by severity, threat type, state or date. Each card shows the headline, source, severity and state. Analysts and admins can rate a card with thumbs up or down to help the platform learn.",
       placement: "bottom",
-    },
-    {
-      target: "[data-tour='feed-filters']",
-      title: "Filter Controls",
-      content: "Filter items by Severity (critical/high/medium/low), Threat Category (insurgency, crime, political, etc.), and State/Region. Filters combine — select multiple to narrow results.",
-      placement: "bottom",
-    },
-    {
-      target: "[data-tour='feed-sort']",
-      title: "Sort & Search",
-      content: "Sort items by date, priority score or severity. The search bar performs semantic search — it understands meaning, not just keywords. Type a concept like 'border infiltration' to find related items.",
-      placement: "bottom",
-    },
-    {
-      target: "[data-tour='feed-items']",
-      title: "Intelligence Cards",
-      content: "Each card shows the AI-extracted title, source, severity badge, threat category, and affected state. The priority score (0-100) reflects AI confidence. Rate items with the thumbs up/down to train the AI.",
-      placement: "top",
     },
   ],
 
@@ -114,34 +103,41 @@ const PAGE_STEPS = {
     {
       target: "[data-tour='cross-border-title']",
       title: "Cross-Border Watch",
-      content: "Dedicated view for intelligence items involving cross-border movement — from Bangladesh, Myanmar and China. The AI flags items with explicit cross-border indicators.",
+      content: "Items about activity across the border with Bangladesh, Myanmar and China, grouped by country and entry route.",
       placement: "bottom",
-    },
-    {
-      target: "[data-tour='cross-border-map']",
-      title: "Cross-Border Map",
-      content: "Visual representation of cross-border threat vectors. Items with identified countries of origin are mapped to their entry corridors into the NER.",
-      placement: "right",
     },
   ],
 
   "/daily-brief": [
     {
       target: "[data-tour='brief-title']",
-      title: "Daily Intelligence Brief",
-      content: "Auto-generated intelligence summary compiled at 06:00 IST every day. The AI reads all overnight intelligence items and writes an executive summary for each threat category and region.",
+      title: "Periodic Briefs",
+      content: "Your briefs live here. The tabs are Daily, Fortnightly and Monthly, plus Past briefs for earlier ones. The Daily brief is written each morning from what was collected overnight.",
+      placement: "bottom",
+    },
+    {
+      target: "[data-testid='brief-tabs']",
+      title: "Brief Tabs",
+      content: "Switch between Daily, Fortnightly and Monthly briefs. Open Past briefs to find and download any earlier brief.",
+      placement: "bottom",
+    },
+    {
+      target: "[data-testid='brief-date']",
+      title: "Date Picker",
+      content: "Pick a date to see the Daily brief for that day.",
       placement: "bottom",
     },
     {
       target: "[data-tour='brief-generate']",
       title: "Generate Brief",
-      content: "Generate a fresh brief on-demand using all intelligence collected since the last brief. Useful after a major incident or when you need an immediate assessment.",
+      content: "Writes a fresh brief now, using everything collected since the last one. Handy after a major incident. Only analysts and admins see this button.",
       placement: "left",
+      roles: ANALYST_UP,
     },
     {
       target: "[data-tour='brief-export']",
-      title: "Export Brief",
-      content: "Download the current brief as a formatted PDF for distribution. The PDF includes the full text, key indicators and the date/time stamp.",
+      title: "Download PDF",
+      content: "Downloads the brief as a PDF you can print or send on.",
       placement: "left",
     },
   ],
@@ -184,9 +180,9 @@ const PAGE_STEPS = {
 
   "/knowledge-graph": [
     {
-      target: "[data-tour='kg-title']",
+      target: "[data-testid='knowledge-graph-page']",
       title: "Knowledge Graph",
-      content: "A network visualisation of entities and their relationships extracted from intelligence items. Nodes are actors, locations, events or organisations. Edges represent documented relationships.",
+      content: "A web of the people, groups, places and events that appear in the reports, with lines showing how they are connected.",
       placement: "bottom",
     },
   ],
@@ -195,16 +191,16 @@ const PAGE_STEPS = {
     {
       target: "[data-tour='feed-title']",
       title: "Alerts View",
-      content: "Filtered view of CRITICAL and HIGH severity items only. Use the ACK button on each item to acknowledge you have reviewed it — this removes it from the unacknowledged count in the sidebar.",
+      content: "Only the most serious items (Critical and High). Mark an alert as handled once you have reviewed it, and it drops out of the count on the menu.",
       placement: "bottom",
     },
   ],
 
   "/keywords": [
     {
-      target: "[data-tour='keywords-title']",
+      target: "[data-testid='keyword-engine-page']",
       title: "Keyword Engine",
-      content: "Define custom keyword groups. When intelligence items containing these keywords arrive, the AI applies additional attention and can trigger priority escalation.",
+      content: "Keep lists of words you care about. Items that mention them get extra attention.",
       placement: "bottom",
     },
   ],
@@ -213,16 +209,16 @@ const PAGE_STEPS = {
     {
       target: "[data-tour='training-title']",
       title: "Training & Feedback",
-      content: "Review how analyst ratings are influencing the AI classification pipeline. High feedback influence means analyst corrections are strongly shaping future classifications.",
+      content: "See how analyst ratings and corrections are helping the platform sort items better over time.",
       placement: "bottom",
     },
   ],
 
   "/upload": [
     {
-      target: "[data-tour='upload-title']",
-      title: "Manual Intelligence Upload",
-      content: "Upload intelligence documents (PDF, DOCX, images) directly into the platform. The AI extracts, classifies and integrates them into the intelligence feed automatically.",
+      target: "[data-testid='document-analysis-page']",
+      title: "Manual Int Uploads",
+      content: "Add your own documents (PDF, Word, images). The platform reads them, sorts them and adds them to your feed.",
       placement: "bottom",
     },
   ],
@@ -231,7 +227,7 @@ const PAGE_STEPS = {
     {
       target: "[data-tour='settings-title']",
       title: "Platform Settings",
-      content: "Administrator-only control panel for configuring the intelligence platform.",
+      content: "For admins only. Analysts and viewers do not see Settings in their menu. This is where sources and data settings are managed.",
       placement: "bottom",
     },
     {
@@ -242,44 +238,77 @@ const PAGE_STEPS = {
     },
     {
       target: "[data-tour='rss-manager']",
-      title: "RSS Feed Management",
-      content: "Add or remove RSS news sources. The platform ships with 89 built-in NER intelligence feeds. Custom feeds are scanned on the same schedule as built-in feeds.",
+      title: "News Sites",
+      content: "Add or remove news websites the platform reads. Your additions are collected on the same schedule as the built-in ones.",
       placement: "bottom",
     },
     {
       target: "[data-tour='retention-card']",
       title: "Data Retention Window",
-      content: "Controls how many days of intelligence are visible in the feed and stats. Older items stay in the database but are hidden. Increase for historical analysis, decrease for a sharper operational focus.",
+      content: "How many days of items show in the feed and counts. Older items are kept but hidden. Raise it for history, lower it for a sharper focus on recent events.",
       placement: "top",
     },
     {
       target: "[data-tour='bias-card']",
       title: "Feedback Bias Configuration",
-      content: "Controls how strongly analyst ratings influence the AI pipeline. 'Light' means AI judgment dominates; 'High' means analyst consensus strongly shapes future classifications. Use 'Rolling 30 Days' to keep the AI current.",
+      content: "How strongly analyst ratings shape the platform's sorting. Light means the platform mostly decides on its own; High means analyst ratings count for a lot.",
       placement: "top",
     },
     {
       target: "[data-tour='source-effectiveness']",
       title: "Source Effectiveness",
-      content: "Shows which non-RSS sources are producing actionable intelligence. Each row shows item count, severity distribution bar, AI processing rate, and the latest catch. High-value = Critical + High items combined.",
+      content: "Shows which social and web sources (YouTube, Telegram, Facebook, Instagram, X and others) are giving useful items, and how many are Critical or High.",
       placement: "top",
     },
   ],
 
   "/reports": [
     {
-      target: "[data-tour='reports-title']",
+      target: "[data-testid='reports-page']",
       title: "Reports",
-      content: "Generate and download formatted intelligence reports. Reports can be time-bounded, filtered by region or threat category, and exported as PDF.",
+      content: "Create and download reports as PDF: by state, by country, or a custom one using your own dates and filters.",
       placement: "bottom",
+    },
+  ],
+
+  "/faultlines": [
+    {
+      target: "[data-testid^='faultline-card-']",
+      title: "Faultlines",
+      content: "Each card is a long-running tension in the region with its current level. The card also shows when it was last scored. Click a card for its articles and history.",
+      placement: "bottom",
+    },
+    {
+      target: "[data-testid='run-daily-btn']",
+      title: "Run Scoring Now",
+      content: "Updates every faultline's score right away instead of waiting for the daily run. Only analysts and admins see this button.",
+      placement: "bottom",
+      roles: ANALYST_UP,
+    },
+  ],
+
+  "/admin": [
+    {
+      target: "[data-testid='source-health-panel']",
+      title: "Source Health",
+      content: "Shows whether each source is working and when it last brought in items. Check here first if a source looks quiet. Admin only.",
+      placement: "bottom",
+      roles: ADMIN_ONLY,
+    },
+    {
+      target: "[data-testid='model-trial-panel']",
+      title: "Model Trial",
+      content: "Try the platform's sorting on a small sample to compare how it performs. Admin only.",
+      placement: "top",
+      roles: ADMIN_ONLY,
     },
   ],
 
   "/user-management": [
     {
-      target: "[data-tour='users-title']",
+      target: "[data-testid='user-management-page']",
       title: "User Management",
-      content: "Admin-only. Create and manage analyst accounts. Roles: Admin (full access + settings), Analyst (read/write intel, rate items), Viewer (read-only). Deactivate accounts without deleting them.",
+      content: "For admins only. Create and manage accounts. Admin has full access, Analyst can read and rate items and run updates, Viewer can only read. Accounts can be switched off without deleting them.",
       placement: "bottom",
     },
   ],
@@ -387,7 +416,14 @@ export default function AppTour() {
   const location = useLocation();
   const { running, skipTour, finishTour, joyKey } = useTour();
 
-  const steps = PAGE_STEPS[location.pathname] || [];
+  const { user } = useAuth();
+
+  // Hide steps the person's role cannot see, and drop our own `roles` field.
+  const steps = (PAGE_STEPS[location.pathname] || [])
+    .filter((s) => !s.roles || s.roles.includes(user?.role))
+    // Skip steps whose target is not on screen (e.g. no brief yet), so the tour never stalls.
+    .filter((s) => s.target === "body" || (running && document.querySelector(s.target)))
+    .map(({ roles, ...step }) => step);
 
   const handleEvent = ({ status, action }) => {
     if (status === STATUS.SKIPPED) {

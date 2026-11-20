@@ -15,6 +15,7 @@ import { Button } from "../components/ui/button";
 import { Badge } from "../components/ui/badge";
 import Tip from "./Tip";
 import { useTour } from "../contexts/TourContext";
+import PageErrorBoundary from "./PageErrorBoundary";
 import NotificationBell from "./NotificationBell";
 
 const ALL_NAV_ITEMS = [
@@ -399,7 +400,7 @@ export default function Layout({ children, alertCount = 0, onSearch, notifUnread
                 <button onClick={logout} className="ml-auto underline underline-offset-2 shrink-0">Sign in again</button>
               </div>
             )}
-            {children}
+            <PageErrorBoundary resetKey={location.pathname}>{children}</PageErrorBoundary>
           </div>
         </main>
       </div>

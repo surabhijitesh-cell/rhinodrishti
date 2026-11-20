@@ -19,85 +19,104 @@ import { Slider } from "./ui/slider";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
+import LoadError from "./LoadError";
 import { SlidersHorizontal, AlertTriangle, CheckCircle2, RefreshCw, Info } from "lucide-react";
 
-// ── Cost constants (Gemini 2.5 Flash pricing — Stage 2 primary model) ────────
-// Stage 1: Gemini Flash-Lite  $0.10/$0.40 per MTok (cheap_classifier.py)
-// Stage 2: Gemini 2.5 Flash   $0.15/$0.60 per MTok (ai_pipeline.py) ← simulator models this
-const GEMINI_INPUT_PER_M  = 0.15;  // USD per million input tokens
-const GEMINI_OUTPUT_PER_M = 0.60;  // USD per million output tokens
-const AVG_INPUT_TOK_PER_CALL  = 1500;
-const AVG_OUTPUT_TOK_PER_CALL = 400;
-const CYCLES_PER_DAY = 96;         // every 15 min × 24h
-const INR_RATE = 84;
+// ── Cost assumptions (shown to the reader at the bottom of the panel) ─────────
+// Full classification: measured real charge per call, 17 Nov 2026.
+const COST_PER_CLASSIFY_CALL_USD = 0.0012;
+// Cheap pre-filter (google/gemini-2.5-flash-lite) at its listed OpenRouter price.
+const PREFILTER_INPUT_PER_M  = 0.10;   // USD per million input tokens
+const PREFILTER_OUTPUT_PER_M = 0.40;   // USD per million output tokens
+// The page does not receive real text sizes, so these are stated assumptions.
+const PREFILTER_INPUT_TOKENS  = 400;   // title + short excerpt per item
+const PREFILTER_OUTPUT_TOKENS = 20;    // a yes/no answer
+const COST_PER_PREFILTER_CALL_USD =
+  (PREFILTER_INPUT_TOKENS  / 1_000_000 * PREFILTER_INPUT_PER_M) +
+  (PREFILTER_OUTPUT_TOKENS / 1_000_000 * PREFILTER_OUTPUT_PER_M);
+const CYCLES_PER_DAY = 96;         // every 15 min x 24h
 
-const COST_PER_CALL_USD =
-  (AVG_INPUT_TOK_PER_CALL  / 1_000_000 * GEMINI_INPUT_PER_M) +
-  (AVG_OUTPUT_TOK_PER_CALL / 1_000_000 * GEMINI_OUTPUT_PER_M);
+// Rupees only when the live rate is known; otherwise dollars alone.
+const rupees = (usd, rate) => (rate ? `₹${Math.round(usd * rate).toLocaleString("en-IN")}` : null);
+
+function money(usd, rate) {
+  const inr = rupees(usd, rate);
+  return inr ? `${inr} ($${usd.toFixed(2)})` : `$${usd.toFixed(2)}`;
+}
 
 // ── Simulation engine ─────────────────────────────────────────────────────────
 function simulateFunnel(settings, todayData, savedSettings) {
-  const scanned   = todayData?.items_scanned  || 200;
-  const s0pass    = todayData?.stage0_pass     || scanned;
-  const s05pass   = todayData?.stage05_pass    || s0pass;
-  const s1pass    = todayData?.stage1_pass     || s05pass;
-  const haikuTotal = (todayData?.haiku_relevant || 0) + (todayData?.haiku_not_relevant || 0);
-  const cycles    = todayData?.cycles          || 1;
+  const cycles      = Math.max(1, todayData?.cycles || 1);
+  const scannedAct  = todayData?.items_scanned  || 200;
+  const s0Act       = todayData?.stage0_pass     || scannedAct;
+  const s05Act      = todayData?.stage05_pass    || s0Act;
+  const s1Act       = todayData?.stage1_pass     || s05Act;
+  const haikuTotal  = (todayData?.haiku_relevant || 0) + (todayData?.haiku_not_relevant || 0);
 
-  // Stage 0: keyword filter — not tunable, use actual
-  const afterS0 = s0pass;
+  // "Max items scanned per cycle": if today's cycles were hitting the saved cap,
+  // scale volume with the new cap; otherwise the cap only bites when lowered below
+  // what a cycle actually scanned.
+  const savedScan  = savedSettings?.stage2_max_scan || settings.stage2_max_scan;
+  const perCycle   = scannedAct / cycles;
+  const wasCapped  = perCycle >= 0.95 * savedScan;
+  const simPerCycle = wasCapped
+    ? perCycle * (settings.stage2_max_scan / savedScan)
+    : Math.min(perCycle, settings.stage2_max_scan);
+  const k = perCycle > 0 ? simPerCycle / perCycle : 1;
 
-  // Stage 0.5: estimate impact of min_sim change
-  const baselinePassRate = s0pass > 0 ? s05pass / s0pass : 1.0;
+  const scanned = Math.round(scannedAct * k);
+  const afterS0 = Math.round(s0Act * k);   // keyword filter: not tunable
+
+  // Stage 0.5: estimate impact of the similarity change
+  const baselinePassRate = s0Act > 0 ? s05Act / s0Act : 1.0;
   const simDelta = (settings.stage05_min_sim - (savedSettings?.stage05_min_sim || 0.35)) * 1.8;
   const simPassRate05 = settings.stage05_enabled
     ? Math.max(0.20, Math.min(1.0, baselinePassRate - simDelta))
     : 1.0;
   const afterS05 = Math.round(afterS0 * simPassRate05);
 
-  // Stage 1: Gemini filter — use actual pass rate if enabled
-  const s1baseRate = s05pass > 0 ? s1pass / s05pass : 1.0;
-  const afterS1 = settings.stage1_enabled
-    ? Math.round(afterS05 * s1baseRate)
-    : afterS05;
+  // Stage 1: cheap pre-filter; use today's real pass rate when on
+  const s1baseRate = s05Act > 0 ? s1Act / s05Act : 1.0;
+  const afterS1 = settings.stage1_enabled ? Math.round(afterS05 * s1baseRate) : afterS05;
 
-  // Stage 2: Haiku cap per cycle
-  const haikuCap     = settings.stage2_max_haiku * cycles;
-  const toHaiku      = Math.min(afterS1, haikuCap);
-  const haikuPerDay  = toHaiku / cycles * CYCLES_PER_DAY;
-  const costPerDayUsd = haikuPerDay * COST_PER_CALL_USD;
-  const costPerDayInr = Math.round(costPerDayUsd * INR_RATE);
+  // Stage 2: full classification, capped per cycle
+  const toHaiku     = Math.min(afterS1, settings.stage2_max_haiku * cycles);
+  const haikuPerDay = toHaiku / cycles * CYCLES_PER_DAY;
+  const prefilterPerDay = settings.stage1_enabled ? afterS05 / cycles * CYCLES_PER_DAY : 0;
+  const costPerDayUsd = haikuPerDay * COST_PER_CLASSIFY_CALL_USD + prefilterPerDay * COST_PER_PREFILTER_CALL_USD;
 
-  // Baseline cost (current actual settings applied)
-  const baseHaikuPerDay = (haikuTotal / cycles) * CYCLES_PER_DAY;
-  const baseCostUsd = baseHaikuPerDay * COST_PER_CALL_USD;
+  // Baseline = today's actual behaviour at the saved settings
+  const basePrefilterPerDay = savedSettings?.stage1_enabled !== false ? s05Act / cycles * CYCLES_PER_DAY : 0;
+  const baseCostUsd = (haikuTotal / cycles) * CYCLES_PER_DAY * COST_PER_CLASSIFY_CALL_USD
+    + basePrefilterPerDay * COST_PER_PREFILTER_CALL_USD;
+  const savingsPct = baseCostUsd > 0 ? Math.round((1 - costPerDayUsd / baseCostUsd) * 100) : 0;
 
-  const savingsPct = baseCostUsd > 0
-    ? Math.round((1 - costPerDayUsd / baseCostUsd) * 100)
-    : 0;
-
-  // Coverage risk
   const filterRate = afterS0 > 0 ? 1 - toHaiku / afterS0 : 0;
+
+  // Coverage risk is about missed news only. Turning the pre-filter off is
+  // the opposite trade: it costs more but misses fewer items.
   let coverageRisk = "LOW";
   let riskColor    = "text-emerald-400";
-  if (settings.stage05_min_sim > 0.55 || !settings.stage1_enabled) {
+  if (settings.stage05_min_sim > 0.55) {
     coverageRisk = "HIGH — may miss critical news";
     riskColor    = "text-red-400";
   } else if (settings.stage05_min_sim > 0.45) {
     coverageRisk = "MEDIUM — some relevant news may be filtered";
     riskColor    = "text-amber-400";
   }
+  const prefilterOff = !settings.stage1_enabled;
 
   return {
-    afterS0, afterS05, afterS1, toHaiku,
-    costPerDayUsd, costPerDayInr, haikuPerDay,
+    scanned, afterS0, afterS05, afterS1, toHaiku,
+    costPerDayUsd, haikuPerDay,
     baseCostUsd, savingsPct, filterRate,
-    coverageRisk, riskColor,
+    coverageRisk, riskColor, prefilterOff,
   };
 }
 
 // ── Funnel chart data builder ─────────────────────────────────────────────────
-function buildChartData(scanned, sim) {
+function buildChartData(sim) {
+  const scanned = sim.scanned;
   const stages = [
     { name: "Scanned",    pass: scanned,       drop: 0 },
     { name: "After S0",   pass: sim.afterS0,   drop: scanned - sim.afterS0 },
@@ -151,7 +170,7 @@ function ToggleRow({ label, value, onChange, warn }) {
 }
 
 // ── Impact confirmation modal ─────────────────────────────────────────────────
-function ConfirmModal({ sim, settings, onConfirm, onCancel, saving }) {
+function ConfirmModal({ sim, settings, rate, onConfirm, onCancel, saving }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
       <div className="border border-border bg-card rounded-none shadow-xl p-6 max-w-sm w-full mx-4 space-y-4">
@@ -171,17 +190,17 @@ function ConfirmModal({ sim, settings, onConfirm, onCancel, saving }) {
             </span>
           </div>
           <div className="flex justify-between">
-            <span>Stage 1 (Gemini) enabled</span>
+            <span>Cheap pre-filter enabled</span>
             <span className={settings.stage1_enabled ? "text-emerald-400" : "text-red-400"}>
               {settings.stage1_enabled ? "YES" : "NO"}
             </span>
           </div>
           <div className="flex justify-between">
-            <span>Max scan/cycle</span>
+            <span>Max items scanned per cycle</span>
             <span className="text-foreground">{settings.stage2_max_scan}</span>
           </div>
           <div className="flex justify-between">
-            <span>Max Gemini calls/cycle</span>
+            <span>Max full classifications per cycle</span>
             <span className="text-foreground">{settings.stage2_max_haiku}</span>
           </div>
         </div>
@@ -197,10 +216,10 @@ function ConfirmModal({ sim, settings, onConfirm, onCancel, saving }) {
             Impact Assessment
           </p>
           <p className="text-[10px] font-mono">
-            Est. Gemini Flash calls/day: <span className="font-bold">{Math.round(sim.haikuPerDay).toLocaleString()}</span>
+            Est. full classifications/day: <span className="font-bold">{Math.round(sim.haikuPerDay).toLocaleString()}</span>
           </p>
           <p className="text-[10px] font-mono">
-            Est. cost/day: <span className="font-bold text-emerald-400">₹{sim.costPerDayInr}</span>
+            Est. cost/day: <span className="font-bold text-emerald-400">{money(sim.costPerDayUsd, rate)}</span>
             {sim.savingsPct > 0 && (
               <span className="text-emerald-400/70 ml-1">({sim.savingsPct}% less)</span>
             )}
@@ -208,15 +227,20 @@ function ConfirmModal({ sim, settings, onConfirm, onCancel, saving }) {
           <p className="text-[10px] font-mono">
             Coverage risk: <span className={`font-bold ${sim.riskColor}`}>{sim.coverageRisk}</span>
           </p>
+          {sim.prefilterOff && (
+            <p className="text-[10px] font-mono text-amber-400">
+              Pre-filter off: higher cost, fewer missed items.
+            </p>
+          )}
           <p className="text-[10px] font-mono text-muted-foreground">
-            ~{Math.round(sim.filterRate * 100)}% of items filtered before Gemini Flash
+            ~{Math.round(sim.filterRate * 100)}% of items filtered before full classification
           </p>
         </div>
 
         {sim.coverageRisk.startsWith("HIGH") && (
           <div className="flex items-start gap-2 text-[9px] font-mono text-red-400 border border-red-500/30 bg-red-500/10 p-2">
             <AlertTriangle size={10} className="shrink-0 mt-0.5" />
-            <span>Warning: aggressive settings may prevent critical NER news from reaching classification. Proceed with caution.</span>
+            <span>Warning: this similarity setting may stop critical NER news from reaching classification. Proceed with caution.</span>
           </div>
         )}
 
@@ -254,20 +278,26 @@ export default function FilterThresholdSimulator({ api }) {
   const [showModal, setShowModal]         = useState(false);
   const [saving, setSaving]               = useState(false);
   const [saved, setSaved]                 = useState(false);
-  const [error, setError]                 = useState(null);
+  const [error, setError]                 = useState(null);       // save failure
+  const [todayFailed, setTodayFailed]       = useState(false);
 
   const load = useCallback(async () => {
-    try {
-      const [settingsRes, todayRes] = await Promise.all([
-        axios.get(`${api}/admin/filter-settings`),
-        axios.get(`${api}/admin/filter-cascade/today`),
-      ]);
-      const s = settingsRes.data;
+    setError(null);
+    const [settingsRes, todayRes] = await Promise.allSettled([
+      axios.get(`${api}/admin/filter-settings`),
+      axios.get(`${api}/admin/filter-cascade/today`),
+    ]);
+    if (settingsRes.status === "fulfilled" && settingsRes.value.data) {
+      const s = settingsRes.value.data;
       setSavedSettings(s);
       setSettings({ ...s });
-      setTodayData(todayRes.data);
-    } catch (e) {
-      setError("Failed to load settings");
+    }
+    // The cascade endpoint reports its own errors inside a normal reply.
+    if (todayRes.status === "fulfilled" && !todayRes.value.data?.error) {
+      setTodayData(todayRes.value.data);
+      setTodayFailed(false);
+    } else {
+      setTodayFailed(true);
     }
     setLoading(false);
   }, [api]);
@@ -275,14 +305,15 @@ export default function FilterThresholdSimulator({ api }) {
   useEffect(() => { load(); }, [load]);
 
   const sim = useMemo(() => {
-    if (!settings || !todayData) return null;
+    if (!settings || !todayData || todayFailed) return null;
     return simulateFunnel(settings, todayData, savedSettings);
-  }, [settings, todayData, savedSettings]);
+  }, [settings, todayData, todayFailed, savedSettings]);
 
   const chartData = useMemo(() => {
     if (!sim || !todayData) return [];
-    return buildChartData(todayData.items_scanned || 200, sim);
+    return buildChartData(sim);
   }, [sim, todayData]);
+  const rate = todayData?.usd_to_inr || null;
 
   const hasChanges = useMemo(() => {
     if (!settings || !savedSettings) return false;
@@ -297,7 +328,7 @@ export default function FilterThresholdSimulator({ api }) {
       setSaved(true);
       setTimeout(() => setSaved(false), 3000);
     } catch (e) {
-      setError("Failed to save settings");
+      setError("Couldn't save the settings. Nothing was changed, try again.");
     }
     setSaving(false);
     setShowModal(false);
@@ -315,12 +346,23 @@ export default function FilterThresholdSimulator({ api }) {
     );
   }
 
+  if (!settings) {
+    return (
+      <Card className="border border-border rounded-none bg-card border-l-4 border-l-violet-500">
+        <CardContent className="p-4">
+          <LoadError what="the filter settings" onRetry={load} />
+        </CardContent>
+      </Card>
+    );
+  }
+
   return (
     <>
       {showModal && sim && (
         <ConfirmModal
           sim={sim}
           settings={settings}
+          rate={rate}
           onConfirm={handleApply}
           onCancel={() => setShowModal(false)}
           saving={saving}
@@ -373,7 +415,7 @@ export default function FilterThresholdSimulator({ api }) {
 
               <div>
                 <p className="text-[9px] font-mono text-muted-foreground uppercase tracking-wider font-semibold mb-3">
-                  Stage 1 — Gemini Flash-Lite binary filter
+                  Cheap pre-filter (keeps or drops each item before full classification)
                 </p>
                 <ToggleRow
                   label="Enabled"
@@ -382,24 +424,24 @@ export default function FilterThresholdSimulator({ api }) {
                   warn={true}
                 />
                 <p className="text-[8px] font-mono text-muted-foreground/60 mt-1">
-                  Disabling Stage 1 sends all S0.5 survivors directly to Gemini Flash — significantly increases cost.
+                  Turning this off costs more (every surviving item gets a full classification) but misses fewer items.
                 </p>
               </div>
 
               <div>
                 <p className="text-[9px] font-mono text-muted-foreground uppercase tracking-wider font-semibold mb-3">
-                  Stage 2 — Gemini 2.5 Flash capacity
+                  Full classification capacity
                 </p>
                 <SliderRow
-                  label="Max items scanned/cycle"
+                  label="Max items scanned per cycle"
                   value={settings.stage2_max_scan}
                   min={50} max={500} step={25}
                   onChange={update("stage2_max_scan")}
-                  hint="Higher = clears backlog faster but uses more memory"
+                  hint="Higher = clears backlog faster. The simulation scales today's volume with this number."
                 />
                 <div className="mt-3">
                   <SliderRow
-                    label="Max Gemini calls/cycle"
+                    label="Max full classifications per cycle"
                     value={settings.stage2_max_haiku}
                     min={5} max={50} step={1}
                     onChange={update("stage2_max_haiku")}
@@ -436,7 +478,7 @@ export default function FilterThresholdSimulator({ api }) {
                     reset to saved
                   </button>
                 )}
-                {error && <p className="text-[9px] text-red-400 font-mono mt-1">{error}</p>}
+                {error && <p className="text-[9px] text-red-400 font-mono mt-1" role="alert">{error}</p>}
               </div>
             </div>
 
@@ -489,6 +531,7 @@ export default function FilterThresholdSimulator({ api }) {
               </div>
 
               {/* Cost & impact summary */}
+              {todayFailed && <LoadError what="today's filter figures" onRetry={load} />}
               {sim && (
                 <div className="border border-border/30 p-3 bg-muted/5 space-y-2">
                   <p className="text-[9px] font-mono text-muted-foreground uppercase tracking-wider font-semibold">
@@ -496,12 +539,12 @@ export default function FilterThresholdSimulator({ api }) {
                   </p>
 
                   <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 text-[9px] font-mono">
-                    <span className="text-muted-foreground">Gemini Flash calls</span>
+                    <span className="text-muted-foreground">Full classifications</span>
                     <span className="text-foreground font-bold">{Math.round(sim.haikuPerDay).toLocaleString()}</span>
 
                     <span className="text-muted-foreground">Est. cost</span>
                     <span className="text-emerald-400 font-bold">
-                      ₹{sim.costPerDayInr} (${sim.costPerDayUsd.toFixed(2)})
+                      {money(sim.costPerDayUsd, rate)}
                     </span>
 
                     <span className="text-muted-foreground">vs current</span>
@@ -510,12 +553,18 @@ export default function FilterThresholdSimulator({ api }) {
                     </span>
 
                     <span className="text-muted-foreground">Filter rate</span>
-                    <span className="text-foreground">{Math.round(sim.filterRate * 100)}% before Gemini Flash</span>
+                    <span className="text-foreground">{Math.round(sim.filterRate * 100)}% before full classification</span>
 
                     <span className="text-muted-foreground">Coverage risk</span>
                     <span className={sim.riskColor}>{sim.coverageRisk.split(" —")[0]}</span>
                   </div>
 
+                  {sim.prefilterOff && (
+                    <div className="flex items-start gap-1.5 text-[8px] font-mono text-amber-400 mt-1">
+                      <AlertTriangle size={9} className="shrink-0 mt-0.5" />
+                      <span>Pre-filter off: higher cost, fewer missed items.</span>
+                    </div>
+                  )}
                   {sim.coverageRisk !== "LOW" && (
                     <div className="flex items-start gap-1.5 text-[8px] font-mono text-amber-400 mt-1">
                       <AlertTriangle size={9} className="shrink-0 mt-0.5" />
@@ -526,9 +575,14 @@ export default function FilterThresholdSimulator({ api }) {
                   <div className="flex items-start gap-1.5 text-[8px] font-mono text-muted-foreground/60 mt-1 border-t border-border/20 pt-1.5">
                     <Info size={8} className="shrink-0 mt-0.5" />
                     <span>
-                      Simulation uses today's actual cycle data as baseline.
-                      Stage 0.5 estimate uses linear approximation — actual may vary
-                      ±10% depending on article distribution.
+                      Uses today's real cycles as the baseline; the similarity estimate is a rough
+                      straight-line guess (actual may differ by about 10%). Costs assume
+                      ${COST_PER_CLASSIFY_CALL_USD} per full classification (measured 17 Nov 2026) and
+                      ${COST_PER_PREFILTER_CALL_USD.toFixed(6)} per pre-filter check (listed price
+                      ${PREFILTER_INPUT_PER_M} in / ${PREFILTER_OUTPUT_PER_M} out per million tokens, assuming{" "}
+                      {PREFILTER_INPUT_TOKENS} tokens in and {PREFILTER_OUTPUT_TOKENS} out per item;
+                      real text sizes are not available on this page).
+                      {rate ? "" : " Live exchange rate unavailable, so dollars only."}
                     </span>
                   </div>
                 </div>

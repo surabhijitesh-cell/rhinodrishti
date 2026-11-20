@@ -6,6 +6,16 @@ import { Badge } from "../components/ui/badge";
 import { toast } from "sonner";
 import axios from "axios";
 import UserActivityTab from "../components/UserActivityTab";
+import LoadError from "../components/LoadError";
+import ConfirmAction from "../components/ConfirmAction";
+import { useAuth } from "../contexts/AuthContext";
+import { formatIST } from "../lib/time";
+import {
+  AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogCancel, AlertDialogAction,
+} from "../components/ui/alert-dialog";
+
+const ROLES = ["admin", "analyst", "viewer"];
 
 const ROLE_BADGES = {
   admin: "bg-red-500/20 text-red-400 border-red-500/30",
@@ -24,17 +34,27 @@ const IOD_BADGES = {
 // named centres. Matches backend/iod_registry.py.
 const IOD_ORDER = ["IOD-1", "IOD-4", "IOD-5", "IOD-CIJ"];
 
-function generatePassword() {
+// Browser fallback: uses the secure random source, never Math.random.
+function generatePasswordLocally() {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789!@#$%";
+  const limit = 256 - (256 % chars.length); // reject values that would favour some characters
   let pwd = "";
-  for (let i = 0; i < 14; i++) pwd += chars[Math.floor(Math.random() * chars.length)];
+  while (pwd.length < 14) {
+    const bytes = crypto.getRandomValues(new Uint8Array(32));
+    for (const b of bytes) {
+      if (b < limit && pwd.length < 14) pwd += chars[b % chars.length];
+    }
+  }
   return pwd;
 }
 
 export default function UserManagement({ api }) {
+  const { user: me } = useAuth();
   const [activeTab, setActiveTab] = useState("users");
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [pendingRole, setPendingRole] = useState(null); // { user, role }
   const [showCreate, setShowCreate] = useState(false);
   const [resetUserId, setResetUserId] = useState(null);
 
@@ -49,12 +69,21 @@ export default function UserManagement({ api }) {
   const [resetting, setResetting] = useState(false);
   const [copied, setCopied] = useState(false);
 
+  const generatePassword = async () => {
+    try {
+      const res = await axios.post(`${api}/users/generate-password`);
+      if (res.data?.password) return res.data.password;
+    } catch (err) { /* fall back to the browser's secure generator */ }
+    return generatePasswordLocally();
+  };
+
   const fetchUsers = useCallback(async () => {
     try {
       const res = await axios.get(`${api}/users`);
       setUsers(res.data.users || []);
+      setLoadFailed(false);
     } catch (err) {
-      toast.error("Failed to fetch users");
+      setLoadFailed(true);
     }
     setLoading(false);
   }, [api]);
@@ -105,7 +134,19 @@ export default function UserManagement({ api }) {
       toast.success(`User ${user.is_active ? "deactivated" : "activated"}`);
       fetchUsers();
     } catch (err) {
-      toast.error("Failed to update user");
+      toast.error(err.response?.data?.detail || "Failed to update user");
+    }
+  };
+
+  const confirmRoleChange = async () => {
+    const { user, role } = pendingRole;
+    setPendingRole(null);
+    try {
+      await axios.put(`${api}/users/${user.id}`, { role });
+      toast.success(`${user.username} is now ${role}. They will be signed out and must log in again.`);
+      fetchUsers();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Failed to change role");
     }
   };
 
@@ -145,7 +186,9 @@ export default function UserManagement({ api }) {
     const iod = u.iod || "IOD-1";
     (usersByIod[iod] = usersByIod[iod] || []).push(u);
   }
-  const iodGroups = IOD_ORDER.filter((iod) => usersByIod[iod]?.length).map((iod) => ({
+  // Users whose IOD is not one of the known centres are still listed, in their own group.
+  const unknownIods = Object.keys(usersByIod).filter((iod) => !IOD_ORDER.includes(iod));
+  const iodGroups = [...IOD_ORDER, ...unknownIods].filter((iod) => usersByIod[iod]?.length).map((iod) => ({
     iod, members: usersByIod[iod],
   }));
 
@@ -272,7 +315,7 @@ export default function UserManagement({ api }) {
                     </button>
                   </div>
                   <Button type="button" variant="outline" className="rounded-none text-xs shrink-0"
-                    onClick={() => { const p = generatePassword(); setForm({ ...form, password: p }); setShowFormPass(true); }}
+                    onClick={async () => { const p = await generatePassword(); setForm((f) => ({ ...f, password: p })); setShowFormPass(true); }}
                     data-testid="generate-password-btn"
                   >
                     <RefreshCw size={12} className="mr-1" /> Generate
@@ -321,7 +364,7 @@ export default function UserManagement({ api }) {
                 </button>
               </div>
               <Button type="button" variant="outline" className="rounded-none text-xs shrink-0"
-                onClick={() => { const p = generatePassword(); setResetPass(p); setShowResetPass(true); }}
+                onClick={async () => { const p = await generatePassword(); setResetPass(p); setShowResetPass(true); }}
               >
                 <RefreshCw size={12} className="mr-1" /> Generate
               </Button>
@@ -355,6 +398,8 @@ export default function UserManagement({ api }) {
         <CardContent className="p-0">
           {loading ? (
             <div className="p-8 text-center text-muted-foreground text-sm">Loading...</div>
+          ) : loadFailed ? (
+            <LoadError what="the user list" onRetry={fetchUsers} className="m-4" />
           ) : users.length === 0 ? (
             <div className="p-8 text-center text-muted-foreground text-sm">No users found</div>
           ) : (
@@ -377,9 +422,12 @@ export default function UserManagement({ api }) {
                       <tr className="bg-muted/15">
                         <td colSpan={7} className="px-4 py-1.5">
                           <div className="flex items-center gap-2">
-                            <Badge className={`rounded-none text-[9px] px-1.5 py-0 border ${IOD_BADGES[iod]}`}>
+                            <Badge className={`rounded-none text-[9px] px-1.5 py-0 border ${IOD_BADGES[iod] || IOD_BADGES["IOD-1"]}`}>
                               {iod}
                             </Badge>
+                            {!IOD_ORDER.includes(iod) && (
+                              <span className="text-[10px] text-amber-400 font-mono">Unrecognised IOD: please reassign</span>
+                            )}
                             <span className="text-[10px] uppercase tracking-widest text-muted-foreground font-mono">
                               {members.length} {members.length === 1 ? "user" : "users"}
                             </span>
@@ -392,9 +440,15 @@ export default function UserManagement({ api }) {
                         <td className="px-4 py-2.5 font-mono text-sm">{u.username}</td>
                         <td className="px-4 py-2.5 text-muted-foreground">{u.name || "—"}</td>
                         <td className="px-4 py-2.5">
-                          <Badge className={`rounded-none text-[9px] px-1.5 py-0 border ${ROLE_BADGES[u.role] || ROLE_BADGES.viewer}`}>
-                            {u.role?.toUpperCase()}
-                          </Badge>
+                          <select
+                            value={ROLES.includes(u.role) ? u.role : ""}
+                            onChange={(e) => e.target.value !== u.role && setPendingRole({ user: u, role: e.target.value })}
+                            className={`border px-1.5 py-1 text-[10px] font-mono uppercase focus:outline-none ${ROLE_BADGES[u.role] || ROLE_BADGES.viewer}`}
+                            data-testid={`role-select-${u.username}`}
+                          >
+                            {!ROLES.includes(u.role) && <option value="">{u.role || "unknown"}</option>}
+                            {ROLES.map((r) => <option key={r} value={r} className="bg-background text-foreground">{r}</option>)}
+                          </select>
                         </td>
                         <td className="px-4 py-2.5">
                           <select
@@ -403,21 +457,30 @@ export default function UserManagement({ api }) {
                             className="bg-background border border-border px-1.5 py-1 text-[10px] font-mono focus:outline-none focus:border-primary"
                             data-testid={`iod-select-${u.username}`}
                           >
+                            {!IOD_ORDER.includes(u.iod || "IOD-1") && <option value={u.iod}>{u.iod} (unrecognised)</option>}
                             {IOD_ORDER.map((iod) => (
                               <option key={iod} value={iod}>{iod}</option>
                             ))}
                           </select>
                         </td>
                         <td className="px-4 py-2.5">
-                          <button onClick={() => handleToggleActive(u)}
-                            className={`text-[10px] uppercase tracking-widest font-mono cursor-pointer ${u.is_active ? "text-green-400" : "text-red-400"}`}
-                            data-testid={`toggle-active-${u.username}`}
+                          <ConfirmAction
+                            when={u.is_active && u.id === me?.id}
+                            title="Deactivate your own account?"
+                            description="You will be signed out and will not be able to log back in until another admin reactivates you."
+                            confirmLabel="Deactivate me"
+                            onConfirm={() => handleToggleActive(u)}
                           >
-                            {u.is_active ? "Active" : "Inactive"}
-                          </button>
+                            <button onClick={u.is_active && u.id === me?.id ? undefined : () => handleToggleActive(u)}
+                              className={`text-[10px] uppercase tracking-widest font-mono cursor-pointer ${u.is_active ? "text-green-400" : "text-red-400"}`}
+                              data-testid={`toggle-active-${u.username}`}
+                            >
+                              {u.is_active ? "Active" : "Inactive"}
+                            </button>
+                          </ConfirmAction>
                         </td>
                         <td className="px-4 py-2.5 text-xs text-muted-foreground font-mono">
-                          {u.last_login ? new Date(u.last_login).toLocaleString("en-IN", { dateStyle: "short", timeStyle: "short" }) : "Never"}
+                          {u.last_login ? formatIST(u.last_login) : "Never"}
                         </td>
                         <td className="px-4 py-2.5 text-right">
                           <div className="flex items-center justify-end gap-1">
@@ -445,6 +508,22 @@ export default function UserManagement({ api }) {
       </Card>
       </>
       )}
+
+      <AlertDialog open={!!pendingRole} onOpenChange={(o) => !o && setPendingRole(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Change {pendingRole?.user.username} to {pendingRole?.role}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Their access changes at once and they will be signed out everywhere and must log in again.
+              {pendingRole?.user.id === me?.id && " This is your own account."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmRoleChange}>Change role</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

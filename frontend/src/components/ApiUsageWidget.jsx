@@ -85,7 +85,7 @@ function StackedSparkline({ hourly }) {
   );
 }
 
-function DayBar({ day, maxCost }) {
+function DayBar({ day, maxCost, rate }) {
   const pct = maxCost > 0 ? Math.min((day.cost_usd / maxCost) * 100, 100) : 0;
   const label = day.date.slice(5);
   return (
@@ -94,13 +94,13 @@ function DayBar({ day, maxCost }) {
       <div className="flex-1 h-3 bg-muted/20 relative overflow-hidden rounded-none">
         <div className="h-full bg-violet-500/60" style={{ width: `${pct}%` }} />
       </div>
-      <span className="w-16 text-right text-muted-foreground shrink-0">₹{day.cost_inr.toFixed(0)}</span>
+      {rate && <span className="w-16 text-right text-muted-foreground shrink-0">₹{day.cost_inr.toFixed(0)}</span>}
       <span className="w-12 text-right text-muted-foreground/60 shrink-0">${day.cost_usd.toFixed(3)}</span>
     </div>
   );
 }
 
-function ProviderRow({ name, data, onEditThreshold }) {
+function ProviderRow({ name, data, onEditThreshold, rate }) {
   const meta = PROVIDER_META[name] || { label: name, color: "bg-muted", dot: "bg-muted" };
   const cost = data?.cost_usd || 0;
   const calls = data?.call_count || 0;
@@ -118,10 +118,12 @@ function ProviderRow({ name, data, onEditThreshold }) {
           {alert && <span className="text-[8px] text-red-400 font-bold">⚠</span>}
         </div>
         <div className="flex items-center gap-2">
-          <span className={`text-[11px] font-bold font-mono ${alert ? "text-red-400" : "text-foreground"}`}>
-            ₹{inr.toFixed(0)}
-          </span>
-          <span className="text-[9px] font-mono text-muted-foreground/60">${cost.toFixed(3)}</span>
+          {rate && (
+            <span className={`text-[11px] font-bold font-mono ${alert ? "text-red-400" : "text-foreground"}`}>
+              ₹{inr.toFixed(0)}
+            </span>
+          )}
+          <span className={rate ? "text-[9px] font-mono text-muted-foreground/60" : `text-[11px] font-bold font-mono ${alert ? "text-red-400" : "text-foreground"}`}>${cost.toFixed(3)}</span>
           <span className="text-[9px] font-mono text-muted-foreground/40">{calls} calls</span>
           <button
             onClick={() => onEditThreshold(name, thr)}
@@ -171,7 +173,7 @@ export default function ApiUsageWidget({ api }) {
       if (t.alert && !alertFiredRef.current) {
         alertFiredRef.current = true;
         toast.error(
-          `⚠ API spend alert! Total today: ₹${t.today_inr} ($${t.today_usd}) — ${t.pct_of_limit}% of $${t.threshold_usd} daily limit.`,
+          `⚠ API spend alert! Total today: ${t.usd_to_inr ? `₹${t.today_inr} ` : ""}($${t.today_usd}) — ${t.pct_of_limit}% of $${t.threshold_usd} daily limit.`,
           { duration: 12000 }
         );
       }
@@ -222,6 +224,7 @@ export default function ApiUsageWidget({ api }) {
                       : today?.pct_of_limit >= 70 ? "bg-amber-500"
                       : "bg-emerald-500";
   const providers = today?.by_provider || {};
+  const rate = today?.usd_to_inr || null;   // live rate; no rate means dollars only
 
   return (
     <Card className="border border-border rounded-none bg-card border-l-4 border-l-violet-500">
@@ -255,16 +258,18 @@ export default function ApiUsageWidget({ api }) {
                 ><Settings2 size={9} /></button>
               </div>
               <div className="flex items-center gap-2">
-                <span className={`text-sm font-bold font-mono ${today.alert ? "text-red-400" : "text-emerald-400"}`}>
-                  ₹{today.today_inr.toFixed(0)}
-                </span>
-                <span className="text-[9px] font-mono text-muted-foreground">${today.today_usd.toFixed(3)}</span>
+                {rate && (
+                  <span className={`text-sm font-bold font-mono ${today.alert ? "text-red-400" : "text-emerald-400"}`}>
+                    ₹{today.today_inr.toFixed(0)}
+                  </span>
+                )}
+                <span className={rate ? "text-[9px] font-mono text-muted-foreground" : `text-sm font-bold font-mono ${today.alert ? "text-red-400" : "text-emerald-400"}`}>${today.today_usd.toFixed(3)}</span>
               </div>
             </div>
             <MiniBar value={today.today_usd} max={today.threshold_usd} color={totalPctColor} />
             <div className="flex justify-between text-[9px] font-mono text-muted-foreground">
               <span>{today.pct_of_limit}% of daily limit</span>
-              <span>Limit ₹{today.threshold_inr} (${today.threshold_usd})</span>
+              <span>Limit {rate ? `₹${today.threshold_inr} ` : ""}(${today.threshold_usd})</span>
             </div>
           </div>
         )}
@@ -319,6 +324,7 @@ export default function ApiUsageWidget({ api }) {
               name={p}
               data={providers[p]}
               onEditThreshold={(name, cur) => { setEditVal(String(cur)); setEditMode(name); }}
+              rate={rate}
             />
           ))}
         </div>
@@ -347,7 +353,7 @@ export default function ApiUsageWidget({ api }) {
             >
               7-Day History {showHistory ? <ChevronUp size={9} /> : <ChevronDown size={9} />}
             </button>
-            {showHistory && daily.map(d => <DayBar key={d.date} day={d} maxCost={maxDailyCost} />)}
+            {showHistory && daily.map(d => <DayBar key={d.date} day={d} maxCost={maxDailyCost} rate={rate} />)}
           </div>
         )}
 

@@ -11,8 +11,53 @@ from shared import db, training_col, intelligence_col, activity_log_col, feedbac
 from llm_client import get_anthropic_client, ANTHROPIC_MODEL
 from utils.auth import get_current_user
 from user_activity import log_action
+from pymongo.errors import DuplicateKeyError
 
 router = APIRouter()
+
+# A training run is recorded in the database (one record), so a page reload or a
+# second browser tab cannot start a second run, and a crashed run cannot block
+# training forever.
+run_state_col = db.training_run_state
+RUN_STALE_MINUTES = 15    # a run that has not reported progress for this long is dead
+ITEM_STALE_MINUTES = 10   # an item stuck on "processing" this long was interrupted
+MIN_RATED_ITEMS = 20      # fewer rated items than this: no score is shown
+MISS_GAP = 2.0            # AI rated an item this many points (of 6) below the analysts = a miss
+RETRY_STATUSES = ["pending", "ready", "failed"]
+
+
+def _parse_ts(value):
+    try:
+        d = datetime.fromisoformat(str(value))
+    except (TypeError, ValueError):
+        return None
+    return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
+
+
+def run_is_active(state: dict, now: datetime) -> bool:
+    """True only if a run is recorded as running AND it reported progress recently."""
+    if not state or not state.get("running"):
+        return False
+    beat = _parse_ts(state.get("heartbeat"))
+    return bool(beat) and now - beat < timedelta(minutes=RUN_STALE_MINUTES)
+
+
+def item_is_stale(item: dict, now: datetime) -> bool:
+    """A 'processing' item whose start time is old (or unknown) was interrupted."""
+    if item.get("status") != "processing":
+        return False
+    started = _parse_ts(item.get("processing_started_at"))
+    return started is None or now - started >= timedelta(minutes=ITEM_STALE_MINUTES)
+
+
+def run_outcome(total: int, completed: int, failed: int) -> dict:
+    """Plain-English result of a run: 'complete' only if every item succeeded."""
+    ok = total > 0 and failed == 0 and completed == total
+    if ok:
+        message = "Training complete: all %d items were processed." % total
+    else:
+        message = "Training finished with problems: %d of %d items done, %d failed. Failed items stay in the queue and are retried on the next run." % (completed, total, failed)
+    return {"ok": ok, "message": message, "completed": completed, "failed": failed, "total": total}
 
 
 # ============================================================
@@ -116,8 +161,9 @@ async def upload_training_file(file: UploadFile = File(...), current_user: dict 
 # ============================================================
 @router.get("/training/queue")
 async def get_training_queue():
+    await _release_stale_items()
     items = await training_col.find({}, {"_id": 0}).sort("uploaded_at", -1).to_list(200)
-    pending = sum(1 for i in items if i.get("status") == "pending")
+    pending = sum(1 for i in items if i.get("status") in ("pending", "failed"))
     ready = sum(1 for i in items if i.get("status") == "ready")
     processed = sum(1 for i in items if i.get("status") == "completed")
     return {
@@ -145,9 +191,12 @@ async def delete_training_item(item_id: str):
 # ============================================================
 @router.post("/training/run", dependencies=[Depends(require_analyst_or_admin)])
 async def run_training(background_tasks: BackgroundTasks, current_user: dict = Depends(get_current_user)):
-    pending = await training_col.count_documents({"status": {"$in": ["pending", "ready"]}})
+    await _release_stale_items()
+    pending = await training_col.count_documents({"status": {"$in": RETRY_STATUSES}})
     if pending == 0:
         raise HTTPException(status_code=400, detail="No pending items in training queue")
+    if not await _acquire_run_lock(pending):
+        raise HTTPException(status_code=409, detail="Training is already running. Wait for it to finish; this page will show its progress.")
     background_tasks.add_task(_run_training_pipeline)
     background_tasks.add_task(log_action, current_user, "training_action", f"run: {pending} items")
     return {"message": f"Training started for {pending} items", "pending": pending}
@@ -156,18 +205,58 @@ async def run_training(background_tasks: BackgroundTasks, current_user: dict = D
 # ============================================================
 # Training progress (polled by frontend)
 # ============================================================
-_training_status = {
-    "running": False,
-    "total": 0,
-    "current": 0,
-    "current_title": "",
-    "completed": 0,
-    "errors": 0,
-}
+async def _acquire_run_lock(total: int) -> bool:
+    """Atomically start a run. False if a live run already exists."""
+    now = datetime.now(timezone.utc)
+    cutoff = (now - timedelta(minutes=RUN_STALE_MINUTES)).isoformat()
+    try:
+        await run_state_col.update_one(
+            {"_id": "current", "$or": [{"running": {"$ne": True}}, {"heartbeat": {"$lt": cutoff}}]},
+            {"$set": {"running": True, "total": total, "current": 0, "current_title": "",
+                      "completed": 0, "errors": 0, "outcome": None,
+                      "started_at": now.isoformat(), "heartbeat": now.isoformat()}},
+            upsert=True,
+        )
+    except DuplicateKeyError:
+        return False
+    return True
+
+
+async def _set_run_state(**fields):
+    fields["heartbeat"] = datetime.now(timezone.utc).isoformat()
+    await run_state_col.update_one({"_id": "current"}, {"$set": fields})
+
+
+async def _release_stale_items():
+    """Items left on 'processing' by an interrupted run are marked failed so they are retried."""
+    now = datetime.now(timezone.utc)
+    state = await run_state_col.find_one({"_id": "current"}) or {}
+    cutoff = (now - timedelta(minutes=ITEM_STALE_MINUTES)).isoformat()
+    conds = [{"processing_started_at": {"$lt": cutoff}}]
+    if not run_is_active(state, now):
+        conds.append({"processing_started_at": {"$exists": False}})
+    await training_col.update_many(
+        {"status": "processing", "$or": conds},
+        {"$set": {"status": "failed", "error": "Interrupted before it finished"}},
+    )
+
 
 @router.get("/training/progress")
 async def get_training_progress():
-    return _training_status
+    state = await run_state_col.find_one({"_id": "current"}, {"_id": 0}) or {}
+    active = run_is_active(state, datetime.now(timezone.utc))
+    outcome = state.get("outcome")
+    if state.get("running") and not active:
+        outcome = {"ok": False, "message": "Training was interrupted before it finished. Interrupted items stay in the queue and are retried on the next run."}
+    return {
+        "running": active,
+        "total": state.get("total", 0),
+        "current": state.get("current", 0),
+        "current_title": state.get("current_title", "") if active else "",
+        "completed": state.get("completed", 0),
+        "errors": state.get("errors", 0),
+        "outcome": None if active else outcome,
+    }
 
 
 # ============================================================
@@ -244,25 +333,33 @@ async def get_activity_log(page: int = 1, page_size: int = 20):
 SEVERITY_MAP = {"critical": 6.0, "high": 5.0, "medium": 3.5, "low": 2.0}
 
 
-async def _compute_effectiveness():
-    """Compute alignment between AI classifications and analyst feedback ratings.
-    Returns score 0-100 and per-item breakdown."""
-    rated_items = await intelligence_col.find(
-        {"feedback_avg_rating": {"$exists": True, "$gt": 0}, "feedback_total_ratings": {"$gte": 1}},
-        {"_id": 0, "id": 1, "severity": 1, "priority_score": 1,
-         "feedback_avg_rating": 1, "feedback_total_ratings": 1, "title": 1}
-    ).to_list(1000)
+def effectiveness_from_items(rated_items: list) -> dict:
+    """Alignment between AI severity and analyst ratings (pure function).
 
-    if not rated_items:
-        return {"score": None, "sample_size": 0, "alignments": [], "grade": "INSUFFICIENT_DATA"}
+    Needs MIN_RATED_ITEMS rated items; below that no score is given.
+    A 'miss' = the AI rated an item at least MISS_GAP points (of 6) BELOW what
+    analysts rated it, i.e. it under-called something analysts found important.
+    The reverse (AI high, analysts low, e.g. 'irrelevant but critical') is a
+    'false alarm' and is counted separately, not as a miss."""
+    n = len(rated_items)
+    if n < MIN_RATED_ITEMS:
+        return {"score": None, "sample_size": n, "min_required": MIN_RATED_ITEMS,
+                "misses": 0, "false_alarms": 0, "grade": "INSUFFICIENT_DATA",
+                "message": "Not enough ratings yet: %d rated items, at least %d needed." % (n, MIN_RATED_ITEMS)}
 
     alignments = []
+    misses = 0
+    false_alarms = 0
     for item in rated_items:
         sev = (item.get("severity") or "").lower()
         ai_score = SEVERITY_MAP.get(sev, 3.0)
         analyst_avg = item["feedback_avg_rating"]
         # Alignment: 1 means perfect match, 0 means max disagreement
         alignment = max(0, 1.0 - abs(ai_score - analyst_avg) / 5.0)
+        if analyst_avg - ai_score >= MISS_GAP:
+            misses += 1
+        elif ai_score - analyst_avg >= MISS_GAP:
+            false_alarms += 1
         alignments.append({
             "id": item["id"],
             "title": (item.get("title") or "")[:60],
@@ -293,10 +390,22 @@ async def _compute_effectiveness():
     return {
         "score": score,
         "sample_size": len(alignments),
+        "min_required": MIN_RATED_ITEMS,
+        "misses": misses,
+        "false_alarms": false_alarms,
         "grade": grade,
         "worst_misalignments": alignments[:5],
         "best_alignments": alignments[-5:][::-1],
     }
+
+
+async def _compute_effectiveness():
+    rated_items = await intelligence_col.find(
+        {"feedback_avg_rating": {"$exists": True, "$gt": 0}, "feedback_total_ratings": {"$gte": 1}},
+        {"_id": 0, "id": 1, "severity": 1, "priority_score": 1,
+         "feedback_avg_rating": 1, "feedback_total_ratings": 1, "title": 1}
+    ).to_list(1000)
+    return effectiveness_from_items(rated_items)
 
 
 @router.get("/training/effectiveness")
@@ -327,25 +436,40 @@ async def get_effectiveness_score():
 # Background pipeline
 # ============================================================
 async def _run_training_pipeline():
-    global _training_status
+    # The run lock was taken by run_training(); always release it, even on a crash.
+    completed = 0
+    errors = 0
+    items = []
+    try:
+        items = await training_col.find(
+            {"status": {"$in": RETRY_STATUSES}}, {"_id": 0}
+        ).to_list(200)
+        await _set_run_state(total=len(items))
+        completed, errors = await _process_items(items)
+    except Exception as e:
+        logger.error(f"Training run crashed: {e}")
+    finally:
+        outcome = run_outcome(len(items), completed, max(errors, len(items) - completed))
+        try:
+            await _set_run_state(running=False, current_title="", completed=completed,
+                                 errors=errors, outcome=outcome)
+        except Exception as e:
+            logger.error(f"Could not release training run lock: {e}")
+    await _log_training_session(items, completed, errors)
 
-    items = await training_col.find(
-        {"status": {"$in": ["pending", "ready"]}}, {"_id": 0}
-    ).to_list(200)
 
-    _training_status["running"] = True
-    _training_status["total"] = len(items)
-    _training_status["current"] = 0
-    _training_status["completed"] = 0
-    _training_status["errors"] = 0
-    _training_status["current_title"] = ""
-
+async def _process_items(items):
+    completed = 0
+    errors = 0
     for idx, item in enumerate(items):
-        _training_status["current"] = idx + 1
-        _training_status["current_title"] = (item.get("title") or item.get("url") or "Unknown")[:60]
+        await _set_run_state(current=idx + 1, completed=completed, errors=errors,
+                             current_title=(item.get("title") or item.get("url") or "Unknown")[:60])
 
         try:
-            await training_col.update_one({"id": item["id"]}, {"$set": {"status": "processing"}})
+            await training_col.update_one(
+                {"id": item["id"]},
+                {"$set": {"status": "processing", "processing_started_at": datetime.now(timezone.utc).isoformat()}}
+            )
 
             # Step 1: Content extraction
             text = item.get("extracted_text", "")
@@ -360,13 +484,15 @@ async def _run_training_pipeline():
             if not text:
                 await training_col.update_one(
                     {"id": item["id"]},
-                    {"$set": {"status": "completed", "ai_analysis": {"error": "No text extracted"}}}
+                    {"$set": {"status": "failed", "error": "No text extracted"}}
                 )
-                _training_status["errors"] += 1
+                errors += 1
                 continue
 
             # Step 2: AI analysis
             analysis = await _analyze_training_item(text)
+            if analysis.get("error"):
+                raise RuntimeError(analysis["error"])
 
             # Update title if we got one from AI
             updates = {
@@ -378,23 +504,24 @@ async def _run_training_pipeline():
                 updates["title"] = analysis["title"]
 
             await training_col.update_one({"id": item["id"]}, {"$set": updates})
-            _training_status["completed"] += 1
+            completed += 1
 
         except Exception as e:
             logger.error(f"Training pipeline error for {item.get('id')}: {e}")
             await training_col.update_one(
                 {"id": item["id"]},
-                {"$set": {"status": "completed", "ai_analysis": {"error": str(e)}}}
+                {"$set": {"status": "failed", "error": str(e)[:300]}}
             )
-            _training_status["errors"] += 1
+            errors += 1
 
         await asyncio.sleep(2)
 
-    _training_status["running"] = False
-    _training_status["current_title"] = ""
-    logger.info(f"Training complete: {_training_status['completed']} processed, {_training_status['errors']} errors")
+    logger.info(f"Training finished: {completed} processed, {errors} errors")
+    return completed, errors
 
-    # Log session-level activity with AI impact summary
+
+async def _log_training_session(items, completed, errors):
+    """Log session-level activity with AI impact summary."""
     try:
         run_regions = {}
         run_actors = {}
@@ -424,7 +551,7 @@ async def _run_training_pipeline():
 
         # Generate AI impact summary
         impact_summary = await _generate_training_impact_summary(
-            EMERGENT_KEY, len(items), _training_status["completed"],
+            "", len(items), completed,
             run_regions, run_actors, run_threats, run_keywords
         )
 
@@ -443,8 +570,8 @@ async def _run_training_pipeline():
             "volume": volume,
             "total_items": len(items),
             "breakdown": {"urls": url_count, "documents": doc_count},
-            "items_processed": _training_status["completed"],
-            "errors": _training_status["errors"],
+            "items_processed": completed,
+            "errors": errors,
             "impact_summary": impact_summary,
         })
 

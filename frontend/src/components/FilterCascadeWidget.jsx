@@ -3,7 +3,7 @@
  *
  * Shows:
  *  - Per-stage drop counts + pass rates (funnel viz)
- *  - Estimated Gemini 2.5 Flash calls saved + cost saved (INR + USD)
+ *  - Estimated AI calls saved + cost saved (INR when the live rate is known, USD always)
  *  - Health status: centroid age, Stage 1 fail-open rate
  *  - 7-day daily savings trend
  *  - Recent cycle table
@@ -124,7 +124,10 @@ function FunnelBar({ stage, scanned, data }) {
   );
 }
 
-function DailySavingsBar({ rows }) {
+// Rupees only when the live rate is known; otherwise dollars alone.
+const inrOrNull = (usd, rate) => (rate ? `₹${Math.round(usd * rate).toLocaleString("en-IN")}` : null);
+
+function DailySavingsBar({ rows, rate }) {
   if (!rows?.length) return null;
   const maxSaved = Math.max(...rows.map(r => r.est_cost_saved_usd || 0), 0.01);
   return (
@@ -138,7 +141,7 @@ function DailySavingsBar({ rows }) {
               <div className="h-full bg-emerald-500/60" style={{ width: `${pctW}%` }} />
             </div>
             <span className="w-16 text-right text-emerald-400 shrink-0">
-              ₹{((r.est_cost_saved_usd || 0) * 84).toFixed(0)} saved
+              {inrOrNull(r.est_cost_saved_usd || 0, rate) || `$${(r.est_cost_saved_usd || 0).toFixed(3)}`} saved
             </span>
           </div>
         );
@@ -147,7 +150,7 @@ function DailySavingsBar({ rows }) {
   );
 }
 
-function RecentCyclesTable({ cycles }) {
+function RecentCyclesTable({ cycles, rate }) {
   if (!cycles?.length) return <p className="text-[9px] font-mono text-muted-foreground">No cycle data yet.</p>;
   return (
     <div className="overflow-x-auto">
@@ -175,7 +178,7 @@ function RecentCyclesTable({ cycles }) {
               <td className="py-0.5 pr-2 text-right text-amber-400">{c.stage1_rejected}</td>
               <td className="py-0.5 pr-2 text-right text-violet-400">{c.haiku_relevant}</td>
               <td className="py-0.5 text-right text-emerald-400">
-                ₹{((c.est_cost_saved_usd || 0) * 84).toFixed(0)}
+                {inrOrNull(c.est_cost_saved_usd || 0, rate) || `$${(c.est_cost_saved_usd || 0).toFixed(3)}`}
               </td>
             </tr>
           ))}
@@ -229,7 +232,8 @@ export default function FilterCascadeWidget({ api }) {
   const health = d.health || {};
   const scanned = d.items_scanned || 0;
   const savedUsd = d.est_cost_saved_usd || 0;
-  const savedInr = d.est_cost_saved_inr || Math.round(savedUsd * 84);
+  const rate = d.usd_to_inr || null;   // same live rate the API Spend panel shows
+  const savedInr = inrOrNull(savedUsd, rate);
   // Only items the filters actually rejected count as saved (postponed items are not savings).
   const savedPct = scanned > 0
     ? Math.round(((d.est_haiku_calls_saved || 0) / scanned) * 100)
@@ -266,8 +270,8 @@ export default function FilterCascadeWidget({ api }) {
           </div>
           <div className="text-right">
             <p className="text-[9px] font-mono text-muted-foreground uppercase tracking-wider">Cost Saved</p>
-            <p className="text-lg font-bold font-mono text-emerald-400">₹{savedInr}</p>
-            <p className="text-[9px] font-mono text-muted-foreground/60">${savedUsd.toFixed(3)}</p>
+            <p className="text-lg font-bold font-mono text-emerald-400">{savedInr || `$${savedUsd.toFixed(3)}`}</p>
+            {savedInr && <p className="text-[9px] font-mono text-muted-foreground/60">${savedUsd.toFixed(3)}</p>}
           </div>
         </div>
 
@@ -317,7 +321,7 @@ export default function FilterCascadeWidget({ api }) {
           </button>
           {showTrend && (
             <div className="mt-2">
-              <DailySavingsBar rows={daily} />
+              <DailySavingsBar rows={daily} rate={rate} />
             </div>
           )}
         </div>
@@ -332,7 +336,7 @@ export default function FilterCascadeWidget({ api }) {
           </button>
           {showCycles && (
             <div className="mt-2">
-              <RecentCyclesTable cycles={recent} />
+              <RecentCyclesTable cycles={recent} rate={rate} />
             </div>
           )}
         </div>

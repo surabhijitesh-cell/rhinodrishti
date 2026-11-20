@@ -33,9 +33,7 @@
 20. [User Management](#20-user-management)
 21. [API & Pipeline Monitor](#21-api--pipeline-monitor)
 22. [Settings](#22-settings)
-    - 22.1 [Local Database Storage Card](#221-local-database-storage-card)
-    - 22.2 [Source Effectiveness Card](#222-source-effectiveness-card)
-23. [Local Database Setup Wizard](#23-local-database-setup-wizard)
+23. [What changed in November 2026](#23-what-changed-in-november-2026)
 24. [How the AI Pipeline Works](#24-how-the-ai-pipeline-works)
 25. [Glossary](#25-glossary)
 
@@ -49,12 +47,10 @@
 - Click **Authenticate** to log in
 - Use the **eye icon** to toggle password visibility
 - Invalid credentials display an error message — contact your administrator if locked out
+- After **5 wrong passwords in 15 minutes** (or 20 for one username from anywhere) that login is locked for 15 minutes
 
-### Default Admin Account
-On first deployment, the system automatically creates an admin account:
-- **Username:** `admin`
-- **Password:** `<set by admin — not stored here>`
-- **IMPORTANT:** Change this password immediately after first login via User Management
+### First Admin Account
+A brand-new installation creates one `admin` account with a random one-time password, shown only once in the server log. It is never written in this handbook or in the code. Change it at first login.
 
 ### Roles & Permissions
 
@@ -65,23 +61,29 @@ On first deployment, the system automatically creates an admin account:
 | Submit Feedback Ratings | Yes | Yes | No |
 | Generate Briefs, Train AI | Yes | Yes | No |
 | Upload/Analyze/Add to Feed | Yes | Yes | No |
-| Run Keyword Refresh | Yes | Yes | No |
-| Flag Articles to Commanders | Yes | Yes | No |
+| Run Keyword Refresh, Add Keywords | Yes | Yes | No |
+| Flag Articles to Commanders | Yes | Yes | Yes |
+| News, YouTube and Telegram fetches | Yes | Yes | No |
+| Facebook, Instagram and X fetches (paid) | Yes | No | No |
+| Delete or Reprocess items | Yes | Yes | No |
 | Custom Brief Generator | Yes | No | No |
 | API & Pipeline Monitor | Yes | No | No |
-| User Management | Yes | No | No |
+| User Management, change roles | Yes | No | No |
 | Settings | Yes | No | No |
+
+Outside IOD-1, analysts and viewers see, edit and acknowledge only their own IOD's faultlines, PAOIs and faultline alerts. Admins can view any IOD with the IOD switch.
 
 **Admin** — Full access including user creation, password resets, system settings, the Custom Brief Generator, and the API & Pipeline Monitor.
 
 **Analyst** — Can access all intelligence features (feeds, briefs, training, uploads, feedback, flagging). Cannot access User Management, Settings, the Custom Brief Generator, or the API & Pipeline Monitor.
 
-**Viewer** — Read-only access. Can view all intelligence data and download PDFs. All action buttons are disabled.
+**Viewer** — Read-only access. Can view all intelligence data and download PDFs. Buttons a viewer may not use are hidden.
 
 ### Session Management
-- Sessions last **24 hours** (JWT token expiry)
-- Token persists across page refreshes (stored in browser)
-- If your session expires, you'll be automatically redirected to the Login page
+- A login lasts **24 hours**. A warning appears 10 minutes before it expires.
+- Logging out ends your login on every device. A password reset or role change by an admin also signs that user out everywhere.
+- If the server is starting up, you stay logged in and see "Server waking up" until it answers.
+- Admin pages opened by typing their address show "Not available for your role" to other users.
 
 ---
 
@@ -91,26 +93,14 @@ On first deployment, the system automatically creates an admin account:
 Rhino Drishti is an AI-powered military intelligence aggregation and analysis platform for monitoring India's North Eastern Region (NER), Bangladesh, and Myanmar. It automatically collects news and social media from RSS feeds, YouTube, Telegram, Facebook, Instagram and Twitter/X, runs AI classification using a military intelligence framework with dynamic analyst feedback bias, detects patterns, monitors strategic faultlines within Priority Areas of Interest (PAOI), tracks social-media sentiment, and generates Daily, Fortnightly and Monthly intelligence briefs.
 
 ### Navigation
-The sidebar contains all pages:
-- **Dashboard** — Overview of the intelligence landscape
-- **Intelligence Feed** — Full searchable list of classified items
-- **Cross-Border** — Items specifically involving cross-border activity
-- **Periodic Briefs** — Daily, Fortnightly and Monthly automated intelligence briefs
-- **Custom Brief Generator** — Chat-driven, PAOI-focused brief builder (Admin only)
-- **Trends** — Trends Intelligence Center: stability index, severity trends, cross-border correlation
-- **Faultlines** — PAOI-linked faultline monitoring with scoring and monthly reports
-- **Patterns** — Detected threat patterns across regions
-- **Knowledge Graph** — Actor-location relationship mapping
-- **Alerts** — Critical and high-severity items requiring attention
-- **Keyword Engine** — AI-powered keyword management for detection
-- **Training & Feedback** — Rate articles, upload training data, monitor AI learning
-- **Manual Int Uploads** — Analyze articles, upload documents, or add URLs directly to the feed
-- **Reports** — Regional, Cross-Border and Custom filtered PDF reports
-- **User Management** — Create/manage users (Admin only)
-- **API & Pipeline Monitor** — API spend, credit balance, filter health, social scraping controls (Admin only)
-- **Settings** — Configure retention, feedback limits, AI bias (Admin only)
-- **Platform Updates** — Timeline of every version update
-- **User Handbook** — This guide
+The sidebar is in four groups, with a help strip at the bottom:
+- **Daily work** — Dashboard, Alerts, Intelligence Feed, Cross-Border
+- **Analysis** — Faultlines, Trends, Patterns, Knowledge Graph
+- **Briefs and reports** — Periodic Briefs (Daily, Fortnightly, Monthly, Past), Reports, Custom Brief Generator (Admin only)
+- **Tools and admin** — Manual Int Uploads, Keyword Engine, Training & Feedback, and for admins User Management, API & Pipeline Monitor and Settings
+- **Help** — Platform Updates and this User Handbook
+
+All times are shown in India Standard Time (IST).
 
 ---
 
@@ -122,7 +112,7 @@ The Dashboard is your command center showing the current intelligence landscape 
 - **Total Items / Critical / High / Medium / Low**: Click any stat card to filter the Intelligence Feed by that severity level
 
 ### Intelligence Source Monitor Panel
-The collapsible panel shows real-time status for **6 intelligence source types**.
+The panel sits folded at the bottom of the Dashboard; "Alerts needing attention" is at the top. It shows status for **6 intelligence source types**. If the server refuses a fetch, the card shows the reason instead of "Fetching…".
 
 **Two fetch controls:**
 - **FETCH INTEL** — triggers ALL sources simultaneously
@@ -132,11 +122,11 @@ The collapsible panel shows real-time status for **6 intelligence source types**
 | Source | What it monitors |
 |--------|-----------------|
 | **RSS Feeds** | Curated news feeds (regional NER, national, Bangladesh, Myanmar, government PIBs) |
-| **YouTube** | Subscribed channels and keyword searches — requires `YOUTUBE_API_KEY` |
+| **YouTube** | Subscribed channels and keyword searches |
 | **Telegram** | Monitored channels via a Telethon session |
-| **Facebook** | Public posts scraped via Apify — requires `APIFY_TOKEN` |
-| **Instagram** | Public posts scraped via Apify — requires `APIFY_TOKEN` |
-| **Twitter/X** | Tweets scraped via Apify — requires `APIFY_TOKEN` |
+| **Facebook** | Public posts collected through Apify |
+| **Instagram** | Newest posts from 21 named news, Army and BSF accounts, through Apify |
+| **Twitter/X** | Posts collected through Apify, dated by their real posting time |
 
 Facebook, Instagram and Twitter/X each show a small **Social Pulse** badge (▲ positive % / ▼ negative %) next to the Fetch button — see [Section 18](#18-social-media-intelligence--sentiment-pulse). A combined **Social Media Pulse Indicator** sits in the panel header, to the left of the Scan Social Media button, averaging sentiment across all four social platforms.
 
@@ -149,7 +139,7 @@ Below the source monitors, admins and analysts can build and save personal chart
 Tooltips appear on every UI element (hover to see, auto-dismisses after 3 seconds). Each page has a built-in guided tour — re-trigger via the **?** button in the top-right bar. Admins can reset all tours with the **↺** button.
 
 ### Other Dashboard Sections
-- **NER Threat Map** — Visual map of India's Northeast with threat concentration by state
+- **NER Threat Map** — Visual map of India's Northeast. Dots sit on the towns a story names; stories covering four or more states are marked "Region-wide". Use **Links between reports** to show or hide link lines, and **Explain this link** (one small AI call) for why two reports are linked
 - **Unacknowledged Critical Alerts** — Sticky panel of CRITICAL/HIGH items pending acknowledgement
 - **Live Feed Panel** — Real-time WebSocket updates of new intelligence items
 - **Pattern Insights** — Summary of the most significant detected threat patterns
@@ -696,66 +686,39 @@ Shows database collection counts. **Strip Raw Content** removes the full article
 
 ---
 
+### Source Health
+One row per source (news site, YouTube or Telegram channel, web source, Apify platform) with its last success, last error and items brought in. Sources that have gone quiet or keep failing are listed first.
+
+### Model Trial
+Re-scores about 300 stored items with cheaper AI models and shows what they would have missed. It costs about $0.20–$0.50 and changes nothing in the Feed. The two cheaper-model switches stay off unless an admin turns them on after reviewing a trial.
+
+### Pipeline Status and Source Effectiveness
+Moved here from Settings in November 2026.
+
+---
+
 ## 22. Settings
 
-*Admin only.*
-
-### 22.1 Local Database Storage Card
-
-| Mode | Indicator | Meaning |
-|------|-----------|---------|
-| **MongoDB Atlas** | Cloud icon (blue) | Data stored on Atlas cloud |
-| **Local — Tailscale** | Shield icon (green) | Data stored on local hard disk via Tailscale VPN |
-| **Local — Direct** | Server icon (amber) | Data stored on local machine on same network |
-
-### 22.2 Source Effectiveness Card
-
-Shows which non-RSS sources are producing actionable intelligence:
-Item count, Severity bar, AI processing rate, Latest catch, High-value score (Critical + High count).
+*Admin only.* Settings holds only settings.
 
 ### News Retention Window
 Options: 7 / 14 / 30 / 60 / 90 / 180 / 365 days. Affects all pages immediately.
 
-### Feedback Bias Configuration
+If a value fails to load, Settings shows "Couldn't load the current value" and keeps Save switched off, so a real setting is never overwritten with a default.
 
-**Feedback Window:**
-- **Rolling 30 Days** (default) — most adaptive
-- **All Time** — cumulative learning
-
-**Influence Level:**
-| Level | Score Adjustment | Best For |
-|-------|-----------------|----------|
-| **Light** | +/-3 to 5 pts | Minimal correction |
-| **Moderate** | +/-5 to 10 pts | Balanced |
-| **High** | +/-10 to 20 pts | Heavy analyst override |
-
-### Bias Impact Report
-Full-width analytics table showing exactly how analyst feedback changes article scores — Original vs. Biased vs. Delta per item with reasons.
+Training Controls and the Feedback Bias settings are now on the **Training & Feedback** page.
 
 ---
 
-## 23. Local Database Setup Wizard
+## 23. What changed in November 2026
 
-Rhino Drishti can store collected intelligence on a **local 1 TB hard disk** at your intelligence collection centre.
-
-### Architecture
-```
-CLOUD (unchanged): Frontend: Vercel | Backend: Render
-         | (MongoDB driver via WireGuard tunnel)
-ON-PREMISES (Windows 11 PC):
-  MongoDB 7.0 Community + Tailscale Agent + 1 TB storage
-```
-
-### Setup Steps (Automated via PowerShell Wizard)
-The wizard at `local-setup/setup-wizard.ps1`:
-1. Installs MongoDB 7.0 Community (via winget)
-2. Configures authentication
-3. Creates database users
-4. Installs and authenticates Tailscale
-5. Sets Windows Firewall rules
-6. Optionally migrates all data from Atlas to local
-
-After setup, update `MONGO_URL` on Render and redeploy. Settings page switches from "Atlas" to "Local — Tailscale".
+- **Security:** every server action needs a login; viewers cannot start paid or destructive actions; logins lock after repeated wrong passwords.
+- **Alerts:** one "needs attention" rule for the badge, Dashboard and Alerts page, with ACK and "ACK all shown".
+- **Briefs:** Regenerate keeps the old brief until the new one is ready; missing sections are listed; periods follow IST; PDFs name their IOD; a Past tab lists stored briefs; the Daily Brief has a date picker.
+- **Costs:** fewer repeat AI calls, whole-word keyword filters, honest usage figures, and confirmations with a cost note before paid actions.
+- **Collection:** a Source Health panel, fixed X post dates, Instagram from named accounts, Bangla items no longer dropped before the AI reads them.
+- **Faultlines:** North Bengal now receives its news; each story counts once; interrupted or failed runs no longer write zeros or false alerts; "Last scored" is shown.
+- **Screens:** four-group menu, "Couldn't load" instead of zeros, AI search says when nothing matched, Feed sort by severity, "N new items" on Feed and Alerts.
 
 ---
 

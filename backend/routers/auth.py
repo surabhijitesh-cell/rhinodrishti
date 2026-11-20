@@ -2,6 +2,8 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
 from datetime import datetime, timezone
 import time
+import secrets
+import string
 from models.user import UserCreate, UserLogin, UserUpdate, PasswordReset, UserInDB, UserResponse
 from utils.auth import (
     hash_password, verify_password, create_access_token,
@@ -116,6 +118,41 @@ async def get_me(user: dict = Depends(get_current_user)):
 # User Management (Admin only)
 # ============================================================
 
+# No look-alike characters (0/O, 1/l/I) so a password can be read out loud.
+_PW_LOWER = "abcdefghjkmnpqrstuvwxyz"
+_PW_UPPER = "ABCDEFGHJKLMNPQRSTUVWXYZ"
+_PW_DIGITS = "23456789"
+_PW_SYMBOLS = "!@#$%"
+
+
+def generate_password(length: int = 14) -> str:
+    """Random password from the operating system's secure generator, always
+    containing a lower-case, upper-case, digit and symbol character."""
+    length = max(length, 8)
+    pools = (_PW_LOWER, _PW_UPPER, _PW_DIGITS, _PW_SYMBOLS)
+    chars = [secrets.choice(p) for p in pools]
+    chars += [secrets.choice("".join(pools)) for _ in range(length - len(chars))]
+    secrets.SystemRandom().shuffle(chars)
+    return "".join(chars)
+
+
+def removes_admin_access(target: dict, updates: dict) -> bool:
+    """True if applying `updates` stops an active admin from being an active admin."""
+    if target.get("role") != "admin" or target.get("is_active", True) is False:
+        return False
+    return updates.get("role", "admin") != "admin" or updates.get("is_active", True) is False
+
+
+async def _other_active_admins(user_id: str) -> int:
+    return await users_col.count_documents(
+        {"role": "admin", "is_active": {"$ne": False}, "id": {"$ne": user_id}}
+    )
+
+
+@router.post("/users/generate-password")
+async def new_generated_password(admin: dict = Depends(require_admin_role)):
+    return {"password": generate_password()}
+
 @router.get("/users/active")
 async def list_active_users(user: dict = Depends(get_current_user)):
     """Return minimal user info for all active users — used by flag recipient selector."""
@@ -182,7 +219,17 @@ async def update_user(user_id: str, data: UserUpdate, admin: dict = Depends(requ
         if updates["iod"] not in ALL_IODS:
             raise HTTPException(status_code=400, detail=f"iod must be one of {ALL_IODS}")
 
-    result = await users_col.update_one({"id": user_id}, {"$set": updates})
+    target = await users_col.find_one({"id": user_id}, {"_id": 0, "role": 1, "is_active": 1})
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+    if removes_admin_access(target, updates) and await _other_active_admins(user_id) == 0:
+        raise HTTPException(status_code=400, detail="This is the last active admin. Make another user an active admin first.")
+
+    change = {"$set": updates}
+    # A new role (or deactivation) ends the person's current logins so it applies at once.
+    if ("role" in updates and updates["role"] != target.get("role")) or updates.get("is_active") is False:
+        change["$inc"] = {"token_version": 1}
+    result = await users_col.update_one({"id": user_id}, change)
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="User not found")
     updated = await users_col.find_one({"id": user_id}, {"_id": 0, "password_hash": 0})
@@ -193,6 +240,9 @@ async def update_user(user_id: str, data: UserUpdate, admin: dict = Depends(requ
 async def delete_user(user_id: str, admin: dict = Depends(require_admin_role)):
     if admin["id"] == user_id:
         raise HTTPException(status_code=400, detail="Cannot delete your own account")
+    target = await users_col.find_one({"id": user_id}, {"_id": 0, "role": 1, "is_active": 1})
+    if target and removes_admin_access(target, {"is_active": False}) and await _other_active_admins(user_id) == 0:
+        raise HTTPException(status_code=400, detail="This is the last active admin and cannot be deleted.")
     result = await users_col.delete_one({"id": user_id})
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="User not found")

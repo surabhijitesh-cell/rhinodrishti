@@ -14,18 +14,23 @@ import { toast } from "sonner";
 import axios from "axios";
 import { useAuth } from "../contexts/AuthContext";
 import ConfirmAction from "../components/ConfirmAction";
+import LoadError from "../components/LoadError";
+import TrainingControlsPanel from "../components/TrainingControlsPanel";
+import { formatIST } from "../lib/time";
 
 const STATUS_COLORS = {
   pending: "text-yellow-400 border-yellow-500/30",
   ready: "text-blue-400 border-blue-500/30",
   processing: "text-amber-400 border-amber-500/30",
   completed: "text-emerald-400 border-emerald-500/30",
+  failed: "text-red-400 border-red-500/30",
 };
 
 export default function TrainingSummary({ api }) {
   const { user } = useAuth();
   const isViewer  = user?.role === "viewer";
-  const isAnalyst = user?.role === "analyst";
+  const isAdmin   = user?.role === "admin";
+  const [failedParts, setFailedParts] = useState([]);
   const [stats, setStats] = useState(null);
   const [profile, setProfile] = useState(null);
   const [queue, setQueue] = useState([]);
@@ -45,26 +50,38 @@ export default function TrainingSummary({ api }) {
 
   const fetchAll = async () => {
     setLoading(true);
+    // A part that fails to load is remembered by name, so its panel can say
+    // "could not load" instead of showing zeros or "not enough data".
+    const failed = [];
+    const get = (name, path, fallback) =>
+      axios.get(`${api}${path}`).catch(() => { failed.push(name); return { data: fallback }; });
     try {
-      const [statsR, profileR, queueR, insightsR, activityR, effR, biasR] = await Promise.all([
-        axios.get(`${api}/feedback/stats`).catch(() => ({ data: null })),
-        axios.get(`${api}/feedback/training-profile`).catch(() => ({ data: null })),
-        axios.get(`${api}/training/queue`).catch(() => ({ data: { items: [] } })),
-        axios.get(`${api}/training/insights`).catch(() => ({ data: null })),
-        axios.get(`${api}/training/activity-log?page=${logPage}`).catch(() => ({ data: null })),
-        axios.get(`${api}/training/effectiveness`).catch(() => ({ data: null })),
-        axios.get(`${api}/feedback/bias-profile`).catch(() => ({ data: null })),
+      const [statsR, profileR, queueR, insightsR, activityR, effR, biasR, progR] = await Promise.all([
+        get("stats", "/feedback/stats", null),
+        get("profile", "/feedback/training-profile", null),
+        get("queue", "/training/queue", { items: [] }),
+        get("insights", "/training/insights", null),
+        get("activity", `/training/activity-log?page=${logPage}`, null),
+        get("effectiveness", "/training/effectiveness", null),
+        get("bias", "/feedback/bias-profile", null),
+        get("progress", "/training/progress", null),
       ]);
       setStats(statsR.data);
       setProfile(profileR.data);
-      setQueue(queueR.data.items || []);
+      setQueue(queueR.data?.items || []);
       setInsights(insightsR.data);
       setActivityLog(activityR.data);
       setEffectiveness(effR.data);
       setBiasProfile(biasR.data);
+      // A run started before a reload is still running on the server: pick it up.
+      if (progR.data?.running) {
+        setProgress(progR.data);
+        setTraining(true);
+      }
     } catch (e) {
-      console.error(e);
+      failed.push("page");
     }
+    setFailedParts(failed);
     setLoading(false);
   };
 
@@ -91,10 +108,12 @@ export default function TrainingSummary({ api }) {
         setProgress(progRes.data);
         // Update queue live — completed items will disappear from pending view
         setQueue(queueRes.data.items || []);
-        if (!progRes.data.running && progRes.data.total > 0) {
+        if (!progRes.data.running) {
           setTraining(false);
           clearInterval(pollRef.current);
-          toast.success("Training complete!");
+          const outcome = progRes.data.outcome;
+          if (outcome?.ok) toast.success(outcome.message);
+          else toast.error(outcome?.message || "Training stopped before finishing. Check the queue for failed items.");
           fetchAll();
         }
       } catch {}
@@ -152,11 +171,12 @@ export default function TrainingSummary({ api }) {
       toast.success("Training pipeline started");
     } catch (e) {
       toast.error(e.response?.data?.detail || "Failed to start training");
-      setTraining(false);
+      // 409 = a run is already going (another tab or before a reload): keep watching it.
+      setTraining(e.response?.status === 409);
     }
   };
 
-  const pendingCount = queue.filter((i) => ["pending", "ready"].includes(i.status)).length;
+  const pendingCount = queue.filter((i) => ["pending", "ready", "failed"].includes(i.status)).length;
   const completedCount = queue.filter((i) => i.status === "completed").length;
   const pct = progress && progress.total > 0 ? Math.round((progress.current / progress.total) * 100) : 0;
   // During training, only show non-completed items so they clear sequentially
@@ -226,7 +246,9 @@ export default function TrainingSummary({ api }) {
           </CardTitle>
         </CardHeader>
         <CardContent className="p-4">
-          {effectiveness?.score != null ? (
+          {failedParts.includes("effectiveness") ? (
+            <LoadError what="the effectiveness score" onRetry={fetchAll} />
+          ) : effectiveness?.score != null ? (
             <div className="grid grid-cols-1 md:grid-cols-[auto_1fr] gap-6">
               {/* Score dial */}
               <div className="flex flex-col items-center justify-center gap-1.5">
@@ -253,7 +275,12 @@ export default function TrainingSummary({ api }) {
                 }`} data-testid="effectiveness-grade">
                   {effectiveness.grade?.replace("_", " ")}
                 </Badge>
-                <p className="text-[10px] text-muted-foreground font-mono">{effectiveness.sample_size} items analyzed</p>
+                <p className="text-[10px] text-muted-foreground font-mono" data-testid="effectiveness-sample">
+                  Based on {effectiveness.sample_size} rated items
+                </p>
+                <p className="text-[10px] text-muted-foreground font-mono">
+                  {effectiveness.misses} missed, {effectiveness.false_alarms} false alarms
+                </p>
                 {effectiveness.delta_from_last != null && (
                   <div className={`flex items-center gap-1 text-xs font-mono ${
                     effectiveness.delta_from_last > 0 ? "text-emerald-400" :
@@ -272,6 +299,9 @@ export default function TrainingSummary({ api }) {
                 <p className="text-xs text-muted-foreground">
                   Measures alignment between AI classifications (severity) and analyst feedback ratings.
                   Higher scores mean the AI is classifying articles closer to how analysts rate them.
+                  A "miss" is an item the AI rated 2 or more points (out of 6) lower than analysts did.
+                  A "false alarm" is the opposite: the AI rated it much higher than analysts, for example
+                  critical but judged irrelevant. False alarms are counted separately and are not misses.
                 </p>
 
                 {/* Worst misalignments */}
@@ -338,12 +368,15 @@ export default function TrainingSummary({ api }) {
               </div>
             </div>
           ) : (
-            <p className="text-sm text-muted-foreground">
-              Not enough data yet. Rate more articles on the Intelligence Feed to build an effectiveness baseline.
+            <p className="text-sm text-muted-foreground" data-testid="effectiveness-not-enough">
+              Not enough ratings yet: {effectiveness?.sample_size ?? 0} rated items, at least{" "}
+              {effectiveness?.min_required ?? 20} needed. Rate more articles on the Intelligence Feed to build an effectiveness baseline.
             </p>
           )}
         </CardContent>
       </Card>
+
+      {isAdmin && <TrainingControlsPanel api={api} />}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* ===== LEFT: UPLOAD + QUEUE ===== */}
@@ -478,7 +511,9 @@ export default function TrainingSummary({ api }) {
             </CardTitle>
           </CardHeader>
           <CardContent className="p-0">
-            {displayQueue.length === 0 ? (
+            {failedParts.includes("queue") ? (
+              <LoadError what="the training queue" onRetry={fetchAll} className="m-4" />
+            ) : displayQueue.length === 0 ? (
               <p className="text-sm text-muted-foreground p-4">
                 {training ? "All items processed!" : "No items in training queue. Add URLs or upload files above."}
               </p>
@@ -498,7 +533,7 @@ export default function TrainingSummary({ api }) {
                       <div className="flex items-center gap-2 mt-0.5">
                         <span className="text-[10px] font-mono text-muted-foreground">{item.source}</span>
                         <span className="text-[10px] font-mono text-muted-foreground">
-                          {new Date(item.uploaded_at).toLocaleDateString()}
+                          {formatIST(item.uploaded_at, { dateOnly: true })}
                         </span>
                         <Badge variant="outline" className={`rounded-none text-[9px] px-1.5 py-0 uppercase ${STATUS_COLORS[item.status] || ""}`}>
                           {item.status}
@@ -536,7 +571,9 @@ export default function TrainingSummary({ api }) {
             </CardTitle>
           </CardHeader>
           <CardContent className="p-4 space-y-3">
-            {profile?.positive_weights?.regions && Object.keys(profile.positive_weights.regions).length > 0 ? (
+            {failedParts.includes("profile") ? (
+              <LoadError what="analyst preferences" onRetry={fetchAll} />
+            ) : profile?.positive_weights?.regions && Object.keys(profile.positive_weights.regions).length > 0 ? (
               <>
                 <div>
                   <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-mono mb-1.5">Preferred Regions</p>
@@ -570,7 +607,9 @@ export default function TrainingSummary({ api }) {
             </CardTitle>
           </CardHeader>
           <CardContent className="p-4 space-y-3">
-            {insights?.has_data ? (
+            {failedParts.includes("insights") ? (
+              <LoadError what="the training insights" onRetry={fetchAll} />
+            ) : insights?.has_data ? (
               <>
                 <p className="text-xs text-muted-foreground">{insights.items_processed} documents processed</p>
                 {insights.positive_signals?.regions && Object.keys(insights.positive_signals.regions).length > 0 && (
@@ -630,7 +669,7 @@ export default function TrainingSummary({ api }) {
         </Card>
 
         {/* Scoring Formula — admin only */}
-        {!isAnalyst && <Card className="border border-border rounded-none bg-card" data-testid="scoring-formula-card">
+        {isAdmin && <Card className="border border-border rounded-none bg-card" data-testid="scoring-formula-card">
           <CardHeader className="py-3 px-4 border-b border-border">
             <CardTitle className="text-sm uppercase tracking-wider font-['Barlow_Condensed'] font-semibold flex items-center gap-2">
               <ShieldAlert size={16} className="text-amber-400" />
@@ -660,7 +699,7 @@ export default function TrainingSummary({ api }) {
       </div>
 
       {/* ===== ACTIVE FEEDBACK BIAS (AI PIPELINE INTEGRATION) ===== */}
-      {!isAnalyst && <Card className="border border-border rounded-none bg-card border-l-4 border-l-primary" data-testid="feedback-bias-card">
+      {isAdmin && <Card className="border border-border rounded-none bg-card border-l-4 border-l-primary" data-testid="feedback-bias-card">
         <CardHeader className="py-3 px-4 border-b border-border">
           <CardTitle className="text-sm uppercase tracking-wider font-['Barlow_Condensed'] font-semibold flex items-center gap-2">
             <Zap size={16} className="text-primary" />
@@ -792,7 +831,7 @@ export default function TrainingSummary({ api }) {
       </Card>}
 
       {/* ===== TRAINING ACTIVITY LOG ===== */}
-      {!isAnalyst && <Card className="border border-border rounded-none bg-card" data-testid="activity-log-card">
+      {isAdmin && <Card className="border border-border rounded-none bg-card" data-testid="activity-log-card">
         <CardHeader className="py-3 px-4 border-b border-border flex flex-row items-center justify-between">
           <CardTitle className="text-sm uppercase tracking-wider font-['Barlow_Condensed'] font-semibold flex items-center gap-2">
             <Activity size={16} className="text-cyan-400" />
@@ -841,9 +880,7 @@ export default function TrainingSummary({ api }) {
                   {activityLog.entries.map((entry) => (
                     <tr key={entry.id} className="hover:bg-muted/5" data-testid={`activity-row-${entry.id}`}>
                       <td className="p-2.5 font-mono text-[10px] text-muted-foreground whitespace-nowrap">
-                        {new Date(entry.timestamp).toLocaleString(undefined, {
-                          month: "short", day: "numeric", hour: "2-digit", minute: "2-digit"
-                        })}
+                        {formatIST(entry.timestamp)}
                       </td>
                       <td className="p-2.5">
                         {entry.device_id ? (

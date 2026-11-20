@@ -11,20 +11,24 @@ import { Input } from "../components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
 import { toast } from "sonner";
 import { useAuth } from "../contexts/AuthContext";
+import LoadError from "../components/LoadError";
+import { formatIST } from "../lib/time";
 
 export default function UpdatesPage({ api }) {
   const { user } = useAuth();
   const isAdmin = user?.role === "admin";
   const [updates, setUpdates] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [previewing, setPreviewing] = useState(null);
 
   const fetchUpdates = useCallback(async () => {
     try {
       const res = await axios.get(`${api}/app/updates/all`);
       setUpdates(res.data.updates || []);
+      setLoadFailed(false);
     } catch (e) {
-      console.error("Failed to fetch updates:", e);
+      setLoadFailed(true);
     }
     setLoading(false);
   }, [api]);
@@ -55,8 +59,6 @@ export default function UpdatesPage({ api }) {
     setPreviewing(null);
   };
 
-  useEffect(() => { fetchUpdates(); }, [fetchUpdates]);
-
   return (
     <div className="space-y-6" data-testid="updates-page">
       <div>
@@ -86,6 +88,8 @@ export default function UpdatesPage({ api }) {
             <div className="p-8 flex items-center justify-center">
               <Loader2 size={18} className="animate-spin text-muted-foreground" />
             </div>
+          ) : loadFailed ? (
+            <LoadError what="the update history" onRetry={fetchUpdates} className="m-4" />
           ) : updates.length === 0 ? (
             <div className="p-8 text-center text-muted-foreground text-sm">
               No updates published yet.
@@ -108,13 +112,10 @@ export default function UpdatesPage({ api }) {
                             ? "bg-primary/10 text-primary border-primary/30"
                             : "bg-muted text-muted-foreground border-border"
                         }`}>
-                          {u.priority.toUpperCase()}
+                          {(u.priority || "minor").toUpperCase()}
                         </Badge>
                         <span className="text-[10px] font-mono text-muted-foreground">
-                          {new Date(u.created_at).toLocaleDateString("en-IN", {
-                            day: "numeric", month: "short", year: "numeric",
-                            hour: "2-digit", minute: "2-digit",
-                          })}
+                          {formatIST(u.created_at)}
                         </span>
                         {u.created_by && (
                           <span className="text-[9px] font-mono text-muted-foreground/50">
@@ -123,7 +124,7 @@ export default function UpdatesPage({ api }) {
                         )}
                       </div>
                       <p className="text-sm text-muted-foreground mt-1">
-                        {u.priority === "major" ? u.message : "Performance improvements and bug fixes"}
+                        {(typeof u.message === "string" && u.message.trim()) || "Performance improvements and bug fixes"}
                       </p>
                     </div>
                     <Button

@@ -1,22 +1,42 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import axios from "axios";
 import { BookOpen } from "lucide-react";
+import LoadError from "../components/LoadError";
 
 export default function Handbook({ api }) {
   const [content, setContent] = useState("");
   const [loading, setLoading] = useState(true);
+  const [failed, setFailed] = useState(false);
 
-  useEffect(() => {
+  const load = useCallback(() => {
+    setLoading(true);
+    setFailed(false);
     axios.get(`${api}/handbook`).then(res => {
-      setContent(res.data.content || "");
+      const text = res.data?.content || "";
+      setContent(text);
+      setFailed(!text.trim());
       setLoading(false);
-    }).catch(() => setLoading(false));
+    }).catch(() => { setFailed(true); setLoading(false); });
   }, [api]);
+
+  useEffect(() => { load(); }, [load]);
 
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64" data-testid="handbook-page">
         <span className="font-mono text-xs text-muted-foreground">Loading handbook...</span>
+      </div>
+    );
+  }
+
+  if (failed) {
+    return (
+      <div className="p-4 md:p-6 max-w-4xl mx-auto" data-testid="handbook-page">
+        <div className="flex items-center gap-2 mb-6">
+          <BookOpen size={24} className="text-primary" />
+          <h1 className="font-mono text-2xl font-bold tracking-tight">User Handbook</h1>
+        </div>
+        <LoadError what="the handbook" onRetry={load} />
       </div>
     );
   }
