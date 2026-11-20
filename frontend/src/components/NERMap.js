@@ -330,6 +330,7 @@ let _borderGeoCache = null;
 
 // ─── Main component ───────────────────────────────────────────────────────────
 const InteractiveNERMap = memo(function InteractiveNERMap({
+  linksEnabled = true,     // links between reports: full-screen map only, never the small Dashboard map
   windowStateStats = {},   // per-state stats for items in the ACTIVE slider window: the ONE source for outline colours, labels and popups
   items = [],
   onStateClick,
@@ -777,7 +778,7 @@ const InteractiveNERMap = memo(function InteractiveNERMap({
     let cancelled = false; // a newer run replaced this one
     rl.clearLayers();
     setRelError(false);
-    if (!showRel || !items.length) { setRelCount(0); return undefined; }
+    if (!showRel || !linksEnabled || !items.length) { setRelCount(0); return undefined; }
 
     // Build item id → coords + title + timestamp
     // Merge in actor-specific coords (wider 1yr window) so actor lines always draw
@@ -1002,7 +1003,7 @@ const InteractiveNERMap = memo(function InteractiveNERMap({
     });
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [itemIdKey, showRel, relTypes, api, selectedActorFilter, actorItemData]);
+  }, [itemIdKey, showRel, linksEnabled, relTypes, api, selectedActorFilter, actorItemData]);
 
   // ── focusActor: zoom map + auto-enable LINKS filtered to same_actor ──────────
   useEffect(() => {
@@ -1057,7 +1058,7 @@ const InteractiveNERMap = memo(function InteractiveNERMap({
       </div>
 
       {/* Links between related reports: on/off, with the kinds of link to show */}
-      <div style={{ position: "absolute", top: 90, right: 8, zIndex: 1000, minWidth: 90 }}>
+      <div style={{ display: linksEnabled ? undefined : "none", position: "absolute", top: 90, right: 8, zIndex: 1000, minWidth: 90 }}>
         {/* Toggle button */}
         <button
           onClick={() => setShowRel((v) => !v)}

@@ -1468,6 +1468,7 @@ export default function Dashboard({ stats: propStats, api }) {
             <MapClickWrapper>
               <div style={{ minHeight: 380, position: "relative" }}>
                 <NERMap
+                  linksEnabled={false}
                   windowStateStats={windowStateStats}
                   items={mapItems}
                   navigate={navigate}
