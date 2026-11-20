@@ -1217,12 +1217,37 @@ export default function Dashboard({ stats: propStats, api }) {
 
   const trendData = stats?.trend_7d || [];
 
-  // The one set of per-region counts the map uses for outline colours, labels
-  // and popups: items in the ACTIVE window (opacity ≥ 0.95), or every shown item
-  // until the slider has reported a window.
+  // Each region's overall picture (whole retention period): the fallback that
+  // keeps a state's border coloured when the selected time window is quiet.
+  const overallStateStats = useMemo(() => {
+    const m = {};
+    const recent = stats?.recent_critical || [];
+    Object.entries(stats?.state_distribution || {}).forEach(([state, count]) => {
+      m[state] = {
+        count,
+        critical: recent.filter((i) => i.state === state && i.severity === "critical").length,
+        high: recent.filter((i) => i.state === state && i.severity === "high").length,
+        overall: true,
+      };
+    });
+    ["Bangladesh", "Myanmar"].forEach((region) => {
+      if (m[region]) return;
+      const cb = recent.filter((i) => i.countries_involved?.includes(region) || i.state === region);
+      if (cb.length) m[region] = {
+        count: cb.length,
+        critical: cb.filter((i) => i.severity === "critical").length,
+        high: cb.filter((i) => i.severity === "high").length,
+        overall: true,
+      };
+    });
+    return m;
+  }, [stats]);
+
+  // Per-region counts the map uses for outline colours, labels and popups:
+  // items in the ACTIVE window (opacity ≥ 0.95); a region with nothing in the
+  // window shows its overall picture instead, so its border never fades out.
   const windowStateStats = useMemo(() => {
     const active = timelineWindowMs ? mapItems.filter(it => (it._opacity || 0) >= 0.95) : mapItems;
-    if (!active.length) return {};
     const m = {};
     active.forEach(item => {
       const addRegion = (region) => {
@@ -1235,8 +1260,8 @@ export default function Dashboard({ stats: propStats, api }) {
       addRegion(item.state);
       (item.countries_involved || []).forEach(addRegion);
     });
-    return m;
-  }, [mapItems, timelineWindowMs]);
+    return { ...overallStateStats, ...m };
+  }, [mapItems, timelineWindowMs, overallStateStats]);
 
   // Stable onStateClick — prevents NERMap polygon re-render every tick
   const handleStateClick = useCallback(

@@ -192,7 +192,8 @@ const SEV = {
   critical: { fill: "rgba(239,68,68,0.06)",   stroke: "#ef4444", strokeW: 3.0, glow: "#ef4444" },
   high:     { fill: "rgba(245,158,11,0.05)",  stroke: "#f59e0b", strokeW: 2.5, glow: "#f59e0b" },
   medium:   { fill: "rgba(6,182,212,0.04)",   stroke: "#06b6d4", strokeW: 2.0, glow: "#06b6d4" },
-  none:     { fill: "rgba(255,255,255,0.0)",  stroke: "rgba(255,255,255,0.14)", strokeW: 0.6, glow: null },
+  // Quiet states keep a clearly visible outline: a boundary must never vanish.
+  none:     { fill: "rgba(255,255,255,0.0)",  stroke: "rgba(255,255,255,0.45)", strokeW: 1.2, glow: null },
 };
 
 // ─── Relationship: static "why" explanations per type ────────────────────────
@@ -1213,7 +1214,7 @@ function _popup(name, stats) {
     <div class="map-pop">
       <b>${escapeHtml(name)}</b>
       <div style="margin-top:4px; font-size:9px; color:#6b7280; text-transform:uppercase; letter-spacing:.08em">
-        ${n} intelligence item${n !== 1 ? "s" : ""} in the selected time window
+        ${n} intelligence item${n !== 1 ? "s" : ""} ${s.overall ? "in the current retention period (none in the selected time window)" : "in the selected time window"}
       </div>
       ${s.critical > 0 ? `<div style="color:#ef4444;font-size:10px;margin-top:2px">● ${s.critical} critical</div>` : ""}
       ${s.high > 0     ? `<div style="color:#f59e0b;font-size:10px;margin-top:2px">● ${s.high} high</div>` : ""}
