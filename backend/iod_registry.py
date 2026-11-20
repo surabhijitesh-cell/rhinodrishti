@@ -54,6 +54,8 @@ _BANGLADESH_FAULTLINES_CIJ = [
     "bgd_foundational", "bgd_media", "bgd_radicalization", "bgd_minority",
     "bgd_deepfakes", "bgd_anti_india", "bgd_election", "bgd_pakistan",
     "bgd_china", "bgd_foreign_influence",
+    # Added 20 Nov 2026 (Rohit): CIJ watches all 14 Bangladesh faultlines.
+    "bgd_border_disinformation", "bgd_cyber", "bgd_military", "bgd_military_radical",
 ]
 
 # IOD -> faultline watch-list. IOD-1 has no explicit list: it is the
