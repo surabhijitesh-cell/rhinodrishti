@@ -117,6 +117,10 @@ async def is_semantically_relevant(article: dict, db) -> dict:
         return {"relevant": True, "similarity": 0.0, "reason": "text_too_short"}
     if is_regional_language(text):
         return {"relevant": True, "similarity": 0.0, "reason": "regional_language"}
+    from army_image import mentions_army_and_civilians
+    if mentions_army_and_civilians(text):
+        # Army-image stories rarely look like past security news; the AI must judge them.
+        return {"relevant": True, "similarity": 0.0, "reason": "army_image"}
 
     try:
         emb = await generate_embedding(text)

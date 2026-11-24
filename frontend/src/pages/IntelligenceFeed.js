@@ -45,6 +45,7 @@ const STATES = [
   "Bangladesh", "Myanmar"
 ];
 const THREAT_TYPES = [
+  "Army Image",
   "Insurgency", "Cross-border Movement", "Illegal Immigration",
   "Drug Trafficking", "Arms Smuggling", "Ethnic Conflicts",
   "Cyber Threats", "Strategic Infrastructure",

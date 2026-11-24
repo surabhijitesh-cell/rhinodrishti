@@ -60,6 +60,17 @@ C. CROSS-BORDER & FOREIGN INFLUENCE:
 - PLA or Pakistan links with Bangladesh/Myanmar
 - Diplomatic or military engagements impacting India
 
+H. ARMY IMAGE & CIVIL-MILITARY RELATIONS (RELEVANT EVEN WITH NO SECURITY ANGLE):
+- Any incident involving Army / Assam Rifles personnel, vehicles or units and
+  civilians, police or civil administration in the NE region or North Bengal:
+  traffic or challan rows, road accidents, misconduct allegations, scuffles,
+  protests or complaints against the Army, viral videos, court cases, land or
+  cantonment disputes, statements criticising the Army
+- Positive coverage too: rescues, disaster relief, civic action, sports or
+  community events, recruitment rallies, awards
+- Set "army_image" to "negative" (could harm the Army's image) or "positive";
+  otherwise null. Such items are RELEVANT = TRUE.
+
 G. SILIGURI CORRIDOR / WEST BENGAL (HIGH PRIORITY):
 - Any activity in or affecting the Siliguri Corridor (Chicken's Neck), Jalpaiguri, Alipurduar, Cooch Behar, Darjeeling, Siliguri
 - Threats to the narrow land corridor connecting NE India to mainland India
@@ -114,6 +125,10 @@ score at most 55 (MEDIUM), unless the article itself reports a disruption,
 attack, threat, or an explicit military/security use. Disruptions (blocked or
 washed-out roads, bridge collapse, derailment, blockade, shutdown) are NOT capped.
 
+Army image (section H): a NEGATIVE story in Jorhat, Narangi/Narengi (Guwahati)
+or Shillong scores at least 60 (HIGH); a negative story elsewhere in the region
+at least 40. A POSITIVE story scores 30-55 (never above MEDIUM).
+
 --------------------------------------------------
 STEP 3: CLASSIFICATION (MULTI-LABEL)
 --------------------------------------------------
@@ -139,6 +154,7 @@ Assign ALL applicable tags:
 - Drug Trafficking
 - Political Developments
 - Border Security
+- Army Image   (put it FIRST when "army_image" is set)
 
 --------------------------------------------------
 STEP 4: CONTEXTUAL INTELLIGENCE EXTRACTION
@@ -269,6 +285,7 @@ FINAL OUTPUT FORMAT (JSON ONLY)
   "severity": "critical/high/medium/low",
   "threat_trajectory": "ESCALATING/STABLE/DE-ESCALATING/NEW_THREAT/INDETERMINATE",
   "tags": ["tag1", "tag2"],
+  "army_image": "negative/positive/null",
   "regions": ["region1", "region2"],
   "cross_border": true/false,
   "countries": ["country1", "country2"],
@@ -420,6 +437,14 @@ async def classify_once(article, model: str = MODEL, content_chars: int = 2000) 
         # Extract data from new enhanced format
         display_title = analysis.get("title_english", title) or title
         priority_score = analysis.get("priority_score", 30)
+        # Army-image stories: fixed levels, and always kept (Rohit, Nov 2026).
+        from army_image import ARMY_IMAGE_TAG, apply_army_image
+        priority_score, is_army_image = apply_army_image(
+            priority_score, analysis.get("army_image"),
+            f"{title} {content} {analysis.get('summary', '')}")
+        if is_army_image:
+            analysis["relevant"] = True
+            analysis["tags"] = [ARMY_IMAGE_TAG] + [x for x in (analysis.get("tags") or []) if x != ARMY_IMAGE_TAG]
         
         # Severity always derived from priority_score — never trust AI's severity
         # field directly, because the AI frequently outputs severity="high" even

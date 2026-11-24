@@ -15,6 +15,7 @@ RSS_SOURCES = [
     # ---- REGIONAL NER SOURCES (Grassroots - HIGH PRIORITY, 60min polling) ----
     {"name": "NE Now", "url": "https://nenow.in/feed", "category": "regional", "language": "en", "region": "NER", "priority": "grassroots"},
     {"name": "The Sentinel Assam", "url": "https://sentinelassam.com/feed", "category": "regional", "language": "en", "region": "NER", "priority": "grassroots"},
+    {"name": "News18 Guwahati", "url": "https://www.news18.com/commonfeeds/v1/eng/rss/cities/guwahati.xml", "category": "regional", "language": "en", "region": "NER", "priority": "grassroots"},
     {"name": "The Assam Tribune", "url": "https://assamtribune.com/feed", "category": "regional", "language": "en", "region": "NER", "priority": "grassroots"},
     {"name": "Assam Times", "url": "https://assamtimes.org/rss.xml", "category": "regional", "language": "en", "region": "NER", "priority": "grassroots"},
     {"name": "EastMojo", "url": "https://www.eastmojo.com/feed/", "category": "regional", "language": "en", "region": "NER", "priority": "grassroots"},
