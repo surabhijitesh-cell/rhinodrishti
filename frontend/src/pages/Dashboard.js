@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { createPortal } from "react-dom";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import ConfirmAction from "../components/ConfirmAction";
@@ -274,10 +275,12 @@ function SourceDetailPanel({ platform, accentColor, borderAccent, bgAccent, icon
 }
 
 // ─── collapsible source scanners ─────────────────────────────────────────────
-function SourceScanners({ api, socialTrigger }) {
-  const { user: scanUser } = useAuth();
-  const canScan = scanUser?.role === "admin" || scanUser?.role === "analyst";
+// Cards fold away this long after the last source finishes a Fetch Intel run.
+const SOURCE_CARDS_AUTO_HIDE_MS = 90 * 1000;
+
+function SourceScanners({ api, socialTrigger, revealTrigger, cardsSlot }) {
   const [open, setOpen]               = useState(false);  // folded: incidents come first
+  const autoOpened = useRef(false);   // true only while Fetch Intel opened the cards
   const [selected, setSelected]       = useState(null);   // which card is drilled into
   const [rss, setRss]                 = useState(null);
   const [rssSources, setRssSources]   = useState([]);
@@ -414,14 +417,34 @@ function SourceScanners({ api, socialTrigger }) {
 
   const platforms = [
     { key: "rss", ok: true,     active: rssScanning },
-    { key: "yt",  ok: ytActive, active: triggering["youtube"] },
-    { key: "tg",  ok: tgActive, active: triggering["telegram"] },
-    { key: "fb",  ok: fbActive, active: triggering["facebook"] },
-    { key: "ig",  ok: igActive, active: triggering["instagram"] },
-    { key: "tw",  ok: twActive, active: triggering["twitter"] },
+    { key: "yt",  ok: ytActive, active: triggering["youtube"] || triggering["all"] },
+    { key: "tg",  ok: tgActive, active: triggering["telegram"] || triggering["all"] },
+    { key: "fb",  ok: fbActive, active: triggering["facebook"] || triggering["all"] },
+    { key: "ig",  ok: igActive, active: triggering["instagram"] || triggering["all"] },
+    { key: "tw",  ok: twActive, active: triggering["twitter"] || triggering["all"] },
   ];
   const configuredCount = platforms.filter(p => p.ok).length;
   const anyActive = platforms.some(p => p.active);
+
+  // Fetch Intel opens the cards so the fetch can be watched.
+  useEffect(() => {
+    if (!revealTrigger) return;
+    autoOpened.current = true;
+    setOpen(true);
+  }, [revealTrigger]);
+
+  // ...and folds them 1.5 min after the last card stops fetching. A card that
+  // starts fetching again clears the timer; opening by hand cancels auto-hide.
+  useEffect(() => {
+    if (!open || anyActive || !autoOpened.current) return;
+    const id = setTimeout(() => {
+      if (!autoOpened.current) return;
+      autoOpened.current = false;
+      setSelected(null);
+      setOpen(false);
+    }, SOURCE_CARDS_AUTO_HIDE_MS);
+    return () => clearTimeout(id);
+  }, [open, anyActive, revealTrigger]);
 
   // ── source detail data per platform ──
   const detailData = {
@@ -447,51 +470,46 @@ function SourceScanners({ api, socialTrigger }) {
 
   const handleCardClick = (key) => setSelected(prev => prev === key ? null : key);
 
-  return (
-    <Card className="rounded-none border border-border bg-card overflow-hidden">
-      {/* ── header (always visible) ── */}
-      <div
-        className="flex items-center gap-3 px-4 py-2.5 cursor-pointer select-none hover:bg-muted/10 transition-colors"
-        onClick={() => setOpen(v => !v)}
-      >
-        <Radio size={13} className={anyActive ? "text-primary animate-pulse" : "text-muted-foreground"} />
-        <span className="text-[11px] uppercase tracking-widest font-['Barlow_Condensed'] font-bold text-muted-foreground">
-          Intelligence Source Monitors
-        </span>
-        <div className="flex items-center gap-1.5 ml-1">
-          {platforms.map(p => (
-            <span key={p.key} className={`w-1.5 h-1.5 rounded-full transition-colors ${
-              p.active ? "bg-primary animate-pulse" : p.ok ? "bg-green-500/70" : "bg-orange-500/40"
-            }`} />
-          ))}
-        </div>
-        <span className="text-[10px] font-mono text-muted-foreground ml-1 hidden sm:block">{configuredCount}/{platforms.length} configured</span>
-        <div className="ml-auto flex items-center gap-2">
-          {sentimentPulse.combined && (
-            <Tip text={`Combined Social Pulse — ${sentimentPulse.combined.post_count} scored posts across Facebook/Instagram/Twitter/YouTube`} side="top">
-              <span className="flex items-center gap-1.5 text-[10px] font-mono border border-border px-1.5 py-0.5 cursor-help" onClick={e => e.stopPropagation()}>
-                <span className="uppercase tracking-wider text-muted-foreground text-[9px]">Social Media Pulse Indicator</span>
-                <span className="text-emerald-400">▲{sentimentPulse.combined.positive_pct}%</span>
-                <span className="text-red-400">▼{sentimentPulse.combined.negative_pct}%</span>
-              </span>
-            </Tip>
-          )}
-          {canScan && (
-          <Button
-            variant="ghost" size="sm"
-            className="h-6 px-2 text-[9px] rounded-none font-mono text-muted-foreground border border-border hover:text-foreground"
-            title="Fetch all social & web sources (excludes RSS)"
-            onClick={e => { e.stopPropagation(); trigger("all", "/social/fetch-all"); }}
-            disabled={triggering["all"]}
-          >
-            {triggering["all"] ? <Loader2 size={9} className="animate-spin mr-1" /> : <RefreshCw size={9} className="mr-1" />}
-            {triggering["all"] ? "FETCHING…" : "SCAN SOCIAL MEDIA"}
-          </Button>
-          )}
-          {open ? <ChevronUp size={13} className="text-muted-foreground" /> : <ChevronDown size={13} className="text-muted-foreground" />}
-        </div>
-      </div>
+  const toggleOpen = () => {
+    autoOpened.current = false; // opened or closed by hand: never auto-hide
+    setOpen(v => !v);
+  };
 
+  // Compact bar that sits in the Dashboard header next to Fetch Intel.
+  const bar = (
+    <button
+      type="button"
+      onClick={toggleOpen}
+      aria-expanded={open}
+      title={`${open ? "Hide" : "Show"} source cards · ${configuredCount}/${platforms.length} sources configured`}
+      className="flex items-center gap-2 h-9 px-2.5 border border-border bg-card hover:bg-muted/10 transition-colors select-none"
+      data-testid="source-monitor-bar"
+    >
+      <Radio size={13} className={anyActive ? "text-primary animate-pulse" : "text-muted-foreground"} />
+      <span className="text-[10px] uppercase tracking-widest font-['Barlow_Condensed'] font-bold text-muted-foreground">
+        Source Monitors
+      </span>
+      <span className="flex items-center gap-1">
+        {platforms.map(p => (
+          <span key={p.key} className={`w-1.5 h-1.5 rounded-full transition-colors ${
+            p.active ? "bg-primary animate-pulse" : p.ok ? "bg-green-500/70" : "bg-orange-500/40"
+          }`} />
+        ))}
+      </span>
+      {sentimentPulse.combined && (
+        <Tip text={`Social Media Pulse: ${sentimentPulse.combined.post_count} scored posts across Facebook/Instagram/Twitter/YouTube`} side="bottom">
+          <span className="flex items-center gap-1 text-[10px] font-mono border-l border-border pl-2 cursor-help" data-testid="social-pulse">
+            <span className="text-emerald-400">▲{sentimentPulse.combined.positive_pct}%</span>
+            <span className="text-red-400">▼{sentimentPulse.combined.negative_pct}%</span>
+          </span>
+        </Tip>
+      )}
+      {open ? <ChevronUp size={13} className="text-muted-foreground" /> : <ChevronDown size={13} className="text-muted-foreground" />}
+    </button>
+  );
+
+  const panel = (open || triggerError) && (
+    <Card className="rounded-none border border-border bg-card overflow-hidden" data-testid="source-cards-panel">
       {triggerError && (
         <div role="alert" className="flex items-center gap-2 px-4 py-1.5 border-t border-red-500/30 bg-red-500/5 text-red-400 text-[11px]" data-testid="fetch-refused">
           <AlertTriangle size={11} className="shrink-0" />
@@ -504,7 +522,7 @@ function SourceScanners({ api, socialTrigger }) {
       {open && (
         <>
           <div className="border-t border-border p-3">
-            <p className="text-[9px] font-mono text-muted-foreground/50 mb-2 uppercase tracking-wider">Click a card to view its sources · Click header to collapse panel</p>
+            <p className="text-[9px] font-mono text-muted-foreground/50 mb-2 uppercase tracking-wider">Click a card to view its sources · Click Source Monitors in the header to hide</p>
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
 
               <ScannerCard
@@ -640,6 +658,13 @@ function SourceScanners({ api, socialTrigger }) {
         </>
       )}
     </Card>
+  );
+
+  return (
+    <>
+      {bar}
+      {panel && (cardsSlot ? createPortal(panel, cardsSlot) : panel)}
+    </>
   );
 }
 
@@ -1059,6 +1084,9 @@ export default function Dashboard({ stats: propStats, api }) {
   // Increments every time "Fetch Intel" fires social/fetch-all so SourceScanners
   // can show FETCHING badges and start its polling schedule.
   const [socialTrigger, setSocialTrigger] = useState(0);
+  // Increments on every accepted Fetch Intel so the source cards open.
+  const [revealTrigger, setRevealTrigger] = useState(0);
+  const [cardsSlot, setCardsSlot] = useState(null); // where the cards open, under the header
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const focusActor = searchParams.get("focusActor") || null;
@@ -1205,6 +1233,7 @@ export default function Dashboard({ stats: propStats, api }) {
       setLoading(false); // nothing started, so nothing to wait for
       return;
     }
+    setRevealTrigger(t => t + 1);
     setTimeout(() => {
       setLoading(false);
       fetchRecent();
@@ -1285,7 +1314,7 @@ export default function Dashboard({ stats: propStats, api }) {
   return (
     <div className="space-y-6" data-testid="dashboard-page">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-3xl md:text-4xl font-bold uppercase tracking-tight font-['Barlow_Condensed']" data-testid="dashboard-title" data-tour="dashboard-title">
             Intelligence Overview
@@ -1294,7 +1323,7 @@ export default function Dashboard({ stats: propStats, api }) {
             NER Situation Awareness Dashboard
           </p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           <OpenRouterCreditWarning api={api} />
           <Tip text={wsConnected ? "WebSocket live — new intel items arrive instantly without a page refresh" : "WebSocket offline — data updates on manual refresh only"} side="bottom">
             <div className="flex items-center gap-1.5 text-[10px] font-mono cursor-default" data-testid="ws-status">
@@ -1311,6 +1340,14 @@ export default function Dashboard({ stats: propStats, api }) {
               )}
             </div>
           </Tip>
+          <div data-tour="source-scanners">
+            <SourceScanners
+              api={api}
+              socialTrigger={socialTrigger}
+              revealTrigger={revealTrigger}
+              cardsSlot={cardsSlot}
+            />
+          </div>
           {user?.role !== "viewer" && (
           <Tip text="Trigger a full sweep of all 3 active sources — RSS feeds, YouTube and Telegram — simultaneously" side="bottom">
             <Button
@@ -1327,6 +1364,9 @@ export default function Dashboard({ stats: propStats, api }) {
           )}
         </div>
       </div>
+
+      {/* Source cards open here (from the Source Monitors bar or Fetch Intel) */}
+      <div ref={setCardsSlot} className="empty:hidden" />
 
       {fetchError && (
         <div role="alert" className="flex items-center gap-2 p-2 border border-red-500/40 bg-red-500/5 text-red-400 text-xs" data-testid="fetch-intel-refused">
@@ -1730,14 +1770,6 @@ export default function Dashboard({ stats: propStats, api }) {
             </p>
           )}
         </div>
-      </div>
-
-      {/* Source Scanners */}
-      <div data-tour="source-scanners">
-        <SourceScanners
-          api={api}
-          socialTrigger={socialTrigger}
-        />
       </div>
 
       {/* ── Custom Analytics Workspace (Sprint 2) ── */}

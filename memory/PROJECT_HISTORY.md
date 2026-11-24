@@ -175,3 +175,6 @@ Audit maybes: fixed news-link de-dup (no 16 MB distinct), number guard in news a
 
 ## 2026-11-24 — fix/reports-bangladesh-myanmar-filter (Army image coverage)
 Rohit: incidents affecting the Army's image matter even with no security angle (e.g. News18 "army vehicle challan" row, Narangi). New AI rule (section H) + `army_image.py`: negative Army-image stories are at least High in the AOR (Jorhat, Narangi/Narengi, Shillong — fixed, not a setting) and at least Medium elsewhere; positive stories kept but at most Medium (Medium in AOR). Tagged "Army Image" (Feed/Alerts filter); Army+civilian stories skip the similarity filter; News18 Guwahati feed added (it carried the missed article). The incident itself had arrived via MeghUpdates Telegram on 20 Nov as High.
+
+## 2026-11-25 — fix/reports-bangladesh-myanmar-filter (Source Monitors in header)
+The Source Monitors bar now sits in the Dashboard header next to Fetch Intel, compact, showing the Social Media Pulse (▲ positive / ▼ negative %). Clicking it opens or closes the source cards under the header. Fetch Intel opens them by itself and folds them 1.5 min after the last card stops fetching; if they were opened by hand they stay open. The bar's own "Scan Social Media" button was removed because it duplicated Fetch Intel. Checked in a mock preview: hid 90 s after fetching ended; phone layout fine.
